@@ -182,6 +182,13 @@ export async function detectUrlCapabilities(url: string): Promise<boolean> {
   const id = setTimeout(() => controller.abort(), 3000);
 
   try {
+    // Validate protocol for security
+    const parsedUrl = new URL(url);
+    if (parsedUrl.protocol !== 'http:' && parsedUrl.protocol !== 'https:') {
+      console.warn('URL capability detection rejected: Unsupported protocol:', parsedUrl.protocol);
+      clearTimeout(id);
+      return false;
+    }
     const response = await fetch(url, {
       headers: { Range: 'bytes=0-15' },
       signal: controller.signal

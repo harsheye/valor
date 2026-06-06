@@ -4,7 +4,7 @@ import { ffmpegService } from './services/ffmpeg';
 import { VideoPlayer } from './components/VideoPlayer';
 import { 
   Film, UploadCloud, Play, Settings, X,
-  RefreshCw, AlertCircle, CheckCircle, History, Home,
+  RefreshCw, History, Home,
   Clock, Sliders, Volume2, Maximize
 } from 'lucide-react';
 import { storeFileHandle, getFileHandle, removeFileHandle, verifyPermission } from './utils/indexedDB';
@@ -532,9 +532,24 @@ function App() {
 
   const processRemoteUrl = async (url: string) => {
     setIsProcessing(true);
-    setProcessingStep('Checking connection capabilities...');
+    setProcessingStep('Validating security protocols...');
     
     try {
+      // Tighten up URL security - enforce HTTP/HTTPS to prevent protocol-based injection/SSRF/file disclosure
+      let parsed: URL;
+      try {
+        parsed = new URL(url);
+        if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+          throw new Error('Unsupported URL protocol. Only HTTP and HTTPS protocols are allowed.');
+        }
+      } catch (err: any) {
+        alert(err.message || 'Invalid URL format. Please enter a valid HTTP or HTTPS address.');
+        setIsProcessing(false);
+        setProcessingStep('');
+        return;
+      }
+
+      setProcessingStep('Checking connection capabilities...');
       const parserAvailable = await detectUrlCapabilities(url);
       
       if (!parserAvailable) {
@@ -780,6 +795,43 @@ function App() {
             </div>
           )}
         </div>
+
+        {/* Sidebar Footer - Extractor Status & Settings */}
+        <div className="sidebar-footer">
+          <div className="sidebar-extractor-status">
+            <div className="status-light-row">
+              <span className={`status-light ${
+                ffmpegStatus === 'ready' ? 'ready' : 
+                ffmpegStatus === 'loading' ? 'loading' : 'offline'
+              }`}></span>
+              <span className="status-light-label">
+                {ffmpegStatus === 'ready' && 'Extractor Active'}
+                {ffmpegStatus === 'loading' && `Loading Extractor (${ffmpegProgress}%)`}
+                {ffmpegStatus === 'idle' && 'Extractor Offline'}
+                {ffmpegStatus === 'error' && 'Extractor Error'}
+              </span>
+            </div>
+            
+            {ffmpegStatus === 'idle' && (
+              <button className="sidebar-status-btn" onClick={handleInitFFmpeg} title="Load Extractor">
+                <RefreshCw size={12} className="icon-spin-hover" />
+                <span>Load Extractor</span>
+              </button>
+            )}
+            
+            {ffmpegStatus === 'error' && (
+              <button className="sidebar-status-btn btn-retry" onClick={handleInitFFmpeg} title="Retry Loading Extractor">
+                <RefreshCw size={12} />
+                <span>Retry Loading</span>
+              </button>
+            )}
+          </div>
+
+          <button className="sidebar-settings-btn" onClick={() => setShowSettings(true)} title="Preferences">
+            <Settings size={16} />
+            <span>Settings</span>
+          </button>
+        </div>
       </aside>
 
       {/* Main Content Area */}
@@ -792,38 +844,7 @@ function App() {
             </div>
 
             <div className="navbar-right">
-              {ffmpegStatus === 'idle' && (
-                <button className="ffmpeg-status-btn btn-idle" onClick={handleInitFFmpeg} title="Load Extractor">
-                  <RefreshCw size={14} className="icon-spin-hover" />
-                  <span>Load Extractor</span>
-                </button>
-              )}
-
-              {ffmpegStatus === 'loading' && (
-                <div className="ffmpeg-status-indicator loading" title={`Loading WASM (${ffmpegProgress}%)`}>
-                  <span className="status-dot pulsing"></span>
-                  <span>Loading WASM ({ffmpegProgress}%)</span>
-                </div>
-              )}
-
-              {ffmpegStatus === 'ready' && (
-                <div className="ffmpeg-status-indicator ready" title="Extractor Active">
-                  <CheckCircle size={14} className="status-icon" />
-                  <span>Extractor Active</span>
-                </div>
-              )}
-
-              {ffmpegStatus === 'error' && (
-                <div className="ffmpeg-status-indicator error" onClick={handleInitFFmpeg} title="Extractor Offline. Click to retry.">
-                  <AlertCircle size={14} className="status-icon" />
-                  <span>Extractor Offline</span>
-                </div>
-              )}
-
-              <button className="ffmpeg-status-btn btn-settings" onClick={() => setShowSettings(true)} style={{ marginLeft: '1rem' }} title="Settings">
-                <Settings size={14} />
-                <span>Settings</span>
-              </button>
+              {/* Status indicators and settings button moved to sidebar footer */}
             </div>
           </div>
         </header>
@@ -2020,6 +2041,165 @@ function App() {
           left: 50%;
           transform: translate(-50%, -50%);
         }
+
+        /* Sidebar Footer & Status Indicators */
+        .sidebar-footer {
+          margin-top: auto;
+          padding-top: 1.25rem;
+          border-top: 1px solid rgba(255, 255, 255, 0.05);
+          display: flex;
+          flex-direction: column;
+          gap: 0.85rem;
+          flex-shrink: 0;
+        }
+        .sidebar-extractor-status {
+          display: flex;
+          flex-direction: column;
+          gap: 0.5rem;
+          background: rgba(0, 0, 0, 0.25);
+          border: 1px solid rgba(255, 255, 255, 0.03);
+          padding: 0.75rem 0.85rem;
+          border-radius: 8px;
+        }
+        .status-light-row {
+          display: flex;
+          align-items: center;
+          gap: 0.5rem;
+        }
+        .status-light {
+          width: 8px;
+          height: 8px;
+          border-radius: 50%;
+          display: inline-block;
+          flex-shrink: 0;
+        }
+        .status-light.ready {
+          background-color: #2ec471;
+          box-shadow: 0 0 8px rgba(46, 196, 113, 0.7);
+        }
+        .status-light.loading {
+          background-color: #f39c12;
+          box-shadow: 0 0 8px rgba(243, 156, 18, 0.7);
+          animation: statusPulse 1.2s infinite alternate ease-in-out;
+        }
+        .status-light.offline {
+          background-color: #e74c3c;
+          box-shadow: 0 0 8px rgba(231, 76, 60, 0.7);
+        }
+        @keyframes statusPulse {
+          from { opacity: 0.4; transform: scale(0.9); }
+          to { opacity: 1; transform: scale(1.15); }
+        }
+        .status-light-label {
+          font-size: 0.8rem;
+          font-weight: 500;
+          color: #aaa;
+        }
+        .sidebar-status-btn {
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          gap: 0.4rem;
+          background: rgba(255, 255, 255, 0.05);
+          border: 1px solid rgba(255, 255, 255, 0.1);
+          color: #fff;
+          font-size: 0.75rem;
+          font-weight: 600;
+          padding: 0.35rem 0.75rem;
+          border-radius: 4px;
+          cursor: pointer;
+          transition: all 0.2s ease;
+          width: 100%;
+          box-sizing: border-box;
+        }
+        .sidebar-status-btn:hover {
+          background: rgba(229, 9, 20, 0.15);
+          border-color: rgba(229, 9, 20, 0.45);
+          color: #fff;
+        }
+        .sidebar-status-btn.btn-retry:hover {
+          background: rgba(231, 76, 60, 0.15);
+          border-color: rgba(231, 76, 60, 0.45);
+        }
+        .sidebar-settings-btn {
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          gap: 0.5rem;
+          background: rgba(255, 255, 255, 0.08);
+          border: 1px solid rgba(255, 255, 255, 0.12);
+          color: #fff;
+          font-size: 0.8rem;
+          font-weight: 600;
+          padding: 0.5rem 1rem;
+          border-radius: 6px;
+          cursor: pointer;
+          transition: all 0.2s ease;
+          width: 100%;
+          box-sizing: border-box;
+        }
+        .sidebar-settings-btn:hover {
+          background: rgba(255, 255, 255, 0.15);
+          border-color: rgba(255, 255, 255, 0.25);
+        }
+
+        /* Mobile Viewports - Custom Responsive Sidebar & Bottom Nav Styles */
+        @media (max-width: 768px) {
+          .app-sidebar {
+            display: none !important;
+          }
+          .navbar-logo-mobile {
+            display: block !important;
+            font-size: 1.3rem;
+            font-weight: 800;
+            color: #e50914;
+            text-shadow: 0 0 10px rgba(229, 9, 20, 0.2);
+          }
+          .mobile-bottom-nav {
+            display: flex !important;
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            height: 64px;
+            background: rgba(18, 18, 18, 0.96);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            border-top: 1px solid rgba(255, 255, 255, 0.05);
+            justify-content: space-around;
+            align-items: center;
+            z-index: 500;
+            padding: 0 1rem;
+            box-sizing: border-box;
+          }
+          .mobile-bottom-nav-item {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 4px;
+            background: none;
+            border: none;
+            color: #888;
+            font-size: 0.75rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            flex: 1;
+            height: 100%;
+          }
+          .mobile-bottom-nav-item:hover {
+            color: #ccc;
+          }
+          .mobile-bottom-nav-item.active {
+            color: #e50914;
+          }
+          .main-layout-wrapper {
+            height: calc(100vh - 64px);
+            overflow-y: auto;
+          }
+        }
+
         /* Disable animations overrides */
         .no-animations * {
           transition: none !important;
