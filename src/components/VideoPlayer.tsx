@@ -17,12 +17,15 @@ interface VideoPlayerProps {
   onBack: () => void;
   onUpdateVideo: (updatedVideo: VideoItem) => void;
   hideUIOverlays?: boolean;
-  hidePlayerButtons?: boolean;
-  hideTimeline?: boolean;
   hideVideoName?: boolean;
   toastDuration?: number;
   disableAnimations?: boolean;
   pauseOnFocusChange?: boolean;
+  showPlayButton?: boolean;
+  showTimeDisplay?: boolean;
+  showPlayBar?: boolean;
+  showVolumeControl?: boolean;
+  showFullscreen?: boolean;
 }
 
 export const VideoPlayer: React.FC<VideoPlayerProps> = ({ 
@@ -30,12 +33,15 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   onBack, 
   onUpdateVideo, 
   hideUIOverlays = false,
-  hidePlayerButtons = false,
-  hideTimeline = false,
   hideVideoName = false,
   toastDuration = 0.5,
   disableAnimations = false,
-  pauseOnFocusChange = false
+  pauseOnFocusChange = false,
+  showPlayButton = true,
+  showTimeDisplay = true,
+  showPlayBar = true,
+  showVolumeControl = true,
+  showFullscreen = true
 }) => {
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
@@ -938,19 +944,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       const nextSubKey = (keybinds.nextSubtitle || 'b').toLowerCase();
       const nextAudioKey = (keybinds.nextAudio || 'v').toLowerCase();
 
-      if (video.playbackMode === 'native') {
-        if (pressedKey === exitKey) {
-          e.preventDefault();
-          if (document.fullscreenElement) {
-            document.exitFullscreen()
-              .then(() => handleExit())
-              .catch(() => handleExit());
-          } else {
-            handleExit();
-          }
-        }
-        return;
-      }
+
 
       if (pressedKey === fullscreenKey) {
         e.preventDefault();
@@ -1223,7 +1217,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       <video
         ref={videoRef}
         src={video.url}
-        controls={video.playbackMode === 'native'}
+        controls={false}
         crossOrigin={video.playbackMode === 'advanced' ? 'anonymous' : undefined}
         className="main-video-element"
         onLoadedMetadata={() => {
@@ -1254,7 +1248,6 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
         onSeeking={() => setIsBuffering(true)}
         onError={handleVideoError}
         onClick={(e) => {
-          if (video.playbackMode === 'native') return;
           e.stopPropagation();
           togglePlay();
         }}
@@ -1288,17 +1281,15 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       )}
 
       {/* Top Header Overlay */}
-      {(!hidePlayerButtons || !hideVideoName) && (
+      {!hideUIOverlays && (
         <div 
           className={`player-overlay top-overlay-clean ${showControls ? 'visible' : 'hidden'}`} 
           onClick={(e) => e.stopPropagation()}
         >
           {/* Chromecast trigger (acting as pip/dummy cast) */}
-          {!hidePlayerButtons && (
-            <button className="cast-btn" onClick={togglePiP} title="Chromecast">
-              <Cast size={24} />
-            </button>
-          )}
+          <button className="cast-btn" onClick={togglePiP} title="Chromecast">
+            <Cast size={24} />
+          </button>
           
           {/* Centered video title & Playback mode badge */}
           {!hideVideoName && (
@@ -1332,16 +1323,14 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
           )}
 
           {/* Close Button */}
-          {!hidePlayerButtons && (
-            <button className="close-btn" onClick={onBack} title="Close">
-              <X size={24} />
-            </button>
-          )}
+          <button className="close-btn" onClick={onBack} title="Close">
+            <X size={24} />
+          </button>
         </div>
       )}
 
       {/* Center Screen HUD Controls */}
-      {!hidePlayerButtons && video.playbackMode !== 'native' && (
+      {!hideUIOverlays && showPlayButton && (
         <div 
           className={`center-controls-hud ${showControls ? 'visible' : 'hidden'}`} 
           onClick={(e) => {
@@ -1370,111 +1359,119 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       )}
 
       {/* Bottom Controls Overlay */}
-      {(!hideTimeline || !hidePlayerButtons) && video.playbackMode !== 'native' && (
+      {!hideUIOverlays && (showPlayBar || showTimeDisplay || showVolumeControl || showFullscreen || video.isRemote) && (
         <div 
           className={`player-overlay bottom-overlay ${showControls ? 'visible' : 'hidden'}`} 
           onClick={(e) => e.stopPropagation()}
         >
           
           {/* Seekbar timeline row */}
-          {!hideTimeline && (
+          {(showPlayBar || showTimeDisplay) && (
             <div className="seekbar-row">
-              <div className="scrub-container-premium">
-                <div className="scrub-track-bg"></div>
-                <div className="scrub-track-buffered" style={{ width: `${bufferedPercent}%` }}></div>
-                <div className="scrub-track-progress" style={{ width: `${(currentTime / (duration || 1)) * 100}%` }}></div>
-                
-                {/* Hover / Scrub Preview Tooltip (Always rendered to keep preview video loaded and warm) */}
-                <div 
-                  className={`scrub-hover-tooltip ${(hoverTime || isScrubbing) ? 'visible' : ''}`} 
-                  style={{ left: `${isScrubbing ? (currentTime / (duration || 1)) * 100 : hoverPercent}%` }}
-                >
-                  <div className="scrub-hover-preview-box">
-                    <video
-                      ref={previewVideoRef}
-                      src={video.url}
-                      crossOrigin={video.playbackMode === 'advanced' ? 'anonymous' : undefined}
-                      className="scrub-hover-preview-video"
-                      muted
-                      playsInline
-                    />
+              {showPlayBar && (
+                <div className="scrub-container-premium">
+                  <div className="scrub-track-bg"></div>
+                  <div className="scrub-track-buffered" style={{ width: `${bufferedPercent}%` }}></div>
+                  <div className="scrub-track-progress" style={{ width: `${(currentTime / (duration || 1)) * 100}%` }}></div>
+                  
+                  {/* Hover / Scrub Preview Tooltip (Always rendered to keep preview video loaded and warm) */}
+                  <div 
+                    className={`scrub-hover-tooltip ${(hoverTime || isScrubbing) ? 'visible' : ''}`} 
+                    style={{ left: `${isScrubbing ? (currentTime / (duration || 1)) * 100 : hoverPercent}%` }}
+                  >
+                    <div className="scrub-hover-preview-box">
+                      <video
+                        ref={previewVideoRef}
+                        src={video.url}
+                        crossOrigin={video.playbackMode === 'advanced' ? 'anonymous' : undefined}
+                        className="scrub-hover-preview-video"
+                        muted
+                        playsInline
+                      />
+                    </div>
+                    {showTimeDisplay && (
+                      <div className="scrub-hover-time">
+                        {isScrubbing ? formatTime(currentTime) : hoverTime}
+                      </div>
+                    )}
                   </div>
-                  <div className="scrub-hover-time">
-                    {isScrubbing ? formatTime(currentTime) : hoverTime}
-                  </div>
-                </div>
 
-                <input
-                  type="range"
-                  min={0}
-                  max={duration || 100}
-                  step={0.1}
-                  value={currentTime}
-                  onChange={handleSeek}
-                  onMouseMove={handleProgressMouseMove}
-                  onMouseLeave={handleProgressMouseLeave}
-                  onMouseDown={() => setIsScrubbing(true)}
-                  onMouseUp={() => setIsScrubbing(false)}
-                  onTouchStart={() => setIsScrubbing(true)}
-                  onTouchEnd={() => setIsScrubbing(false)}
-                  className="scrub-bar-premium"
-                />
-              </div>
-              <div className="time-display-clean">
-                {formatTime(duration - currentTime)}
-              </div>
+                  <input
+                    type="range"
+                    min={0}
+                    max={duration || 100}
+                    step={0.1}
+                    value={currentTime}
+                    onChange={handleSeek}
+                    onMouseMove={handleProgressMouseMove}
+                    onMouseLeave={handleProgressMouseLeave}
+                    onMouseDown={() => setIsScrubbing(true)}
+                    onMouseUp={() => setIsScrubbing(false)}
+                    onTouchStart={() => setIsScrubbing(true)}
+                    onTouchEnd={() => setIsScrubbing(false)}
+                    className="scrub-bar-premium"
+                  />
+                </div>
+              )}
+              {showTimeDisplay && (
+                <div className="time-display-clean">
+                  {formatTime(duration - currentTime)}
+                </div>
+              )}
             </div>
           )}
 
           {/* Bottom controls bar: PiP on left, Audio & Subtitles in center, Fullscreen on right */}
-          {!hidePlayerButtons && (
+          {!hideUIOverlays && (
             <div className="bottom-controls-bar">
               <div className="bottom-controls-left-spacer">
                 <button className="control-btn-pip" onClick={togglePiP} title="Picture in Picture">
                   <MonitorPlay size={22} />
                 </button>
-                <div className="volume-control-group-premium">
-                  <button 
-                    className="control-btn-volume" 
-                    onClick={() => {
-                      setIsMuted(prev => {
-                        const nextMuted = !prev;
-                        triggerVolumeToast(volume, nextMuted);
-                        return nextMuted;
-                      });
-                    }}
-                    onWheel={(e) => {
-                      e.preventDefault();
-                      setIsMuted(false);
-                      setVolume(prev => {
-                        const delta = e.deltaY < 0 ? 0.05 : -0.05;
-                        const nextVol = Math.max(0.0, Math.min(1.0, prev + delta));
-                        triggerVolumeToast(nextVol, false);
-                        return nextVol;
-                      });
-                    }}
-                    title={isMuted ? "Unmute" : "Mute"}
-                    style={{ background: 'none', border: 'none', color: 'rgba(255, 255, 255, 0.8)', cursor: 'pointer', padding: '6px', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'color 0.2s, transform 0.2s' }}
-                  >
-                    {isMuted || volume === 0 ? <VolumeX size={22} /> : volume < 0.5 ? <Volume1 size={22} /> : <Volume2 size={22} />}
-                  </button>
-                  <div className="volume-slider-container-premium">
-                    <input 
-                      type="range"
-                      min={0}
-                      max={1}
-                      step={0.05}
-                      value={isMuted ? 0 : volume}
-                      onChange={(e) => {
-                        const nextVol = parseFloat(e.target.value);
-                        setVolume(nextVol);
-                        setIsMuted(nextVol === 0);
-                        triggerVolumeToast(nextVol, nextVol === 0);
+                {showVolumeControl && (
+                  <div className="volume-control-group-premium">
+                    <button 
+                      className="control-btn-volume" 
+                      onClick={() => {
+                        setIsMuted(prev => {
+                          const nextMuted = !prev;
+                          triggerVolumeToast(volume, nextMuted);
+                          return nextMuted;
+                        });
                       }}
-                      className="volume-slider-premium"
-                    />
+                      onWheel={(e) => {
+                        e.preventDefault();
+                        setIsMuted(false);
+                        setVolume(prev => {
+                          const delta = e.deltaY < 0 ? 0.05 : -0.05;
+                          const nextVol = Math.max(0.0, Math.min(1.0, prev + delta));
+                          triggerVolumeToast(nextVol, false);
+                          return nextVol;
+                        });
+                      }}
+                      title={isMuted ? "Unmute" : "Mute"}
+                      style={{ background: 'none', border: 'none', color: 'rgba(255, 255, 255, 0.8)', cursor: 'pointer', padding: '6px', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'color 0.2s, transform 0.2s' }}
+                    >
+                      {isMuted || volume === 0 ? <VolumeX size={22} /> : volume < 0.5 ? <Volume1 size={22} /> : <Volume2 size={22} />}
+                    </button>
+                    <div className="volume-slider-container-premium">
+                      <input 
+                        type="range"
+                        min={0}
+                        max={1}
+                        step={0.05}
+                        value={isMuted ? 0 : volume}
+                        onChange={(e) => {
+                          const nextVol = parseFloat(e.target.value);
+                          setVolume(nextVol);
+                          setIsMuted(nextVol === 0);
+                          triggerVolumeToast(nextVol, nextVol === 0);
+                        }}
+                        className="volume-slider-premium"
+                      />
+                    </div>
                   </div>
-                </div>
+                )}
               </div>
 
               <div className="bottom-controls-center-group">
@@ -1595,9 +1592,11 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
               </div>
 
               <div className="bottom-controls-right-group">
-                <button className="control-btn-fullscreen" onClick={toggleFullscreen} title="Fullscreen">
-                  {isFullscreen ? <Minimize size={22} /> : <Maximize size={22} />}
-                </button>
+                {showFullscreen && (
+                  <button className="control-btn-fullscreen" onClick={toggleFullscreen} title="Fullscreen">
+                    {isFullscreen ? <Minimize size={22} /> : <Maximize size={22} />}
+                  </button>
+                )}
               </div>
             </div>
           )}

@@ -81,12 +81,15 @@ function App() {
     defaultSub: 'ENG',
     historyLimit: 10 as number | 'Infinite',
     hideUIOverlays: false,
-    hidePlayerButtons: false,
-    hideTimeline: false,
     hideVideoName: false,
     toastDuration: 0.5,
     disableAnimations: false,
-    pauseOnFocusChange: false
+    pauseOnFocusChange: false,
+    showPlayButton: true,
+    showTimeDisplay: true,
+    showPlayBar: true,
+    showVolumeControl: true,
+    showFullscreen: true
   };
 
   const [showSettings, setShowSettings] = useState(false);
@@ -710,12 +713,15 @@ function App() {
         onBack={() => setPlayingVideo(null)} 
         onUpdateVideo={handleUpdateVideo}
         hideUIOverlays={settings.hideUIOverlays}
-        hidePlayerButtons={settings.hidePlayerButtons}
-        hideTimeline={settings.hideTimeline}
         hideVideoName={settings.hideVideoName}
         toastDuration={settings.toastDuration}
         disableAnimations={settings.disableAnimations}
         pauseOnFocusChange={settings.pauseOnFocusChange}
+        showPlayButton={settings.showPlayButton}
+        showTimeDisplay={settings.showTimeDisplay}
+        showPlayBar={settings.showPlayBar}
+        showVolumeControl={settings.showVolumeControl}
+        showFullscreen={settings.showFullscreen}
       />
     );
   }
@@ -1131,24 +1137,6 @@ function App() {
                   />
                 </div>
                 <div className="pref-row">
-                  <span className="pref-label">Hide Video Player Buttons</span>
-                  <input 
-                    type="checkbox" 
-                    className="pref-checkbox"
-                    checked={settings.hidePlayerButtons} 
-                    onChange={(e) => handleDefaultLangChange('hidePlayerButtons', e.target.checked)}
-                  />
-                </div>
-                <div className="pref-row">
-                  <span className="pref-label">Hide Timeline</span>
-                  <input 
-                    type="checkbox" 
-                    className="pref-checkbox"
-                    checked={settings.hideTimeline} 
-                    onChange={(e) => handleDefaultLangChange('hideTimeline', e.target.checked)}
-                  />
-                </div>
-                <div className="pref-row">
                   <span className="pref-label">Hide Video Name</span>
                   <input 
                     type="checkbox" 
@@ -1156,6 +1144,76 @@ function App() {
                     checked={settings.hideVideoName} 
                     onChange={(e) => handleDefaultLangChange('hideVideoName', e.target.checked)}
                   />
+                </div>
+              </div>
+
+              <div className="settings-section">
+                <h3 className="settings-section-title">Video Controls</h3>
+                <p className="settings-section-desc">Toggle player control overlays visible on the screen.</p>
+                
+                <div className="pref-row">
+                  <span className="pref-label">Play button</span>
+                  <div className="pref-row-right">
+                    <span className="pref-icon">▶</span>
+                    <input 
+                      type="checkbox" 
+                      className="pref-checkbox"
+                      checked={settings.showPlayButton} 
+                      onChange={(e) => handleDefaultLangChange('showPlayButton', e.target.checked)}
+                    />
+                  </div>
+                </div>
+                
+                <div className="pref-row">
+                  <span className="pref-label">Time</span>
+                  <div className="pref-row-right">
+                    <span className="pref-icon font-mono" style={{ fontSize: '0.8rem', letterSpacing: '0.5px' }}>2:09:25</span>
+                    <input 
+                      type="checkbox" 
+                      className="pref-checkbox"
+                      checked={settings.showTimeDisplay} 
+                      onChange={(e) => handleDefaultLangChange('showTimeDisplay', e.target.checked)}
+                    />
+                  </div>
+                </div>
+                
+                <div className="pref-row">
+                  <span className="pref-label">Play bar</span>
+                  <div className="pref-row-right">
+                    <span className="pref-icon">—•</span>
+                    <input 
+                      type="checkbox" 
+                      className="pref-checkbox"
+                      checked={settings.showPlayBar} 
+                      onChange={(e) => handleDefaultLangChange('showPlayBar', e.target.checked)}
+                    />
+                  </div>
+                </div>
+                
+                <div className="pref-row">
+                  <span className="pref-label">Volume</span>
+                  <div className="pref-row-right">
+                    <span className="pref-icon">🔊</span>
+                    <input 
+                      type="checkbox" 
+                      className="pref-checkbox"
+                      checked={settings.showVolumeControl} 
+                      onChange={(e) => handleDefaultLangChange('showVolumeControl', e.target.checked)}
+                    />
+                  </div>
+                </div>
+                
+                <div className="pref-row">
+                  <span className="pref-label">Fullscreen</span>
+                  <div className="pref-row-right">
+                    <span className="pref-icon">⤢</span>
+                    <input 
+                      type="checkbox" 
+                      className="pref-checkbox"
+                      checked={settings.showFullscreen} 
+                      onChange={(e) => handleDefaultLangChange('showFullscreen', e.target.checked)}
+                    />
+                  </div>
                 </div>
                 <div className="pref-row">
                   <span className="pref-label">Disable Hover & Floating Animations</span>
@@ -1904,11 +1962,52 @@ function App() {
           justify-content: space-between;
           align-items: center;
         }
+        .pref-row-right {
+          display: flex;
+          align-items: center;
+          gap: 1.25rem;
+        }
+        .pref-icon {
+          font-size: 0.95rem;
+          color: rgba(255, 255, 255, 0.6);
+          font-weight: 500;
+          min-width: 60px;
+          text-align: right;
+        }
         .pref-checkbox {
-          width: 18px;
-          height: 18px;
+          appearance: none;
+          -webkit-appearance: none;
+          width: 26px;
+          height: 26px;
+          border-radius: 6px;
+          background-color: rgba(255, 255, 255, 0.08);
+          border: 2px solid rgba(255, 255, 255, 0.2);
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
           cursor: pointer;
-          accent-color: #e50914;
+          transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+          position: relative;
+          outline: none;
+        }
+        .pref-checkbox:hover {
+          border-color: #3b82f6;
+          background-color: rgba(59, 130, 246, 0.05);
+        }
+        .pref-checkbox:checked {
+          background-color: #3b82f6;
+          border-color: #3b82f6;
+          box-shadow: 0 0 10px rgba(59, 130, 246, 0.35);
+        }
+        .pref-checkbox:checked::after {
+          content: '✓';
+          color: white;
+          font-size: 0.95rem;
+          font-weight: bold;
+          position: absolute;
+          top: 50%;
+          left: 50%;
+          transform: translate(-50%, -50%);
         }
         /* Disable animations overrides */
         .no-animations * {
