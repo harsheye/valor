@@ -9,7 +9,7 @@ async function start() {
   });
 
   await server.listen();
-  console.log('[Server] Valor Mohoris dev server is running on http://localhost:5174');
+  console.log('[Server] Dracarys dev server is running on http://localhost:5174');
 
   let activeConnections = 0;
   let shutdownTimeout = null;

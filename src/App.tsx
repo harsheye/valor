@@ -765,7 +765,7 @@ function App() {
       {/* Sidebar - Desktop and Tablet */}
       <aside className="app-sidebar">
         <div className="sidebar-header">
-          <div className="sidebar-logo">Valor Mohoris</div>
+          <div className="sidebar-logo">Dracarys</div>
         </div>
         
         <nav className="sidebar-menu">
@@ -858,7 +858,7 @@ function App() {
         <header className="glass-navbar">
           <div className="navbar-container">
             <div className="navbar-logo-mobile">
-              Valor Mohoris
+              Dracarys
             </div>
 
             <div className="navbar-right">
@@ -999,7 +999,7 @@ function App() {
 
         <footer className="app-footer">
           <div className="container footer-content">
-            <span>&copy; 2026 Valor Mohoris. Direct local WebAssembly media processing.</span>
+            <span>&copy; 2026 Dracarys. Direct local WebAssembly media processing.</span>
           </div>
         </footer>
       </div>
