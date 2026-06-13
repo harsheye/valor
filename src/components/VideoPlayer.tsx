@@ -204,16 +204,69 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   const subtitleTracks = video.subtitleTracks || [];
   const streams = video.streams || [];
   const audioStreams = streams.filter(s => s.type === 'audio');
-  const subtitleStreams = streams.filter(s => s.type === 'subtitle');
+  const subtitleStreams = streams.filter(s => 
+    s.type === 'subtitle' && 
+    !/dvd_subtitle|dvdsub|pgs|hdmv_pgs|xsub/i.test(s.codec || '')
+  );
 
   // Clear hover timeouts and reset FFmpeg on unmount or when changing videos
   useEffect(() => {
     return () => {
       if (audioSubTimeoutRef.current) clearTimeout(audioSubTimeoutRef.current);
       console.log('[Player] VideoPlayer resetting FFmpeg worker and lock queue due to unmount or video change');
-      ffmpegService.reset(true);
+      ffmpegService.reset();
     };
   }, [video.id]);
+
+  const lastAudioUrlRef = useRef<string | null>(null);
+  useEffect(() => {
+    const newUrl = selectedAudioTrack?.url || null;
+    const oldUrl = lastAudioUrlRef.current;
+    if (oldUrl && oldUrl !== newUrl && oldUrl.startsWith('blob:')) {
+      console.log(`[Player] Revoking old audio Blob URL: ${oldUrl}`);
+      try {
+        URL.revokeObjectURL(oldUrl);
+      } catch (e) {}
+    }
+    lastAudioUrlRef.current = newUrl;
+  }, [selectedAudioTrack?.url]);
+
+  useEffect(() => {
+    return () => {
+      const oldUrl = lastAudioUrlRef.current;
+      if (oldUrl && oldUrl.startsWith('blob:')) {
+        console.log(`[Player] Revoking active audio Blob URL on unmount: ${oldUrl}`);
+        try {
+          URL.revokeObjectURL(oldUrl);
+        } catch (e) {}
+      }
+    };
+  }, []);
+
+  const lastSubUrlRef = useRef<string | null>(null);
+  useEffect(() => {
+    const newUrl = selectedSubTrack?.url || null;
+    const oldUrl = lastSubUrlRef.current;
+    if (oldUrl && oldUrl !== newUrl && oldUrl.startsWith('blob:')) {
+      console.log(`[Player] Revoking old subtitle Blob URL: ${oldUrl}`);
+      try {
+        URL.revokeObjectURL(oldUrl);
+      } catch (e) {}
+    }
+    lastSubUrlRef.current = newUrl;
+  }, [selectedSubTrack?.url]);
+
+  useEffect(() => {
+    return () => {
+      const oldUrl = lastSubUrlRef.current;
+      if (oldUrl && oldUrl.startsWith('blob:')) {
+        console.log(`[Player] Revoking active subtitle Blob URL on unmount: ${oldUrl}`);
+        try {
+          URL.revokeObjectURL(oldUrl);
+        } catch (e) {}
+      }
+    };
+  }, []);
 
   // Auto-probe local file streams on startup if not already scanned
   useEffect(() => {
@@ -233,9 +286,9 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
         setIsAutoProbing(true);
         try {
           if (!ffmpegService.isReady()) {
-            await ffmpegService.load();
+            await ffmpegService.load(video.id);
           }
-          const result = await ffmpegService.probeFile(video.file);
+          const result = await ffmpegService.probeFile(video.file, video.id);
           const updatedVideo = {
             ...video,
             duration: result.duration,
@@ -385,8 +438,10 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
         if (segment) {
           offsetTime = segment.startTime;
           console.log(`[Remote Audio] HLS segment time: ${offsetTime}, url: ${segment.uri}`);
-          const transcode = codec !== 'aac' && codec !== 'mp3';
-          const result = await ffmpegService.extractHlsAudioSegment(segment.uri, streamIndex, transcode);
+          const result = await ffmpegService.extractHlsAudioSegment(segment.uri, {
+            index: streamIndex,
+            codec: codec || 'aac'
+          });
           audioUrl = result.url;
         }
       } else {
@@ -406,8 +461,13 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
 
         console.log(`[Remote Audio] Range: ${startOffset}-${endOffset}, time: ${offsetTime}`);
         
-        const transcode = codec !== 'aac' && codec !== 'mp3';
-        const result = await ffmpegService.extractRemoteAudioSegment(cachedSource, startOffset, endOffset, streamIndex, transcode, signal);
+        const result = await ffmpegService.extractRemoteAudioSegment(
+          cachedSource,
+          startOffset,
+          endOffset,
+          { index: streamIndex, codec },
+          signal
+        );
         audioUrl = result.url;
       }
 
@@ -484,10 +544,22 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
         const size = await cachedSource.getSize();
         const endOffset = Math.min(startOffset + 2 * 1024 * 1024, size - 1);
 
-        const subtitleText = await ffmpegService.extractRemoteSubtitleSegment(cachedSource, startOffset, endOffset, streamIndex, signal);
+        const subStream = subtitleStreams.find(s => s.index === streamIndex);
+        const codec = subStream?.codec || 'srt';
+        const subtitleText = await ffmpegService.extractRemoteSubtitleSegment(
+          cachedSource,
+          startOffset,
+          endOffset,
+          { index: streamIndex, codec },
+          signal
+        );
         
-        cues = parseSubtitles(subtitleText, 'subtitles.srt');
-        format = 'srt';
+        const isAss = /ass|ssa/i.test(codec);
+        const isVtt = /webvtt/i.test(codec);
+        const formatExt = isAss ? 'ass' : (isVtt ? 'vtt' : 'srt');
+        
+        cues = parseSubtitles(subtitleText, `subtitles.${formatExt}`);
+        format = formatExt === 'vtt' ? 'vtt' : 'srt';
       }
 
       if (cues && cues.length > 0) {
@@ -650,24 +722,17 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
 
     try {
       if (!ffmpegService.isReady()) {
-        await ffmpegService.load();
+        await ffmpegService.load(video.id);
       }
 
-      const lowerCodec = (codec || '').toLowerCase();
-      const isNativePlayable = lowerCodec.includes('aac') || 
-                               lowerCodec.includes('mp3') || 
-                               lowerCodec.includes('opus') || 
-                               lowerCodec.includes('flac') || 
-                               lowerCodec.includes('vorbis') || 
-                               lowerCodec.includes('ac3') || 
-                               lowerCodec.includes('eac3') || 
-                               lowerCodec.includes('dts') || 
-                               lowerCodec.includes('truehd');
       const result = await ffmpegService.extractAudio(
         video.file,
-        streamIndex,
-        !isNativePlayable, // only transcode if not native playable
-        codec || '',
+        video.id,
+        {
+          index: streamIndex,
+          codec: codec || 'mp3',
+          language
+        },
         (p: number) => setFlyExtractProgress(p)
       );
 
@@ -742,19 +807,23 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
 
     try {
       if (!ffmpegService.isReady()) {
-        await ffmpegService.load();
+        await ffmpegService.load(video.id);
       }
 
-      const result = await ffmpegService.extractSubtitle(video.file, streamIndex);
+      const subStream = subtitleStreams.find(s => s.index === streamIndex);
+      const codec = subStream?.codec || 'srt';
+      const result = await ffmpegService.extractSubtitle(video.file, video.id, {
+        index: streamIndex,
+        codec,
+        language
+      });
       
-      const textRes = await fetch(result.url);
-      const text = await textRes.text();
-      const cues = parseSubtitles(text, result.filename);
+      const cues = parseSubtitles(result.text, `subtitles.${result.format}`);
 
       const newTrack: CustomSubtitleTrack = {
         id: `extracted-sub-${Date.now()}`,
         name: `Subtitles (${language?.toUpperCase() || 'Track'})`,
-        url: result.url,
+        url: '',
         cues,
         isExtracted: true,
         streamIndex,
