@@ -22,3 +22,9 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Executables and SEA build files
+start-app.exe
+sea-prep.blob
+wrapper.js
+sea-config.json

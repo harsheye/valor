@@ -489,11 +489,21 @@ function App() {
           }
 
           if (readable) {
+            if (video.url && video.url.startsWith('blob:')) {
+              try {
+                URL.revokeObjectURL(video.url);
+              } catch (e) {}
+            }
+            const newBlobUrl = URL.createObjectURL(video.file);
+            const updatedVideo = {
+              ...video,
+              url: newBlobUrl
+            };
             setVideos(prev => {
               const filtered = prev.filter(v => v.id !== video.id);
-              return [video, ...filtered];
+              return [updatedVideo, ...filtered];
             });
-            setPlayingVideo(video);
+            setPlayingVideo(updatedVideo);
             return;
           }
         }
@@ -779,6 +789,7 @@ function App() {
   if (playingVideo) {
     return (
       <VideoPlayer 
+        key={playingVideo.id}
         video={playingVideo} 
         onBack={() => setPlayingVideo(null)} 
         onUpdateVideo={handleUpdateVideo}

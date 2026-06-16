@@ -504,6 +504,15 @@ export async function parseMkv(source: ByteSource): Promise<{ duration: number; 
     
     const headerSize = r.offset;
 
+    // Break early if we hit a Cluster (media body) or if we already have the track metadata & duration.
+    // This avoids scanning the entire file's cluster headers sequentially, which is extremely slow.
+    if (id === 0x1F43B675) { // Cluster
+      break;
+    }
+    if (tracks.length > 0 && duration > 0) {
+      break;
+    }
+
     if (id === 0x18538067) { // Segment
       segmentOffset = offset + headerSize;
       offset += headerSize;

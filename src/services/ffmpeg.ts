@@ -13,6 +13,7 @@
 import { FFmpeg } from "@ffmpeg/ffmpeg";
 import { fetchFile } from "@ffmpeg/util";
 import type { ByteSource } from "../utils/remoteByteSource";
+import { logger } from "../utils/logger";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -62,8 +63,8 @@ function getOutputFormat(codec: string): { ext: string; mimeType: string } {
   if (/mp3|mpeg/i.test(codec)) return { ext: "mp3",  mimeType: "audio/mpeg" };
   if (/opus|vorbis/i.test(codec)) return { ext: "ogg", mimeType: "audio/ogg" };
   if (/flac/i.test(codec))   return { ext: "flac", mimeType: "audio/flac" };
-  // Transcode targets — always transcode to mp3
-  return { ext: "mp3", mimeType: "audio/mpeg" };
+  // Transcode targets — always transcode to AAC (M4A) for 3x faster encoding
+  return { ext: "m4a", mimeType: "audio/mp4" };
 }
 
 function isCopyCodec(codec: string): boolean {
@@ -142,7 +143,28 @@ export class FFmpegService {
         this.logCollector.push(message);
       }
       if (import.meta.env?.DEV) {
-        console.debug("[ffmpeg]", message);
+        const msg = message.toLowerCase();
+        
+        // Skip uninteresting build/configuration headers to keep logs clear and concise
+        if (msg.includes("configuration:") || msg.includes("libav") || msg.includes("built with")) {
+          return;
+        }
+        
+        // Skip spammy speed/time progress stats as we already have a visual progress bar
+        if (msg.includes("speed=") || msg.includes("time=") || msg.includes("bitrate=")) {
+          return;
+        }
+
+        // Color code errors, warnings, stream mapping info, and success logs
+        if (msg.includes("error") || msg.includes("failed") || msg.includes("invalid")) {
+          logger.ffmpegError(message);
+        } else if (msg.includes("warning") || msg.includes("deprecated")) {
+          logger.ffmpegWarning(message);
+        } else if (msg.includes("stream #") || msg.includes("mapping") || msg.includes("output #")) {
+          logger.ffmpegMap(message);
+        } else {
+          logger.ffmpeg(message);
+        }
       }
     });
 
@@ -197,10 +219,10 @@ export class FFmpegService {
     try {
       // Use string literal — FFFSType.WORKERFS is undefined in ESM builds
       await ff.mount("WORKERFS" as any, { files: [cleanFile] }, mountPoint);
-      console.log(`[ffmpeg] WORKERFS mounted successfully at ${inputPath}`);
+      logger.success(`[ffmpeg] WORKERFS mounted successfully at ${inputPath}`);
     } catch (workerFsError) {
       // WORKERFS unavailable in this environment — fall back to MEMFS write
-      console.warn("[ffmpeg] WORKERFS unavailable, falling back to fetchFile:", workerFsError);
+      logger.warn("[ffmpeg] WORKERFS unavailable, falling back to fetchFile:", workerFsError);
       const data = await fetchFile(file);
       await ff.writeFile(inputPath, data);
     }
@@ -285,7 +307,10 @@ export class FFmpegService {
 
       try {
         const args = this.buildAudioArgs(inputPath, stream, outputPath, ext);
-        await ff.exec(args);
+        const code = await ff.exec(args);
+        if (code !== 0) {
+          throw new Error(`Audio extraction failed. FFmpeg exited with code ${code}`);
+        }
 
         const data = await ff.readFile(outputPath);
         const blob = new Blob([data as any], { type: mimeType });
@@ -309,7 +334,7 @@ export class FFmpegService {
    * Transcode  — Dolby/DTS:              stereo downmix, 128k
    */
   private buildAudioArgs(inputPath: string, stream: StreamInfo, outputPath: string, ext: string): string[] {
-    const selectStream = [`-map`, `0:a:${stream.index}`];
+    const selectStream = [`-map`, `0:${stream.index}`];
 
     if (isCopyCodec(stream.codec)) {
       // Fast path: pure demux, no decode/encode
@@ -327,27 +352,27 @@ export class FFmpegService {
     }
 
     if (isTranscodeCodec(stream.codec)) {
-      // Transcode path: downmix to stereo — 3-4x faster on single-threaded WASM
+      // Transcode path: downmix to stereo, encode to AAC (3x faster than MP3 on WASM)
       return [
         "-i", inputPath,
         ...selectStream,
         "-vn",
         "-ac", "2",          // stereo downmix
         "-ab", "128k",       // compact bitrate
-        "-acodec", "libmp3lame",
+        "-acodec", "aac",    // fast native AAC encoder
         outputPath,
       ];
     }
 
-    // Unknown codec — attempt a generic transcode to stereo MP3
-    console.warn(`[ffmpeg] Unknown codec "${stream.codec}" — attempting generic transcode`);
+    // Unknown codec — attempt a generic transcode to stereo AAC
+    logger.warn(`[ffmpeg] Unknown codec "${stream.codec}" — attempting generic transcode`);
     return [
       "-i", inputPath,
       ...selectStream,
       "-vn",
       "-ac", "2",
       "-ab", "128k",
-      "-acodec", "libmp3lame",
+      "-acodec", "aac",
       outputPath,
     ];
   }
@@ -372,25 +397,37 @@ export class FFmpegService {
       const ff = await this.ensureLoaded(videoId);
       const uniqueId = Math.random().toString(36).substring(2, 9);
       const inputPath = await this.mountFile(ff, file, uniqueId);
-      const format = this.detectSubtitleFormat(stream.codec);
-      const outputPath = `/output_sub_${stream.index}_${uniqueId}.${format}`;
+      let format = this.detectSubtitleFormat(stream.codec);
+      let outputPath = `/output_sub_${stream.index}_${uniqueId}.${format}`;
 
       try {
-        try {
-          await ff.exec([
+        const code = await ff.exec([
+          "-probesize", "1000000",
+          "-analyzeduration", "1000000",
+          "-vn", "-an",
+          "-i", inputPath,
+          "-map", `0:${stream.index}`,
+          "-c:s", "copy",
+          outputPath,
+        ]);
+
+        if (code !== 0) {
+          logger.warn("[ffmpeg] Subtitle copy failed, attempting transcode to srt...");
+          const fallbackPath = `/output_sub_${stream.index}_${uniqueId}.srt`;
+          const fallbackCode = await ff.exec([
+            "-probesize", "1000000",
+            "-analyzeduration", "1000000",
+            "-vn", "-an",
             "-i", inputPath,
-            "-map", `0:s:${stream.index}`,
-            "-c:s", "copy",
-            outputPath,
-          ]);
-        } catch (execErr) {
-          console.warn("[ffmpeg] Subtitle copy failed, attempting transcode to srt:", execErr);
-          await ff.exec([
-            "-i", inputPath,
-            "-map", `0:s:${stream.index}`,
+            "-map", `0:${stream.index}`,
             "-c:s", "srt",
-            outputPath,
+            fallbackPath,
           ]);
+          if (fallbackCode !== 0) {
+            throw new Error(`Subtitle extraction failed. FFmpeg exited with code ${fallbackCode}`);
+          }
+          outputPath = fallbackPath;
+          format = 'srt';
         }
 
         const data = await ff.readFile(outputPath);
@@ -503,7 +540,7 @@ export class FFmpegService {
         details
       });
     }
-    console.log('Parsed stream layout:', { duration, format, streams });
+    logger.success('Parsed stream layout:', { duration, format, streams });
     return { duration, format, streams };
   }
 
@@ -560,7 +597,7 @@ export class FFmpegService {
       await ff.writeFile(tempInFile, chunkBytes);
 
       try {
-        const selectStream = [`-map`, `0:a:${stream.index}`];
+        const selectStream = [`-map`, `0:${stream.index}`];
         let args: string[];
 
         if (isCopyCodec(stream.codec)) {
@@ -576,15 +613,17 @@ export class FFmpegService {
             '-i', tempInFile,
             ...selectStream,
             '-vn',
-            '-acodec', 'libmp3lame',
+            '-acodec', 'aac',
             '-ac', '2',
             '-ab', '128k',
-            '-ar', '44100',
             tempOutFile
           ];
         }
 
-        await ff.exec(args);
+        const code = await ff.exec(args);
+        if (code !== 0) {
+          throw new Error(`Remote audio extraction failed. Exit code ${code}`);
+        }
 
         const data = await ff.readFile(tempOutFile);
         const blob = new Blob([data as any], { type: mimeType });
@@ -617,31 +656,32 @@ export class FFmpegService {
     return this.lock.run(async () => {
       const ff = await this.ensureLoaded("remote-stream");
       const tempInFile = "chunk.bin";
-      const format = this.detectSubtitleFormat(stream.codec);
-      const tempOutFile = `sub_remote_${stream.index}.${format}`;
+      let format = this.detectSubtitleFormat(stream.codec);
+      let tempOutFile = `sub_remote_${stream.index}.${format}`;
 
       const chunkBytes = await source.read(startOffset, endOffset, signal);
       await ff.writeFile(tempInFile, chunkBytes);
 
       try {
-        try {
-          await ff.exec([
+        const code = await ff.exec([
+          '-i', tempInFile,
+          '-map', `0:${stream.index}`,
+          '-c:s', 'copy',
+          tempOutFile
+        ]);
+        if (code !== 0) {
+          logger.warn("[ffmpeg] Remote subtitle copy failed, attempting transcode to srt...");
+          const fallbackOutFile = `sub_remote_${stream.index}.srt`;
+          const fallbackCode = await ff.exec([
             '-i', tempInFile,
-            '-map', `0:s:${stream.index}`,
-            '-c:s', 'copy',
-            tempOutFile
+            '-map', `0:${stream.index}`,
+            '-c:s', 'srt',
+            fallbackOutFile
           ]);
-        } catch (err) {
-          try {
-            await ff.exec([
-              '-i', tempInFile,
-              '-map', `0:s:${stream.index}`,
-              '-c:s', 'srt',
-              tempOutFile
-            ]);
-          } catch (e) {
-            throw err;
+          if (fallbackCode !== 0) {
+            throw new Error(`Remote subtitle extraction failed. Exit code ${fallbackCode}`);
           }
+          tempOutFile = fallbackOutFile;
         }
 
         const data = await ff.readFile(tempOutFile);
@@ -683,15 +723,17 @@ export class FFmpegService {
         } else {
           args = [
             '-i', tempInFile,
-            '-acodec', 'libmp3lame',
+            '-acodec', 'aac',
             '-ac', '2',
             '-ab', '128k',
-            '-ar', '44100',
             tempOutFile
           ];
         }
 
-        await ff.exec(args);
+        const code = await ff.exec(args);
+        if (code !== 0) {
+          throw new Error(`HLS audio extraction failed. Exit code ${code}`);
+        }
 
         const data = await ff.readFile(tempOutFile);
         const blob = new Blob([data as any], { type: mimeType });
@@ -747,7 +789,10 @@ export class FFmpegService {
           ];
         }
 
-        await ff.exec(args);
+        const code = await ff.exec(args);
+        if (code !== 0) {
+          throw new Error(`Video remuxing failed. Exit code ${code}`);
+        }
 
         const data = await ff.readFile(tempOutFile);
         const blob = new Blob([data as any], { type: 'video/mp4' });
@@ -775,7 +820,8 @@ export class FFmpegService {
    */
   async reset(): Promise<void> {
     return this.lock.run(async () => {
-      await this.terminateWorker();
+      // Keep the WASM worker alive for instant reuse across different videos.
+      this.logCollector = [];
     });
   }
 
