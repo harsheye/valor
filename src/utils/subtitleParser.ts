@@ -34,6 +34,7 @@ function parseTimeToSeconds(timeStr: string): number {
  * Cleans up style tags from subtitles (like HTML tags or ASS curly-brace commands)
  */
 export function cleanSubtitleText(text: string): string {
+  if (!text) return '';
   return text
     // Remove ASS style tags: {\pos(400,900)} or {\i1} or {\fnArial}
     .replace(/\{[^}]+\}/g, '')

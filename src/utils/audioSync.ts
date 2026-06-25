@@ -2,10 +2,16 @@ export class AudioSyncEngine {
   private video: HTMLVideoElement;
   private audio: HTMLAudioElement;
   private intervalId: any = null;
-  private isSeeking = false;
+  private isVideoSeeking = false;
+  private isAudioSeeking = false;
   private isSyncingEnabled = true;
   private isVideoWaiting = false;
   private audioStartOffset = 0;
+  private pendingReadyAction: (() => void) | null = null;
+
+  get isSeeking() {
+    return this.isVideoSeeking || this.isAudioSeeking;
+  }
 
   constructor(video: HTMLVideoElement, audio: HTMLAudioElement, startOffset = 0) {
     this.video = video;
@@ -16,13 +22,13 @@ export class AudioSyncEngine {
 
   public setAudioStartOffset(offset: number) {
     this.audioStartOffset = offset;
-    this.audio.currentTime = Math.max(0, this.video.currentTime - this.audioStartOffset);
+    this.syncAudioTime(Math.max(0, this.video.currentTime - this.audioStartOffset));
   }
 
   private init() {
     // Sync initial state
     this.audio.playbackRate = this.video.playbackRate;
-    this.audio.currentTime = Math.max(0, this.video.currentTime - this.audioStartOffset);
+    this.syncAudioTime(Math.max(0, this.video.currentTime - this.audioStartOffset));
     
     // Mute video native audio to only hear the secondary audio
     this.video.muted = true;
@@ -36,9 +42,13 @@ export class AudioSyncEngine {
     this.video.addEventListener('waiting', this.handleWaiting);
     this.video.addEventListener('playing', this.handlePlaying);
 
+    this.audio.addEventListener('seeking', this.handleAudioSeeking);
+    this.audio.addEventListener('seeked', this.handleAudioSeeked);
+    this.audio.addEventListener('loadedmetadata', this.onAudioReady);
+
     // Initial play state sync
     if (!this.video.paused) {
-      this.audio.play().catch(console.error);
+      this.playAudio();
     } else {
       this.audio.pause();
     }
@@ -56,6 +66,10 @@ export class AudioSyncEngine {
     this.video.removeEventListener('waiting', this.handleWaiting);
     this.video.removeEventListener('playing', this.handlePlaying);
     
+    this.audio.removeEventListener('seeking', this.handleAudioSeeking);
+    this.audio.removeEventListener('seeked', this.handleAudioSeeked);
+    this.audio.removeEventListener('loadedmetadata', this.onAudioReady);
+    
     this.stopSyncLoop();
     this.audio.pause();
     this.video.muted = false; // Restore video volume
@@ -64,7 +78,7 @@ export class AudioSyncEngine {
   // Handle playback changes
   private handlePlay = () => {
     if (this.isSyncingEnabled) {
-      this.audio.play().catch(console.error);
+      this.playAudio();
     }
   };
 
@@ -73,15 +87,23 @@ export class AudioSyncEngine {
   };
 
   private handleSeeking = () => {
-    this.isSeeking = true;
+    this.isVideoSeeking = true;
     this.isVideoWaiting = false;
-    this.audio.currentTime = Math.max(0, this.video.currentTime - this.audioStartOffset);
+    this.syncAudioTime(Math.max(0, this.video.currentTime - this.audioStartOffset));
   };
 
   private handleSeeked = () => {
-    this.audio.currentTime = Math.max(0, this.video.currentTime - this.audioStartOffset);
-    this.isSeeking = false;
+    this.syncAudioTime(Math.max(0, this.video.currentTime - this.audioStartOffset));
+    this.isVideoSeeking = false;
     this.isVideoWaiting = false;
+  };
+
+  private handleAudioSeeking = () => {
+    this.isAudioSeeking = true;
+  };
+
+  private handleAudioSeeked = () => {
+    this.isAudioSeeking = false;
   };
 
   private handleRateChange = () => {
@@ -98,9 +120,40 @@ export class AudioSyncEngine {
     // Video resumed, resume audio if video is playing
     this.isVideoWaiting = false;
     if (!this.video.paused) {
-      this.audio.play().catch(console.error);
+      this.playAudio();
     }
   };
+
+  private onAudioReady = () => {
+    if (this.pendingReadyAction) {
+      this.pendingReadyAction();
+      this.pendingReadyAction = null;
+    }
+  };
+
+  private runWhenAudioReady(action: () => void) {
+    if (this.audio.readyState >= 1) {
+      action();
+    } else {
+      this.pendingReadyAction = action;
+    }
+  }
+
+  private syncAudioTime(targetTime: number) {
+    this.runWhenAudioReady(() => {
+      this.audio.currentTime = targetTime;
+    });
+  }
+
+  private playAudio() {
+    this.runWhenAudioReady(() => {
+      this.audio.play().catch((err) => {
+        if (err && err.name !== 'AbortError') {
+          console.error(err);
+        }
+      });
+    });
+  }
 
   // Background drift sync loop
   private startSyncLoop() {
@@ -112,24 +165,24 @@ export class AudioSyncEngine {
       const aTime = this.audio.currentTime;
       const drift = Math.abs(vTime - (aTime + this.audioStartOffset));
 
-      // If they drift by more than 80ms, seek audio to video time
-      if (drift > 0.08) {
+      // If they drift by more than 120ms, seek audio to video time
+      if (drift > 0.12) {
         console.log(`[AudioSync] Drift detected: ${Math.round(drift * 1000)}ms. Syncing audio.`);
-        this.audio.currentTime = Math.max(0, vTime - this.audioStartOffset);
+        this.syncAudioTime(Math.max(0, vTime - this.audioStartOffset));
       }
 
       // Keep play states synchronized
       if (this.video.paused && !this.audio.paused) {
         this.audio.pause();
-      } else if (!this.video.paused && this.audio.paused && !this.video.seeking && !this.isVideoWaiting) {
-        this.audio.play().catch(console.error);
+      } else if (!this.video.paused && this.audio.paused && !this.video.seeking && !this.isSeeking && !this.isVideoWaiting) {
+        this.playAudio();
       }
 
       // Sync playback rate in case it changed out of events
       if (this.audio.playbackRate !== this.video.playbackRate) {
         this.audio.playbackRate = this.video.playbackRate;
       }
-    }, 250); // check 4 times a second
+    }, 600);
   }
 
   private stopSyncLoop() {
@@ -147,9 +200,9 @@ export class AudioSyncEngine {
     if (!enabled) {
       this.audio.pause();
     } else {
-      this.audio.currentTime = Math.max(0, this.video.currentTime - this.audioStartOffset);
+      this.syncAudioTime(Math.max(0, this.video.currentTime - this.audioStartOffset));
       if (!this.video.paused) {
-        this.audio.play().catch(console.error);
+        this.playAudio();
       }
     }
   }

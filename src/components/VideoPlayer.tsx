@@ -84,8 +84,9 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   // Tracks Selection State
   const [selectedAudioTrack, setSelectedAudioTrack] = useState<CustomAudioTrack | null>(null);
   const [selectedSubTrack, setSelectedSubTrack] = useState<CustomSubtitleTrack | null>(null);
-  const [, setExtractingStreamIndex] = useState<number | null>(null);
+  const [extractingStreamIndex, setExtractingStreamIndex] = useState<number | null>(null);
   const [showAudioSubMenu, setShowAudioSubMenu] = useState(false);
+  const [isKeyInitiated, setIsKeyInitiated] = useState(false);
   const [activeAudioStartOffset, setActiveAudioStartOffset] = useState(0);
   const [activeSubtitleStartOffset, setActiveSubtitleStartOffset] = useState(0);
   const [activeAudioStreamIndex, setActiveAudioStreamIndex] = useState<number | null>(null);
@@ -156,7 +157,8 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   const customSubInputRef = useRef<HTMLInputElement>(null);
 
   const cachedSourceRef = useRef<CachedByteSource | null>(null);
-  const abortControllerRef = useRef<AbortController | null>(null);
+  const audioAbortControllerRef = useRef<AbortController | null>(null);
+  const subAbortControllerRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
     if (video.isRemote) {
@@ -169,8 +171,11 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       cachedSourceRef.current = null;
     }
     return () => {
-      if (abortControllerRef.current) {
-        abortControllerRef.current.abort();
+      if (audioAbortControllerRef.current) {
+        audioAbortControllerRef.current.abort();
+      }
+      if (subAbortControllerRef.current) {
+        subAbortControllerRef.current.abort();
       }
     };
   }, [video.url, video.isRemote, video.file, video.type]);
@@ -515,11 +520,11 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   // Audio/subtitle segment chunk loading on demand
   const loadAudioChunk = async (time: number, streamIndex: number, codec: string) => {
     // Seek optimization: abort any active remote fetches
-    if (abortControllerRef.current) {
-      abortControllerRef.current.abort();
+    if (audioAbortControllerRef.current) {
+      audioAbortControllerRef.current.abort();
     }
-    abortControllerRef.current = new AbortController();
-    const signal = abortControllerRef.current.signal;
+    audioAbortControllerRef.current = new AbortController();
+    const signal = audioAbortControllerRef.current.signal;
 
     setExtractingStreamIndex(streamIndex);
 
@@ -554,7 +559,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
           const result = await ffmpegService.extractHlsAudioSegment(video.id, segment.uri, {
             index: streamIndex,
             codec: codec || 'aac'
-          });
+          }, signal);
           audioUrl = result.url;
         }
       } else if (!video.isRemote && video.file) {
@@ -573,7 +578,8 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
           video.file,
           offsetTime,
           audioDuration,
-          { index: streamIndex, codec }
+          { index: streamIndex, codec },
+          signal
         );
         audioUrl = result.url;
       } else {
@@ -623,16 +629,17 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       logger.error('Failed to extract remote audio segment:', err);
     } finally {
       setExtractingStreamIndex(null);
+      setIsKeyInitiated(false);
     }
   };
 
   const loadSubtitleChunk = async (time: number, streamIndex: number) => {
     // Seek optimization: abort any active remote fetches
-    if (abortControllerRef.current) {
-      abortControllerRef.current.abort();
+    if (subAbortControllerRef.current) {
+      subAbortControllerRef.current.abort();
     }
-    abortControllerRef.current = new AbortController();
-    const signal = abortControllerRef.current.signal;
+    subAbortControllerRef.current = new AbortController();
+    const signal = subAbortControllerRef.current.signal;
 
     setExtractingStreamIndex(streamIndex);
     
@@ -712,6 +719,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
             trackNumber,
             scale,
             sMap,
+            mkvInfo.firstClusterOffset || 0,
             time,
             subDuration,
             onProgress,
@@ -830,6 +838,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       logger.error('Failed to extract remote subtitles:', err);
     } finally {
       setExtractingStreamIndex(null);
+      setIsKeyInitiated(false);
     }
   };
 
@@ -930,13 +939,32 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   };
 
   // On-the-fly selection handlers for embedded streams selected in-player using container-direct chunk reading
-  const handleSelectEmbeddedAudio = async (streamIndex: number, codec: string, _language?: string) => {
+  const handleSelectEmbeddedAudio = async (streamIndex: number, codec: string, language?: string) => {
     setActiveAudioStreamIndex(streamIndex);
+    const label = getLangLabel(language, `Track #${streamIndex}`);
+    setSelectedAudioTrack({
+      id: `remote-aud-${streamIndex}`,
+      name: `Audio (${label})`,
+      url: '',
+      isExtracted: true,
+      streamIndex,
+      codec
+    });
     await loadAudioChunk(currentTime, streamIndex, codec);
   };
 
-  const handleSelectEmbeddedSubtitle = async (streamIndex: number, _codec: string, _language?: string) => {
+  const handleSelectEmbeddedSubtitle = async (streamIndex: number, codec: string, language?: string) => {
     setActiveSubStreamIndex(streamIndex);
+    const label = getLangLabel(language, `Track #${streamIndex}`);
+    setSelectedSubTrack({
+      id: `remote-sub-${streamIndex}`,
+      name: `Subtitles (${label})`,
+      url: '',
+      cues: [],
+      isExtracted: true,
+      streamIndex,
+      format: /ass|ssa/i.test(codec) ? 'ass' : (/webvtt/i.test(codec) ? 'vtt' : 'srt')
+    });
     await loadSubtitleChunk(currentTime, streamIndex);
   };
 
@@ -1090,6 +1118,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     const nextIndex = (currentIndex + 1) % options.length;
     const nextOpt = options[nextIndex];
 
+    setIsKeyInitiated(true);
     if (nextOpt.type === 'off') {
       setSelectedSubTrack(null);
       setActiveSubStreamIndex(null);
@@ -1120,6 +1149,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     const nextIndex = (currentIndex + 1) % options.length;
     const nextOpt = options[nextIndex];
 
+    setIsKeyInitiated(true);
     if (nextOpt.type === 'original') {
       setSelectedAudioTrack(null);
       setActiveAudioStreamIndex(null);
@@ -1858,8 +1888,13 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
           )}
         </div>
       )}
-
-
+      {/* Key-initiated loading overlay (shown over everything, including popovers) */}
+      {isKeyInitiated && extractingStreamIndex !== null && (
+        <div className="non-blocking-toast animate-fade-in" onClick={(e) => e.stopPropagation()}>
+          <Loader className="fly-loader-spin" size={14} />
+          <span>Loading track...</span>
+        </div>
+      )}
 
       {/* Auto-probing Stream indicator */}
       {isAutoProbing && (
@@ -2615,7 +2650,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
           position: absolute;
           top: 2.2rem;
           right: 3.5rem;
-          z-index: 30;
+          z-index: 650;
           background: rgba(15,15,15,0.92);
           border: 1px solid rgba(255,255,255,0.12);
           border-radius: 6px;

@@ -421,7 +421,9 @@ export class FFmpegService {
     signal?: AbortSignal
   ): Promise<ExtractionResult> {
     return this.lock.run(async () => {
+      if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
       const ff = await this.ensureLoaded(videoId);
+      if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
       const tempInFile = "chunk.bin";
       const { ext, mimeType } = getOutputFormat(stream.codec);
       const tempOutFile = `audio_remote_${stream.index}.${ext}`;
@@ -435,6 +437,7 @@ export class FFmpegService {
         concatenated = await source.read(0, endOffset, signal);
       } else {
         const headerBytes = await source.read(0, headerLimit, signal);
+        if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
         const chunkBytes = await source.read(startOffset, endOffset, signal);
 
         concatenated = new Uint8Array(headerBytes.length + chunkBytes.length);
@@ -442,6 +445,7 @@ export class FFmpegService {
         concatenated.set(chunkBytes, headerBytes.length);
       }
 
+      if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
       await ff.writeFile(tempInFile, concatenated);
 
       try {
@@ -470,11 +474,13 @@ export class FFmpegService {
           ];
         }
 
+        if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
         const code = await ff.exec(args);
         if (code !== 0) {
           throw new Error(`Remote audio extraction failed. Exit code ${code}`);
         }
 
+        if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
         const data = await ff.readFile(tempOutFile);
         const blob = new Blob([data as any], { type: mimeType });
         const url = URL.createObjectURL(blob);
@@ -505,8 +511,9 @@ export class FFmpegService {
     signal?: AbortSignal
   ): Promise<string> {
     return this.lock.run(async () => {
-      console.log('[extractRemoteSubtitleSegment] source:', source, 'type:', typeof source, 'methods:', Object.keys(source || {}), 'proto:', Object.getPrototypeOf(source));
+      if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
       const ff = await this.ensureLoaded(videoId);
+      if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
       const tempInFile = "chunk.bin";
       let format = this.detectSubtitleFormat(stream.codec);
       let tempOutFile = `sub_remote_${stream.index}.${format}`;
@@ -519,6 +526,7 @@ export class FFmpegService {
         concatenated = await source.read(0, endOffset, signal);
       } else {
         const headerBytes = await source.read(0, headerLimit, signal);
+        if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
         const chunkBytes = await source.read(startOffset, endOffset, signal);
 
         concatenated = new Uint8Array(headerBytes.length + chunkBytes.length);
@@ -526,9 +534,11 @@ export class FFmpegService {
         concatenated.set(chunkBytes, headerBytes.length);
       }
 
+      if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
       await ff.writeFile(tempInFile, concatenated);
 
       try {
+        if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
         const code = await ff.exec([
           '-fflags', '+ignidx',
           '-i', tempInFile,
@@ -537,6 +547,7 @@ export class FFmpegService {
           tempOutFile
         ]);
         if (code !== 0) {
+          if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
           logger.warn("[ffmpeg] Remote subtitle copy failed, attempting transcode to srt...");
           const fallbackOutFile = `sub_remote_${stream.index}.srt`;
           const fallbackCode = await ff.exec([
@@ -552,6 +563,7 @@ export class FFmpegService {
           tempOutFile = fallbackOutFile;
         }
 
+        if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
         const data = await ff.readFile(tempOutFile);
         return new TextDecoder("utf-8").decode(data as Uint8Array);
       } finally {
@@ -571,12 +583,19 @@ export class FFmpegService {
     file: File,
     startTime: number,
     duration: number,
-    stream: StreamInfo
+    stream: StreamInfo,
+    signal?: AbortSignal
   ): Promise<ExtractionResult> {
     return this.lock.run(async () => {
+      if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
       const ff = await this.ensureLoaded(videoId);
+      if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
       const uniqueId = Math.random().toString(36).substring(2, 9);
       const inputPath = await this.mountFile(ff, file, uniqueId);
+      if (signal?.aborted) {
+        await this.cleanupSession(ff, inputPath, "");
+        throw new DOMException("Aborted", "AbortError");
+      }
       const { ext, mimeType } = getOutputFormat(stream.codec);
       const tempOutFile = `audio_local_${stream.index}.${ext}`;
 
@@ -608,11 +627,13 @@ export class FFmpegService {
           ];
         }
 
+        if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
         const code = await ff.exec(args);
         if (code !== 0) {
           throw new Error(`Local audio chunk extraction failed. Exit code ${code}`);
         }
 
+        if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
         const data = await ff.readFile(tempOutFile);
         const blob = new Blob([data as any], { type: mimeType });
         const url = URL.createObjectURL(blob);
@@ -634,16 +655,24 @@ export class FFmpegService {
   async extractLocalSubtitleTrack(
     videoId: string,
     file: File,
-    stream: StreamInfo
+    stream: StreamInfo,
+    signal?: AbortSignal
   ): Promise<string> {
     return this.lock.run(async () => {
+      if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
       const ff = await this.ensureLoaded(videoId);
+      if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
       const uniqueId = Math.random().toString(36).substring(2, 9);
       const inputPath = await this.mountFile(ff, file, uniqueId);
+      if (signal?.aborted) {
+        await this.cleanupSession(ff, inputPath, "");
+        throw new DOMException("Aborted", "AbortError");
+      }
       let format = this.detectSubtitleFormat(stream.codec);
       let tempOutFile = `sub_local_${stream.index}.${format}`;
 
       try {
+        if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
         const code = await ff.exec([
           '-i', inputPath,
           '-map', `0:${stream.index}`,
@@ -651,6 +680,7 @@ export class FFmpegService {
           tempOutFile
         ]);
         if (code !== 0) {
+          if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
           logger.warn("[ffmpeg] Local subtitle copy failed, attempting transcode to srt...");
           const fallbackOutFile = `sub_local_${stream.index}.srt`;
           const fallbackCode = await ff.exec([
@@ -665,6 +695,7 @@ export class FFmpegService {
           tempOutFile = fallbackOutFile;
         }
 
+        if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
         const data = await ff.readFile(tempOutFile);
         return new TextDecoder("utf-8").decode(data as Uint8Array);
       } finally {
@@ -679,16 +710,20 @@ export class FFmpegService {
   async extractHlsAudioSegment(
     videoId: string,
     segmentUrl: string,
-    stream: StreamInfo
+    stream: StreamInfo,
+    signal?: AbortSignal
   ): Promise<{ url: string; mimeType: string }> {
     return this.lock.run(async () => {
+      if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
       const ff = await this.ensureLoaded(videoId);
+      if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
       const tempInFile = "segment.ts";
       const { ext, mimeType } = getOutputFormat(stream.codec);
       const tempOutFile = `audio_hls_${stream.index}.${ext}`;
 
-      const response = await fetch(segmentUrl);
+      const response = await fetch(segmentUrl, { signal });
       const buffer = await response.arrayBuffer();
+      if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
       await ff.writeFile(tempInFile, new Uint8Array(buffer));
 
       try {
@@ -709,11 +744,13 @@ export class FFmpegService {
           ];
         }
 
+        if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
         const code = await ff.exec(args);
         if (code !== 0) {
           throw new Error(`HLS audio extraction failed. Exit code ${code}`);
         }
 
+        if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
         const data = await ff.readFile(tempOutFile);
         const blob = new Blob([data as any], { type: mimeType });
         const url = URL.createObjectURL(blob);
