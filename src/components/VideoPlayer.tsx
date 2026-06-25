@@ -8,7 +8,7 @@ import type { VideoItem, CustomAudioTrack, CustomSubtitleTrack } from '../types/
 import { SubtitleOverlay } from './SubtitleOverlay';
 import type { SubtitleSettings } from './SubtitleOverlay';
 import { AudioSyncEngine } from '../utils/audioSync';
-import { parseSubtitles } from '../utils/subtitleParser';
+import { parseSubtitles, cleanSubtitleText } from '../utils/subtitleParser';
 import { parseMkv, parseMp4, extractMkvSubtitles } from '../utils/containerParser';
 import { ffmpegService } from '../services/ffmpeg';
 import { HttpByteSource, CachedByteSource, FileByteSource } from '../utils/remoteByteSource';
@@ -65,7 +65,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     }
   });
 
-  const [volumeToast, setVolumeToast] = useState<{ volume: number; visible: boolean; isMuted: boolean }>({ volume: 1, visible: false, isMuted: false });
+  const [, setVolumeToast] = useState<{ volume: number; visible: boolean; isMuted: boolean }>({ volume: 1, visible: false, isMuted: false });
   const volumeToastTimeoutRef = useRef<any>(null);
 
   const triggerVolumeToast = (vol: number, muted: boolean) => {
@@ -84,13 +84,31 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   // Tracks Selection State
   const [selectedAudioTrack, setSelectedAudioTrack] = useState<CustomAudioTrack | null>(null);
   const [selectedSubTrack, setSelectedSubTrack] = useState<CustomSubtitleTrack | null>(null);
-  const [extractingStreamIndex, setExtractingStreamIndex] = useState<number | null>(null);
+  const [, setExtractingStreamIndex] = useState<number | null>(null);
   const [showAudioSubMenu, setShowAudioSubMenu] = useState(false);
   const [activeAudioStartOffset, setActiveAudioStartOffset] = useState(0);
   const [activeSubtitleStartOffset, setActiveSubtitleStartOffset] = useState(0);
   const [activeAudioStreamIndex, setActiveAudioStreamIndex] = useState<number | null>(null);
   const [activeSubStreamIndex, setActiveSubStreamIndex] = useState<number | null>(null);
   const [playbackError, setPlaybackError] = useState<string | null>(null);
+
+  const [subSearchQuery, setSubSearchQuery] = useState('');
+
+  useEffect(() => {
+    setSubSearchQuery('');
+  }, [selectedSubTrack?.id]);
+
+  const subCues = selectedSubTrack?.cues || [];
+  const activeCueIdx = subCues.findIndex(cue => currentTime >= cue.startTime && currentTime <= cue.endTime);
+
+  useEffect(() => {
+    if (activeCueIdx !== -1 && showAudioSubMenu) {
+      const activeEl = document.getElementById(`cue-item-${activeCueIdx}`);
+      if (activeEl) {
+        activeEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      }
+    }
+  }, [activeCueIdx, showAudioSubMenu]);
 
   // Default Subtitle Settings (kept for compatibility with SubtitleOverlay)
   const [subSettings] = useState<SubtitleSettings>({
@@ -504,11 +522,6 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     const signal = abortControllerRef.current.signal;
 
     setExtractingStreamIndex(streamIndex);
-    
-    const wasPlaying = isPlaying;
-    if (videoRef.current && isPlaying) {
-      videoRef.current.pause();
-    }
 
     try {
       if (!ffmpegService.isReady()) {
@@ -610,9 +623,6 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       logger.error('Failed to extract remote audio segment:', err);
     } finally {
       setExtractingStreamIndex(null);
-      if (wasPlaying && videoRef.current) {
-        videoRef.current.play().catch(console.error);
-      }
     }
   };
 
@@ -1669,6 +1679,9 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
                           triggerVolumeToast(nextVol, nextVol === 0);
                         }}
                         className="volume-slider-premium"
+                        style={{
+                          background: `linear-gradient(to right, #e50914 0%, #e50914 ${(isMuted ? 0 : volume) * 100}%, rgba(255, 255, 255, 0.25) ${(isMuted ? 0 : volume) * 100}%, rgba(255, 255, 255, 0.25) 100%)`
+                        }}
                       />
                     </div>
                   </div>
@@ -1695,7 +1708,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
                   
                   {showAudioSubMenu && (
                     <div 
-                      className="audio-sub-popover-center animate-fade-in"
+                      className={`audio-sub-popover-center animate-fade-in ${selectedSubTrack ? 'has-transcript' : ''}`}
                       onMouseEnter={() => {
                         if (audioSubTimeoutRef.current) clearTimeout(audioSubTimeoutRef.current);
                       }}
@@ -1786,6 +1799,48 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
                             </label>
                           </div>
                         </div>
+
+                        {/* Subtitle Cue Transcript Column */}
+                        {selectedSubTrack && (
+                          <div className="popover-col popover-transcript-col">
+                            <h4>Subtitle View</h4>
+                            <div className="transcript-search-box">
+                              <input 
+                                type="text" 
+                                placeholder="Search subtitles..." 
+                                value={subSearchQuery}
+                                onChange={(e) => setSubSearchQuery(e.target.value)}
+                                className="transcript-search-input"
+                                onClick={(e) => e.stopPropagation()}
+                              />
+                            </div>
+                            <div className="transcript-cues-list">
+                              {(selectedSubTrack.cues || []).map((cue, originalIdx) => {
+                                const isMatched = cleanSubtitleText(cue.text).toLowerCase().includes(subSearchQuery.toLowerCase());
+                                if (!isMatched) return null;
+                                
+                                const isActive = currentTime >= cue.startTime && currentTime <= cue.endTime;
+                                return (
+                                  <div 
+                                    key={cue.id || originalIdx} 
+                                    id={`cue-item-${originalIdx}`}
+                                    className={`transcript-cue-item ${isActive ? 'active' : ''}`}
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      if (videoRef.current) {
+                                        videoRef.current.currentTime = cue.startTime;
+                                        setCurrentTime(cue.startTime);
+                                      }
+                                    }}
+                                  >
+                                    <span className="cue-time">{formatTime(cue.startTime)}</span>
+                                    <span className="cue-text">{cleanSubtitleText(cue.text)}</span>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        )}
                       </div>
                     </div>
                   )}
@@ -1804,13 +1859,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
         </div>
       )}
 
-      {/* Non-blocking Stream Load Notification Toast */}
-      {extractingStreamIndex !== null && (
-        <div className="non-blocking-toast animate-fade-in" onClick={(e) => e.stopPropagation()}>
-          <Loader className="fly-loader-spin" size={14} />
-          <span>Loading track...</span>
-        </div>
-      )}
+
 
       {/* Auto-probing Stream indicator */}
       {isAutoProbing && (
@@ -1868,26 +1917,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
         </div>
       )}
 
-      {/* Volume Toast Overlay */}
-      <div className={`volume-toast-overlay ${volumeToast.visible ? 'visible' : ''}`}>
-        <div className="volume-toast-content">
-          <span className="volume-toast-icon">
-            {volumeToast.isMuted || volumeToast.volume === 0 ? (
-              <VolumeX size={18} style={{ color: '#e50914' }} />
-            ) : volumeToast.volume < 0.4 ? (
-              <Volume1 size={18} />
-            ) : (
-              <Volume2 size={18} />
-            )}
-          </span>
-          <div className="volume-toast-bar-container">
-            <div className="volume-toast-bar-fill" style={{ width: `${volumeToast.isMuted ? 0 : volumeToast.volume * 100}%` }}></div>
-          </div>
-          <span className="volume-toast-text">
-            {volumeToast.isMuted ? 'Muted' : `${Math.round(volumeToast.volume * 100)}%`}
-          </span>
-        </div>
-      </div>
+
 
       {playbackError && (
         <div className="playback-error-overlay" onClick={(e) => e.stopPropagation()}>
@@ -2374,6 +2404,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
           left: 50%;
           transform: translateX(-50%);
           width: 460px;
+          max-width: 95vw;
           background: rgba(18, 18, 18, 0.88);
           backdrop-filter: blur(25px);
           -webkit-backdrop-filter: blur(25px);
@@ -2382,6 +2413,10 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
           padding: 1.1rem;
           box-shadow: 0 15px 40px rgba(0,0,0,0.7);
           z-index: 100;
+          transition: width 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+        }
+        .audio-sub-popover-center.has-transcript {
+          width: 780px;
         }
         .audio-sub-popover-center::before {
           content: '';
@@ -2397,6 +2432,86 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
           display: grid;
           grid-template-columns: 1fr 1fr;
           gap: 1.25rem;
+        }
+        .audio-sub-popover-center.has-transcript .popover-cols {
+          grid-template-columns: 1fr 1fr 1.3fr;
+        }
+        .popover-transcript-col {
+          border-left: 1px solid rgba(255, 255, 255, 0.08);
+          padding-left: 1.25rem;
+          display: flex;
+          flex-direction: column;
+          max-height: 200px;
+        }
+        .transcript-search-box {
+          margin-bottom: 0.5rem;
+        }
+        .transcript-search-input {
+          width: 100%;
+          background: rgba(255, 255, 255, 0.06);
+          border: 1px solid rgba(255, 255, 255, 0.12);
+          border-radius: 6px;
+          padding: 0.35rem 0.6rem;
+          color: white;
+          font-size: 0.8rem;
+          outline: none;
+          transition: border-color 0.2s;
+          box-sizing: border-box;
+        }
+        .transcript-search-input:focus {
+          border-color: #e50914;
+        }
+        .transcript-cues-list {
+          flex: 1;
+          overflow-y: auto;
+          display: flex;
+          flex-direction: column;
+          gap: 0.35rem;
+          padding-right: 4px;
+          scrollbar-width: thin;
+          scrollbar-color: rgba(255, 255, 255, 0.2) transparent;
+        }
+        .transcript-cues-list::-webkit-scrollbar {
+          width: 4px;
+        }
+        .transcript-cues-list::-webkit-scrollbar-thumb {
+          background: rgba(255, 255, 255, 0.2);
+          border-radius: 2px;
+        }
+        .transcript-cue-item {
+          display: flex;
+          gap: 0.5rem;
+          padding: 0.4rem 0.5rem;
+          border-radius: 4px;
+          cursor: pointer;
+          transition: background 0.15s, color 0.15s;
+          font-size: 0.85rem;
+          color: #aaaaaa;
+          align-items: flex-start;
+          text-align: left;
+        }
+        .transcript-cue-item:hover {
+          background: rgba(255, 255, 255, 0.06);
+          color: white;
+        }
+        .transcript-cue-item.active {
+          background: rgba(229, 9, 20, 0.12);
+          border-left: 2px solid #e50914;
+          color: white;
+          font-weight: 500;
+        }
+        .cue-time {
+          color: #e50914;
+          font-size: 0.75rem;
+          font-family: monospace;
+          font-weight: 600;
+          white-space: nowrap;
+          margin-top: 1px;
+        }
+        .cue-text {
+          flex: 1;
+          line-height: 1.3;
+          word-break: break-word;
         }
         .popover-col {
           display: flex;
@@ -2633,8 +2748,24 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
           .audio-sub-popover-center {
             width: 280px;
           }
+          .audio-sub-popover-center.has-transcript {
+            width: 90vw;
+          }
+          .audio-sub-popover-center.has-transcript .popover-cols {
+            grid-template-columns: 1fr;
+            max-height: 350px;
+            overflow-y: auto;
+          }
           .popover-cols {
             grid-template-columns: 1fr;
+          }
+          .popover-transcript-col {
+            border-left: none;
+            border-top: 1px solid rgba(255, 255, 255, 0.08);
+            padding-left: 0;
+            padding-top: 1rem;
+            margin-top: 0.5rem;
+            max-height: 200px;
           }
           /* Touch-safety thumb size scaling */
           .scrub-bar-premium::-webkit-slider-thumb {
@@ -2748,11 +2879,11 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
           align-items: center;
         }
         .volume-control-group-premium:hover .volume-slider-container-premium {
-          width: 75px;
-          margin-left: 8px;
+          width: 90px;
+          margin-left: 10px;
         }
         .volume-slider-premium {
-          width: 75px;
+          width: 90px;
           height: 4px;
           -webkit-appearance: none;
           background: rgba(255, 255, 255, 0.25);
@@ -2761,36 +2892,36 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
           cursor: pointer;
           transition: background 0.15s;
         }
-        .volume-slider-premium:hover {
-          background: rgba(255, 255, 255, 0.45);
-        }
         .volume-slider-premium::-webkit-slider-runnable-track {
           height: 4px;
         }
         .volume-slider-premium::-webkit-slider-thumb {
           -webkit-appearance: none;
-          width: 10px;
-          height: 10px;
+          width: 12px;
+          height: 12px;
           border-radius: 50%;
-          background: #e50914; /* Netflix Red */
-          margin-top: -3px; /* centers thumb */
-          box-shadow: 0 0 4px rgba(0, 0, 0, 0.5);
-          transition: transform 0.1s ease;
+          background: #ffffff;
+          margin-top: -4px; /* centers thumb */
+          box-shadow: 0 1px 4px rgba(0, 0, 0, 0.4);
+          transition: transform 0.15s cubic-bezier(0.16, 1, 0.3, 1), background-color 0.15s;
+          border: none;
         }
         .volume-slider-premium:hover::-webkit-slider-thumb {
-          transform: scale(1.25);
+          transform: scale(1.2);
+          background-color: #ffffff;
         }
         .volume-slider-premium::-moz-range-thumb {
-          width: 10px;
-          height: 10px;
+          width: 12px;
+          height: 12px;
           border: none;
           border-radius: 50%;
-          background: #e50914;
-          box-shadow: 0 0 4px rgba(0, 0, 0, 0.5);
-          transition: transform 0.1s ease;
+          background: #ffffff;
+          box-shadow: 0 1px 4px rgba(0, 0, 0, 0.4);
+          transition: transform 0.15s cubic-bezier(0.16, 1, 0.3, 1), background-color 0.15s;
         }
         .volume-slider-premium:hover::-moz-range-thumb {
-          transform: scale(1.25);
+          transform: scale(1.2);
+          background-color: #ffffff;
         }
 
         /* Disable animations overrides */
