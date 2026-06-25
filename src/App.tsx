@@ -13,8 +13,6 @@ import { probeContainer, parseMp4, parseMkv } from './utils/containerParser';
 import { parseHlsManifest } from './utils/hlsParser';
 
 function App() {
-  const [ffmpegStatus, setFfmpegStatus] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle');
-  const [ffmpegProgress, setFfmpegProgress] = useState(0);
   const [videos, setVideos] = useState<VideoItem[]>(() => {
     try {
       const saved = localStorage.getItem('valor_videos');
@@ -39,18 +37,6 @@ function App() {
   const [activeTab, setActiveTab] = useState<'home' | 'history'>('home');
   const [isProcessing, setIsProcessing] = useState(false);
   const [processingStep, setProcessingStep] = useState('');
-
-  useEffect(() => {
-    const handleStatusChange = (e: Event) => {
-      const detail = (e as CustomEvent).detail;
-      if (detail) {
-        if (detail.status) setFfmpegStatus(detail.status);
-        if (detail.progress !== undefined) setFfmpegProgress(detail.progress);
-      }
-    };
-    window.addEventListener('ffmpeg-status-change', handleStatusChange);
-    return () => window.removeEventListener('ffmpeg-status-change', handleStatusChange);
-  }, []);
 
   // Heartbeat to keep the server alive while the app is active
   useEffect(() => {
@@ -270,21 +256,6 @@ function App() {
 
 
 
-  // FFmpeg Engine Initializer
-  const handleInitFFmpeg = async () => {
-    if (ffmpegStatus === 'ready' || ffmpegStatus === 'loading') return;
-    setFfmpegStatus('loading');
-    setFfmpegProgress(0);
-    try {
-      await ffmpegService.load((progress) => {
-        setFfmpegProgress(progress);
-      });
-      setFfmpegStatus('ready');
-    } catch (error) {
-      console.error(error);
-      setFfmpegStatus('error');
-    }
-  };
 
   const handleUpdateVideo = (updatedVideoOrUpdater: VideoItem | ((prev: VideoItem) => VideoItem), isExiting = false) => {
     setVideos((prev) =>
