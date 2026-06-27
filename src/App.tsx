@@ -4,6 +4,7 @@ import { ffmpegService } from './services/ffmpeg';
 import { VideoPlayer } from './components/VideoPlayer';
 import { CustomSelect } from './components/CustomSelect';
 import { Onboarding01 } from './components/Onboarding01';
+import { CalendarView } from './components/CalendarView';
 import { 
   Film, UploadCloud, Play, Settings, X,
   RefreshCw, History, Home
@@ -95,7 +96,7 @@ function App() {
   });
   const [playingVideo, setPlayingVideo] = useState<VideoItem | null>(null);
   const [lastPlayingVideo, setLastPlayingVideo] = useState<VideoItem | null>(null);
-  const [activeTab, setActiveTab] = useState<'home' | 'history' | 'settings'>('home');
+  const [activeTab, setActiveTab] = useState<'home' | 'history' | 'calendar' | 'settings'>('home');
   const [settingsTab, setSettingsTab] = useState<'general' | 'hotkeys' | 'subtitle' | 'storage'>('general');
   const [isProcessing, setIsProcessing] = useState(false);
   const [processingStep, setProcessingStep] = useState('');
@@ -468,7 +469,11 @@ function App() {
           ? (playingVideo && v.id === playingVideo.id)
           : v.id === updatedVideoOrUpdater.id;
         if (isTarget) {
-          return typeof updatedVideoOrUpdater === 'function' ? (updatedVideoOrUpdater as Function)(v) : updatedVideoOrUpdater;
+          const updatedItem = typeof updatedVideoOrUpdater === 'function' ? (updatedVideoOrUpdater as Function)(v) : updatedVideoOrUpdater;
+          return {
+            ...updatedItem,
+            lastPlayedDate: new Date().toISOString()
+          };
         }
         return v;
       })
@@ -673,7 +678,8 @@ function App() {
       format: mergedFormat,
       streams: mergedStreams,
       audioTracks: mergedAudioTracks,
-      subtitleTracks: mergedSubtitleTracks
+      subtitleTracks: mergedSubtitleTracks,
+      lastPlayedDate: new Date().toISOString()
     };
 
     setVideos(prev => {
@@ -981,7 +987,8 @@ function App() {
         subtitleTracks,
         currentTime: 0,
         timecodeScale,
-        playbackMode: 'advanced'
+        playbackMode: 'advanced',
+        lastPlayedDate: new Date().toISOString()
       };
 
       setVideos(prev => {
@@ -1018,7 +1025,8 @@ function App() {
         audioTracks: [],
         subtitleTracks: [],
         playbackMode: 'native',
-        probingError: probingError || undefined
+        probingError: probingError || undefined,
+        lastPlayedDate: new Date().toISOString()
       };
       setVideos(prev => {
         const filtered = prev.filter(v => v.url !== url);
@@ -1121,6 +1129,14 @@ function App() {
           >
             <History size={20} />
             <span className="sidebar-menu-text">History ({videos.length})</span>
+          </button>
+          <button 
+            className={`sidebar-menu-item ${activeTab === 'calendar' ? 'active' : ''}`}
+            onClick={() => setActiveTab('calendar')}
+            title="Calendar"
+          >
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+            <span className="sidebar-menu-text">Calendar</span>
           </button>
         </nav>
 
@@ -1309,9 +1325,16 @@ function App() {
               </div>
             )}
 
+            {activeTab === 'calendar' && (
+              <CalendarView 
+                videos={videos} 
+                onPlayVideo={handlePlayVideo} 
+              />
+            )}
+
             {activeTab === 'settings' && (
               <div className="workspace-panel-wrapper">
-                <div className="glass-panel workspace-panel scrollable-panel">
+                <div className="glass-panel workspace-panel settings-panel">
                   
                   {/* Sexy Inner Tab Navigation */}
                   <div className="settings-tab-nav">
@@ -1532,89 +1555,140 @@ function App() {
                           <h3>Default Subtitle Style</h3>
                           <p className="settings-section-desc">Appearance defaults applied to all media tracks.</p>
                           
-                           <div className="pref-row-vertical">
-                            <span className="pref-label">Font Family</span>
-                            <CustomSelect 
-                              value={settings.subSettings.fontFamily}
-                              onChange={(val) => {
-                                const updatedSub = { ...settings.subSettings, fontFamily: val };
-                                handleDefaultLangChange('subSettings', updatedSub);
-                              }}
-                              options={fontOptions}
-                            />
-                          </div>
+                           {/* Side-by-side Font Family and Font Size */}
+                           <div style={{ display: 'flex', gap: '1.5rem', marginBottom: '1.25rem', width: '100%', flexWrap: 'wrap' }}>
+                             <div style={{ flex: 1, minWidth: '180px', display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
+                               <span className="pref-label">Font Family</span>
+                               <CustomSelect 
+                                 value={settings.subSettings.fontFamily}
+                                 onChange={(val) => {
+                                   const updatedSub = { ...settings.subSettings, fontFamily: val };
+                                   handleDefaultLangChange('subSettings', updatedSub);
+                                 }}
+                                 options={fontOptions}
+                               />
+                             </div>
 
-                          <div className="pref-row">
-                            <span className="pref-label">Size</span>
-                            <div className="size-btn-group size-btn-group-page">
-                              <button 
-                                className="size-action-btn size-action-btn-page"
-                                onClick={() => {
-                                  const currentSize = settings.subSettings.customSize || 100;
-                                  const updatedSub = { ...settings.subSettings, customSize: Math.max(50, currentSize - 10) };
-                                  handleDefaultLangChange('subSettings', updatedSub);
-                                }}
-                              >
-                                -
-                              </button>
-                              <span className="size-value-display size-value-display-page">{settings.subSettings.customSize || 100}%</span>
-                              <button 
-                                className="size-action-btn size-action-btn-page"
-                                onClick={() => {
-                                  const currentSize = settings.subSettings.customSize || 100;
-                                  const updatedSub = { ...settings.subSettings, customSize: Math.min(300, currentSize + 10) };
-                                  handleDefaultLangChange('subSettings', updatedSub);
-                                }}
-                              >
-                                +
-                              </button>
-                            </div>
-                          </div>
+                             <div style={{ flex: 1, minWidth: '180px', display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
+                               <span className="pref-label">Font Size</span>
+                               <div className="sexy-size-control-group" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', background: 'rgba(0,0,0,0.5)', border: '1px solid rgba(255,255,255,0.12)', borderRadius: '8px', padding: '4px', height: '36px', width: '220px', boxSizing: 'border-box' }}>
+                                 <button 
+                                   type="button"
+                                   onClick={() => {
+                                     const currentSize = settings.subSettings.customSize || 100;
+                                     const updatedSub = { ...settings.subSettings, customSize: Math.max(50, currentSize - 10) };
+                                     handleDefaultLangChange('subSettings', updatedSub);
+                                   }}
+                                   style={{
+                                     width: '28px',
+                                     height: '28px',
+                                     borderRadius: '6px',
+                                     border: 'none',
+                                     background: 'rgba(255,255,255,0.06)',
+                                     color: '#fff',
+                                     cursor: 'pointer',
+                                     display: 'flex',
+                                     alignItems: 'center',
+                                     justifyContent: 'center',
+                                     transition: 'all 0.2s',
+                                   }}
+                                   onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(255,255,255,0.12)'}
+                                   onMouseLeave={(e) => e.currentTarget.style.background = 'rgba(255,255,255,0.06)'}
+                                 >
+                                   <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" strokeWidth="2.5" fill="none"><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                                 </button>
+                                 
+                                 <span style={{ fontSize: '0.85rem', fontWeight: 600, minWidth: '45px', textAlign: 'center', color: '#fff', flex: 1 }}>
+                                   {settings.subSettings.customSize || 100}%
+                                 </span>
+                                 
+                                 <button 
+                                   type="button"
+                                   onClick={() => {
+                                     const currentSize = settings.subSettings.customSize || 100;
+                                     const updatedSub = { ...settings.subSettings, customSize: Math.min(300, currentSize + 10) };
+                                     handleDefaultLangChange('subSettings', updatedSub);
+                                   }}
+                                   style={{
+                                     width: '28px',
+                                     height: '28px',
+                                     borderRadius: '6px',
+                                     border: 'none',
+                                     background: 'rgba(255,255,255,0.06)',
+                                     color: '#fff',
+                                     cursor: 'pointer',
+                                     display: 'flex',
+                                     alignItems: 'center',
+                                     justifyContent: 'center',
+                                     transition: 'all 0.2s',
+                                   }}
+                                   onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(255,255,255,0.12)'}
+                                   onMouseLeave={(e) => e.currentTarget.style.background = 'rgba(255,255,255,0.06)'}
+                                 >
+                                   <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" strokeWidth="2.5" fill="none"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                                 </button>
+                               </div>
+                             </div>
+                           </div>
 
-                          <div className="style-colors-row style-colors-row-page">
-                            <div className="color-picker-item">
-                              <span className="pref-label">Text Color</span>
-                              <div className="picker-wrapper">
-                                <input 
-                                  type="color" 
-                                  value={settings.subSettings.customTextColor || '#ffffff'}
-                                  onChange={(e) => {
-                                    const updatedSub = { ...settings.subSettings, customTextColor: e.target.value };
-                                    handleDefaultLangChange('subSettings', updatedSub);
-                                  }}
-                                  className="color-picker-input-premium"
-                                />
-                              </div>
-                            </div>
-                            
-                            <div className="color-picker-item bg-picker-item">
-                              <span className="pref-label">Background</span>
-                              <div className="picker-wrapper">
-                                <input 
-                                  type="color" 
-                                  value={settings.subSettings.customBgColor && !settings.subSettings.customBgColor.startsWith('rgba') && settings.subSettings.customBgColor !== 'transparent' ? settings.subSettings.customBgColor : '#000000'}
-                                  onChange={(e) => {
-                                    const updatedSub = { ...settings.subSettings, customBgColor: e.target.value };
-                                    handleDefaultLangChange('subSettings', updatedSub);
-                                  }}
-                                  className="color-picker-input-premium"
-                                  disabled={settings.subSettings.customBgColor === 'transparent'}
-                                />
-                                <button 
-                                  className={`bg-clear-btn ${settings.subSettings.customBgColor === 'transparent' ? 'active' : ''}`}
-                                  onClick={() => {
-                                    const updatedSub = { 
-                                      ...settings.subSettings, 
-                                      customBgColor: settings.subSettings.customBgColor === 'transparent' ? '#000000' : 'transparent' 
-                                    };
-                                    handleDefaultLangChange('subSettings', updatedSub);
-                                  }}
-                                >
-                                  None
-                                </button>
-                              </div>
-                            </div>
-                          </div>
+                           {/* Premium Swatch Color Pickers */}
+                           <div className="style-colors-row style-colors-row-page" style={{ display: 'flex', gap: '1.5rem', marginBottom: '1.25rem', width: '100%', flexWrap: 'wrap' }}>
+                             <div className="color-picker-item" style={{ flex: 1, minWidth: '180px', display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
+                               <span className="pref-label">Text Color</span>
+                               <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', background: 'rgba(0,0,0,0.5)', border: '1px solid rgba(255,255,255,0.12)', borderRadius: '8px', padding: '0.4rem 0.6rem', height: '36px', width: '220px', boxSizing: 'border-box', position: 'relative', cursor: 'pointer' }} onClick={() => document.getElementById('textColorInput')?.click()}>
+                                 <div style={{ width: '20px', height: '20px', borderRadius: '50%', background: settings.subSettings.customTextColor || '#ffffff', border: '2px solid rgba(255,255,255,0.2)', boxShadow: '0 0 8px rgba(255,255,255,0.1)', flexShrink: 0 }} />
+                                 <span style={{ fontSize: '0.85rem', fontWeight: 600, color: 'rgba(255,255,255,0.85)', textTransform: 'uppercase', fontFamily: 'monospace', flex: 1 }}>
+                                   {settings.subSettings.customTextColor || '#ffffff'}
+                                 </span>
+                                 <input 
+                                   id="textColorInput"
+                                   type="color" 
+                                   value={settings.subSettings.customTextColor || '#ffffff'}
+                                   onChange={(e) => {
+                                     const updatedSub = { ...settings.subSettings, customTextColor: e.target.value };
+                                     handleDefaultLangChange('subSettings', updatedSub);
+                                   }}
+                                   style={{ position: 'absolute', opacity: 0, width: 0, height: 0, border: 'none', padding: 0 }}
+                                 />
+                               </div>
+                             </div>
+                             
+                             <div className="color-picker-item bg-picker-item" style={{ flex: 1, minWidth: '180px', display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
+                               <span className="pref-label">Background Color</span>
+                               <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', width: '220px' }}>
+                                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', background: 'rgba(0,0,0,0.5)', border: '1px solid rgba(255,255,255,0.12)', borderRadius: '8px', padding: '0.4rem 0.6rem', height: '36px', flex: 1, boxSizing: 'border-box', position: 'relative', cursor: settings.subSettings.customBgColor === 'transparent' ? 'not-allowed' : 'pointer' }} onClick={() => { if (settings.subSettings.customBgColor !== 'transparent') document.getElementById('bgColorInput')?.click(); }}>
+                                   <div style={{ width: '20px', height: '20px', borderRadius: '50%', background: settings.subSettings.customBgColor === 'transparent' ? 'transparent' : settings.subSettings.customBgColor || '#000000', border: '2px solid rgba(255,255,255,0.2)', backgroundImage: settings.subSettings.customBgColor === 'transparent' ? 'linear-gradient(45deg, #ccc 25%, transparent 25%), linear-gradient(-45deg, #ccc 25%, transparent 25%), linear-gradient(45deg, transparent 75%, #ccc 75%), linear-gradient(-45deg, transparent 75%, #ccc 75%)' : 'none', backgroundSize: '8px 8px', backgroundPosition: '0 0, 0 4px, 4px -4px, -4px 0px', flexShrink: 0 }} />
+                                   <span style={{ fontSize: '0.85rem', fontWeight: 600, color: settings.subSettings.customBgColor === 'transparent' ? 'rgba(255,255,255,0.4)' : 'rgba(255,255,255,0.85)', textTransform: 'uppercase', fontFamily: 'monospace', flex: 1 }}>
+                                     {settings.subSettings.customBgColor === 'transparent' ? 'NONE' : settings.subSettings.customBgColor || '#000000'}
+                                   </span>
+                                   <input 
+                                     id="bgColorInput"
+                                     type="color" 
+                                     value={settings.subSettings.customBgColor && !settings.subSettings.customBgColor.startsWith('rgba') && settings.subSettings.customBgColor !== 'transparent' ? settings.subSettings.customBgColor : '#000000'}
+                                     onChange={(e) => {
+                                       const updatedSub = { ...settings.subSettings, customBgColor: e.target.value };
+                                       handleDefaultLangChange('subSettings', updatedSub);
+                                     }}
+                                     style={{ position: 'absolute', opacity: 0, width: 0, height: 0, border: 'none', padding: 0 }}
+                                     disabled={settings.subSettings.customBgColor === 'transparent'}
+                                   />
+                                 </div>
+                                 <button 
+                                   className={`bg-clear-btn ${settings.subSettings.customBgColor === 'transparent' ? 'active' : ''}`}
+                                   onClick={() => {
+                                     const updatedSub = { 
+                                       ...settings.subSettings, 
+                                       customBgColor: settings.subSettings.customBgColor === 'transparent' ? '#000000' : 'transparent' 
+                                     };
+                                     handleDefaultLangChange('subSettings', updatedSub);
+                                   }}
+                                   style={{ height: '36px', padding: '0 0.75rem', borderRadius: '8px', cursor: 'pointer', background: settings.subSettings.customBgColor === 'transparent' ? '#3b82f6' : 'rgba(255,255,255,0.06)', border: 'none', color: '#fff', fontSize: '0.8rem', fontWeight: 600 }}
+                                 >
+                                   None
+                                 </button>
+                               </div>
+                             </div>
+                           </div>
 
                           {/* Live Subtitle Style Preview */}
                           <div className="preview-video-frame">
@@ -1745,6 +1819,13 @@ function App() {
         >
           <History size={20} />
           <span>History</span>
+        </button>
+        <button 
+          className={`mobile-bottom-nav-item ${activeTab === 'calendar' ? 'active' : ''}`}
+          onClick={() => setActiveTab('calendar')}
+        >
+          <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ display: 'block', margin: '0 auto 2px auto' }}><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+          <span>Calendar</span>
         </button>
         <button 
           className={`mobile-bottom-nav-item ${activeTab === 'settings' ? 'active' : ''}`}
@@ -2085,10 +2166,26 @@ function App() {
           box-sizing: border-box;
           width: 100%;
         }
+        .workspace-panel.settings-panel {
+          max-height: 82vh;
+          display: flex;
+          flex-direction: column;
+          overflow: hidden;
+        }
         .scrollable-panel {
           max-height: 82vh;
           overflow-y: auto;
           scrollbar-width: thin;
+        }
+        .settings-page-content-wrapper {
+          flex: 1;
+          overflow-y: auto;
+          scrollbar-width: thin;
+          padding-right: 0.5rem;
+          box-sizing: border-box;
+        }
+        .settings-panel .custom-select-container {
+          width: 220px !important;
         }
         .settings-tab-nav {
           display: flex;

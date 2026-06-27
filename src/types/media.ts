@@ -43,4 +43,5 @@ export interface VideoItem {
   currentTime?: number;
   probingError?: string;
   playbackMode?: 'advanced' | 'native';
+  lastPlayedDate?: string;
 }
