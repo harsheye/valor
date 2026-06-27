@@ -165,8 +165,10 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     if (video.isRemote) {
       const byteSource = new HttpByteSource(video.url);
       cachedSourceRef.current = new CachedByteSource(byteSource, 4 * 1024 * 1024, 16); // 4MB chunks, cache size 16 (64MB)
-    } else if (video.type === 'local' && video.file) {
-      const byteSource = new FileByteSource(video.file);
+    } else if (video.type === 'local') {
+      const byteSource = video.file
+        ? new FileByteSource(video.file)
+        : new HttpByteSource(video.url);
       cachedSourceRef.current = new CachedByteSource(byteSource, 4 * 1024 * 1024, 16); // 4MB chunks, cache size 16 (64MB)
     } else {
       cachedSourceRef.current = null;

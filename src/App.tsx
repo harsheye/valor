@@ -53,7 +53,7 @@ function App() {
     const fileParam = params.get('file');
     if (fileParam) {
       const localStreamUrl = `${window.location.origin}/local-video-stream?path=${encodeURIComponent(fileParam)}`;
-      processRemoteUrl(localStreamUrl);
+      processRemoteUrl(localStreamUrl, true);
     }
   }, []);
 
@@ -493,7 +493,7 @@ function App() {
     if (isPickerOpenRef.current) return;
     
     // Set picker open lock if we might open a file picker
-    if (video.type === 'local' && !video.file) {
+    if (video.type === 'local' && !video.file && !video.url) {
       isPickerOpenRef.current = true;
     }
 
@@ -505,6 +505,15 @@ function App() {
         });
         setPlayingVideo(video);
       } else if (video.type === 'local') {
+        if (!video.file && video.url) {
+          // Play directly from the local stream URL (open-with) without picker
+          setVideos(prev => {
+            const filtered = prev.filter(v => v.id !== video.id);
+            return [video, ...filtered];
+          });
+          setPlayingVideo(video);
+          return;
+        }
         if (video.file) {
           let readable = false;
           try {
@@ -620,7 +629,7 @@ function App() {
     }
   };
 
-  const processRemoteUrl = async (url: string) => {
+  const processRemoteUrl = async (url: string, isLocalFile = false) => {
     setIsProcessing(true);
     setProcessingStep('Validating security protocols...');
     
@@ -650,8 +659,9 @@ function App() {
           id: urlId,
           title,
           url,
-          type: 'url',
-          isRemote: true,
+          type: isLocalFile ? 'local' : 'url',
+          isRemote: !isLocalFile,
+          fileName: isLocalFile ? title : undefined,
           containerType: 'unknown',
           audioTracks: [],
           subtitleTracks: [],
@@ -754,8 +764,9 @@ function App() {
         id: urlId,
         title,
         url,
-        type: 'url',
-        isRemote: true,
+        type: isLocalFile ? 'local' : 'url',
+        isRemote: !isLocalFile,
+        fileName: isLocalFile ? title : undefined,
         containerType: container,
         seekMap,
         hlsPlaylist,
@@ -796,8 +807,9 @@ function App() {
         id: `url-${Date.now()}`,
         title,
         url,
-        type: 'url',
-        isRemote: true,
+        type: isLocalFile ? 'local' : 'url',
+        isRemote: !isLocalFile,
+        fileName: isLocalFile ? title : undefined,
         containerType: 'unknown',
         audioTracks: [],
         subtitleTracks: [],
@@ -855,7 +867,7 @@ function App() {
       {/* Sidebar - Desktop and Tablet */}
       <aside className="app-sidebar">
         <div className="sidebar-header">
-          <div className="sidebar-logo">Dracarys</div>
+          <div className="sidebar-logo">Valor</div>
         </div>
         
         <nav className="sidebar-menu">
@@ -919,7 +931,7 @@ function App() {
         <header className="glass-navbar">
           <div className="navbar-container">
             <div className="navbar-logo-mobile">
-              Dracarys
+              Valor
             </div>
 
             <div className="navbar-right">
@@ -1060,7 +1072,7 @@ function App() {
 
         <footer className="app-footer">
           <div className="container footer-content">
-            <span>&copy; 2026 Dracarys. Direct local WebAssembly media processing.</span>
+            <span>&copy; 2026 Valor. Direct local WebAssembly media processing.</span>
           </div>
         </footer>
       </div>
