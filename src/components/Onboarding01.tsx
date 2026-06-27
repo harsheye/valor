@@ -411,12 +411,12 @@ export function Onboarding01({
                   >
                     <div
                       className={cn(
-                        'relative overflow-hidden rounded-lg transition-colors',
+                        'relative rounded-lg transition-colors',
                         isOpen && 'border border-border bg-muted'
                       )}
                       style={{
                         position: 'relative',
-                        overflow: 'hidden',
+                        overflow: 'visible',
                         borderRadius: '8px',
                         border: isOpen ? '1px solid rgba(255,255,255,0.08)' : '1px solid transparent',
                         background: isOpen ? 'rgba(255,255,255,0.02)' : 'transparent',
