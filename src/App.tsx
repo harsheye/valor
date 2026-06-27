@@ -7,6 +7,7 @@ import { Onboarding01 } from './components/Onboarding01';
 import { CalendarView } from './components/CalendarView';
 import { LibraryView } from './components/LibraryView';
 import Calendar02 from './components/creative-tim/blocks/calendar-02';
+import { classifyVideoTitle } from './utils/libraryClassifier';
 import { 
   Film, UploadCloud, Play, Settings, X,
   RefreshCw, History, Home
@@ -102,7 +103,6 @@ function App() {
     }
   });
   const [playingVideo, setPlayingVideo] = useState<VideoItem | null>(null);
-  const [lastPlayingVideo, setLastPlayingVideo] = useState<VideoItem | null>(null);
   const [activeTab, setActiveTab] = useState<'home' | 'history' | 'calendar' | 'library' | 'settings'>('home');
   const [settingsTab, setSettingsTab] = useState<'general' | 'hotkeys' | 'subtitle' | 'storage'>('general');
   const [isProcessing, setIsProcessing] = useState(false);
@@ -205,16 +205,6 @@ function App() {
         }
       }
 
-      // Resume setup
-      const lastId = localStorage.getItem('valor_last_playing_id');
-      if (lastId && loadedVideos.length > 0) {
-        const match = loadedVideos.find(v => v.id === lastId);
-        if (match) {
-          setLastPlayingVideo(match);
-        }
-      } else if (loadedVideos.length > 0) {
-        setLastPlayingVideo(loadedVideos[0]);
-      }
     };
 
     initData();
@@ -1203,19 +1193,62 @@ function App() {
           <div className="workspace-container">
             {activeTab === 'home' && (
               <div className="workspace-panel-wrapper">
-                {lastPlayingVideo && (
-                  <div className="resume-banner glass-panel animate-fade-in">
-                    <div className="resume-banner-left">
-                      <span className="resume-badge">CONTINUE WATCHING</span>
-                      <h3 className="resume-title">{lastPlayingVideo.title}</h3>
-                      <p className="resume-desc text-muted">Resume at {formatTime(lastPlayingVideo.currentTime || 0)}</p>
+                {(() => {
+                  const continueWatchingList = videos.filter(v => v.currentTime && v.currentTime > 5 && (typeof v.duration !== 'number' || v.currentTime < v.duration - 5));
+                  if (continueWatchingList.length === 0) return null;
+                  return (
+                    <div className="continue-watching-section animate-fade-in" style={{ marginBottom: '1.5rem' }}>
+                      <h3 style={{ fontSize: '1rem', fontWeight: 600, color: '#fff', marginBottom: '0.75rem', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" className="text-primary"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                        <span>Continue Watching</span>
+                      </h3>
+                      <div className="continue-watching-list" style={{ display: 'flex', gap: '1rem', overflowX: 'auto', paddingBottom: '0.5rem', scrollbarWidth: 'thin' }}>
+                        {continueWatchingList.map((video) => {
+                          const durationSeconds = typeof video.duration === 'number' ? video.duration : parseFloat(video.duration || '0');
+                          const progress = durationSeconds > 0 && video.currentTime
+                            ? Math.round((video.currentTime / durationSeconds) * 100)
+                            : 0;
+                          const classification = classifyVideoTitle(video.title);
+
+                          return (
+                            <div 
+                              key={video.id} 
+                              onClick={() => handlePlayVideo(video)}
+                              style={{
+                                flex: '0 0 240px',
+                                background: 'rgba(255,255,255,0.02)',
+                                border: '1px solid rgba(255,255,255,0.06)',
+                                borderRadius: '8px',
+                                padding: '0.85rem',
+                                cursor: 'pointer',
+                                display: 'flex',
+                                flexDirection: 'column',
+                                gap: '0.5rem',
+                                transition: 'all 0.2s',
+                                position: 'relative'
+                              }}
+                              className="continue-card"
+                            >
+                              <div style={{ fontSize: '0.85rem', fontWeight: 600, color: '#fff', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={video.title}>
+                                {classification.displayTitle}
+                              </div>
+                              <div style={{ fontSize: '0.72rem', color: 'rgba(255,255,255,0.45)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                <span>Resume at {formatTime(video.currentTime || 0)}</span>
+                                {progress > 0 && <span>{progress}%</span>}
+                              </div>
+                              
+                              {progress > 0 && (
+                                <div style={{ height: '4px', width: '100%', background: 'rgba(255,255,255,0.1)', borderRadius: '2px', overflow: 'hidden' }}>
+                                  <div style={{ height: '100%', width: `${progress}%`, background: '#3b82f6' }} />
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
                     </div>
-                    <button className="btn btn-primary resume-btn" onClick={() => handlePlayVideo(lastPlayingVideo)}>
-                      <Play size={14} fill="white" />
-                      <span>Resume</span>
-                    </button>
-                  </div>
-                )}
+                  );
+                })()}
                 <div className="glass-panel workspace-panel">
                   <div className="panel-header">
                     <h2>Select Media</h2>
@@ -1421,8 +1454,13 @@ function App() {
                                   options={subOptions}
                                 />
                               </div>
+                            </div>
+
+                            <div className="settings-section">
+                              <h3>Calendar Preferences</h3>
+                              <p className="settings-section-desc">Choose between the interactive month grid or the schedule list.</p>
                               <div className="pref-row">
-                                <span className="pref-label">Calendar View Style</span>
+                                <span className="pref-label">Calendar Layout Style</span>
                                 <CustomSelect 
                                   value={settings.calendarStyle} 
                                   onChange={(val) => handleDefaultLangChange('calendarStyle', val)}
