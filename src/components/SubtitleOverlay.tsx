@@ -7,6 +7,9 @@ export interface SubtitleSettings {
   backdrop: 'none' | 'shadow' | 'opaque';
   fontFamily: 'sans-serif' | 'serif' | 'monospace';
   fontStyle: 'normal' | 'italic' | 'bold';
+  customTextColor?: string;
+  customBgColor?: string;
+  customSize?: number;
 }
 
 interface SubtitleOverlayProps {
@@ -43,10 +46,28 @@ export const SubtitleOverlay: React.FC<SubtitleOverlayProps> = ({
     fontStyle: settings.fontStyle === 'italic' ? 'italic' : 'normal',
   };
 
+  if (settings.customTextColor) {
+    fontStyleStyles.color = settings.customTextColor;
+  }
+  if (settings.customBgColor) {
+    fontStyleStyles.backgroundColor = settings.customBgColor;
+    fontStyleStyles.padding = '0.45rem 1.2rem';
+    fontStyleStyles.borderRadius = '6px';
+    fontStyleStyles.boxShadow = '0 8px 20px rgba(0,0,0,0.4)';
+    fontStyleStyles.border = '1px solid rgba(255,255,255,0.06)';
+  }
+  if (settings.customSize && settings.customSize > 0) {
+    fontStyleStyles.fontSize = `${(settings.customSize / 100) * 1.65}rem`;
+  }
+
+  const isCustomColor = !!settings.customTextColor;
+  const isCustomBg = !!settings.customBgColor;
+  const isCustomSize = !!settings.customSize && settings.customSize > 0;
+
   return (
     <div className={`subtitle-overlay-container ${controlsVisible ? 'controls-showing' : ''}`}>
       <div 
-        className={`subtitle-text font-${settings.fontSize} color-${settings.color} backdrop-${settings.backdrop}`}
+        className={`subtitle-text ${isCustomSize ? '' : `font-${settings.fontSize}`} ${isCustomColor ? '' : `color-${settings.color}`} ${isCustomBg ? '' : `backdrop-${settings.backdrop}`}`}
         style={fontStyleStyles}
       >
         {formattedText}

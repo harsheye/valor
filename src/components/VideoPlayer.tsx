@@ -29,6 +29,8 @@ interface VideoPlayerProps {
   showPlayBar?: boolean;
   showVolumeControl?: boolean;
   showFullscreen?: boolean;
+  subSettings: SubtitleSettings;
+  onUpdateSubSettings: (settings: Partial<SubtitleSettings>) => void;
 }
 
 export const VideoPlayer: React.FC<VideoPlayerProps> = ({ 
@@ -44,7 +46,9 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   showTimeDisplay = true,
   showPlayBar = true,
   showVolumeControl = true,
-  showFullscreen = true
+  showFullscreen = true,
+  subSettings,
+  onUpdateSubSettings
 }) => {
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
@@ -108,14 +112,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     }
   }, [activeCueIdx, showAudioSubMenu]);
 
-  // Default Subtitle Settings (kept for compatibility with SubtitleOverlay)
-  const [subSettings] = useState<SubtitleSettings>({
-    fontSize: 'medium',
-    color: 'white',
-    backdrop: 'shadow',
-    fontFamily: 'sans-serif',
-    fontStyle: 'normal'
-  });
+
 
   // Buffering States
   const [isBuffering, setIsBuffering] = useState(false);
@@ -1898,6 +1895,8 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
                       getLangLabel={getLangLabel}
                       formatTime={formatTime}
                       cleanSubtitleText={cleanSubtitleText}
+                      subSettings={subSettings}
+                      onUpdateSubSettings={onUpdateSubSettings}
                     />
                   )}
                 </div>
@@ -2477,7 +2476,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
           transition: width 0.3s cubic-bezier(0.16, 1, 0.3, 1);
         }
         .audio-sub-popover-center.has-transcript {
-          width: 780px;
+          width: 960px;
         }
         .audio-sub-popover-center::before {
           content: '';
@@ -2495,7 +2494,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
           gap: 1.25rem;
         }
         .audio-sub-popover-center.has-transcript .popover-cols {
-          grid-template-columns: 1fr 1fr 1.3fr;
+          grid-template-columns: 1fr 1fr 1.3fr 1.1fr;
         }
         .popover-transcript-col {
           border-left: 1px solid rgba(255, 255, 255, 0.08);
@@ -2503,6 +2502,140 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
           display: flex;
           flex-direction: column;
           max-height: 200px;
+        }
+        .popover-style-col {
+          border-left: 1px solid rgba(255, 255, 255, 0.08);
+          padding-left: 1.25rem;
+          display: flex;
+          flex-direction: column;
+        }
+        .style-customizer {
+          display: flex;
+          flex-direction: column;
+          gap: 0.75rem;
+          margin-top: 0.5rem;
+        }
+        .style-row {
+          display: flex;
+          flex-direction: column;
+          gap: 0.3rem;
+        }
+        .style-label {
+          font-size: 0.8rem;
+          color: rgba(255, 255, 255, 0.6);
+          font-weight: 500;
+        }
+        .style-slider {
+          -webkit-appearance: none;
+          appearance: none;
+          width: 100%;
+          height: 4px;
+          background: rgba(255, 255, 255, 0.15);
+          border-radius: 2px;
+          outline: none;
+        }
+        .style-slider::-webkit-slider-thumb {
+          -webkit-appearance: none;
+          appearance: none;
+          width: 12px;
+          height: 12px;
+          border-radius: 50%;
+          background: #ffffff;
+          cursor: pointer;
+          box-shadow: 0 1px 3px rgba(0,0,0,0.5);
+          transition: transform 0.1s ease;
+        }
+        .style-slider::-webkit-slider-thumb:hover {
+          transform: scale(1.2);
+        }
+        .style-select {
+          background: rgba(30, 30, 30, 0.7);
+          border: 1px solid rgba(255, 255, 255, 0.15);
+          border-radius: 4px;
+          color: #ffffff;
+          padding: 0.3rem 0.5rem;
+          font-size: 0.85rem;
+          outline: none;
+          cursor: pointer;
+        }
+        .color-palette {
+          display: flex;
+          align-items: center;
+          gap: 0.4rem;
+          flex-wrap: wrap;
+        }
+        .color-dot {
+          width: 20px;
+          height: 20px;
+          border-radius: 50%;
+          border: 1px solid rgba(255,255,255,0.1);
+          cursor: pointer;
+          position: relative;
+          transition: transform 0.15s ease;
+          padding: 0;
+        }
+        .color-dot:hover {
+          transform: scale(1.15);
+        }
+        .color-dot.active {
+          transform: scale(1.15);
+          box-shadow: 0 0 0 2px #3b82f6;
+        }
+        .color-picker-input {
+          -webkit-appearance: none;
+          appearance: none;
+          border: none;
+          width: 20px;
+          height: 20px;
+          border-radius: 50%;
+          cursor: pointer;
+          background: none;
+          padding: 0;
+        }
+        .color-picker-input::-webkit-color-swatch-wrapper {
+          padding: 0;
+        }
+        .color-picker-input::-webkit-color-swatch {
+          border: 1px solid rgba(255,255,255,0.2);
+          border-radius: 50%;
+        }
+        .toggles-row {
+          flex-direction: row !important;
+          gap: 0.4rem;
+          margin-top: 0.3rem;
+        }
+        .style-toggle-btn {
+          flex: 1;
+          background: rgba(255, 255, 255, 0.06);
+          border: 1px solid rgba(255, 255, 255, 0.1);
+          border-radius: 4px;
+          color: rgba(255, 255, 255, 0.8);
+          padding: 0.35rem;
+          font-size: 0.8rem;
+          cursor: pointer;
+          transition: all 0.15s ease;
+        }
+        .style-toggle-btn:hover {
+          background: rgba(255, 255, 255, 0.12);
+        }
+        .style-toggle-btn.active {
+          background: #3b82f6;
+          border-color: #3b82f6;
+          color: #ffffff;
+        }
+        .style-reset-btn {
+          background: transparent;
+          border: 1px solid rgba(255, 255, 255, 0.15);
+          border-radius: 4px;
+          color: rgba(255, 255, 255, 0.5);
+          padding: 0.35rem 0.6rem;
+          font-size: 0.8rem;
+          cursor: pointer;
+          transition: all 0.15s ease;
+        }
+        .style-reset-btn:hover {
+          color: #ffffff;
+          border-color: rgba(255, 255, 255, 0.3);
         }
         .transcript-search-box {
           margin-bottom: 0.5rem;

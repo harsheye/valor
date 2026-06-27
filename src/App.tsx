@@ -117,7 +117,17 @@ function App() {
     showTimeDisplay: true,
     showPlayBar: true,
     showVolumeControl: true,
-    showFullscreen: true
+    showFullscreen: true,
+    subSettings: {
+      fontSize: 'medium' as 'small' | 'medium' | 'large' | 'extra-large',
+      color: 'white' as 'white' | 'yellow' | 'cyan' | 'green',
+      backdrop: 'shadow' as 'none' | 'shadow' | 'opaque',
+      fontFamily: 'sans-serif' as 'sans-serif' | 'serif' | 'monospace',
+      fontStyle: 'normal' as 'normal' | 'italic' | 'bold',
+      customTextColor: '',
+      customBgColor: '',
+      customSize: 100
+    }
   };
 
   const [showSettings, setShowSettings] = useState(false);
@@ -133,6 +143,10 @@ function App() {
           keybinds: {
             ...defaultSettings.keybinds,
             ...(parsed.keybinds || {})
+          },
+          subSettings: {
+            ...defaultSettings.subSettings,
+            ...(parsed.subSettings || {})
           }
         };
       }
@@ -858,6 +872,18 @@ function App() {
         showPlayBar={settings.showPlayBar}
         showVolumeControl={settings.showVolumeControl}
         showFullscreen={settings.showFullscreen}
+        subSettings={settings.subSettings}
+        onUpdateSubSettings={(newSubSettings) => {
+          const updated = {
+            ...settings,
+            subSettings: {
+              ...settings.subSettings,
+              ...newSubSettings
+            }
+          };
+          setSettings(updated);
+          localStorage.setItem('valor_settings', JSON.stringify(updated));
+        }}
       />
     );
   }
