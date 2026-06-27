@@ -10,7 +10,8 @@ process.on('unhandledRejection', (reason, promise) => {
   console.error('[Server Unhandled Rejection]', reason);
 });
 
-const args = process.argv.slice(2).filter(arg => {
+const isSea = !process.argv[0].toLowerCase().endsWith('node.exe') && !process.argv[0].toLowerCase().endsWith('node');
+const args = process.argv.slice(isSea ? 1 : 2).filter(arg => {
   const lower = arg.toLowerCase();
   return !lower.endsWith('node.exe') && !lower.endsWith('node') && !lower.endsWith('start-app.js') && !lower.endsWith('start-app.exe') && !lower.endsWith('start-app-exe');
 });

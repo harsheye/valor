@@ -86,6 +86,9 @@ namespace ValorTray
             // Start Node server in the background
             StartServer(args);
 
+            // Give the background server a second to initialize and bind to the port
+            Thread.Sleep(1000);
+
             // Open initial browser
             OpenBrowser(fileArg, playWithVlc);
 
