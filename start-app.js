@@ -49,6 +49,66 @@ async function start() {
     },
   });
 
+  const getJsonBody = (req) => new Promise((resolve) => {
+    let body = '';
+    req.on('data', chunk => { body += chunk; });
+    req.on('end', () => {
+      try { resolve(JSON.parse(body)); }
+      catch { resolve({}); }
+    });
+  });
+
+  const dataDir = path.join(process.cwd(), '.valor_data');
+  if (!fs.existsSync(dataDir)) {
+    fs.mkdirSync(dataDir, { recursive: true });
+  }
+
+  // Settings API
+  server.middlewares.use('/api/settings', async (req, res, next) => {
+    const url = new URL(req.url, 'http://localhost');
+    if (url.pathname !== '/' && url.pathname !== '') {
+      return next();
+    }
+    res.setHeader('Content-Type', 'application/json');
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Headers', '*');
+    const settingsFile = path.join(dataDir, 'settings.json');
+    if (req.method === 'POST') {
+      const data = await getJsonBody(req);
+      fs.writeFileSync(settingsFile, JSON.stringify(data, null, 2));
+      res.end(JSON.stringify({ success: true }));
+    } else {
+      if (fs.existsSync(settingsFile)) {
+        res.end(fs.readFileSync(settingsFile));
+      } else {
+        res.end(JSON.stringify({}));
+      }
+    }
+  });
+
+  // History API
+  server.middlewares.use('/api/history', async (req, res, next) => {
+    const url = new URL(req.url, 'http://localhost');
+    if (url.pathname !== '/' && url.pathname !== '') {
+      return next();
+    }
+    res.setHeader('Content-Type', 'application/json');
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Headers', '*');
+    const historyFile = path.join(dataDir, 'history.json');
+    if (req.method === 'POST') {
+      const data = await getJsonBody(req);
+      fs.writeFileSync(historyFile, JSON.stringify(data, null, 2));
+      res.end(JSON.stringify({ success: true }));
+    } else {
+      if (fs.existsSync(historyFile)) {
+        res.end(fs.readFileSync(historyFile));
+      } else {
+        res.end(JSON.stringify([]));
+      }
+    }
+  });
+
   // Local file streaming middleware
   server.middlewares.use('/local-video-stream', (req, res) => {
     const url = new URL(req.url, 'http://localhost');

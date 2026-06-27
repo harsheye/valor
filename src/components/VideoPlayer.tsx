@@ -33,6 +33,7 @@ interface VideoPlayerProps {
   onUpdateSubSettings: (settings: Partial<SubtitleSettings>) => void;
   historySaveInterval?: number;
   saveVolume?: boolean;
+  ratingThreshold?: number;
 }
 
 export const VideoPlayer: React.FC<VideoPlayerProps> = ({ 
@@ -52,11 +53,20 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   subSettings,
   onUpdateSubSettings,
   historySaveInterval = 5,
-  saveVolume = true
+  saveVolume = true,
+  ratingThreshold = 3
 }) => {
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
+
+  const totalTimeWatchedRef = useRef<number>((video as any).totalTimeWatched || 0);
+  const sessionStartRef = useRef<number | null>(null);
+  const mountTimeRef = useRef<number>(Date.now());
+  const [showRatingPrompt, setShowRatingPrompt] = useState(false);
+  const [userRating, setUserRating] = useState<number | null>((video as any).rating || null);
+  const ratingPromptedRef = useRef<boolean>(!!(video as any).rating);
+
   const [volume, setVolume] = useState<number>(() => {
     try {
       const saved = localStorage.getItem('valor_volume');
@@ -1490,19 +1500,102 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     };
   }, [pauseOnFocusChange, isFullscreen]);
 
+  // Track active play duration (totalTimeWatched)
+  useEffect(() => {
+    if (isPlaying) {
+      sessionStartRef.current = Date.now();
+      const interval = setInterval(() => {
+        if (sessionStartRef.current) {
+          const now = Date.now();
+          const delta = (now - sessionStartRef.current) / 1000;
+          sessionStartRef.current = now;
+          totalTimeWatchedRef.current += delta;
+
+          // Check if remaining time is below rating threshold (minutes) to show rating prompt
+          if (videoRef.current && duration > 0 && !ratingPromptedRef.current) {
+            const remaining = duration - videoRef.current.currentTime;
+            if (remaining <= (ratingThreshold || 3) * 60 && remaining > 5) {
+              setShowRatingPrompt(true);
+              ratingPromptedRef.current = true;
+            }
+          }
+        }
+      }, 1000);
+      return () => {
+        clearInterval(interval);
+        if (sessionStartRef.current) {
+          const now = Date.now();
+          const delta = (now - sessionStartRef.current) / 1000;
+          totalTimeWatchedRef.current += delta;
+          sessionStartRef.current = null;
+        }
+      };
+    }
+  }, [isPlaying, duration, ratingThreshold]);
+
+  // Session Logging on Mount/Unmount
+  useEffect(() => {
+    return () => {
+      const exitTime = Date.now();
+      const sessionDuration = (exitTime - mountTimeRef.current) / 1000;
+      const newSession = {
+        startedAt: new Date(mountTimeRef.current).toISOString(),
+        endedAt: new Date(exitTime).toISOString(),
+        durationWatched: Math.round(sessionDuration)
+      };
+
+      const existingSessions = (video as any).sessions || [];
+      const updatedSessions = [...existingSessions, newSession];
+
+      let timeToFinish = (video as any).timeToFinish;
+      if (!timeToFinish && duration > 0 && videoRef.current && (videoRef.current.currentTime / duration) >= 0.95) {
+        const firstPlay = (video as any).firstPlayTimestamp || mountTimeRef.current;
+        timeToFinish = (exitTime - firstPlay) / 1000;
+      }
+
+      onUpdateVideo((prev: any) => ({
+        ...prev,
+        currentTime: videoRef.current ? videoRef.current.currentTime : prev.currentTime,
+        totalTimeWatched: Math.round(totalTimeWatchedRef.current),
+        sessions: updatedSessions,
+        timeToFinish: timeToFinish ? Math.round(timeToFinish) : prev.timeToFinish,
+        firstPlayTimestamp: prev.firstPlayTimestamp || mountTimeRef.current
+      }), true);
+    };
+  }, [duration, onUpdateVideo]);
+
   // Periodically save current playback position to parent state
   useEffect(() => {
     const intervalMs = (historySaveInterval || 5) * 1000;
     const interval = setInterval(() => {
       if (videoRef.current && !videoRef.current.paused) {
-        onUpdateVideo({
-          ...video,
-          currentTime: videoRef.current.currentTime
-        });
+        const exitTime = Date.now();
+        const currentSession = {
+          startedAt: new Date(mountTimeRef.current).toISOString(),
+          endedAt: new Date(exitTime).toISOString(),
+          durationWatched: Math.round((exitTime - mountTimeRef.current) / 1000)
+        };
+        const existingSessions = (video as any).sessions || [];
+        const updatedSessions = [...existingSessions, currentSession];
+
+        let timeToFinish = (video as any).timeToFinish;
+        if (!timeToFinish && duration > 0 && (videoRef.current.currentTime / duration) >= 0.95) {
+          const firstPlay = (video as any).firstPlayTimestamp || mountTimeRef.current;
+          timeToFinish = (exitTime - firstPlay) / 1000;
+        }
+
+        onUpdateVideo((prev: any) => ({
+          ...prev,
+          currentTime: videoRef.current ? videoRef.current.currentTime : prev.currentTime,
+          totalTimeWatched: Math.round(totalTimeWatchedRef.current),
+          sessions: updatedSessions,
+          timeToFinish: timeToFinish ? Math.round(timeToFinish) : prev.timeToFinish,
+          firstPlayTimestamp: prev.firstPlayTimestamp || mountTimeRef.current
+        }));
       }
     }, intervalMs);
     return () => clearInterval(interval);
-  }, [video, onUpdateVideo, historySaveInterval]);
+  }, [onUpdateVideo, historySaveInterval, duration]);
 
   // Auto-select preferred default audio/subtitle streams
   useEffect(() => {
@@ -1794,6 +1887,43 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
               <span className="seek-hud-text">10</span>
             </div>
           </button>
+        </div>
+      )}
+
+      {/* Floating Rating Prompt Overlay */}
+      {showRatingPrompt && (
+        <div className="floating-rating-prompt animate-slide-in" onClick={(e) => e.stopPropagation()}>
+          <div className="rating-header">
+            <span>Enjoying this video? Rate it:</span>
+            <button className="rating-close" onClick={() => setShowRatingPrompt(false)}>
+              <X size={14} />
+            </button>
+          </div>
+          <div className="rating-stars">
+            {[1, 2, 3, 4, 5].map((star) => {
+              const active = userRating !== null && star <= userRating;
+              return (
+                <button
+                  key={star}
+                  type="button"
+                  className={`star-btn ${active ? 'active' : ''}`}
+                  onClick={() => {
+                    setUserRating(star);
+                    onUpdateVideo((prev: any) => ({ ...prev, rating: star }));
+                    // Show a quick thank you message and then close
+                    setTimeout(() => {
+                      setShowRatingPrompt(false);
+                    }, 1500);
+                  }}
+                >
+                  ★
+                </button>
+              );
+            })}
+          </div>
+          {userRating !== null && (
+            <div className="rating-thanks">Thanks for rating! ({userRating}/5)</div>
+          )}
         </div>
       )}
 
@@ -2233,6 +2363,71 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
         .cast-btn:hover, .close-btn:hover {
           transform: scale(1.15);
           opacity: 0.8;
+        }
+        .floating-rating-prompt {
+          position: absolute;
+          top: 80px;
+          right: 20px;
+          background: rgba(10, 10, 10, 0.88);
+          border: 1px solid rgba(255, 255, 255, 0.15);
+          border-radius: 10px;
+          padding: 0.9rem 1.1rem;
+          z-index: 200;
+          box-shadow: 0 10px 25px rgba(0,0,0,0.6);
+          backdrop-filter: blur(12px);
+          -webkit-backdrop-filter: blur(12px);
+          width: 250px;
+          display: flex;
+          flex-direction: column;
+          gap: 0.5rem;
+          color: #ffffff;
+        }
+        .rating-header {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          font-size: 0.82rem;
+          font-weight: 600;
+          color: rgba(255,255,255,0.85);
+        }
+        .rating-close {
+          background: none;
+          border: none;
+          color: rgba(255,255,255,0.4);
+          cursor: pointer;
+          padding: 2px;
+          display: flex;
+          align-items: center;
+        }
+        .rating-close:hover {
+          color: #ffffff;
+        }
+        .rating-stars {
+          display: flex;
+          gap: 0.35rem;
+          justify-content: center;
+          margin-top: 0.25rem;
+        }
+        .star-btn {
+          background: none;
+          border: none;
+          font-size: 1.8rem;
+          color: rgba(255, 255, 255, 0.15);
+          cursor: pointer;
+          padding: 0;
+          line-height: 1;
+          transition: transform 0.15s, color 0.15s, text-shadow 0.15s;
+        }
+        .star-btn:hover, .star-btn.active {
+          color: #f1c40f;
+          text-shadow: 0 0 8px rgba(241, 196, 15, 0.6);
+          transform: scale(1.18);
+        }
+        .rating-thanks {
+          font-size: 0.75rem;
+          color: #2ecc71;
+          text-align: center;
+          font-weight: 600;
         }
         .player-lock-indicator {
           position: absolute;

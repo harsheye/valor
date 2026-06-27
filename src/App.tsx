@@ -59,6 +59,19 @@ const fontOptions = [
   { value: 'monospace', label: 'Roboto Mono' }
 ];
 
+const storageModeOptions = [
+  { value: 'localstorage', label: 'Local Browser Storage' },
+  { value: 'file', label: 'Persistent Server Files' }
+];
+
+const ratingThresholdOptions = [
+  { value: 1, label: '1 minute remaining' },
+  { value: 2, label: '2 minutes remaining' },
+  { value: 3, label: '3 minutes remaining (Default)' },
+  { value: 5, label: '5 minutes remaining' },
+  { value: 10, label: '10 minutes remaining' }
+];
+
 function App() {
   const [videos, setVideos] = useState<VideoItem[]>(() => {
     try {
@@ -85,6 +98,10 @@ function App() {
   const [settingsTab, setSettingsTab] = useState<'general' | 'hotkeys' | 'subtitle' | 'storage'>('general');
   const [isProcessing, setIsProcessing] = useState(false);
   const [processingStep, setProcessingStep] = useState('');
+  
+  // Onboarding states
+  const [onboardingCompletedSteps, setOnboardingCompletedSteps] = useState<string[]>([]);
+  const [openStepId, setOpenStepId] = useState<string>('storage');
 
   // Heartbeat to keep the server alive while the app is active
   useEffect(() => {
@@ -106,16 +123,96 @@ function App() {
   }, []);
 
   useEffect(() => {
-    const lastId = localStorage.getItem('valor_last_playing_id');
-    if (lastId) {
-      const match = videos.find(v => v.id === lastId);
-      if (match) {
-        setLastPlayingVideo(match);
+    const initData = async () => {
+      let loadedSettings = defaultSettings;
+      let settingsLoaded = false;
+      try {
+        const res = await fetch('/api/settings');
+        const fileSettings = await res.json();
+        if (fileSettings && Object.keys(fileSettings).length > 0) {
+          loadedSettings = {
+            ...defaultSettings,
+            ...fileSettings,
+            keybinds: { ...defaultSettings.keybinds, ...(fileSettings.keybinds || {}) },
+            subSettings: { ...defaultSettings.subSettings, ...(fileSettings.subSettings || {}) }
+          };
+          setSettings(loadedSettings);
+          settingsLoaded = true;
+        }
+      } catch (e) {
+        console.warn('Failed to load settings from server file');
       }
-    } else {
-      setLastPlayingVideo(null);
-    }
-  }, [videos]);
+
+      if (!settingsLoaded) {
+        const saved = localStorage.getItem('valor_settings');
+        if (saved) {
+          try {
+            const parsed = JSON.parse(saved);
+            loadedSettings = {
+              ...defaultSettings,
+              ...parsed,
+              keybinds: { ...defaultSettings.keybinds, ...(parsed.keybinds || {}) },
+              subSettings: { ...defaultSettings.subSettings, ...(parsed.subSettings || {}) }
+            };
+            setSettings(loadedSettings);
+          } catch {}
+        }
+      }
+
+      // Load History
+      const storageMode = loadedSettings.storageMode || 'localstorage';
+      let loadedVideos: VideoItem[] = [];
+      let historyLoaded = false;
+
+      if (storageMode === 'file') {
+        try {
+          const res = await fetch('/api/history');
+          const fileHistory = await res.json();
+          if (Array.isArray(fileHistory)) {
+            loadedVideos = fileHistory.map((v: any) => ({
+              ...v,
+              audioTracks: v.audioTracks || [],
+              subtitleTracks: v.subtitleTracks || []
+            }));
+            setVideos(loadedVideos);
+            historyLoaded = true;
+          }
+        } catch (e) {
+          console.warn('Failed to load history from server file');
+        }
+      }
+
+      if (!historyLoaded) {
+        const savedVideos = localStorage.getItem('valor_videos');
+        if (savedVideos) {
+          try {
+            const parsed = JSON.parse(savedVideos);
+            if (Array.isArray(parsed)) {
+              loadedVideos = parsed.map((v: any) => ({
+                ...v,
+                audioTracks: v.audioTracks || [],
+                subtitleTracks: v.subtitleTracks || []
+              }));
+              setVideos(loadedVideos);
+            }
+          } catch {}
+        }
+      }
+
+      // Resume setup
+      const lastId = localStorage.getItem('valor_last_playing_id');
+      if (lastId && loadedVideos.length > 0) {
+        const match = loadedVideos.find(v => v.id === lastId);
+        if (match) {
+          setLastPlayingVideo(match);
+        }
+      } else if (loadedVideos.length > 0) {
+        setLastPlayingVideo(loadedVideos[0]);
+      }
+    };
+
+    initData();
+  }, []);
 
 
 
@@ -168,6 +265,9 @@ function App() {
     saveTrackPreferences: true,
     saveVolume: true,
     saveSettings: true,
+    storageMode: 'localstorage' as 'localstorage' | 'file',
+    ratingThreshold: 3 as number,
+    isOnboarded: false as boolean,
     subSettings: {
       fontSize: 'medium' as 'small' | 'medium' | 'large' | 'extra-large',
       color: 'white' as 'white' | 'yellow' | 'cyan' | 'green',
@@ -206,7 +306,19 @@ function App() {
     }
   });
 
-  const saveSettingsToStorage = (state: typeof defaultSettings) => {
+  const saveSettingsToStorage = async (state: typeof defaultSettings) => {
+    if (state.storageMode === 'file') {
+      try {
+        await fetch('/api/settings', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(state)
+        });
+      } catch (e) {
+        console.error('Failed to save settings to server:', e);
+      }
+    }
+
     if (!state.saveSettings) {
       localStorage.removeItem('valor_settings');
       return;
@@ -955,6 +1067,7 @@ function App() {
         subSettings={settings.subSettings}
         historySaveInterval={settings.historySaveInterval}
         saveVolume={settings.saveVolume}
+        ratingThreshold={settings.ratingThreshold}
         onUpdateSubSettings={(newSubSettings) => {
           const updated = {
             ...settings,
@@ -967,6 +1080,188 @@ function App() {
           saveSettingsToStorage(updated);
         }}
       />
+    );
+  }
+
+  const onboardingSteps = [
+    {
+      id: 'storage',
+      title: 'Choose Storage Location',
+      description: 'Select how Valor should save your settings, ratings, and playback history.',
+      completed: onboardingCompletedSteps.includes('storage'),
+      renderContent: () => (
+        <div className="onboarding-step-options">
+          <p className="text-muted text-sm mb-3" style={{ fontSize: '0.8rem', color: 'rgba(255,255,255,0.5)', marginBottom: '0.75rem' }}>Choose whether to store history in your local browser sandbox or directly as server files (allows unlimited storage + advanced cumulative stats).</p>
+          <div className="flex gap-2" style={{ display: 'flex', gap: '0.75rem', marginBottom: '1rem' }}>
+            <button 
+              type="button"
+              className={`btn btn-secondary ${settings.storageMode === 'localstorage' ? 'active' : ''}`}
+              onClick={() => handleDefaultLangChange('storageMode', 'localstorage')}
+              style={{ flex: 1, padding: '0.65rem', border: settings.storageMode === 'localstorage' ? '1px solid #3b82f6' : '1px solid rgba(255,255,255,0.1)', background: settings.storageMode === 'localstorage' ? 'rgba(59,130,246,0.15)' : 'rgba(0,0,0,0.3)', borderRadius: '6px', color: '#fff', cursor: 'pointer' }}
+            >
+              Local Storage
+            </button>
+            <button 
+              type="button"
+              className={`btn btn-secondary ${settings.storageMode === 'file' ? 'active' : ''}`}
+              onClick={() => handleDefaultLangChange('storageMode', 'file')}
+              style={{ flex: 1, padding: '0.65rem', border: settings.storageMode === 'file' ? '1px solid #3b82f6' : '1px solid rgba(255,255,255,0.1)', background: settings.storageMode === 'file' ? 'rgba(59,130,246,0.15)' : 'rgba(0,0,0,0.3)', borderRadius: '6px', color: '#fff', cursor: 'pointer' }}
+            >
+              Server File
+            </button>
+          </div>
+          <button 
+            type="button"
+            className="btn btn-primary w-full"
+            style={{ width: '100%', background: '#3b82f6', border: 'none', color: '#fff', padding: '0.65rem', borderRadius: '6px', cursor: 'pointer', fontWeight: 600 }}
+            onClick={() => {
+              setOnboardingCompletedSteps(prev => [...prev, 'storage']);
+              setOpenStepId('languages');
+            }}
+          >
+            Confirm Storage Location
+          </button>
+        </div>
+      )
+    },
+    {
+      id: 'languages',
+      title: 'Preferred Languages',
+      description: 'Set your preferred default audio track and subtitle language.',
+      completed: onboardingCompletedSteps.includes('languages'),
+      renderContent: () => (
+        <div className="onboarding-step-options" style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+          <div className="pref-row" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <span className="pref-label text-sm" style={{ color: 'rgba(255,255,255,0.7)', fontSize: '0.85rem' }}>Default Audio</span>
+            <CustomSelect 
+              value={settings.defaultAudio} 
+              onChange={(val) => handleDefaultLangChange('defaultAudio', val)}
+              options={audioOptions}
+            />
+          </div>
+          <div className="pref-row" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <span className="pref-label text-sm" style={{ color: 'rgba(255,255,255,0.7)', fontSize: '0.85rem' }}>Default Subtitles</span>
+            <CustomSelect 
+              value={settings.defaultSub} 
+              onChange={(val) => handleDefaultLangChange('defaultSub', val)}
+              options={subOptions}
+            />
+          </div>
+          <button 
+            type="button"
+            className="btn btn-primary w-full"
+            style={{ width: '100%', background: '#3b82f6', border: 'none', color: '#fff', padding: '0.65rem', borderRadius: '6px', cursor: 'pointer', fontWeight: 600, marginTop: '0.5rem' }}
+            onClick={() => {
+              setOnboardingCompletedSteps(prev => [...prev, 'languages']);
+              setOpenStepId('keybinds');
+            }}
+          >
+            Save Preferences
+          </button>
+        </div>
+      )
+    },
+    {
+      id: 'keybinds',
+      title: 'Keyboard Controls Profile',
+      description: 'Review default keyboard hotkeys for player controls.',
+      completed: onboardingCompletedSteps.includes('keybinds'),
+      renderContent: () => (
+        <div className="onboarding-step-options">
+          <p className="text-muted text-sm mb-3" style={{ fontSize: '0.8rem', color: 'rgba(255,255,255,0.5)', marginBottom: '0.75rem' }}>Valor supports rebinding key shortcuts in settings at any time. Lock controls shortcut defaults to "W".</p>
+          <div className="keybind-summary" style={{ background: 'rgba(0,0,0,0.3)', padding: '0.75rem', borderRadius: '6px', fontSize: '0.8rem', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem', marginBottom: '1rem', border: '1px solid rgba(255,255,255,0.06)' }}>
+            <div>Play/Pause: <b>Space</b></div>
+            <div>Fullscreen: <b>F</b></div>
+            <div>Lock Player: <b>W</b></div>
+            <div>Exit / Back: <b>Esc</b></div>
+          </div>
+          <button 
+            type="button"
+            className="btn btn-primary w-full"
+            style={{ width: '100%', background: '#3b82f6', border: 'none', color: '#fff', padding: '0.65rem', borderRadius: '6px', cursor: 'pointer', fontWeight: 600 }}
+            onClick={() => {
+              setOnboardingCompletedSteps(prev => [...prev, 'keybinds']);
+              setOpenStepId('ready');
+            }}
+          >
+            Acknowledge Hotkeys
+          </button>
+        </div>
+      )
+    },
+    {
+      id: 'ready',
+      title: 'Ready to stream!',
+      description: 'You are all set to start using Valor.',
+      completed: onboardingCompletedSteps.includes('ready'),
+      renderContent: () => (
+        <div className="onboarding-step-options">
+          <p className="text-muted text-sm mb-3" style={{ fontSize: '0.8rem', color: 'rgba(255,255,255,0.5)', marginBottom: '0.75rem' }}>Click below to finish setting up and access the main player workspace.</p>
+          <button 
+            type="button"
+            className="btn btn-primary w-full"
+            style={{ width: '100%', background: '#2ecc71', border: 'none', color: '#fff', padding: '0.65rem', borderRadius: '6px', cursor: 'pointer', fontWeight: 600 }}
+            onClick={() => {
+              setOnboardingCompletedSteps(prev => [...prev, 'ready']);
+              handleDefaultLangChange('isOnboarded', true);
+            }}
+          >
+            Get Started with Valor
+          </button>
+        </div>
+      )
+    }
+  ];
+
+  if (!settings.isOnboarded) {
+    const completedCount = onboardingCompletedSteps.length;
+    const progressPercent = (completedCount / 4) * 100;
+    const strokeDashoffset = 100 - progressPercent;
+
+    return (
+      <div className="onboarding-overlay">
+        <div className="onboarding-card glass-panel">
+          <div className="onboarding-header">
+            <h3 className="onboarding-title">Get started with Valor</h3>
+            <div className="onboarding-progress-container">
+              <svg className="progress-ring-svg" height="18" viewBox="0 0 14 14" width="18">
+                <circle cx="7" cy="7" fill="none" r="6" stroke="rgba(255,255,255,0.1)" strokeWidth="2" />
+                <circle cx="7" cy="7" fill="none" r="6" stroke="#3b82f6" strokeDasharray="100" strokeDashoffset={strokeDashoffset} strokeLinecap="round" strokeWidth="2" />
+              </svg>
+              <span className="progress-text">{completedCount} / 4 completed</span>
+            </div>
+          </div>
+
+          <div className="onboarding-steps-list">
+            {onboardingSteps.map((step) => {
+              const isOpen = openStepId === step.id;
+              return (
+                <div key={step.id} className={`onboarding-step-row ${isOpen ? 'open' : ''}`}>
+                  <div className="onboarding-step-header" onClick={() => setOpenStepId(step.id)}>
+                    <div className="step-indicator-wrapper">
+                      {step.completed ? (
+                        <span className="step-dot completed">✓</span>
+                      ) : (
+                        <span className="step-dot">•</span>
+                      )}
+                      <span className={`step-title ${step.completed ? 'completed' : ''}`}>{step.title}</span>
+                    </div>
+                    {!isOpen && <span className="step-chevron">›</span>}
+                  </div>
+                  {isOpen && (
+                    <div className="onboarding-step-body animate-fade-in">
+                      <p className="step-desc">{step.description}</p>
+                      <div className="step-controls-wrapper">
+                        {step.renderContent()}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </div>
     );
   }
 
@@ -1144,7 +1439,23 @@ function App() {
                     <div className="history-list">
                       {videos.map((video) => (
                         <div key={video.id} className="history-item glass-panel" onClick={() => handlePlayVideo(video)}>
-                          <span className="history-title" title={video.title}>{video.title}</span>
+                          <div className="history-info">
+                            <span className="history-title" title={video.title}>{video.title}</span>
+                            <div className="history-stats">
+                              {video.duration && (
+                                <span className="stat-badge">Length: {typeof video.duration === 'number' ? formatTime(video.duration) : video.duration}</span>
+                              )}
+                              {(video as any).totalTimeWatched > 0 && (
+                                <span className="stat-badge">Watched: {formatTime((video as any).totalTimeWatched)}</span>
+                              )}
+                              {(video as any).rating && (
+                                <span className="stat-badge rating-badge">Rating: {'★'.repeat((video as any).rating)}{'☆'.repeat(5 - (video as any).rating)}</span>
+                              )}
+                              {(video as any).timeToFinish && (
+                                <span className="stat-badge finish-badge">Completed in: {formatTime((video as any).timeToFinish)}</span>
+                              )}
+                            </div>
+                          </div>
                           <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
                             <button className="btn btn-primary btn-sm play-btn-compact">
                               <Play size={12} fill="white" />
@@ -1472,6 +1783,26 @@ function App() {
                               </div>
                             </div>
                           </div>
+
+                          {/* Live Subtitle Style Preview */}
+                          <div className="preview-video-frame">
+                            <span 
+                              className="sub-preview-card"
+                              style={{
+                                fontFamily: settings.subSettings.fontFamily === 'serif' ? 'Playfair Display, serif' : settings.subSettings.fontFamily === 'monospace' ? 'Roboto Mono, monospace' : settings.subSettings.fontFamily === 'outfit' ? 'Outfit, sans-serif' : settings.subSettings.fontFamily === 'cinzel' ? 'Cinzel, serif' : settings.subSettings.fontFamily === 'montserrat' ? 'Montserrat, sans-serif' : 'Poppins, sans-serif',
+                                fontSize: `${Math.min(24, Math.max(12, (settings.subSettings.customSize || 100) * 0.15))}px`,
+                                color: settings.subSettings.customTextColor || '#ffffff',
+                                backgroundColor: settings.subSettings.customBgColor === 'transparent' ? 'transparent' : settings.subSettings.customBgColor || 'rgba(0,0,0,0.75)',
+                                padding: settings.subSettings.customBgColor === 'transparent' ? '0' : '0.4rem 0.8rem',
+                                borderRadius: '6px',
+                                textShadow: settings.subSettings.customBgColor === 'transparent' ? '1px 1px 2px #000, -1px -1px 2px #000, 1px -1px 2px #000, -1px 1px 2px #000' : 'none',
+                                display: 'inline-block',
+                                transition: 'all 0.2s ease',
+                              }}
+                            >
+                              Valor Subtitle Preview
+                            </span>
+                          </div>
                         </div>
                       </div>
                     )}
@@ -1480,8 +1811,29 @@ function App() {
                     {settingsTab === 'storage' && (
                       <div className="settings-tab-content animate-fade-in">
                         <div className="settings-section max-w-md">
-                          <h3>Storage & Saves Preferences</h3>
-                          <p className="settings-section-desc">Toggle what data is saved in local storage. Disabling options clears their stored data immediately.</p>
+                          <h3>Storage Location & Advanced Metrics</h3>
+                          <p className="settings-section-desc">Configure where your data is stored and playback rating threshold parameters.</p>
+                          
+                          <div className="pref-row" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem' }}>
+                            <span className="pref-label">Storage Location</span>
+                            <CustomSelect 
+                              value={settings.storageMode || 'localstorage'}
+                              onChange={(val) => handleDefaultLangChange('storageMode', val)}
+                              options={storageModeOptions}
+                            />
+                          </div>
+
+                          <div className="pref-row" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
+                            <span className="pref-label">Rating Prompt Threshold</span>
+                            <CustomSelect 
+                              value={settings.ratingThreshold || 3}
+                              onChange={(val) => handleDefaultLangChange('ratingThreshold', val)}
+                              options={ratingThresholdOptions}
+                            />
+                          </div>
+
+                          <h3>Data Persistence Preferences</h3>
+                          <p className="settings-section-desc">Toggle what data is saved in your active storage location.</p>
                           
                           <div className="pref-row">
                             <span className="pref-label">Save Playback Position & History</span>
@@ -1934,6 +2286,157 @@ function App() {
           color: #ffffff;
           box-shadow: 0 4px 12px rgba(59, 130, 246, 0.25);
         }
+
+        /* Onboarding styles */
+        .onboarding-overlay {
+          position: fixed;
+          top: 0;
+          left: 0;
+          right: 0;
+          bottom: 0;
+          background: rgba(8, 8, 8, 0.85);
+          backdrop-filter: blur(25px);
+          -webkit-backdrop-filter: blur(25px);
+          z-index: 9999;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          padding: 1.5rem;
+        }
+        .onboarding-card {
+          width: 100%;
+          max-width: 480px;
+          background: rgba(18, 18, 18, 0.65);
+          border: 1px solid rgba(255, 255, 255, 0.08);
+          border-radius: 12px;
+          padding: 1.75rem;
+          box-shadow: 0 20px 50px rgba(0,0,0,0.6);
+        }
+        .onboarding-header {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          margin-bottom: 1.75rem;
+          border-bottom: 1px solid rgba(255,255,255,0.06);
+          padding-bottom: 1rem;
+        }
+        .onboarding-title {
+          font-size: 1.25rem;
+          font-weight: 700;
+          color: #ffffff;
+          margin: 0;
+        }
+        .onboarding-progress-container {
+          display: flex;
+          align-items: center;
+          gap: 0.5rem;
+        }
+        .progress-ring-svg {
+          transform: rotate(-90deg);
+        }
+        .progress-text {
+          font-size: 0.8rem;
+          color: rgba(255,255,255,0.6);
+          font-weight: 500;
+        }
+        .onboarding-steps-list {
+          display: flex;
+          flex-direction: column;
+          gap: 0.5rem;
+        }
+        .onboarding-step-row {
+          border-radius: 8px;
+          border: 1px solid transparent;
+          transition: all 0.2s ease;
+        }
+        .onboarding-step-row.open {
+          background: rgba(255, 255, 255, 0.03);
+          border-color: rgba(255, 255, 255, 0.06);
+        }
+        .onboarding-step-header {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          padding: 0.85rem 1rem;
+          cursor: pointer;
+        }
+        .step-indicator-wrapper {
+          display: flex;
+          align-items: center;
+          gap: 0.75rem;
+        }
+        .step-dot {
+          width: 20px;
+          height: 20px;
+          border-radius: 50%;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          font-size: 0.75rem;
+          font-weight: bold;
+          background: rgba(255,255,255,0.06);
+          color: rgba(255,255,255,0.4);
+          border: 1px solid rgba(255,255,255,0.1);
+        }
+        .step-dot.completed {
+          background: #3b82f6;
+          color: #ffffff;
+          border-color: #3b82f6;
+          box-shadow: 0 0 10px rgba(59, 130, 246, 0.3);
+        }
+        .step-title {
+          font-size: 0.95rem;
+          font-weight: 600;
+          color: rgba(255,255,255,0.85);
+          transition: color 0.2s;
+        }
+        .step-title.completed {
+          color: #3b82f6;
+        }
+        .step-chevron {
+          font-size: 1.2rem;
+          color: rgba(255,255,255,0.3);
+          line-height: 1;
+        }
+        .onboarding-step-body {
+          padding: 0 1rem 1rem 2.75rem;
+        }
+        .step-desc {
+          font-size: 0.82rem;
+          color: rgba(255,255,255,0.5);
+          line-height: 1.4;
+          margin: 0 0 1rem 0;
+        }
+        .step-controls-wrapper {
+          width: 100%;
+        }
+
+        /* Subtitle Live Preview styles */
+        .preview-video-frame {
+          width: 100%;
+          height: 120px;
+          border-radius: 8px;
+          border: 1px solid rgba(255,255,255,0.08);
+          background: linear-gradient(135deg, #141e30, #243b55);
+          position: relative;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          margin-top: 1.5rem;
+          overflow: hidden;
+          box-shadow: inset 0 0 20px rgba(0,0,0,0.8);
+        }
+        .preview-video-frame::before {
+          content: 'Live Subtitle Preview';
+          position: absolute;
+          top: 6px;
+          left: 10px;
+          font-size: 0.65rem;
+          text-transform: uppercase;
+          letter-spacing: 0.05em;
+          color: rgba(255,255,255,0.4);
+          font-weight: 700;
+        }
         .settings-page-content-wrapper {
           min-height: 400px;
         }
@@ -2193,6 +2696,14 @@ function App() {
           border-color: rgba(255, 255, 255, 0.1);
           background: rgba(255, 255, 255, 0.02);
         }
+        .history-info {
+          display: flex;
+          flex-direction: column;
+          gap: 0.4rem;
+          flex: 1;
+          margin-right: 1.5rem;
+          min-width: 0;
+        }
         .history-title {
           font-size: clamp(0.9rem, 2.5vw, 1.05rem);
           font-weight: 550;
@@ -2200,8 +2711,31 @@ function App() {
           white-space: nowrap;
           text-overflow: ellipsis;
           overflow: hidden;
-          flex: 1;
-          min-width: 0;
+          width: 100%;
+        }
+        .history-stats {
+          display: flex;
+          flex-wrap: wrap;
+          gap: 0.5rem;
+        }
+        .stat-badge {
+          font-size: 0.72rem;
+          background: rgba(255, 255, 255, 0.05);
+          border: 1px solid rgba(255, 255, 255, 0.08);
+          color: rgba(255,255,255,0.55);
+          padding: 0.15rem 0.45rem;
+          border-radius: 4px;
+          font-weight: 500;
+        }
+        .rating-badge {
+          color: #f1c40f;
+          border-color: rgba(241, 196, 15, 0.2);
+          background: rgba(241, 196, 15, 0.05);
+        }
+        .finish-badge {
+          color: #2ecc71;
+          border-color: rgba(46, 204, 113, 0.2);
+          background: rgba(46, 204, 113, 0.05);
         }
         .play-btn-compact {
           display: inline-flex;
