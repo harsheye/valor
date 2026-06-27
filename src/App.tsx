@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import type { VideoItem, CustomAudioTrack, CustomSubtitleTrack } from './types/media';
 import { ffmpegService } from './services/ffmpeg';
 import { VideoPlayer } from './components/VideoPlayer';
+import { CustomSelect } from './components/CustomSelect';
 import { 
   Film, UploadCloud, Play, Settings, X,
   RefreshCw, History, Home
@@ -10,6 +11,53 @@ import { storeFileHandle, getFileHandle, removeFileHandle, verifyPermission } fr
 import { HttpByteSource, CachedByteSource, detectUrlCapabilities } from './utils/remoteByteSource';
 import { probeContainer, parseMp4, parseMkv } from './utils/containerParser';
 import { parseHlsManifest } from './utils/hlsParser';
+
+const audioOptions = [
+  { value: 'Original', label: 'Original' },
+  { value: 'ENG', label: 'English' },
+  { value: 'JAP', label: 'Japanese' },
+  { value: 'CHN', label: 'Chinese' }
+];
+
+const subOptions = [
+  { value: 'Off', label: 'Off' },
+  { value: 'ENG', label: 'English' },
+  { value: 'JAP', label: 'Japanese' },
+  { value: 'CHN', label: 'Chinese' }
+];
+
+const limitOptions = [
+  { value: 5, label: '5 items' },
+  { value: 10, label: '10 items (Default)' },
+  { value: 20, label: '20 items' },
+  { value: 50, label: '50 items' },
+  { value: 'Infinite', label: 'Infinite' }
+];
+
+const intervalOptions = [
+  { value: 2, label: 'Every 2 seconds' },
+  { value: 5, label: 'Every 5 seconds (Default)' },
+  { value: 10, label: 'Every 10 seconds' },
+  { value: 30, label: 'Every 30 seconds' },
+  { value: 60, label: 'Every 60 seconds' }
+];
+
+const toastOptions = [
+  { value: 0.5, label: '0.5 seconds (Default)' },
+  { value: 1, label: '1.0 second' },
+  { value: 1.5, label: '1.5 seconds' },
+  { value: 2, label: '2.0 seconds' },
+  { value: 3, label: '3.0 seconds' }
+];
+
+const fontOptions = [
+  { value: 'poppins', label: 'Poppins (Default)' },
+  { value: 'montserrat', label: 'Montserrat' },
+  { value: 'outfit', label: 'Outfit' },
+  { value: 'cinzel', label: 'Cinzel' },
+  { value: 'serif', label: 'Playfair Display' },
+  { value: 'monospace', label: 'Roboto Mono' }
+];
 
 function App() {
   const [videos, setVideos] = useState<VideoItem[]>(() => {
@@ -991,38 +1039,24 @@ function App() {
 
       {/* Main Content Area */}
       <div className="main-layout-wrapper">
-        {/* Top Navbar */}
-        <header className="glass-navbar">
-          <div className="navbar-container">
-            <div className="navbar-logo-mobile">
-              Valor
-            </div>
-
-            <div className="navbar-right">
-              {/* Status indicators and settings button moved to sidebar footer */}
-            </div>
-          </div>
-        </header>
-
         {/* Main Content Pane */}
         <main className="main-content container animate-fade-in">
-          {lastPlayingVideo && (
-            <div className="resume-banner glass-panel animate-fade-in">
-              <div className="resume-banner-left">
-                <span className="resume-badge">CONTINUE WATCHING</span>
-                <h3 className="resume-title">{lastPlayingVideo.title}</h3>
-                <p className="resume-desc text-muted">Resume at {formatTime(lastPlayingVideo.currentTime || 0)}</p>
-              </div>
-              <button className="btn btn-primary resume-btn" onClick={() => handlePlayVideo(lastPlayingVideo)}>
-                <Play size={14} fill="white" />
-                <span>Resume</span>
-              </button>
-            </div>
-          )}
-
           <div className="workspace-container">
             {activeTab === 'home' && (
               <div className="workspace-panel-wrapper">
+                {lastPlayingVideo && (
+                  <div className="resume-banner glass-panel animate-fade-in">
+                    <div className="resume-banner-left">
+                      <span className="resume-badge">CONTINUE WATCHING</span>
+                      <h3 className="resume-title">{lastPlayingVideo.title}</h3>
+                      <p className="resume-desc text-muted">Resume at {formatTime(lastPlayingVideo.currentTime || 0)}</p>
+                    </div>
+                    <button className="btn btn-primary resume-btn" onClick={() => handlePlayVideo(lastPlayingVideo)}>
+                      <Play size={14} fill="white" />
+                      <span>Resume</span>
+                    </button>
+                  </div>
+                )}
                 <div className="glass-panel workspace-panel">
                   <div className="panel-header">
                     <h2>Select Media</h2>
@@ -1176,29 +1210,19 @@ function App() {
                               <p className="settings-section-desc">Default selections when loading a new video file.</p>
                               <div className="pref-row">
                                 <span className="pref-label">Default Audio</span>
-                                <select 
-                                  className="pref-select"
+                                <CustomSelect 
                                   value={settings.defaultAudio} 
-                                  onChange={(e) => handleDefaultLangChange('defaultAudio', e.target.value)}
-                                >
-                                  <option value="Original">Original</option>
-                                  <option value="ENG">English</option>
-                                  <option value="JAP">Japanese</option>
-                                  <option value="CHN">Chinese</option>
-                                </select>
+                                  onChange={(val) => handleDefaultLangChange('defaultAudio', val)}
+                                  options={audioOptions}
+                                />
                               </div>
                               <div className="pref-row">
                                 <span className="pref-label">Default Subtitles</span>
-                                <select 
-                                  className="pref-select"
+                                <CustomSelect 
                                   value={settings.defaultSub} 
-                                  onChange={(e) => handleDefaultLangChange('defaultSub', e.target.value)}
-                                >
-                                  <option value="Off">Off</option>
-                                  <option value="ENG">English</option>
-                                  <option value="JAP">Japanese</option>
-                                  <option value="CHN">Chinese</option>
-                                </select>
+                                  onChange={(val) => handleDefaultLangChange('defaultSub', val)}
+                                  options={subOptions}
+                                />
                               </div>
                             </div>
 
@@ -1207,45 +1231,27 @@ function App() {
                               <p className="settings-section-desc">Configure library limits and playback auto-save frequency.</p>
                               <div className="pref-row">
                                 <span className="pref-label">History Limit</span>
-                                <select 
-                                  className="pref-select"
+                                <CustomSelect 
                                   value={settings.historyLimit} 
-                                  onChange={(e) => handleDefaultLangChange('historyLimit', e.target.value === 'Infinite' ? 'Infinite' : parseInt(e.target.value, 10))}
-                                >
-                                  <option value="5">5 items</option>
-                                  <option value="10">10 items (Default)</option>
-                                  <option value="20">20 items</option>
-                                  <option value="50">50 items</option>
-                                  <option value="Infinite">Infinite</option>
-                                </select>
+                                  onChange={(val) => handleDefaultLangChange('historyLimit', val)}
+                                  options={limitOptions}
+                                />
                               </div>
                               <div className="pref-row">
                                 <span className="pref-label">History Position Auto-Save Interval</span>
-                                <select 
-                                  className="pref-select"
+                                <CustomSelect 
                                   value={settings.historySaveInterval || 5} 
-                                  onChange={(e) => handleDefaultLangChange('historySaveInterval', parseInt(e.target.value, 10))}
-                                >
-                                  <option value="2">Every 2 seconds</option>
-                                  <option value="5">Every 5 seconds (Default)</option>
-                                  <option value="10">Every 10 seconds</option>
-                                  <option value="30">Every 30 seconds</option>
-                                  <option value="60">Every 60 seconds</option>
-                                </select>
+                                  onChange={(val) => handleDefaultLangChange('historySaveInterval', val)}
+                                  options={intervalOptions}
+                                />
                               </div>
                               <div className="pref-row">
                                 <span className="pref-label">Toast Duration (Seconds)</span>
-                                <select 
-                                  className="pref-select"
+                                <CustomSelect 
                                   value={settings.toastDuration} 
-                                  onChange={(e) => handleDefaultLangChange('toastDuration', parseFloat(e.target.value))}
-                                >
-                                  <option value="0.5">0.5 seconds (Default)</option>
-                                  <option value="1">1.0 second</option>
-                                  <option value="1.5">1.5 seconds</option>
-                                  <option value="2">2.0 seconds</option>
-                                  <option value="3">3.0 seconds</option>
-                                </select>
+                                  onChange={(val) => handleDefaultLangChange('toastDuration', val)}
+                                  options={toastOptions}
+                                />
                               </div>
                             </div>
                           </div>
@@ -1383,23 +1389,16 @@ function App() {
                           <h3>Default Subtitle Style</h3>
                           <p className="settings-section-desc">Appearance defaults applied to all media tracks.</p>
                           
-                          <div className="pref-row-vertical">
+                           <div className="pref-row-vertical">
                             <span className="pref-label">Font Family</span>
-                            <select 
-                              className="pref-select"
+                            <CustomSelect 
                               value={settings.subSettings.fontFamily}
-                              onChange={(e) => {
-                                const updatedSub = { ...settings.subSettings, fontFamily: e.target.value as any };
+                              onChange={(val) => {
+                                const updatedSub = { ...settings.subSettings, fontFamily: val };
                                 handleDefaultLangChange('subSettings', updatedSub);
                               }}
-                            >
-                              <option value="poppins">Poppins (Default)</option>
-                              <option value="montserrat">Montserrat</option>
-                              <option value="outfit">Outfit</option>
-                              <option value="cinzel">Cinzel</option>
-                              <option value="serif">Playfair Display</option>
-                              <option value="monospace">Roboto Mono</option>
-                            </select>
+                              options={fontOptions}
+                            />
                           </div>
 
                           <div className="pref-row">
@@ -1992,6 +1991,67 @@ function App() {
           grid-template-columns: 1fr 1.6fr;
           gap: 1rem;
           margin-top: 1.25rem;
+        }
+        .picker-wrapper {
+          display: flex;
+          align-items: center;
+          gap: 0.45rem;
+        }
+        .color-picker-input-premium {
+          -webkit-appearance: none;
+          appearance: none;
+          border: 1px solid rgba(255, 255, 255, 0.2);
+          width: 30px;
+          height: 30px;
+          border-radius: 50%;
+          cursor: pointer;
+          background: none;
+          padding: 0;
+          transition: transform 0.2s cubic-bezier(0.175, 0.885, 0.32, 1.275), border-color 0.2s, box-shadow 0.2s;
+          box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+        }
+        .color-picker-input-premium:hover {
+          transform: scale(1.15);
+          border-color: rgba(255,255,255,0.45);
+          box-shadow: 0 0 12px rgba(59, 130, 246, 0.5), 0 4px 15px rgba(0,0,0,0.6);
+        }
+        .color-picker-input-premium:disabled {
+          opacity: 0.3;
+          cursor: not-allowed;
+          transform: none;
+          box-shadow: none;
+        }
+        .color-picker-input-premium::-webkit-color-swatch-wrapper {
+          padding: 0;
+        }
+        .color-picker-input-premium::-webkit-color-swatch {
+          border: none;
+          border-radius: 50%;
+        }
+        .bg-clear-btn {
+          flex: 1;
+          background: rgba(255, 255, 255, 0.04);
+          border: 1px solid rgba(255, 255, 255, 0.12);
+          border-radius: 6px;
+          color: rgba(255, 255, 255, 0.55);
+          padding: 0 0.75rem;
+          height: 30px;
+          font-size: 0.8rem;
+          font-weight: 600;
+          cursor: pointer;
+          transition: all 0.2s ease;
+        }
+        .bg-clear-btn:hover {
+          background: rgba(239, 68, 68, 0.12);
+          border-color: rgba(239, 68, 68, 0.4);
+          color: #ef4444;
+          box-shadow: 0 0 10px rgba(239, 68, 68, 0.25);
+        }
+        .bg-clear-btn.active {
+          background: rgba(59, 130, 246, 0.16) !important;
+          border-color: rgba(59, 130, 246, 0.45) !important;
+          color: #3b82f6 !important;
+          box-shadow: 0 0 12px rgba(59, 130, 246, 0.3);
         }
         .panel-header {
           margin-bottom: 1.75rem;

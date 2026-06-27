@@ -2642,7 +2642,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
           gap: 0.35rem;
         }
         .style-label {
-          font-size: 0.78rem;
+          font-size: 0.7rem;
           color: rgba(255, 255, 255, 0.45);
           text-transform: uppercase;
           letter-spacing: 0.05em;
@@ -2664,9 +2664,9 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
           background: transparent;
           border: none;
           color: #ffffff;
-          width: 32px;
-          height: 28px;
-          font-size: 1.15rem;
+          width: 28px;
+          height: 24px;
+          font-size: 0.95rem;
           font-weight: 500;
           cursor: pointer;
           transition: background 0.15s ease, color 0.15s;
@@ -2682,34 +2682,19 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
           background: rgba(255, 255, 255, 0.15);
         }
         .size-value-display {
-          font-size: 0.88rem;
+          font-size: 0.8rem;
           font-weight: 600;
           color: #ffffff;
-          padding: 0 0.85rem;
-          min-width: 46px;
+          padding: 0 0.6rem;
+          min-width: 38px;
           text-align: center;
         }
         
-        /* Font Family Select Premium */
-        .style-select-premium {
-          background: rgba(0, 0, 0, 0.25);
-          border: 1px solid rgba(255, 255, 255, 0.15);
-          border-radius: 6px;
-          color: #ffffff;
-          padding: 0.45rem 0.6rem;
-          font-size: 0.88rem;
-          outline: none;
-          cursor: pointer;
-          transition: border-color 0.2s ease, background-color 0.2s;
-          width: 100%;
-        }
-        .style-select-premium:hover {
-          border-color: rgba(255, 255, 255, 0.25);
+        /* Font Family Select Premium override for popover style col */
+        .popover-style-col .custom-select-trigger {
+          font-size: 0.95rem;
+          padding: 0.55rem 0.9rem;
           background: rgba(0, 0, 0, 0.35);
-        }
-        .style-select-premium option {
-          background: #181818;
-          color: #ffffff;
         }
         
         /* Subtitle Color Selector - 1 line Text & Background */
@@ -2731,53 +2716,58 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
         .color-picker-input-premium {
           -webkit-appearance: none;
           appearance: none;
-          border: 1px solid rgba(255, 255, 255, 0.15);
-          width: 28px;
-          height: 28px;
-          border-radius: 6px;
+          border: 1px solid rgba(255, 255, 255, 0.2);
+          width: 30px;
+          height: 30px;
+          border-radius: 50%;
           cursor: pointer;
           background: none;
           padding: 0;
-          transition: transform 0.15s ease, border-color 0.15s;
-          box-shadow: 0 4px 10px rgba(0,0,0,0.3);
+          transition: transform 0.2s cubic-bezier(0.175, 0.885, 0.32, 1.275), border-color 0.2s, box-shadow 0.2s;
+          box-shadow: 0 4px 12px rgba(0,0,0,0.5);
         }
         .color-picker-input-premium:hover {
-          transform: scale(1.08);
-          border-color: rgba(255,255,255,0.3);
+          transform: scale(1.15);
+          border-color: rgba(255,255,255,0.45);
+          box-shadow: 0 0 12px rgba(59, 130, 246, 0.5), 0 4px 15px rgba(0,0,0,0.6);
         }
         .color-picker-input-premium:disabled {
-          opacity: 0.4;
+          opacity: 0.3;
           cursor: not-allowed;
           transform: none;
+          box-shadow: none;
         }
         .color-picker-input-premium::-webkit-color-swatch-wrapper {
           padding: 0;
         }
         .color-picker-input-premium::-webkit-color-swatch {
           border: none;
-          border-radius: 5px;
+          border-radius: 50%;
         }
         .bg-clear-btn {
           flex: 1;
-          background: rgba(255, 255, 255, 0.05);
-          border: 1px solid rgba(255, 255, 255, 0.15);
+          background: rgba(255, 255, 255, 0.04);
+          border: 1px solid rgba(255, 255, 255, 0.12);
           border-radius: 6px;
-          color: rgba(255, 255, 255, 0.5);
-          padding: 0 0.6rem;
-          height: 28px;
+          color: rgba(255, 255, 255, 0.55);
+          padding: 0 0.75rem;
+          height: 30px;
           font-size: 0.8rem;
-          font-weight: 500;
+          font-weight: 600;
           cursor: pointer;
-          transition: all 0.15s ease;
+          transition: all 0.2s ease;
         }
         .bg-clear-btn:hover {
-          background: rgba(255, 255, 255, 0.1);
-          color: #ffffff;
+          background: rgba(239, 68, 68, 0.12);
+          border-color: rgba(239, 68, 68, 0.4);
+          color: #ef4444;
+          box-shadow: 0 0 10px rgba(239, 68, 68, 0.25);
         }
         .bg-clear-btn.active {
-          background: #3b82f6;
-          border-color: #3b82f6;
-          color: #ffffff;
+          background: rgba(59, 130, 246, 0.16) !important;
+          border-color: rgba(59, 130, 246, 0.45) !important;
+          color: #3b82f6 !important;
+          box-shadow: 0 0 12px rgba(59, 130, 246, 0.3);
         }
         
         /* Font weight & style buttons row */

@@ -2,6 +2,16 @@ import React, { useState } from 'react';
 import { Check } from 'lucide-react';
 import type { CustomAudioTrack, CustomSubtitleTrack } from '../types/media';
 import type { MediaStream } from '../services/ffmpeg';
+import { CustomSelect } from './CustomSelect';
+
+const fontOptions = [
+  { value: 'poppins', label: 'Poppins' },
+  { value: 'montserrat', label: 'Montserrat' },
+  { value: 'outfit', label: 'Outfit' },
+  { value: 'cinzel', label: 'Cinzel' },
+  { value: 'serif', label: 'Playfair' },
+  { value: 'monospace', label: 'Mono' }
+];
 
 export interface AudioSubPopoverProps {
   audioStreams: MediaStream[];
@@ -230,19 +240,11 @@ export const AudioSubPopover: React.FC<AudioSubPopoverProps> = ({
               <div className="style-font-size-row">
                 <div className="style-row">
                   <span className="style-label">Font</span>
-                  <select 
+                  <CustomSelect 
                     value={subSettings.fontFamily}
-                    onChange={(e) => onUpdateSubSettings({ fontFamily: e.target.value as any })}
-                    className="style-select-premium"
-                    onClick={(e) => e.stopPropagation()}
-                  >
-                    <option value="poppins">Poppins</option>
-                    <option value="montserrat">Montserrat</option>
-                    <option value="outfit">Outfit</option>
-                    <option value="cinzel">Cinzel</option>
-                    <option value="serif">Playfair</option>
-                    <option value="monospace">Mono</option>
-                  </select>
+                    onChange={(val) => onUpdateSubSettings({ fontFamily: val })}
+                    options={fontOptions}
+                  />
                 </div>
 
                 <div className="style-row">
