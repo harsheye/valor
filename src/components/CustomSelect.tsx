@@ -179,7 +179,7 @@ export const CustomSelect: React.FC<CustomSelectProps> = ({
           transition: border-color 0.15s;
         }
         .custom-select-search-input:focus {
-          border-color: rgba(59, 130, 246, 0.5);
+          border-color: rgba(229, 9, 20, 0.5);
         }
         .custom-select-options-list {
           max-height: 180px;
@@ -209,7 +209,7 @@ export const CustomSelect: React.FC<CustomSelectProps> = ({
           color: #ffffff;
         }
         .custom-select-option.selected {
-          background: #3b82f6;
+          background: #e50914;
           color: #ffffff;
         }
         .option-check-icon {

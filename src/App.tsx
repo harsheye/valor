@@ -1392,7 +1392,6 @@ function App() {
                   const continueWatchingList = videos.filter(v => v.currentTime && v.currentTime > 5 && (typeof v.duration !== 'number' || v.currentTime < v.duration - 5));
                   if (continueWatchingList.length === 0) return null;
                   const primaryContinue = continueWatchingList[0];
-                  const otherContinueList = continueWatchingList.slice(1);
 
                   return (
                     <div className="continue-watching-section animate-fade-in" style={{ marginBottom: '1.5rem', width: '100%' }}>
@@ -1404,7 +1403,7 @@ function App() {
                           background: 'linear-gradient(135deg, #e50914 0%, #9b040c 100%)', 
                           borderRadius: '12px', 
                           padding: '1.5rem', 
-                          marginBottom: otherContinueList.length > 0 ? '1.25rem' : '0',
+                          marginBottom: '0',
                           display: 'flex',
                           justifyContent: 'space-between',
                           alignItems: 'center',
@@ -1482,61 +1481,6 @@ function App() {
                           )}
                         </button>
                       </div>
-
-                      {/* Secondary horizontal scrolling list for other in-progress items */}
-                      {otherContinueList.length > 0 && (
-                        <>
-                          <h4 style={{ fontSize: '0.85rem', fontWeight: 600, color: 'rgba(255,255,255,0.4)', marginBottom: '0.5rem', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-                            Recently Played
-                          </h4>
-                          <div className="continue-watching-list" style={{ display: 'flex', gap: '1rem', overflowX: 'auto', paddingBottom: '0.5rem', scrollbarWidth: 'thin' }}>
-                            {otherContinueList.map((video) => {
-                              const durationSeconds = parseDurationToSeconds(video.duration);
-                              const progress = durationSeconds > 0 && video.currentTime
-                                ? Math.round((video.currentTime / durationSeconds) * 100)
-                                : 0;
-                              const classification = classifyVideoTitle(video.title);
-
-                              return (
-                                <div 
-                                  key={video.id} 
-                                  onClick={() => handlePlayVideo(video)}
-                                  style={{
-                                    flex: '0 0 240px',
-                                    background: 'rgba(255,255,255,0.02)',
-                                    border: '1px solid rgba(255,255,255,0.06)',
-                                    borderRadius: '8px',
-                                    padding: '0.85rem',
-                                    cursor: 'pointer',
-                                    display: 'flex',
-                                    flexDirection: 'column',
-                                    gap: '0.5rem',
-                                    transition: 'all 0.2s',
-                                    position: 'relative'
-                                  }}
-                                  className="continue-card"
-                                >
-                                  <div style={{ fontSize: '0.85rem', fontWeight: 600, color: '#fff', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={video.title}>
-                                    {classification.displayTitle}
-                                  </div>
-                                  <div style={{ fontSize: '0.72rem', color: 'rgba(255,255,255,0.45)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                                    <span>
-                                      {isInstantlyPlayable(video) ? `Resume at ${formatTime(video.currentTime || 0)}` : 'Select Media to Play'}
-                                    </span>
-                                    {progress > 0 && <span>{progress}%</span>}
-                                  </div>
-                                  
-                                  {progress > 0 && (
-                                    <div style={{ height: '4px', width: '100%', background: 'rgba(255,255,255,0.1)', borderRadius: '2px', overflow: 'hidden' }}>
-                                      <div style={{ height: '100%', width: `${progress}%`, background: '#3b82f6' }} />
-                                    </div>
-                                  )}
-                                </div>
-                              );
-                            })}
-                          </div>
-                        </>
-                      )}
                     </div>
                   );
                 })()}
@@ -3630,6 +3574,24 @@ function App() {
           .main-layout-wrapper {
             height: calc(100vh - 64px);
             overflow-y: auto;
+          }
+        @media (max-width: 580px) {
+          .premium-red-banner {
+            flex-direction: column !important;
+            align-items: stretch !important;
+            gap: 1.2rem;
+          }
+          .premium-red-banner button {
+            width: 100%;
+            justify-content: center;
+          }
+          .inline-url-input-wrapper {
+            flex-direction: column;
+            gap: 0.55rem;
+          }
+          .inline-url-btn {
+            width: 100%;
+            justify-content: center;
           }
         }
 

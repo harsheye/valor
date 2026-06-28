@@ -2959,7 +2959,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
           background: rgba(0, 0, 0, 0.35);
         }
         .style-row .custom-select-container {
-          width: 50% !important;
+          width: 100% !important;
         }
         
         /* Subtitle Color Selector - 1 line Text & Background */
@@ -3188,8 +3188,8 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
           color: #ffffff;
         }
         .popover-option.active {
-          background: rgba(59, 130, 246, 0.08);
-          border-color: rgba(59, 130, 246, 0.2);
+          background: rgba(229, 9, 20, 0.08);
+          border-color: rgba(229, 9, 20, 0.2);
           color: #ffffff;
           font-weight: 500;
         }
