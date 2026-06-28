@@ -44,4 +44,5 @@ export interface VideoItem {
   probingError?: string;
   playbackMode?: 'advanced' | 'native';
   lastPlayedDate?: string;
+  localFilePath?: string;
 }

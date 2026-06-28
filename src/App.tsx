@@ -442,7 +442,8 @@ function App() {
         lastPlayedDate: v.lastPlayedDate,
         totalTimeWatched: (v as any).totalTimeWatched,
         rating: (v as any).rating,
-        timeToFinish: (v as any).timeToFinish
+        timeToFinish: (v as any).timeToFinish,
+        localFilePath: v.localFilePath
       }));
 
       // Sync to backend file if storageMode is file
@@ -706,7 +707,8 @@ function App() {
       streams: mergedStreams,
       audioTracks: mergedAudioTracks,
       subtitleTracks: mergedSubtitleTracks,
-      lastPlayedDate: new Date().toISOString()
+      lastPlayedDate: new Date().toISOString(),
+      localFilePath: (file as any).path || (file as any).localFilePath || undefined
     };
 
     setVideos(prev => {
@@ -742,6 +744,21 @@ function App() {
         });
         setPlayingVideo(video);
       } else if (video.type === 'local') {
+        if (video.localFilePath) {
+          const streamUrl = `${window.location.origin}/local-video-stream?path=${encodeURIComponent(video.localFilePath)}`;
+          const updated = {
+            ...video,
+            url: streamUrl
+          };
+          setVideos(prev => {
+            const filtered = prev.filter(v => v.id !== video.id);
+            return [updated, ...filtered];
+          });
+          setPlayingVideo(updated);
+          isPickerOpenRef.current = false;
+          return;
+        }
+
         if (!video.file && video.url) {
           // Play directly from the local stream URL (open-with) without picker
           setVideos(prev => {
@@ -870,6 +887,17 @@ function App() {
     setIsProcessing(true);
     setProcessingStep('Validating security protocols...');
     
+    let localPathVal: string | undefined = undefined;
+    if (url.includes('path=')) {
+      try {
+        const u = new URL(url);
+        const p = u.searchParams.get('path');
+        if (p) {
+          localPathVal = p;
+        }
+      } catch {}
+    }
+    
     try {
       const urlId = `url-${Date.now()}`;
       // Tighten up URL security - enforce HTTP/HTTPS to prevent protocol-based injection/SSRF/file disclosure
@@ -891,7 +919,7 @@ function App() {
       
       if (!parserAvailable) {
         console.log('[App] Remote byte access blocked or failed. Engaging Native Playback Mode.');
-        const title = url.substring(url.lastIndexOf('/') + 1) || 'Remote Stream';
+        const title = localPathVal ? (localPathVal.split(/[/\\]/).pop() || localPathVal) : (url.substring(url.lastIndexOf('/') + 1) || 'Remote Stream');
         const nativeItem: VideoItem = {
           id: urlId,
           title,
@@ -903,7 +931,8 @@ function App() {
           audioTracks: [],
           subtitleTracks: [],
           playbackMode: 'native',
-          probingError: 'The remote server blocks cross-origin byte access (CORS).'
+          probingError: 'The remote server blocks cross-origin byte access (CORS).',
+          localFilePath: localPathVal
         };
         setVideos(prev => {
           const filtered = prev.filter(v => v.url !== url);
@@ -987,16 +1016,7 @@ function App() {
       const audioTracks: CustomAudioTrack[] = [];
       const subtitleTracks: CustomSubtitleTrack[] = [];
 
-      let title = url.substring(url.lastIndexOf('/') + 1) || 'Remote Stream';
-      if (url.includes('path=')) {
-        try {
-          const u = new URL(url);
-          const p = u.searchParams.get('path');
-          if (p) {
-            title = p.split(/[/\\]/).pop() || p;
-          }
-        } catch {}
-      }
+      let title = localPathVal ? (localPathVal.split(/[/\\]/).pop() || localPathVal) : (url.substring(url.lastIndexOf('/') + 1) || 'Remote Stream');
       const videoItem: VideoItem = {
         id: urlId,
         title,
@@ -1015,7 +1035,8 @@ function App() {
         currentTime: 0,
         timecodeScale,
         playbackMode: 'advanced',
-        lastPlayedDate: new Date().toISOString()
+        lastPlayedDate: new Date().toISOString(),
+        localFilePath: localPathVal
       };
 
       setVideos(prev => {
