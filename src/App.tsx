@@ -305,6 +305,8 @@ function App() {
   const historyVideoInputRef = useRef<HTMLInputElement>(null);
   const pendingLocalReassociateIdRef = useRef<string | null>(null);
   const isPickerOpenRef = useRef(false);
+  const lastHistorySyncTimeRef = useRef<number>(0);
+  const historySyncTimeoutRef = useRef<any>(null);
 
   const defaultSettings = {
     keybinds: {
@@ -513,13 +515,28 @@ function App() {
         playedDates: v.playedDates
       }));
 
-      // Sync to backend file if storageMode is file
+      // Sync to backend file if storageMode is file (debounced to once every 10 seconds)
       if (settings.storageMode === 'file') {
-        fetch('/api/history', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(serialized)
-        }).catch(err => console.error('Failed to sync history to server file:', err));
+        const now = Date.now();
+        if (now - lastHistorySyncTimeRef.current > 10000) {
+          lastHistorySyncTimeRef.current = now;
+          if (historySyncTimeoutRef.current) clearTimeout(historySyncTimeoutRef.current);
+          fetch('/api/history', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(serialized)
+          }).catch(err => console.error('Failed to sync history to server file:', err));
+        } else {
+          if (historySyncTimeoutRef.current) clearTimeout(historySyncTimeoutRef.current);
+          historySyncTimeoutRef.current = setTimeout(() => {
+            lastHistorySyncTimeRef.current = Date.now();
+            fetch('/api/history', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(serialized)
+            }).catch(err => console.error('Failed to sync history to server file:', err));
+          }, 10000);
+        }
       }
 
       try {
