@@ -475,13 +475,37 @@ export class FFmpegService {
         }
 
         if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
-        const code = await ff.exec(args);
-        if (code !== 0) {
-          throw new Error(`Remote audio extraction failed. Exit code ${code}`);
+        
+        let code = -1;
+        let execFailed = false;
+        try {
+          code = await ff.exec(args);
+        } catch (execError) {
+          logger.warn("[ffmpeg] Remote segment ff.exec threw an error, forcing worker recreation:", execError);
+          execFailed = true;
+          this.terminateWorker(); // Force recreate next time
+        }
+
+        if (code !== 0 || execFailed) {
+          logger.warn(`[ffmpeg] Remote segment ff.exec returned code ${code}, attempting to read output file anyway.`);
+          if (!execFailed) {
+            this.terminateWorker(); // Force recreate next time
+          }
         }
 
         if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
-        const data = await ff.readFile(tempOutFile);
+        
+        let data: Uint8Array | null = null;
+        try {
+          data = await ff.readFile(tempOutFile) as Uint8Array;
+        } catch (readErr) {
+          logger.warn("[ffmpeg] Failed to read output file after extraction:", readErr);
+        }
+
+        if (!data || data.length === 0) {
+          throw new Error(`Remote audio extraction failed. Output file is empty or missing. Exit status code: ${code}`);
+        }
+
         const blob = new Blob([data as any], { type: mimeType });
         const url = URL.createObjectURL(blob);
 
@@ -628,13 +652,37 @@ export class FFmpegService {
         }
 
         if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
-        const code = await ff.exec(args);
-        if (code !== 0) {
-          throw new Error(`Local audio chunk extraction failed. Exit code ${code}`);
+        
+        let code = -1;
+        let execFailed = false;
+        try {
+          code = await ff.exec(args);
+        } catch (execError) {
+          logger.warn("[ffmpeg] Local segment ff.exec threw an error, forcing worker recreation:", execError);
+          execFailed = true;
+          this.terminateWorker(); // Force recreate next time
+        }
+
+        if (code !== 0 || execFailed) {
+          logger.warn(`[ffmpeg] Local segment ff.exec returned code ${code}, attempting to read output file anyway.`);
+          if (!execFailed) {
+            this.terminateWorker(); // Force recreate next time
+          }
         }
 
         if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
-        const data = await ff.readFile(tempOutFile);
+        
+        let data: Uint8Array | null = null;
+        try {
+          data = await ff.readFile(tempOutFile) as Uint8Array;
+        } catch (readErr) {
+          logger.warn("[ffmpeg] Failed to read output file after extraction:", readErr);
+        }
+
+        if (!data || data.length === 0) {
+          throw new Error(`Local audio chunk extraction failed. Output file is empty or missing. Exit status code: ${code}`);
+        }
+
         const blob = new Blob([data as any], { type: mimeType });
         const url = URL.createObjectURL(blob);
 
