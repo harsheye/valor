@@ -187,6 +187,17 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     hasAutoSelectedRef.current = false;
   }, [video.id]);
 
+  const onUpdateVideoRef = useRef(onUpdateVideo);
+  const durationRef = useRef(duration);
+
+  useEffect(() => {
+    onUpdateVideoRef.current = onUpdateVideo;
+  }, [onUpdateVideo]);
+
+  useEffect(() => {
+    durationRef.current = duration;
+  }, [duration]);
+
   useEffect(() => {
     if (video.isRemote) {
       const byteSource = new HttpByteSource(video.url);
@@ -402,7 +413,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
             seekMap: seekMap.length > 0 ? seekMap : undefined,
             timecodeScale
           };
-          onUpdateVideo(updatedVideo);
+          onUpdateVideoRef.current(updatedVideo);
         } catch (err) {
           logger.error('Auto probe streams failed:', err);
           probingVideoIdRef.current = null; // allow retry
@@ -412,7 +423,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       }
     };
     autoProbe();
-  }, [video.id, video.type, video.file, onUpdateVideo]);
+  }, [video.id, video.type, video.file]);
 
   // Synchronize Audio Engine
   useEffect(() => {
@@ -1570,12 +1581,13 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       const updatedSessions = [...existingSessions, newSession];
 
       let timeToFinish = (video as any).timeToFinish;
-      if (!timeToFinish && duration > 0 && videoRef.current && (videoRef.current.currentTime / duration) >= 0.95) {
+      const currentDuration = durationRef.current;
+      if (!timeToFinish && currentDuration > 0 && videoRef.current && (videoRef.current.currentTime / currentDuration) >= 0.95) {
         const firstPlay = (video as any).firstPlayTimestamp || mountTimeRef.current;
         timeToFinish = (exitTime - firstPlay) / 1000;
       }
 
-      onUpdateVideo((prev: any) => ({
+      onUpdateVideoRef.current((prev: any) => ({
         ...prev,
         currentTime: videoRef.current ? videoRef.current.currentTime : prev.currentTime,
         totalTimeWatched: Math.round(totalTimeWatchedRef.current),
@@ -1584,7 +1596,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
         firstPlayTimestamp: prev.firstPlayTimestamp || mountTimeRef.current
       }), true);
     };
-  }, [duration, onUpdateVideo]);
+  }, []);
 
   // Periodically save current playback position to parent state
   useEffect(() => {
@@ -1601,12 +1613,13 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
         const updatedSessions = [...existingSessions, currentSession];
 
         let timeToFinish = (video as any).timeToFinish;
-        if (!timeToFinish && duration > 0 && (videoRef.current.currentTime / duration) >= 0.95) {
+        const currentDuration = durationRef.current;
+        if (!timeToFinish && currentDuration > 0 && (videoRef.current.currentTime / currentDuration) >= 0.95) {
           const firstPlay = (video as any).firstPlayTimestamp || mountTimeRef.current;
           timeToFinish = (exitTime - firstPlay) / 1000;
         }
 
-        onUpdateVideo((prev: any) => ({
+        onUpdateVideoRef.current((prev: any) => ({
           ...prev,
           currentTime: videoRef.current ? videoRef.current.currentTime : prev.currentTime,
           totalTimeWatched: Math.round(totalTimeWatchedRef.current),
@@ -1617,7 +1630,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       }
     }, intervalMs);
     return () => clearInterval(interval);
-  }, [onUpdateVideo, historySaveInterval, duration]);
+  }, [historySaveInterval]);
 
   // Auto-select preferred default audio/subtitle streams
   useEffect(() => {
