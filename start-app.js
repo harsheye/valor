@@ -227,6 +227,9 @@ const backendServer = http.createServer((req, res) => {
     req.on('close', cleanUp);
     res.on('close', cleanUp);
     res.on('finish', cleanUp);
+    req.on('error', (err) => {
+      console.error('[Server Request Error]', err.message);
+    });
 
     trackStart();
 
