@@ -136,6 +136,28 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+  // 1.5. Play command forward receiver
+  if (pathname === '/api/play') {
+    const file = parsedUrl.searchParams.get('file');
+    const openUrl = file 
+      ? `http://127.0.0.1:${PORT}/?file=${encodeURIComponent(file)}`
+      : `http://127.0.0.1:${PORT}/`;
+      
+    console.log(`[Server] Received external play command. Opening browser: ${openUrl}`);
+    if (process.platform === 'win32') {
+      spawn('cmd', ['/c', 'start', '', openUrl], { detached: true }).unref();
+    } else if (process.platform === 'darwin') {
+      spawn('open', [openUrl], { detached: true }).unref();
+    } else {
+      spawn('xdg-open', [openUrl], { detached: true }).unref();
+    }
+    
+    res.statusCode = 200;
+    res.setHeader('Content-Type', 'application/json');
+    res.end(JSON.stringify({ success: true }));
+    return;
+  }
+
   // Settings API
   if (pathname === '/api/settings') {
     res.statusCode = 200;
@@ -280,13 +302,13 @@ const server = http.createServer((req, res) => {
   });
 });
 
-// Auto-shutdown if no active tabs (5-minute grace period under all conditions)
+// Auto-shutdown if no active tabs (1-minute grace period under all conditions)
 const startShutdownChecker = () => {
   setInterval(() => {
     if (activeConnections > 0) {
       lastHeartbeat = Date.now();
     }
-    const limit = 300000; // 5 minutes
+    const limit = 60000; // 1 minute
     if (Date.now() - lastHeartbeat > limit) {
       console.log('[Server] No active tabs detected. Shutting down...');
       server.close(() => {
@@ -345,4 +367,63 @@ server.on('error', (err) => {
   }
 });
 
-attemptListen();
+// Startup check: reuse existing running server if present
+let checkingExisting = false;
+const activePortFile = path.join(dataDir, 'active_port.txt');
+if (fs.existsSync(activePortFile)) {
+  try {
+    const savedPort = parseInt(fs.readFileSync(activePortFile, 'utf8').trim(), 10);
+    if (savedPort && !isNaN(savedPort)) {
+      checkingExisting = true;
+      console.log(`[Server] Checking for running instance on port ${savedPort}...`);
+      
+      const options = {
+        host: '127.0.0.1',
+        port: savedPort,
+        path: '/api/heartbeat',
+        method: 'POST',
+        timeout: 1000
+      };
+      
+      const clientReq = http.request(options, (res) => {
+        if (res.statusCode === 200) {
+          console.log(`[Server] Found running instance on port ${savedPort}. Forwarding play command...`);
+          const playPath = resolvedFilePath 
+            ? `/api/play?file=${encodeURIComponent(resolvedFilePath)}`
+            : '/api/play';
+            
+          const playReq = http.request({
+            host: '127.0.0.1',
+            port: savedPort,
+            path: playPath,
+            method: 'GET',
+            timeout: 1000
+          }, () => {
+            console.log('[Server] Command successfully forwarded. Exiting.');
+            process.exit(0);
+          });
+          playReq.on('error', () => {
+            process.exit(0);
+          });
+          playReq.end();
+        } else {
+          attemptListen();
+        }
+      });
+      
+      clientReq.on('error', () => {
+        attemptListen();
+      });
+      clientReq.on('timeout', () => {
+        clientReq.destroy();
+        attemptListen();
+      });
+      clientReq.end();
+    }
+  } catch (e) {
+    console.error('[Server] Port check error:', e.message);
+    attemptListen();
+  }
+} else {
+  attemptListen();
+}
