@@ -976,19 +976,37 @@ function App() {
       if (!parserAvailable) {
         console.log('[App] Remote byte access blocked or failed. Engaging Native Playback Mode.');
         const title = localPathVal ? (localPathVal.split(/[/\\]/).pop() || localPathVal) : (url.substring(url.lastIndexOf('/') + 1) || 'Remote Stream');
+        
+        // Match history by normalized identity
+        let match: VideoItem | undefined = undefined;
+        try {
+          const savedHistory = localStorage.getItem('valor_videos');
+          if (savedHistory) {
+            const parsedHistory = JSON.parse(savedHistory) as VideoItem[];
+            const targetIden = getVideoIdentity(title);
+            match = parsedHistory.find(v => getVideoIdentity(v.title) === targetIden);
+          }
+        } catch (e) {}
+
         const nativeItem: VideoItem = {
-          id: urlId,
+          id: match ? match.id : urlId,
           title,
           url,
           type: isLocalFile ? 'local' : 'url',
           isRemote: !isLocalFile,
           fileName: isLocalFile ? title : undefined,
           containerType: 'unknown',
-          audioTracks: [],
-          subtitleTracks: [],
+          audioTracks: match ? match.audioTracks : [],
+          subtitleTracks: match ? match.subtitleTracks : [],
           playbackMode: 'native',
           probingError: 'The remote server blocks cross-origin byte access (CORS).',
-          localFilePath: localPathVal
+          localFilePath: localPathVal,
+          currentTime: match ? match.currentTime || 0 : 0,
+          lastPlayedDate: new Date().toISOString(),
+          playedDates: match ? Array.from(new Set([...(match.playedDates || []), new Date().toISOString()])) : [new Date().toISOString()],
+          rating: match ? match.rating : undefined,
+          totalTimeWatched: match ? match.totalTimeWatched : undefined,
+          timeToFinish: match ? match.timeToFinish : undefined
         };
         setVideos(prev => mergeOrAddVideo(prev, nativeItem));
         setPlayingVideo(nativeItem);
@@ -1070,8 +1088,20 @@ function App() {
       const subtitleTracks: CustomSubtitleTrack[] = [];
 
       let title = localPathVal ? (localPathVal.split(/[/\\]/).pop() || localPathVal) : (url.substring(url.lastIndexOf('/') + 1) || 'Remote Stream');
+      
+      // Match history by normalized identity
+      let match: VideoItem | undefined = undefined;
+      try {
+        const savedHistory = localStorage.getItem('valor_videos');
+        if (savedHistory) {
+          const parsedHistory = JSON.parse(savedHistory) as VideoItem[];
+          const targetIden = getVideoIdentity(title);
+          match = parsedHistory.find(v => getVideoIdentity(v.title) === targetIden);
+        }
+      } catch (e) {}
+
       const videoItem: VideoItem = {
-        id: urlId,
+        id: match ? match.id : urlId,
         title,
         url,
         type: isLocalFile ? 'local' : 'url',
@@ -1083,13 +1113,17 @@ function App() {
         duration: duration !== 'Unknown' ? duration : undefined,
         format,
         streams,
-        audioTracks,
-        subtitleTracks,
-        currentTime: 0,
+        audioTracks: match ? match.audioTracks : audioTracks,
+        subtitleTracks: match ? match.subtitleTracks : subtitleTracks,
+        currentTime: match ? match.currentTime || 0 : 0,
         timecodeScale,
         playbackMode: 'advanced',
         lastPlayedDate: new Date().toISOString(),
-        localFilePath: localPathVal
+        localFilePath: localPathVal,
+        playedDates: match ? Array.from(new Set([...(match.playedDates || []), new Date().toISOString()])) : [new Date().toISOString()],
+        rating: match ? match.rating : undefined,
+        totalTimeWatched: match ? match.totalTimeWatched : undefined,
+        timeToFinish: match ? match.timeToFinish : undefined
       };
 
       setVideos(prev => mergeOrAddVideo(prev, videoItem));
@@ -1112,19 +1146,36 @@ function App() {
       }
 
       const title = url.substring(url.lastIndexOf('/') + 1) || 'Remote Stream';
+      
+      // Match history by normalized identity
+      let match: VideoItem | undefined = undefined;
+      try {
+        const savedHistory = localStorage.getItem('valor_videos');
+        if (savedHistory) {
+          const parsedHistory = JSON.parse(savedHistory) as VideoItem[];
+          const targetIden = getVideoIdentity(title);
+          match = parsedHistory.find(v => getVideoIdentity(v.title) === targetIden);
+        }
+      } catch (e) {}
+
       const fallbackItem: VideoItem = {
-        id: `url-${Date.now()}`,
+        id: match ? match.id : `url-${Date.now()}`,
         title,
         url,
         type: isLocalFile ? 'local' : 'url',
         isRemote: !isLocalFile,
         fileName: isLocalFile ? title : undefined,
         containerType: 'unknown',
-        audioTracks: [],
-        subtitleTracks: [],
+        audioTracks: match ? match.audioTracks : [],
+        subtitleTracks: match ? match.subtitleTracks : [],
         playbackMode: 'native',
         probingError: probingError || undefined,
-        lastPlayedDate: new Date().toISOString()
+        currentTime: match ? match.currentTime || 0 : 0,
+        lastPlayedDate: new Date().toISOString(),
+        playedDates: match ? Array.from(new Set([...(match.playedDates || []), new Date().toISOString()])) : [new Date().toISOString()],
+        rating: match ? match.rating : undefined,
+        totalTimeWatched: match ? match.totalTimeWatched : undefined,
+        timeToFinish: match ? match.timeToFinish : undefined
       };
       setVideos(prev => mergeOrAddVideo(prev, fallbackItem));
       setPlayingVideo(fallbackItem);

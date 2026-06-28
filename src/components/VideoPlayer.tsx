@@ -410,7 +410,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
 
   // Synchronize Audio Engine
   useEffect(() => {
-    if (selectedAudioTrack && videoRef.current && audioRef.current) {
+    if (selectedAudioTrack && selectedAudioTrack.url && videoRef.current && audioRef.current) {
       logger.player(`Initializing sync engine for track: ${selectedAudioTrack.name} with offset: ${activeAudioStartOffset}`);
       const engine = new AudioSyncEngine(videoRef.current, audioRef.current, activeAudioStartOffset);
       syncEngineRef.current = engine;
@@ -438,7 +438,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       localStorage.removeItem('valor_volume');
     }
     if (videoRef.current) {
-      videoRef.current.volume = selectedAudioTrack ? 0 : volume;
+      videoRef.current.volume = (selectedAudioTrack && selectedAudioTrack.url) ? 0 : volume;
     }
     if (audioRef.current) {
       audioRef.current.volume = volume;
@@ -452,7 +452,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       localStorage.removeItem('valor_muted');
     }
     if (videoRef.current) {
-      videoRef.current.muted = selectedAudioTrack ? true : isMuted;
+      videoRef.current.muted = (selectedAudioTrack && selectedAudioTrack.url) ? true : isMuted;
     }
     if (audioRef.current) {
       audioRef.current.muted = isMuted;
@@ -2939,6 +2939,9 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
           font-size: 0.95rem;
           padding: 0.55rem 0.9rem;
           background: rgba(0, 0, 0, 0.35);
+        }
+        .style-row .custom-select-container {
+          width: 50% !important;
         }
         
         /* Subtitle Color Selector - 1 line Text & Background */
