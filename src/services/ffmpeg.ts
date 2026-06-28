@@ -56,12 +56,12 @@ export interface ProbeResult {
 const COPY_CODEC_RE = /aac|mp3|mpeg|opus|flac|vorbis/i;
 
 function getOutputFormat(codec: string): { ext: string; mimeType: string } {
-  if (/aac/i.test(codec))    return { ext: "aac",  mimeType: "audio/aac" };
+  if (/aac/i.test(codec))    return { ext: "m4a",  mimeType: "audio/mp4" };
   if (/mp3|mpeg/i.test(codec)) return { ext: "mp3",  mimeType: "audio/mpeg" };
   if (/opus|vorbis/i.test(codec)) return { ext: "ogg", mimeType: "audio/ogg" };
   if (/flac/i.test(codec))   return { ext: "flac", mimeType: "audio/flac" };
-  // Transcode targets — always transcode to raw AAC (ADTS) to play immediately
-  return { ext: "aac", mimeType: "audio/aac" };
+  // Transcode targets — transcode to M4A with faststart for instant play/seek
+  return { ext: "m4a", mimeType: "audio/mp4" };
 }
 
 function isCopyCodec(codec: string): boolean {
@@ -452,6 +452,8 @@ export class FFmpegService {
         const selectStream = [`-map`, `0:${stream.index}`];
         let args: string[];
 
+        const faststartFlags = ext === 'm4a' ? ['-movflags', '+faststart'] : [];
+
         if (isCopyCodec(stream.codec)) {
           args = [
             '-fflags', '+ignidx',
@@ -459,6 +461,7 @@ export class FFmpegService {
             ...selectStream,
             '-vn',
             '-acodec', 'copy',
+            ...faststartFlags,
             tempOutFile
           ];
         } else {
@@ -470,6 +473,7 @@ export class FFmpegService {
             '-acodec', 'aac',
             '-ac', '2',
             '-ab', '128k',
+            ...faststartFlags,
             tempOutFile
           ];
         }
@@ -627,6 +631,8 @@ export class FFmpegService {
         const selectStream = [`-map`, `0:${stream.index}`];
         let args: string[];
 
+        const faststartFlags = ext === 'm4a' ? ['-movflags', '+faststart'] : [];
+
         if (isCopyCodec(stream.codec)) {
           args = [
             '-ss', startTime.toFixed(3),
@@ -635,6 +641,7 @@ export class FFmpegService {
             ...selectStream,
             '-vn',
             '-acodec', 'copy',
+            ...faststartFlags,
             tempOutFile
           ];
         } else {
@@ -647,6 +654,7 @@ export class FFmpegService {
             '-acodec', 'aac',
             '-ac', '2',
             '-ab', '128k',
+            ...faststartFlags,
             tempOutFile
           ];
         }
