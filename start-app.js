@@ -211,7 +211,7 @@ async function start() {
   };
 
   // Start initial timer in case the browser doesn't open or connect at all
-  startShutdownTimer(15000, 'Initial startup timeout (no tab connected)');
+  startShutdownTimer(300000, 'Initial startup timeout (no tab connected)');
 
   // Track WebSocket connections from Vite clients
   server.ws.on('connection', (socket) => {
