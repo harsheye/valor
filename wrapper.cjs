@@ -226,6 +226,8 @@ const backendServer = http.createServer((req, res) => {
     }
 
     let connectionTracked = false;
+    let fileStream = null;
+
     const trackStart = () => {
       if (!connectionTracked) {
         activeConnections++;
@@ -241,9 +243,17 @@ const backendServer = http.createServer((req, res) => {
       }
     };
 
-    req.on('close', trackEnd);
-    res.on('close', trackEnd);
-    res.on('finish', trackEnd);
+    const cleanUp = () => {
+      trackEnd();
+      if (fileStream) {
+        fileStream.destroy();
+        fileStream = null;
+      }
+    };
+
+    req.on('close', cleanUp);
+    res.on('close', cleanUp);
+    res.on('finish', cleanUp);
 
     trackStart();
 
@@ -265,8 +275,8 @@ const backendServer = http.createServer((req, res) => {
       const start = parseInt(parts[0], 10);
       const end = parts[1] ? parseInt(parts[1], 10) : fileSize - 1;
       const chunksize = (end - start) + 1;
-      const file = fs.createReadStream(videoPath, { start, end });
-      file.on('error', (err) => {
+      fileStream = fs.createReadStream(videoPath, { start, end });
+      fileStream.on('error', (err) => {
         console.error('[Server Stream Error]', err.message);
       });
       res.on('error', (err) => {
@@ -277,17 +287,17 @@ const backendServer = http.createServer((req, res) => {
         'Content-Length': chunksize,
       };
       res.writeHead(206, head);
-      file.pipe(res);
+      fileStream.pipe(res);
     } else {
       res.writeHead(200, { 'Content-Length': fileSize });
-      const file = fs.createReadStream(videoPath);
-      file.on('error', (err) => {
+      fileStream = fs.createReadStream(videoPath);
+      fileStream.on('error', (err) => {
         console.error('[Server Stream Error]', err.message);
       });
       res.on('error', (err) => {
         console.error('[Server Response Error]', err.message);
       });
-      file.pipe(res);
+      fileStream.pipe(res);
     }
     return;
   }
