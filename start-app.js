@@ -42,13 +42,40 @@ if (playWithVlc && resolvedFilePath) {
 }
 
 async function start() {
-  const server = await createServer({
-    server: {
-      port: 5174,
-      host: true,
-      open: false,
-    },
-  });
+  let port = 5174;
+  const portArgIdx = process.argv.indexOf('--port');
+  if (portArgIdx !== -1 && process.argv[portArgIdx + 1]) {
+    port = parseInt(process.argv[portArgIdx + 1], 10);
+  }
+
+  let server;
+  let success = false;
+  
+  while (!success && port < 6000) {
+    try {
+      server = await createServer({
+        server: {
+          port: port,
+          host: '127.0.0.1',
+          open: false,
+        },
+      });
+      await server.listen();
+      success = true;
+    } catch (err) {
+      if (err.code === 'EACCES' || err.code === 'EADDRINUSE') {
+        console.log(`[Server] Port ${port} is unavailable (${err.code}). Trying next port...`);
+        port++;
+      } else {
+        throw err;
+      }
+    }
+  }
+
+  if (!success) {
+    console.error('[Server] Could not find any available port to bind.');
+    process.exit(1);
+  }
 
   const getJsonBody = (req) => new Promise((resolve) => {
     let body = '';
@@ -164,8 +191,7 @@ async function start() {
     }
   });
 
-  await server.listen();
-  console.log('[Server] Valor dev server is running on http://localhost:5174');
+  console.log(`[Server] Valor dev server is running on http://127.0.0.1:${port}`);
 
   let activeConnections = 0;
   let shutdownTimeout = null;
