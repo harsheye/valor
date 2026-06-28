@@ -231,6 +231,20 @@ function App() {
     return `${m}:${sStr}`;
   };
 
+  const isInstantlyPlayable = (video: VideoItem): boolean => {
+    if (video.type === 'url') return true;
+    if (video.localFilePath) return true;
+    if (video.file) {
+      try {
+        video.file.slice(0, 1);
+        return true;
+      } catch (e) {
+        return false;
+      }
+    }
+    return false;
+  };
+
   // Selector Form states
   const [isDragActive, setIsDragActive] = useState(false);
   const [videoUrl, setVideoUrl] = useState('');
@@ -1360,8 +1374,17 @@ function App() {
                             flexShrink: 0
                           }}
                         >
-                          <Play size={14} fill="#e50914" stroke="#e50914" />
-                          <span>Resume Playback</span>
+                          {isInstantlyPlayable(primaryContinue) ? (
+                            <>
+                              <Play size={14} fill="#e50914" stroke="#e50914" />
+                              <span>Resume Playback</span>
+                            </>
+                          ) : (
+                            <>
+                              <UploadCloud size={14} stroke="#e50914" />
+                              <span>Select Media</span>
+                            </>
+                          )}
                         </button>
                       </div>
 
@@ -1402,7 +1425,9 @@ function App() {
                                     {classification.displayTitle}
                                   </div>
                                   <div style={{ fontSize: '0.72rem', color: 'rgba(255,255,255,0.45)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                                    <span>Resume at {formatTime(video.currentTime || 0)}</span>
+                                    <span>
+                                      {isInstantlyPlayable(video) ? `Resume at ${formatTime(video.currentTime || 0)}` : 'Select Media to Play'}
+                                    </span>
                                     {progress > 0 && <span>{progress}%</span>}
                                   </div>
                                   
@@ -1575,8 +1600,17 @@ function App() {
                             flexShrink: 0
                           }}
                         >
-                          <Play size={14} fill="#e50914" stroke="#e50914" />
-                          <span>Resume Playback</span>
+                          {isInstantlyPlayable(primaryContinue) ? (
+                            <>
+                              <Play size={14} fill="#e50914" stroke="#e50914" />
+                              <span>Resume Playback</span>
+                            </>
+                          ) : (
+                            <>
+                              <UploadCloud size={14} stroke="#e50914" />
+                              <span>Select Media</span>
+                            </>
+                          )}
                         </button>
                       </div>
                     );
@@ -1609,9 +1643,18 @@ function App() {
                             </div>
                           </div>
                           <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-                            <button className="btn btn-primary btn-sm play-btn-compact">
-                              <Play size={12} fill="white" />
-                              <span>Play</span>
+                            <button className="btn btn-primary btn-sm play-btn-compact" style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                              {isInstantlyPlayable(video) ? (
+                                <>
+                                  <Play size={12} fill="white" />
+                                  <span>Play</span>
+                                </>
+                              ) : (
+                                <>
+                                  <UploadCloud size={12} />
+                                  <span>Select Media</span>
+                                </>
+                              )}
                             </button>
                             <button 
                               className="btn-remove-history" 
@@ -1633,7 +1676,7 @@ function App() {
               settings.calendarStyle === 'list' ? (
                 <div className="workspace-panel-wrapper">
                   <div className="glass-panel workspace-panel" style={{ padding: '0', background: 'transparent', border: 'none' }}>
-                    <Calendar02 videos={videos} onPlayVideo={handlePlayVideo} />
+                    <Calendar02 videos={videos} onPlayVideo={handlePlayVideo} isInstantlyPlayable={isInstantlyPlayable} />
                   </div>
                 </div>
               ) : (
@@ -1648,6 +1691,7 @@ function App() {
               <LibraryView 
                 videos={videos} 
                 onPlayVideo={handlePlayVideo} 
+                isInstantlyPlayable={isInstantlyPlayable}
               />
             )}
 

@@ -1,14 +1,15 @@
 import { useState } from "react"
-import { ChevronLeft, ChevronRight, Clock, Star, Play, Film, Calendar } from "lucide-react"
+import { ChevronLeft, ChevronRight, Clock, Star, Play, Film, Calendar, UploadCloud } from "lucide-react"
 import type { VideoItem } from "../../../types/media"
 import { classifyVideoTitle } from "../../../utils/libraryClassifier"
 
 interface Calendar02Props {
   videos: VideoItem[];
   onPlayVideo: (video: VideoItem) => void;
+  isInstantlyPlayable: (video: VideoItem) => boolean;
 }
 
-export default function Calendar02({ videos, onPlayVideo }: Calendar02Props) {
+export default function Calendar02({ videos, onPlayVideo, isInstantlyPlayable }: Calendar02Props) {
   const [currentDate, setCurrentDate] = useState(new Date());
 
   const year = currentDate.getFullYear();
@@ -294,8 +295,17 @@ export default function Calendar02({ videos, onPlayVideo }: Calendar02Props) {
                                 boxShadow: '0 4px 12px rgba(59,130,246,0.2)'
                               }}
                             >
-                              <Play size={10} fill="white" />
-                              <span>Resume</span>
+                              {isInstantlyPlayable(video) ? (
+                                <>
+                                  <Play size={10} fill="white" />
+                                  <span>Resume</span>
+                                </>
+                              ) : (
+                                <>
+                                  <UploadCloud size={10} />
+                                  <span>Select Media</span>
+                                </>
+                              )}
                             </button>
                           </div>
                         );

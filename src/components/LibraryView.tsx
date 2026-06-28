@@ -1,14 +1,15 @@
 import React, { useState } from 'react';
-import { Film, Play, Star, List, Tv } from 'lucide-react';
+import { Film, Play, Star, List, Tv, UploadCloud } from 'lucide-react';
 import type { VideoItem } from '../types/media';
 import { classifyVideoTitle } from '../utils/libraryClassifier';
 
 interface LibraryViewProps {
   videos: VideoItem[];
   onPlayVideo: (video: VideoItem) => void;
+  isInstantlyPlayable: (video: VideoItem) => boolean;
 }
 
-export const LibraryView: React.FC<LibraryViewProps> = ({ videos, onPlayVideo }) => {
+export const LibraryView: React.FC<LibraryViewProps> = ({ videos, onPlayVideo, isInstantlyPlayable }) => {
   const [activeSubTab, setActiveSubTab] = useState<'movies' | 'series'>('movies');
   const [selectedSeries, setSelectedSeries] = useState<string | null>(null);
 
@@ -138,17 +139,31 @@ export const LibraryView: React.FC<LibraryViewProps> = ({ videos, onPlayVideo })
                         {item.displayTitle}
                       </div>
                       
-                      <div style={{ fontSize: '0.72rem', color: 'rgba(255,255,255,0.5)', display: 'flex', justifyContent: 'space-between', marginTop: 'auto' }}>
+                      <div style={{ fontSize: '0.72rem', color: 'rgba(255,255,255,0.5)', display: 'flex', justifyContent: 'space-between', marginTop: 'auto', alignItems: 'center' }}>
                         <span>Length: {durationStr}</span>
                         {watchedProgress > 0 && <span style={{ color: '#3b82f6', fontWeight: 600 }}>{watchedProgress}% watched</span>}
                       </div>
 
-                      {rating > 0 && (
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '2px', fontSize: '0.7rem', color: '#f59e0b' }}>
-                          <Star size={10} fill="#f59e0b" stroke="#f59e0b" />
-                          <span>{'★'.repeat(rating)}{'☆'.repeat(5 - rating)}</span>
-                        </div>
-                      )}
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px', marginTop: '4px' }}>
+                        {rating > 0 ? (
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '2px', fontSize: '0.7rem', color: '#f59e0b' }}>
+                            <Star size={10} fill="#f59e0b" stroke="#f59e0b" />
+                            <span>{'★'.repeat(rating)}{'☆'.repeat(5 - rating)}</span>
+                          </div>
+                        ) : <div />}
+                        
+                        <span style={{ 
+                          fontSize: '0.65rem', 
+                          fontWeight: 700, 
+                          color: isInstantlyPlayable(item.video) ? '#2ecc71' : '#f59e0b',
+                          background: isInstantlyPlayable(item.video) ? 'rgba(46,204,113,0.1)' : 'rgba(245,158,11,0.1)',
+                          padding: '2px 6px',
+                          borderRadius: '4px',
+                          border: isInstantlyPlayable(item.video) ? '1px solid rgba(46,204,113,0.2)' : '1px solid rgba(245,158,11,0.2)'
+                        }}>
+                          {isInstantlyPlayable(item.video) ? 'Play' : 'Select Media'}
+                        </span>
+                      </div>
                     </div>
                   );
                 })}
@@ -296,8 +311,17 @@ export const LibraryView: React.FC<LibraryViewProps> = ({ videos, onPlayVideo })
                                             </span>
                                           )}
                                           <button className="btn btn-primary btn-sm play-btn-compact" style={{ padding: '0.25rem 0.5rem', display: 'flex', alignItems: 'center', gap: '3px', cursor: 'pointer' }}>
-                                            <Play size={10} fill="white" />
-                                            <span style={{ fontSize: '0.75rem' }}>Play</span>
+                                            {isInstantlyPlayable(epItem.video) ? (
+                                              <>
+                                                <Play size={10} fill="white" />
+                                                <span style={{ fontSize: '0.75rem' }}>Play</span>
+                                              </>
+                                            ) : (
+                                              <>
+                                                <UploadCloud size={10} />
+                                                <span style={{ fontSize: '0.75rem' }}>Select Media</span>
+                                              </>
+                                            )}
                                           </button>
                                         </div>
                                       </div>
