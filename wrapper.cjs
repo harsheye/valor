@@ -44,8 +44,14 @@ if (playWithVlc && resolvedFilePath) {
 }
 
 const execDir = path.dirname(process.execPath);
-
-const dataDir = path.join(process.cwd(), '.valor_data');
+let appDir = __dirname;
+if (!fs.existsSync(path.join(appDir, 'dist'))) {
+  appDir = execDir;
+}
+if (!fs.existsSync(path.join(appDir, 'dist'))) {
+  appDir = process.cwd();
+}
+const dataDir = path.join(appDir, '.valor_data');
 if (!fs.existsSync(dataDir)) {
   fs.mkdirSync(dataDir, { recursive: true });
 }
@@ -80,13 +86,7 @@ const getJsonBody = (req) => new Promise((resolve) => {
   });
 });
 
-let distDir = path.join(__dirname, 'dist');
-if (!fs.existsSync(distDir)) {
-  distDir = path.join(execDir, 'dist');
-}
-if (!fs.existsSync(distDir)) {
-  distDir = path.join(process.cwd(), 'dist');
-}
+let distDir = path.join(appDir, 'dist');
 
 console.log(`[Server] Serving static files from: ${distDir}`);
 
