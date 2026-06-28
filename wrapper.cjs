@@ -104,6 +104,7 @@ const MIME_TYPES = {
 };
 
 let lastHeartbeat = Date.now();
+let hasReceivedFirstHeartbeat = false;
 
 const server = http.createServer((req, res) => {
   // CORS headers
@@ -124,6 +125,7 @@ const server = http.createServer((req, res) => {
   // 1. Heartbeat check
   if (pathname === '/api/heartbeat') {
     lastHeartbeat = Date.now();
+    hasReceivedFirstHeartbeat = true;
     res.statusCode = 200;
     res.setHeader('Content-Type', 'application/json');
     res.end(JSON.stringify({ status: 'ok' }));
@@ -255,7 +257,8 @@ const server = http.createServer((req, res) => {
 // Auto-shutdown if no active tabs
 const startShutdownChecker = () => {
   setInterval(() => {
-    if (Date.now() - lastHeartbeat > 8000) {
+    const limit = hasReceivedFirstHeartbeat ? 15000 : 300000;
+    if (Date.now() - lastHeartbeat > limit) {
       console.log('[Server] No active tabs detected. Shutting down...');
       server.close(() => {
         process.exit(0);
