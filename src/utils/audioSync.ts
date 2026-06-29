@@ -95,15 +95,19 @@ export class AudioSyncEngine {
     this.isVideoWaiting = false;
     this.pendingPlay = false;
     this.audio.pause();
-    this.syncAudioTime(Math.max(0, this.video.currentTime - this.audioStartOffset));
+    if (this.isSyncingEnabled) {
+      this.syncAudioTime(Math.max(0, this.video.currentTime - this.audioStartOffset));
+    }
   };
 
   private handleSeeked = () => {
-    this.syncAudioTime(Math.max(0, this.video.currentTime - this.audioStartOffset));
+    if (this.isSyncingEnabled) {
+      this.syncAudioTime(Math.max(0, this.video.currentTime - this.audioStartOffset));
+    }
     this.isVideoSeeking = false;
     this.isVideoWaiting = false;
 
-    if (!this.video.paused && !this.video.seeking && !this.isVideoSeeking && !this.isAudioSeeking && !this.isVideoWaiting) {
+    if (this.isSyncingEnabled && !this.video.paused && !this.video.seeking && !this.isVideoSeeking && !this.isAudioSeeking && !this.isVideoWaiting) {
       this.playAudio();
     }
   };
@@ -115,13 +119,15 @@ export class AudioSyncEngine {
 
   private handleAudioSeeked = () => {
     this.isAudioSeeking = false;
-    if (!this.video.paused && !this.video.seeking && !this.isVideoSeeking && !this.isAudioSeeking && !this.isVideoWaiting) {
+    if (this.isSyncingEnabled && !this.video.paused && !this.video.seeking && !this.isVideoSeeking && !this.isAudioSeeking && !this.isVideoWaiting) {
       this.playAudio();
     }
   };
 
   private handleRateChange = () => {
-    this.audio.playbackRate = this.video.playbackRate;
+    if (this.isSyncingEnabled) {
+      this.audio.playbackRate = this.video.playbackRate;
+    }
   };
 
   private handleWaiting = () => {
@@ -134,12 +140,13 @@ export class AudioSyncEngine {
   private handlePlaying = () => {
     // Video resumed, resume audio if video is playing
     this.isVideoWaiting = false;
-    if (!this.video.paused) {
+    if (this.isSyncingEnabled && !this.video.paused) {
       this.playAudio();
     }
   };
 
   private onAudioReady = () => {
+    if (!this.isSyncingEnabled) return;
     if (this.audio.readyState >= 1) {
       if (this.pendingSeekTime !== null) {
         const targetTime = this.pendingSeekTime;
@@ -158,6 +165,7 @@ export class AudioSyncEngine {
   };
 
   private syncAudioTime(targetTime: number) {
+    if (!this.isSyncingEnabled) return;
     if (this.audio.readyState >= 1) {
       this.pendingSeekTime = null;
       this.audio.currentTime = targetTime;
@@ -167,6 +175,7 @@ export class AudioSyncEngine {
   }
 
   private playAudio() {
+    if (!this.isSyncingEnabled) return;
     if (this.isSeeking || this.video.seeking) return; // Don't play if seeking
     if (this.audio.readyState >= 1) {
       this.pendingPlay = false;
@@ -184,16 +193,39 @@ export class AudioSyncEngine {
   private startSyncLoop() {
     this.stopSyncLoop();
     this.intervalId = setInterval(() => {
-      if (this.isSeeking || !this.isSyncingEnabled) return;
+      if (
+        this.isSeeking || 
+        !this.isSyncingEnabled || 
+        !this.audio || 
+        !this.video || 
+        this.audio.readyState < 2 || 
+        this.audio.seeking || 
+        this.video.seeking
+      ) {
+        return;
+      }
 
       const vTime = this.video.currentTime;
       const aTime = this.audio.currentTime;
-      const drift = Math.abs(vTime - (aTime + this.audioStartOffset));
+      const drift = vTime - (aTime + this.audioStartOffset);
+      const absDrift = Math.abs(drift);
 
-      // If they drift by more than 120ms, seek audio to video time
-      if (drift > 0.12) {
-        console.log(`[AudioSync] Drift detected: ${Math.round(drift * 1000)}ms. Syncing audio.`);
+      // If they drift by more than 500ms, do a hard seek
+      if (absDrift > 0.5) {
+        console.log(`[AudioSync] Large drift detected: ${Math.round(drift * 1000)}ms. Hard seeking audio.`);
         this.syncAudioTime(Math.max(0, vTime - this.audioStartOffset));
+        this.audio.playbackRate = this.video.playbackRate;
+      } 
+      // If drift is between 80ms and 500ms, apply dynamic playback rate adjustment to catch up smoothly
+      else if (absDrift > 0.08) {
+        const correction = drift > 0 ? 1.06 : 0.94;
+        this.audio.playbackRate = this.video.playbackRate * correction;
+      } 
+      // Otherwise, they are well in sync, restore matching playback rate
+      else {
+        if (this.audio.playbackRate !== this.video.playbackRate) {
+          this.audio.playbackRate = this.video.playbackRate;
+        }
       }
 
       // Keep play states synchronized
@@ -202,12 +234,7 @@ export class AudioSyncEngine {
       } else if (!this.video.paused && this.audio.paused && !this.video.seeking && !this.isSeeking && !this.isVideoWaiting) {
         this.playAudio();
       }
-
-      // Sync playback rate in case it changed out of events
-      if (this.audio.playbackRate !== this.video.playbackRate) {
-        this.audio.playbackRate = this.video.playbackRate;
-      }
-    }, 600);
+    }, 400); // Check slightly more frequently (400ms instead of 600ms) for smoother rate correction
   }
 
   private stopSyncLoop() {

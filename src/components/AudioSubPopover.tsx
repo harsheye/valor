@@ -43,6 +43,8 @@ export interface AudioSubPopoverProps {
 
   subSettings: any;
   onUpdateSubSettings: (settings: any) => void;
+  audioBoost: number;
+  setAudioBoost: (boost: number) => void;
 }
 
 export const AudioSubPopover: React.FC<AudioSubPopoverProps> = ({
@@ -69,7 +71,9 @@ export const AudioSubPopover: React.FC<AudioSubPopoverProps> = ({
   formatTime,
   cleanSubtitleText,
   subSettings,
-  onUpdateSubSettings
+  onUpdateSubSettings,
+  audioBoost,
+  setAudioBoost
 }) => {
   const [subSearchQuery, setSubSearchQuery] = useState('');
 
@@ -121,6 +125,28 @@ export const AudioSubPopover: React.FC<AudioSubPopoverProps> = ({
             <label className="popover-option add-custom-btn" onClick={() => { customAudioInputRef.current?.click(); setShowAudioSubMenu(false); }}>
               <span>+ Add Custom File</span>
             </label>
+
+            {/* Audio Boost (Sound Boost) Options */}
+            <div style={{ marginTop: '1rem', borderTop: '1px solid rgba(255, 255, 255, 0.1)', paddingTop: '0.75rem' }}>
+              <h4 style={{ marginBottom: '0.4rem', fontSize: '0.8rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'rgba(255, 255, 255, 0.5)' }}>Sound Boost</h4>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                <label className={`popover-option ${audioBoost === 100 ? 'active' : ''}`} onClick={() => { setAudioBoost(100); setShowAudioSubMenu(false); }}>
+                  <input type="radio" name="audio-boost" checked={audioBoost === 100} readOnly />
+                  <span>Normal (100%)</span>
+                  {audioBoost === 100 && <Check size={14} className="check-icon" />}
+                </label>
+                <label className={`popover-option ${audioBoost === 150 ? 'active' : ''}`} onClick={() => { setAudioBoost(150); setShowAudioSubMenu(false); }}>
+                  <input type="radio" name="audio-boost" checked={audioBoost === 150} readOnly />
+                  <span>Boost 150%</span>
+                  {audioBoost === 150 && <Check size={14} className="check-icon" />}
+                </label>
+                <label className={`popover-option ${audioBoost === 200 ? 'active' : ''}`} onClick={() => { setAudioBoost(200); setShowAudioSubMenu(false); }}>
+                  <input type="radio" name="audio-boost" checked={audioBoost === 200} readOnly />
+                  <span>Boost 200%</span>
+                  {audioBoost === 200 && <Check size={14} className="check-icon" />}
+                </label>
+              </div>
+            </div>
           </div>
         </div>
 

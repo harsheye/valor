@@ -57,7 +57,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   ratingThreshold = 3
 }) => {
   const [isPlaying, setIsPlaying] = useState(false);
-  const [currentTime, setCurrentTime] = useState(0);
+  const [currentTime, setCurrentTime] = useState(video.currentTime || 0);
   const [duration, setDuration] = useState(0);
 
   const totalTimeWatchedRef = useRef<number>((video as any).totalTimeWatched || 0);
@@ -121,6 +121,95 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   const [activeSubStreamIndex, setActiveSubStreamIndex] = useState<number | null>(null);
   const [playbackError, setPlaybackError] = useState<string | null>(null);
 
+  const [audioBoost, setAudioBoost] = useState<number>(100);
+
+  // Refs for Web Audio API audio boost
+  const audioCtxRef = useRef<AudioContext | null>(null);
+  const videoSourceRef = useRef<MediaElementAudioSourceNode | null>(null);
+  const audioSourceRef = useRef<MediaElementAudioSourceNode | null>(null);
+  const videoGainRef = useRef<GainNode | null>(null);
+  const audioGainRef = useRef<GainNode | null>(null);
+
+  const initAudioBoost = () => {
+    if (!audioCtxRef.current) {
+      const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+      if (!AudioCtx) return;
+      audioCtxRef.current = new AudioCtx();
+    }
+    const ctx = audioCtxRef.current;
+    if (ctx.state === 'suspended') {
+      ctx.resume().catch(console.error);
+    }
+
+    if (videoRef.current && !videoSourceRef.current) {
+      try {
+        const source = ctx.createMediaElementSource(videoRef.current);
+        const gain = ctx.createGain();
+        source.connect(gain);
+        gain.connect(ctx.destination);
+        videoSourceRef.current = source;
+        videoGainRef.current = gain;
+        logger.player('Web Audio API initialized for main video element');
+      } catch (err) {
+        logger.player('Error setting up Web Audio for video element:', err);
+      }
+    }
+
+    if (audioRef.current && !audioSourceRef.current) {
+      try {
+        const source = ctx.createMediaElementSource(audioRef.current);
+        const gain = ctx.createGain();
+        source.connect(gain);
+        gain.connect(ctx.destination);
+        audioSourceRef.current = source;
+        audioGainRef.current = gain;
+        logger.player('Web Audio API initialized for secondary audio element');
+      } catch (err) {
+        logger.player('Error setting up Web Audio for audio element:', err);
+      }
+    }
+  };
+
+  const handleSetAudioBoost = (boost: number) => {
+    setAudioBoost(boost);
+    triggerSwitchToast(boost === 100 ? 'Audio Boost: Normal' : `Audio Boost: ${boost}%`);
+  };
+
+  // Synchronize Audio Boost values to Web Audio API gain nodes
+  useEffect(() => {
+    if (audioBoost > 100) {
+      initAudioBoost();
+    }
+    const multiplier = audioBoost / 100;
+    if (videoGainRef.current) {
+      videoGainRef.current.gain.setValueAtTime(multiplier, audioCtxRef.current?.currentTime || 0);
+    }
+    if (audioGainRef.current) {
+      audioGainRef.current.gain.setValueAtTime(multiplier, audioCtxRef.current?.currentTime || 0);
+    }
+  }, [audioBoost]);
+
+  // If a secondary audio track gets enabled while audioBoost is active, make sure Web Audio is bound to it
+  useEffect(() => {
+    if (audioBoost > 100) {
+      initAudioBoost();
+    }
+  }, [selectedAudioTrack, audioBoost]);
+
+  // Clean up AudioContext on unmount
+  useEffect(() => {
+    return () => {
+      if (audioCtxRef.current) {
+        audioCtxRef.current.close().catch(console.error);
+        audioCtxRef.current = null;
+        videoSourceRef.current = null;
+        audioSourceRef.current = null;
+        videoGainRef.current = null;
+        audioGainRef.current = null;
+      }
+    };
+  }, []);
+
 
 
   const subCues = selectedSubTrack?.cues || [];
@@ -143,6 +232,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const hasSeekedRef = useRef(false);
+  const wasPausedByFocusLossRef = useRef(false);
   const previewVideoRef = useRef<HTMLVideoElement>(null);
   const [flashHud, setFlashHud] = useState<'play' | 'pause' | 'rewind' | 'forward' | null>(null);
   const hudTimeoutRef = useRef<any>(null);
@@ -189,6 +279,13 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     hasAutoSelectedRef.current = false;
     activeAudioStartOffsetRef.current = 0;
     activeSubtitleStartOffsetRef.current = 0;
+    setCurrentTime(video.currentTime || 0);
+    setSelectedAudioTrack(null);
+    setSelectedSubTrack(null);
+    setActiveAudioStreamIndex(null);
+    setActiveSubStreamIndex(null);
+    setActiveAudioStartOffset(0);
+    setActiveSubtitleStartOffset(0);
   }, [video.id]);
 
   const onUpdateVideoRef = useRef(onUpdateVideo);
@@ -486,7 +583,10 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
 
     const tick = () => {
       if (videoRef.current && !videoRef.current.paused) {
-        setCurrentTime(videoRef.current.currentTime);
+        const shouldUpdate = !video.currentTime || hasSeekedRef.current || videoRef.current.currentTime > 0;
+        if (shouldUpdate) {
+          setCurrentTime(videoRef.current.currentTime);
+        }
 
         // Heartbeat ping to prevent auto-shutdown when browser throttles background timers
         const now = Date.now();
@@ -540,13 +640,26 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     };
   }, [isPlaying, showAudioSubMenu]);
 
+  const parseDurationToSeconds = (dur: any): number => {
+    if (!dur) return 0;
+    if (typeof dur === 'number') return dur;
+    const parts = String(dur).split(':').map(Number);
+    if (parts.length === 3) {
+      return parts[0] * 3600 + parts[1] * 60 + parts[2];
+    }
+    if (parts.length === 2) {
+      return parts[0] * 60 + parts[1];
+    }
+    return parts[0] || 0;
+  };
+
   // Helper to resolve byte range for a target time duration using the seekMap (or linear interpolation fallback)
-  const getByteRangeForTimeRange = (time: number, targetDuration: number): { startOffset: number; endOffset: number; offsetTime: number } => {
+  const getByteRangeForTimeRange = async (time: number, targetDuration: number, source: any): Promise<{ startOffset: number; endOffset: number; offsetTime: number }> => {
     const seekMap = video.seekMap || [];
     if (seekMap.length === 0) {
       // Linear interpolation fallback if no seekMap is available
-      const totalDurSeconds = duration || 1;
-      const fileSize = video.file ? video.file.size : 100 * 1024 * 1024; // default to 100MB if remote URL and size unknown
+      const totalDurSeconds = duration || parseDurationToSeconds(video.duration) || 1;
+      const fileSize = video.file ? video.file.size : await source.getSize().catch(() => 100 * 1024 * 1024);
       const startOffset = Math.floor((time / totalDurSeconds) * fileSize);
       const endOffset = Math.min(startOffset + 8 * 1024 * 1024, fileSize); // default 8MB chunk size
       return { startOffset, endOffset, offsetTime: time };
@@ -590,6 +703,10 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     }
     audioAbortControllerRef.current = new AbortController();
     const signal = audioAbortControllerRef.current.signal;
+
+    if (syncEngineRef.current) {
+      syncEngineRef.current.setSyncEnabled(false);
+    }
 
     setExtractingStreamIndex(streamIndex);
 
@@ -652,7 +769,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       } else {
         const isRemote = video.isRemote;
         const audioDuration = isRemote ? 30 : 120;
-        const { startOffset, endOffset, offsetTime: resolvedOffsetTime } = getByteRangeForTimeRange(time, audioDuration);
+        const { startOffset, endOffset, offsetTime: resolvedOffsetTime } = await getByteRangeForTimeRange(time, audioDuration, cachedSource);
         offsetTime = resolvedOffsetTime;
 
         logger.remote(`Range: ${startOffset}-${endOffset}, time: ${offsetTime}`);
@@ -684,10 +801,6 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
           codec: 'mp3'
         };
         setSelectedAudioTrack(newTrack);
-        if (syncEngineRef.current) {
-          syncEngineRef.current.setAudioStartOffset(offsetTime);
-          syncEngineRef.current.setSyncEnabled(true);
-        }
       }
     } catch (err: any) {
       if (err.name === 'AbortError') {
@@ -863,7 +976,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       } else {
         const isRemote = video.isRemote;
         const subDuration = isRemote ? 60 : 300;
-        const { startOffset, endOffset, offsetTime: resolvedOffsetTime } = getByteRangeForTimeRange(time, subDuration);
+        const { startOffset, endOffset, offsetTime: resolvedOffsetTime } = await getByteRangeForTimeRange(time, subDuration, cachedSource);
         offsetTime = resolvedOffsetTime;
 
         setActiveSubtitleStartOffset(offsetTime);
@@ -985,7 +1098,10 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       }
     }
 
-    if (activeSubStreamIndex !== null && video.isRemote && !subDebounceTimeoutRef.current) {
+    const containerType = (video.containerType || '').toLowerCase();
+    const isMkv = containerType.includes('mkv') || containerType.includes('matroska') || (video.format || '').toLowerCase().includes('mkv') || (video.format || '').toLowerCase().includes('matroska');
+
+    if (activeSubStreamIndex !== null && (video.isRemote || isMkv) && !subDebounceTimeoutRef.current) {
       let needLoad = false;
       if (video.containerType === 'hls' && video.hlsPlaylist) {
         const segments = video.hlsPlaylist.segments || [];
@@ -996,7 +1112,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
         }
       } else {
         const isRemote = video.isRemote;
-        const subDuration = isRemote ? 60 : 300;
+        const subDuration = isMkv ? (isRemote ? 300 : 600) : (isRemote ? 60 : 300);
         if (newTime < activeSubtitleStartOffsetRef.current || newTime > activeSubtitleStartOffsetRef.current + subDuration - 5) {
           needLoad = true;
         }
@@ -1402,6 +1518,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     
     if (pressedKey === lockControlsKey) {
       e.preventDefault();
+      e.stopPropagation();
       setIsLocked(prev => {
         const next = !prev;
         triggerSwitchToast(next ? `Controls Locked (${lockControlsKey.toUpperCase()})` : `Controls Unlocked (${lockControlsKey.toUpperCase()})`);
@@ -1412,6 +1529,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
 
     if (isLocked) {
       e.preventDefault();
+      e.stopPropagation();
       return;
     }
     const playPauseKey = (keybinds.playPause || ' ').toLowerCase();
@@ -1490,8 +1608,8 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => handleKeyDownRef.current?.(e);
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
+    window.addEventListener('keydown', handleKeyDown, true);
+    return () => window.removeEventListener('keydown', handleKeyDown, true);
   }, []);
 
   // Reset seek state when video url changes
@@ -1510,38 +1628,74 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     }
   }, [video.url]);
 
-  // Pause on Window Blur or Tab switch if enabled (Fullscreen only)
+  // Pause/Resume on Window Focus changes if enabled (Fullscreen only)
   useEffect(() => {
-    if (!pauseOnFocusChange) return;
+    if (!pauseOnFocusChange || isLocked) return;
 
     const handleFocusLoss = () => {
       const isCurrentFullscreen = !!document.fullscreenElement || isFullscreen;
       if (!isCurrentFullscreen) return;
       if (videoRef.current && !videoRef.current.paused) {
-        logger.player('Focus lost, pausing video playback');
+        logger.player('Focus lost, auto-pausing video playback');
         videoRef.current.pause();
         setIsPlaying(false);
+        wasPausedByFocusLossRef.current = true;
+      }
+    };
+
+    const handleFocusGain = () => {
+      if (wasPausedByFocusLossRef.current && videoRef.current && videoRef.current.paused) {
+        logger.player('Focus regained, auto-resuming video playback');
+        videoRef.current.play()
+          .then(() => setIsPlaying(true))
+          .catch(err => logger.player('Autoplay play error on focus gain:', err));
+        wasPausedByFocusLossRef.current = false;
       }
     };
 
     const handleVisibilityChange = () => {
       const isCurrentFullscreen = !!document.fullscreenElement || isFullscreen;
       if (!isCurrentFullscreen) return;
-      if (document.visibilityState === 'hidden' && videoRef.current && !videoRef.current.paused) {
-        logger.player('Tab hidden, pausing video playback');
-        videoRef.current.pause();
-        setIsPlaying(false);
+      if (document.visibilityState === 'hidden') {
+        if (videoRef.current && !videoRef.current.paused) {
+          logger.player('Tab hidden, auto-pausing video playback');
+          videoRef.current.pause();
+          setIsPlaying(false);
+          wasPausedByFocusLossRef.current = true;
+        }
+      } else if (document.visibilityState === 'visible') {
+        handleFocusGain();
       }
     };
 
     window.addEventListener('blur', handleFocusLoss);
+    window.addEventListener('focus', handleFocusGain);
     document.addEventListener('visibilitychange', handleVisibilityChange);
 
     return () => {
       window.removeEventListener('blur', handleFocusLoss);
+      window.removeEventListener('focus', handleFocusGain);
       document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
-  }, [pauseOnFocusChange, isFullscreen]);
+  }, [pauseOnFocusChange, isFullscreen, isLocked]);
+
+  // Re-engage fullscreen on window focus if locked
+  useEffect(() => {
+    if (!isLocked) return;
+
+    const handleFocus = () => {
+      if (containerRef.current && !document.fullscreenElement) {
+        containerRef.current.requestFullscreen().catch(err => {
+          logger.player('Failed to re-engage fullscreen on focus:', err);
+        });
+      }
+    };
+
+    window.addEventListener('focus', handleFocus);
+    return () => {
+      window.removeEventListener('focus', handleFocus);
+    };
+  }, [isLocked]);
 
   // Track active play duration (totalTimeWatched)
   useEffect(() => {
@@ -1809,7 +1963,12 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
           }
         }}
         onTimeUpdate={() => {
-          if (videoRef.current) setCurrentTime(videoRef.current.currentTime);
+          if (videoRef.current) {
+            const shouldUpdate = !video.currentTime || hasSeekedRef.current || videoRef.current.currentTime > 0;
+            if (shouldUpdate) {
+              setCurrentTime(videoRef.current.currentTime);
+            }
+          }
         }}
         onPlay={() => setIsPlaying(true)}
         onPause={() => setIsPlaying(false)}
@@ -1845,19 +2004,51 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
         />
       )}
 
-      {/* Lock Indicator Button */}
+      {/* Lock Overlay to block mouse clicks and all settings */}
       {isLocked && (
-        <button 
-          className="player-lock-indicator"
+        <div 
+          className="player-lock-overlay"
           onClick={(e) => {
+            e.preventDefault();
             e.stopPropagation();
-            setIsLocked(false);
-            triggerSwitchToast(`Controls Unlocked (${getLockShortcutKey()})`);
           }}
-          title={`Unlock Controls (Shortcut: ${getLockShortcutKey()})`}
+          onMouseDown={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+          }}
+          onMouseUp={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+          }}
+          onMouseMove={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+          }}
+          style={{
+            position: 'absolute',
+            inset: 0,
+            zIndex: 9999,
+            background: 'transparent',
+            cursor: 'default',
+            pointerEvents: 'auto'
+          }}
         >
-          <Lock size={20} />
-        </button>
+          {/* Lock Indicator Button */}
+          <button 
+            className="player-lock-indicator"
+            onClick={(e) => {
+              e.stopPropagation();
+              setIsLocked(false);
+              triggerSwitchToast(`Controls Unlocked (${getLockShortcutKey()})`);
+            }}
+            title={`Unlock Controls (Shortcut: ${getLockShortcutKey()})`}
+            style={{
+              pointerEvents: 'auto'
+            }}
+          >
+            <Lock size={20} />
+          </button>
+        </div>
       )}
 
       {/* Buffering ring loader */}
@@ -2175,6 +2366,8 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
                       cleanSubtitleText={cleanSubtitleText}
                       subSettings={subSettings}
                       onUpdateSubSettings={onUpdateSubSettings}
+                      audioBoost={audioBoost}
+                      setAudioBoost={handleSetAudioBoost}
                     />
                   )}
                 </div>
