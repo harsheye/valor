@@ -17,7 +17,7 @@ export class PacketReader {
     signal?: AbortSignal
   ): Promise<AudioPacket> {
     const rawWav = await this.demuxMgr.sliceAudio(ff, streamIndex, startTime, duration, seekMap, signal);
-    const audioBuffer = await this.audioCtx.decodeAudioData(rawWav.buffer);
+    const audioBuffer = await this.audioCtx.decodeAudioData(rawWav.buffer as ArrayBuffer);
 
     return {
       startTime,
