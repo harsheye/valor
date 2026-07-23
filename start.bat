@@ -1,3 +1,3 @@
 @echo off
-cd /d "d:\valor"
-start-app.exe
+cd /d "%~dp0"
+start "" ".\node.exe" "start-app.js" %*

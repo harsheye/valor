@@ -146,7 +146,20 @@ export class LocalIndexedDBProvider implements StorageProvider {
     const videosKey = activeUserId === 'local' ? 'valor_videos' : `valor_videos_${activeUserId}`;
     
     const idbVal = await this.get(videosKey);
-    if (Array.isArray(idbVal)) return idbVal;
+    if (Array.isArray(idbVal)) {
+      // Auto-purge any bloated File objects from previous versions to reclaim space
+      const needsPurge = idbVal.some(v => v.file !== undefined);
+      if (needsPurge) {
+        console.log('[IndexedDB] Purging bloated File objects from history to reclaim space...');
+        const sanitizedHistory = idbVal.map(item => {
+          const { file, ...rest } = item;
+          return rest as VideoItem;
+        });
+        await this.set(videosKey, sanitizedHistory);
+        return sanitizedHistory;
+      }
+      return idbVal;
+    }
 
     const localVal = localStorage.getItem(videosKey);
     if (localVal) {
@@ -161,7 +174,14 @@ export class LocalIndexedDBProvider implements StorageProvider {
   async saveHistory(history: VideoItem[]): Promise<void> {
     const activeUserId = this.getActiveUserId();
     const videosKey = activeUserId === 'local' ? 'valor_videos' : `valor_videos_${activeUserId}`;
-    await this.set(videosKey, history);
+    
+    // Strip the raw 'file' object before saving to prevent IndexedDB from storing massive video blobs
+    const sanitizedHistory = history.map(item => {
+      const { file, ...rest } = item;
+      return rest as VideoItem;
+    });
+    
+    await this.set(videosKey, sanitizedHistory);
   }
 
   async updatePlayback(videoId: string, progress: { currentTime: number; lastPlayedDate?: string }): Promise<void> {

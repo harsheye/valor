@@ -32,7 +32,7 @@ namespace ValorTray
             {
                 if (arg.Equals("--vlc", StringComparison.OrdinalIgnoreCase))
                 {
-                    // Handled directly by start-app.exe
+                    // Handled directly by start.bat
                 }
                 else if (!arg.StartsWith("-"))
                 {
@@ -121,7 +121,7 @@ namespace ValorTray
             // Start Node server in the background
             StartServer(args);
 
-            // Browser launching on startup is handled by the server (start-app.exe) to prevent double tabs
+            // Browser launching on startup is handled by the server (start.bat) to prevent double tabs
 
             // Run the message loop
             Application.Run();
@@ -152,10 +152,10 @@ namespace ValorTray
 
         private static void StartServer(string[] args)
         {
-            string exePath = Path.Combine(appDir, "start-app.exe");
+            string exePath = Path.Combine(appDir, "start.bat");
             if (!File.Exists(exePath))
             {
-                MessageBox.Show("Could not find start-app.exe in the application directory.", "Valor Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                MessageBox.Show("Could not find start.bat in the application directory.", "Valor Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
                 Application.Exit();
                 return;
             }
@@ -192,7 +192,7 @@ namespace ValorTray
             if (vlc && !string.IsNullOrEmpty(file))
             {
                 ProcessStartInfo vlcStart = new ProcessStartInfo();
-                vlcStart.FileName = Path.Combine(appDir, "start-app.exe");
+                vlcStart.FileName = Path.Combine(appDir, "start.bat");
                 vlcStart.Arguments = "--vlc \"" + file + "\"";
                 vlcStart.CreateNoWindow = true;
                 vlcStart.UseShellExecute = false;
@@ -266,7 +266,7 @@ namespace ValorTray
                 catch {}
             }
 
-            // Also kill any remaining start-app.exe processes to be clean
+            // Also kill any remaining start.bat processes to be clean
             try
             {
                 foreach (var p in Process.GetProcessesByName("start-app"))
