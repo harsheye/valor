@@ -492,17 +492,20 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
   const updatePlayerSetting = (key: keyof typeof playerSettings, value: any) => {
     setPlayerSettings(prev => {
       const next = { ...prev, [key]: value };
-      
-      // If we blocked seeking completely, disable skip buttons too
       if (key === 'blockSeekingCompletely' && value) {
         next.allowUiSkipping = false;
       }
-      
-      if (onUpdateSettings) {
-        onUpdateSettings(next);
-      }
       return next;
     });
+
+    // Invoke callback side-effects after state update scheduling to prevent updating parent while rendering child
+    const nextSettings = { ...playerSettings, [key]: value };
+    if (key === 'blockSeekingCompletely' && value) {
+      nextSettings.allowUiSkipping = false;
+    }
+    if (onUpdateSettings) {
+      onUpdateSettings(nextSettings);
+    }
   };
 
   const uiConfig = {
@@ -2459,6 +2462,12 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
 
   // Playback Control Handlers
   const togglePlay = () => {
+    if (video.type === 'local' && !video.file) {
+      if (onReassociate) {
+        onReassociate(video.id);
+        return;
+      }
+    }
     if (!videoRef.current) return;
     if (isPlaying) {
       if (playbackControllerRef.current) {
@@ -3196,6 +3205,7 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
         const ffmpegMgr = new FFmpegManager(video.id);
         const demuxMgr = new DemuxManager(ffmpegMgr, fileOrSource);
         controller = new PlaybackController(ffmpegMgr, demuxMgr, video.seekMap);
+        controller.pauseOnFocusChange = playerSettings.pauseOnFocusChange;
         controller.setAudioBoost(audioBoost);
         playbackControllerRef.current = controller;
 
@@ -3245,11 +3255,23 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
     }
   }, [activeAudioStreamIndex]);
 
+  // Sync focus loss auto-pause setting to the playback controller
+  useEffect(() => {
+    if (playbackControllerRef.current) {
+      playbackControllerRef.current.pauseOnFocusChange = playerSettings.pauseOnFocusChange;
+    }
+  }, [playerSettings.pauseOnFocusChange]);
+
+  const pauseOnFocusChangeRef = useRef(playerSettings.pauseOnFocusChange);
+  useEffect(() => {
+    pauseOnFocusChangeRef.current = playerSettings.pauseOnFocusChange;
+  }, [playerSettings.pauseOnFocusChange]);
+
   // Pause/Resume on Window Focus changes if enabled (Fullscreen only)
   useEffect(() => {
-    if (!playerSettings.pauseOnFocusChange || isLocked) return;
-
     const handleFocusLoss = () => {
+
+      if (!pauseOnFocusChangeRef.current || isLocked) return;
       const isCurrentFullscreen = !!document.fullscreenElement || isFullscreen;
       if (!isCurrentFullscreen) return;
       if (videoRef.current && !videoRef.current.paused) {
@@ -3265,6 +3287,8 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
     };
 
     const handleFocusGain = () => {
+
+      if (!pauseOnFocusChangeRef.current || isLocked) return;
       if (wasPausedByFocusLossRef.current && videoRef.current && videoRef.current.paused) {
         logger.player('Focus regained, auto-resuming video playback');
         const p = playbackControllerRef.current 
@@ -3277,6 +3301,8 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
     };
 
     const handleVisibilityChange = () => {
+
+      if (!pauseOnFocusChangeRef.current || isLocked) return;
       const isCurrentFullscreen = !!document.fullscreenElement || isFullscreen;
       if (!isCurrentFullscreen) return;
       if (document.visibilityState === 'hidden') {
@@ -3304,7 +3330,7 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
       window.removeEventListener('focus', handleFocusGain);
       document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
-  }, [playerSettings.pauseOnFocusChange, isFullscreen, isLocked]);
+  }, [isFullscreen, isLocked]);
 
   // Re-engage fullscreen on window focus if locked
   useEffect(() => {
@@ -3774,6 +3800,7 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
   activeSkipBookmarkRef.current = activeSkipBookmark;
 
   const controlsVisible = showControls && !isLocked;
+  const effectiveDuration = duration || parseDurationToSeconds(video.duration) || 0;
 
   return (
     <div 
@@ -3797,14 +3824,90 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
         toggleFullscreen();
       }}
     >
-      {/* Wrapper to isolate flexbox from overlay rendering */}
+      {video.type === 'local' && !activeFile && (
+        <div style={{
+          position: 'absolute',
+          inset: 0,
+          background: 'rgba(0, 0, 0, 0.85)',
+          backdropFilter: 'blur(10px)',
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 600,
+          color: '#ffffff',
+          fontFamily: "'Inter', sans-serif"
+        }}>
+          <div style={{
+            background: 'rgba(255, 255, 255, 0.05)',
+            border: '1px solid rgba(255, 255, 255, 0.1)',
+            padding: '2.5rem',
+            borderRadius: '16px',
+            textAlign: 'center',
+            maxWidth: '450px',
+            boxShadow: '0 20px 40px rgba(0,0,0,0.5)',
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            gap: '1.25rem'
+          }}>
+            <Lock size={48} color="#ff7a00" />
+            <h2 style={{ fontSize: '1.5rem', fontWeight: 800, margin: 0 }}>Restore Access to File</h2>
+            <p style={{ fontSize: '0.95rem', color: 'rgba(255, 255, 255, 0.7)', margin: 0, lineHeight: 1.5 }}>
+              To resume watching <strong>{video.title}</strong>, please restore permission to access the local file.
+            </p>
+            <button 
+              className="btn btn-primary"
+              style={{
+                background: '#ff7a00',
+                border: 'none',
+                color: '#ffffff',
+                fontWeight: 700,
+                padding: '0.75rem 2rem',
+                fontSize: '1rem',
+                borderRadius: '8px',
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px',
+                boxShadow: '0 4px 12px rgba(255, 122, 0, 0.3)',
+                marginTop: '0.5rem'
+              }}
+              onClick={(e) => {
+                e.stopPropagation();
+                if (onReassociate) {
+                  onReassociate(video.id);
+                }
+              }}
+            >
+              <Play size={16} fill="white" />
+              <span>Resume Playback</span>
+            </button>
+            <button
+              className="btn btn-secondary btn-sm"
+              style={{
+                background: 'transparent',
+                border: 'none',
+                color: 'rgba(255, 255, 255, 0.5)',
+                cursor: 'pointer',
+                fontSize: '0.85rem',
+                textDecoration: 'underline'
+              }}
+              onClick={(e) => {
+                e.stopPropagation();
+                if (onBack) onBack();
+              }}
+            >
+              Cancel & Go Back
+            </button>
+          </div>
+        </div>
+      )}
+
       <div 
         style={{ 
           position: 'absolute', 
           inset: 0, 
-          display: 'flex', 
-          alignItems: 'center', 
-          justifyContent: 'center', 
           zIndex: 10 
         }}
         onClick={(e) => {
@@ -3858,6 +3961,12 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
           }}
           onPlay={() => setIsPlaying(true)}
           onPause={() => {
+            // If focus loss auto-pause is disabled and this pause was triggered by browser 
+            // background tab throttling, ignore it — don't update UI state.
+            if (!pauseOnFocusChangeRef.current && document.visibilityState === 'hidden') {
+              console.log('[LocalVideoPlayer] Ignoring browser background throttle onPause event');
+              return;
+            }
             setIsPlaying(false);
             onUpdateVideoRef.current((prev: any) => ({
               ...prev,
@@ -4426,18 +4535,18 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
                   }}
                 >
                   <div className="scrub-track-bg"></div>
-                  <div className="scrub-track-buffered" style={{ width: `${bufferedPercent}%` }}></div>
-                  <div className="scrub-track-progress" style={{ width: `${(currentTime / (duration || 1)) * 100}%` }}></div>
+                  <div className="scrub-track-buffered" style={{ width: `${effectiveDuration > 0 ? Math.min(100, Math.max(0, bufferedPercent)) : 0}%` }}></div>
+                  <div className="scrub-track-progress" style={{ width: `${effectiveDuration > 0 ? Math.min(100, Math.max(0, (currentTime / effectiveDuration) * 100)) : 0}%` }}></div>
 
                   {/* Bookmark Timeline Dots */}
-                  {bookmarks.map((bm) => {
-                    const percent = (bm.time / (duration || 1)) * 100;
+                  {effectiveDuration > 0 && bookmarks.map((bm) => {
+                    const percent = Math.min(100, Math.max(0, (bm.time / effectiveDuration) * 100));
                     const isOutro = bm.isOutro || bm.category === 'Outro';
                     const isIntro = bm.isIntro || bm.category === 'Intro';
                     const isOutroWithoutEnd = isOutro && (bm.endTime === undefined || bm.endTime === null);
-                    const effectiveEndTime = isOutroWithoutEnd ? duration : bm.endTime;
+                    const effectiveEndTime = isOutroWithoutEnd ? effectiveDuration : bm.endTime;
                     const hasRange = (effectiveEndTime !== undefined && effectiveEndTime !== null && effectiveEndTime > bm.time) || isOutro;
-                    const endPercent = hasRange ? ((effectiveEndTime || duration) / (duration || 1)) * 100 : percent;
+                    const endPercent = hasRange ? Math.min(100, Math.max(0, ((effectiveEndTime || effectiveDuration) / effectiveDuration) * 100)) : percent;
                     const widthPercent = Math.max(0, endPercent - percent);
                     
                     if (hasRange) {
@@ -4506,7 +4615,7 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
                   {/* Hover / Scrub Preview Tooltip (Always rendered to keep preview video loaded and warm) */}
                   <div 
                     className={`scrub-hover-tooltip ${(hoverTime || isScrubbing) ? 'visible' : ''}`} 
-                    style={{ left: `${isScrubbing ? ((scrubTime !== null ? scrubTime : currentTime) / (duration || 1)) * 100 : hoverPercent}%` }}
+                    style={{ left: `${isScrubbing ? (effectiveDuration > 0 ? Math.min(100, Math.max(0, ((scrubTime !== null ? scrubTime : currentTime) / effectiveDuration) * 100)) : 0) : hoverPercent}%` }}
                   >
                     <div className="scrub-hover-preview-box">
                       <video
@@ -4524,13 +4633,13 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
                       </div>
                     )}
                   </div>
-
-                  <input
-                    type="range"
-                    min={0}
-                    max={duration || 100}
-                    step={0.1}
-                    value={isScrubbing && scrubTime !== null ? scrubTime : currentTime}
+ 
+                   <input
+                     type="range"
+                     min={0}
+                     max={effectiveDuration || 100}
+                     step={0.1}
+                     value={isScrubbing && scrubTime !== null ? scrubTime : currentTime}
                     onChange={handleSeek}
                     onMouseMove={handleProgressMouseMove}
                     onMouseLeave={handleProgressMouseLeave}

@@ -77,6 +77,7 @@ export class PlaybackController {
   public state = new PlaybackState();
   public session = new PlaybackSession();
   public timeline: Timeline;
+  public pauseOnFocusChange = false;
 
   constructor(
     private ffmpegMgr: FFmpegManager,
@@ -246,7 +247,19 @@ export class PlaybackController {
   };
 
   private onPauseEvent = () => {
-    console.log(`[PlaybackController-${this.instanceId}] Native pause event detected.`);
+    console.log(`[PlaybackController-${this.instanceId}] Native pause event detected. pauseOnFocusChange=${this.pauseOnFocusChange} visibilityState=${document.visibilityState} isPlaying=${this.state.isPlaying}`);
+    
+    // If focus loss auto-pause is disabled, and the browser background throttles/pauses
+    // the silent video element, we override it and resume immediately.
+    if (!this.pauseOnFocusChange && document.visibilityState === 'hidden' && this.state.isPlaying) {
+      console.log(`[PlaybackController-${this.instanceId}] Ignoring browser background throttle pause — resuming playback.`);
+      if (this.videoEl) {
+        this.videoEl.play().catch(err => {
+          console.warn('[PlaybackController] Failed to override background pause:', err);
+        });
+      }
+      return;
+    }
     this.pause();
   };
 

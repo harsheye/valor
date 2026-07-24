@@ -66,7 +66,7 @@ import {
   Maximize, Zap, Coffee, SkipForward, Ban, FastForward, Lock, ChevronRight, ChevronLeft,
   LogOut, Trash2, Plus, Download, UserPlus, Trophy, Radio
 } from 'lucide-react';
-import { storeFileHandle, getFileHandle, removeFileHandle, verifyPermission } from './utils/indexedDB';
+import { storeFileHandle, getFileHandle, removeFileHandle, verifyPermission, cleanupFileHandles } from './utils/indexedDB';
 import { HttpByteSource, CachedByteSource, detectUrlCapabilities } from './services/remote/remoteByteSource';
 import { probeContainer, parseMp4, parseMkv } from './utils/containerParser';
 import { parseHlsManifest } from './utils/hlsParser';
@@ -975,9 +975,11 @@ function App() {
   };
 
   const isInstantlyPlayable = (video: VideoItem): boolean => {
+    if (video.type === 'local') return true;
     if (video.type === 'url') return true;
     if (video.type === 'online_movie' || video.type === 'online_tv' || video.type === 'online_anime') return true;
     if (video.localFilePath) return true;
+    if ((video as any).hasHandle) return true;
     if (video.file) {
       try {
         video.file.slice(0, 1);
@@ -1361,19 +1363,25 @@ function App() {
               }
               
               // If it's a local file and still using a blob URL (no localFilePath), try to recover from IndexedDB handle
+              let hasHandle = false;
               if (videoObj.type === 'local' && !videoObj.localFilePath && (!videoObj.url || videoObj.url.startsWith('blob:'))) {
                 const handle = await getFileHandle(videoObj.id);
                 if (handle) {
+                  hasHandle = true;
                   const options = { mode: 'read' as const };
-                  if ((await handle.queryPermission(options)) === 'granted') {
-                    const file = await handle.getFile();
-                    const newBlobUrl = URL.createObjectURL(file);
-                    videoObj = {
-                      ...videoObj,
-                      file,
-                      url: newBlobUrl
-                    };
-                    console.log('[Recovery] Successfully programmatically recovered local file handle and generated new blob URL.');
+                  try {
+                    if ((await (handle as any).queryPermission(options)) === 'granted') {
+                      const file = await handle.getFile();
+                      const newBlobUrl = URL.createObjectURL(file);
+                      videoObj = {
+                        ...videoObj,
+                        file,
+                        url: newBlobUrl
+                      };
+                      console.log('[Recovery] Successfully programmatically recovered local file handle and generated new blob URL.');
+                    }
+                  } catch (e) {
+                    console.error('[Recovery] Failed to query permission on load:', e);
                   }
                 }
               }
@@ -1385,6 +1393,13 @@ function App() {
                     return current;
                   }
                   if (videoObj.type === 'local' && !videoObj.localFilePath && (!isFileObj(videoObj.file) || !videoObj.url || videoObj.url.startsWith('blob:'))) {
+                    if (hasHandle) {
+                      console.log('[Recovery] Local video has a saved handle. Retaining playingVideo for deferred permission grant.');
+                      return {
+                        ...videoObj,
+                        hasHandle: true
+                      };
+                    }
                     console.warn('[Recovery] Local video is unplayable (dead blob and no file handle). Clearing playingVideo.');
                     localStorage.removeItem('valor_currently_playing');
                     return null;
@@ -1647,6 +1662,10 @@ function App() {
 
         await storageProvider.saveHistory(targetVideos, forceSync);
 
+        // Clean up unneeded or bloated file handles/blobs from IndexedDB
+        const activeIds = targetVideos.map(v => v.id);
+        cleanupFileHandles(activeIds).catch(err => console.warn('[IndexedDB Cleanup] Failed:', err));
+
         const serialized = targetVideos.map(v => ({
           id: v.id,
           title: v.title,
@@ -1729,12 +1748,35 @@ function App() {
       playingVideo.type !== 'local' || 
       playingVideo.localFilePath || 
       isFileObj(playingVideo.file) || 
+      (playingVideo as any).hasHandle || 
       (playingVideo.url && !playingVideo.url.startsWith('blob:'))
     );
 
     if (playingVideo && !isPlaybackRestoring && !isPlayable) {
       const triggerReassociate = async () => {
         pendingLocalReassociateIdRef.current = playingVideo.id;
+        
+        // 1. Try restoring from IndexedDB handle first (silently if permission is already granted)
+        try {
+          const handle = await getFileHandle(playingVideo.id);
+          if (handle) {
+            const options = { mode: 'read' as const };
+            if ((await (handle as any).queryPermission(options)) === 'granted') {
+              const file = await handle.getFile();
+              await processLocalVideo(file, playingVideo.id, handle);
+              return;
+            } else {
+              // Permission is 'prompt'. Eager automatic permission request is not allowed by browser security.
+              // We return early and let user-initiated interaction (like clicking play) trigger the permission prompt.
+              console.log('[Recovery] Found IndexedDB handle on startup but permission is prompt. Waiting for user interaction.');
+              return;
+            }
+          }
+        } catch (err) {
+          console.error('[Recovery] Failed during startup IndexedDB handle check:', err);
+        }
+
+        // 2. Otherwise fallback to file picker
         if ('showOpenFilePicker' in window) {
           try {
             const [handle] = await (window as any).showOpenFilePicker({
@@ -2707,11 +2749,12 @@ function App() {
     playingVideo.type !== 'local' || 
     playingVideo.localFilePath || 
     isFileObj(playingVideo.file) || 
+    (playingVideo as any).hasHandle || 
     (playingVideo.url && !playingVideo.url.startsWith('blob:'))
   );
 
   // If playing, render VideoPlayer fullscreen (blocking mount until playback source restoration finishes)
-  if (playingVideo && !isPlaybackRestoring && isPlayable) {
+  if (playingVideo && (isPlayable || isPlaybackRestoring)) {
     if (playingVideo.type === 'online_movie' || playingVideo.type === 'online_tv' || playingVideo.type === 'online_anime') {
       return (
         <OnlineVideoPlayer
@@ -2807,6 +2850,23 @@ function App() {
       },
       onReassociate: async (videoId: string) => {
         pendingLocalReassociateIdRef.current = videoId;
+        
+        // 1. Try to restore from IndexedDB handle and request permission (runs inside user gesture context)
+        try {
+          const handle = await getFileHandle(videoId);
+          if (handle) {
+            const hasPermission = await verifyPermission(handle);
+            if (hasPermission) {
+              const file = await handle.getFile();
+              await processLocalVideo(file, videoId, handle);
+              return;
+            }
+          }
+        } catch (err) {
+          console.error('[Recovery] Failed to restore from IndexedDB in onReassociate:', err);
+        }
+
+        // 2. Fallback to picker
         if ('showOpenFilePicker' in window) {
           try {
             const [handle] = await (window as any).showOpenFilePicker({

@@ -16,6 +16,11 @@ export function openDB(): Promise<IDBDatabase> {
 }
 
 export async function storeFileHandle(id: string, handle: FileSystemFileHandle): Promise<void> {
+  // Prevent storing raw Blob/File objects to avoid bloated databases
+  if (handle instanceof Blob || handle instanceof File || (handle && typeof (handle as any).size === 'number')) {
+    console.warn('[IndexedDB] Blocked storing raw File/Blob object in file_handles store to save storage.');
+    return;
+  }
   const db = await openDB();
   return new Promise((resolve, reject) => {
     const transaction = db.transaction(STORE_NAME, 'readwrite');
@@ -61,4 +66,36 @@ export async function verifyPermission(fileHandle: any): Promise<boolean> {
     console.error('Permission request failed:', e);
   }
   return false;
+}
+
+export async function cleanupFileHandles(activeIds: string[]): Promise<void> {
+  const db = await openDB();
+  return new Promise<void>((resolve, reject) => {
+    const transaction = db.transaction(STORE_NAME, 'readwrite');
+    const store = transaction.objectStore(STORE_NAME);
+    const request = store.openCursor();
+    const activeSet = new Set(activeIds);
+    
+    request.onsuccess = () => {
+      const cursor = request.result;
+      if (cursor) {
+        const key = String(cursor.key);
+        const value = cursor.value;
+        
+        const isBlobOrFile = value instanceof Blob || value instanceof File || (value && typeof value.size === 'number');
+        const isNotActive = !activeSet.has(key);
+        const isNotHandle = !value || (typeof value.queryPermission !== 'function' && typeof value.kind !== 'string');
+        
+        if (isNotActive || isBlobOrFile || isNotHandle) {
+          console.log(`[IndexedDB Cleanup] Deleting key ${key} from file_handles store (isNotActive: ${isNotActive}, isBlobOrFile: ${isBlobOrFile}, isNotHandle: ${isNotHandle})`);
+          cursor.delete();
+        }
+        cursor.continue();
+      } else {
+        resolve();
+      }
+    };
+    
+    request.onerror = () => reject(request.error);
+  });
 }
