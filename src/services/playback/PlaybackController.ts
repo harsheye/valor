@@ -12,6 +12,17 @@ import { PlaybackSession } from './PlaybackSession';
 import { Timeline } from './Timeline';
 import { logger } from '../../utils/logger';
 
+const getAudioBoostMultiplier = (boostPercent: number): number => {
+  if (boostPercent <= 100) return 1.0;
+  if (boostPercent <= 150) {
+    return 1.0 + (boostPercent - 100) * 0.04;
+  }
+  if (boostPercent <= 200) {
+    return 3.0 + (boostPercent - 150) * 0.02;
+  }
+  return 1.0;
+};
+
 // Concurrency Worker pool limiter helper
 async function runWithLimit<T>(tasks: (() => Promise<T>)[], limit: number): Promise<T[]> {
   const results: Promise<T>[] = [];
@@ -56,6 +67,7 @@ export class PlaybackController {
   private listenersBound = false;
   private onBufferingChange: ((buffering: boolean) => void) | null = null;
   private gainNode: GainNode;
+  private audioBoost = 100;
   // The first play after initialize must keep the generation that fetched the
   // warm-up chunk. Creating another generation here aborts useful work and can
   // launch the same FFmpeg extraction twice.
@@ -659,12 +671,24 @@ export class PlaybackController {
     this.audioScheduler.updatePlaybackRate(rate);
   }
 
+  setAudioBoost(boost: number): void {
+    this.audioBoost = boost;
+    this.applyVolumeAndBoost();
+  }
+
+  private applyVolumeAndBoost(): void {
+    if (this.gainNode) {
+      const volume = this.state.volume;
+      const isMuted = this.state.isMuted;
+      const boostMultiplier = getAudioBoostMultiplier(this.audioBoost);
+      this.gainNode.gain.value = isMuted ? 0 : volume * boostMultiplier;
+    }
+  }
+
   setVolume(volume: number, isMuted: boolean): void {
     this.state.volume = volume;
     this.state.isMuted = isMuted;
-    if (this.gainNode) {
-      this.gainNode.gain.value = isMuted ? 0 : volume;
-    }
+    this.applyVolumeAndBoost();
   }
 
   async switchAudioTrack(streamIndex: number | null): Promise<void> {

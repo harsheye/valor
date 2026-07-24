@@ -23,6 +23,17 @@ import { FFmpegManager } from '../services/ffmpeg/FFmpegManager';
 import { DemuxManager } from '../services/ffmpeg/DemuxManager';
 import { PlaybackController } from '../services/playback/PlaybackController';
 import { logger } from '../utils/logger';
+
+const getAudioBoostMultiplier = (boostPercent: number): number => {
+  if (boostPercent <= 100) return 1.0;
+  if (boostPercent <= 150) {
+    return 1.0 + (boostPercent - 100) * 0.04;
+  }
+  if (boostPercent <= 200) {
+    return 3.0 + (boostPercent - 150) * 0.02;
+  }
+  return 1.0;
+};
 import { classifyVideoTitle } from '../utils/libraryClassifier';
 import { LoadingSpinner, BufferingOverlay } from './LoadingSpinner';
 
@@ -223,26 +234,36 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
       updateVideoLayout();
     };
     window.addEventListener('resize', handleResize);
+    
+    let resizeObserver: ResizeObserver | null = null;
+    if (containerRef.current) {
+      resizeObserver = new ResizeObserver(() => {
+        handleResize();
+      });
+      resizeObserver.observe(containerRef.current);
+    }
+
     const videoEl = videoRef.current;
     if (videoEl) {
       videoEl.addEventListener('loadedmetadata', handleResize);
       videoEl.addEventListener('canplay', handleResize);
       videoEl.addEventListener('play', handleResize);
       videoEl.addEventListener('pause', handleResize);
-      videoEl.addEventListener('timeupdate', handleResize);
     }
-    
+
     setTimeout(handleResize, 100);
     setTimeout(handleResize, 500);
 
     return () => {
       window.removeEventListener('resize', handleResize);
+      if (resizeObserver) {
+        resizeObserver.disconnect();
+      }
       if (videoEl) {
         videoEl.removeEventListener('loadedmetadata', handleResize);
         videoEl.removeEventListener('canplay', handleResize);
         videoEl.removeEventListener('play', handleResize);
         videoEl.removeEventListener('pause', handleResize);
-        videoEl.removeEventListener('timeupdate', handleResize);
       }
     };
   }, [updateVideoLayout, video.url]);
@@ -257,15 +278,27 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
     setHasFetchedOpenSubtitles(true);
     setOpenSubtitles([]);
     try {
+      const savedSettings = localStorage.getItem('valor_settings');
+      let defaultSubCode = 'en';
+      if (savedSettings) {
+        try {
+          const defaultSub = JSON.parse(savedSettings).defaultSub || 'ENG';
+          if (defaultSub === 'ENG') defaultSubCode = 'en';
+          else if (defaultSub === 'JAP') defaultSubCode = 'ja';
+          else if (defaultSub === 'CHN') defaultSubCode = 'zh';
+          else if (defaultSub === 'Off') defaultSubCode = 'en';
+        } catch {}
+      }
+
       const seriesInfo = classifyVideoTitle(video.title);
       let searchUrl = '';
       if (seriesInfo.type === 'series' && seriesInfo.seriesTitle) {
-        searchUrl = `https://api.opensubtitles.com/api/v1/subtitles?query=${encodeURIComponent(seriesInfo.seriesTitle)}&season_number=${seriesInfo.season || 1}&episode_number=${seriesInfo.episode || 1}`;
-        logger.player(`[OpenSubtitles] Querying TV Subtitles: "${seriesInfo.seriesTitle}" S${seriesInfo.season}E${seriesInfo.episode}`);
+        searchUrl = `https://api.opensubtitles.com/api/v1/subtitles?query=${encodeURIComponent(seriesInfo.seriesTitle)}&season_number=${seriesInfo.season || 1}&episode_number=${seriesInfo.episode || 1}&languages=${defaultSubCode}`;
+        logger.player(`[OpenSubtitles] Querying TV Subtitles: "${seriesInfo.seriesTitle}" S${seriesInfo.season}E${seriesInfo.episode} in language: ${defaultSubCode}`);
       } else {
         const cleanName = video.title.replace(/\.[^/.]+$/, "");
-        searchUrl = `https://api.opensubtitles.com/api/v1/subtitles?query=${encodeURIComponent(cleanName)}`;
-        logger.player(`[OpenSubtitles] Querying Movie Subtitles: "${cleanName}"`);
+        searchUrl = `https://api.opensubtitles.com/api/v1/subtitles?query=${encodeURIComponent(cleanName)}&languages=${defaultSubCode}`;
+        logger.player(`[OpenSubtitles] Querying Movie Subtitles: "${cleanName}" in language: ${defaultSubCode}`);
       }
       
       const res = await fetch(searchUrl, {
@@ -1334,12 +1367,12 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
     }
   });
 
-  const [volumeToast, setVolumeToast] = useState<{ volume: number; visible: boolean; isMuted: boolean }>({ volume: 1, visible: false, isMuted: false });
+  const [volumeToast, setVolumeToast] = useState<{ volume: number; boost: number; visible: boolean; isMuted: boolean }>({ volume: 1, boost: 100, visible: false, isMuted: false });
   const volumeToastTimeoutRef = useRef<any>(null);
 
-  const triggerVolumeToast = (vol: number, muted: boolean) => {
+  const triggerVolumeToast = (vol: number, muted: boolean, boost: number = audioBoost) => {
     if (volumeToastTimeoutRef.current) clearTimeout(volumeToastTimeoutRef.current);
-    setVolumeToast({ volume: vol, visible: true, isMuted: muted });
+    setVolumeToast({ volume: vol, boost, visible: true, isMuted: muted });
     volumeToastTimeoutRef.current = setTimeout(() => {
       setVolumeToast(prev => ({ ...prev, visible: false }));
     }, 1500);
@@ -1470,20 +1503,26 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
 
   const handleSetAudioBoost = (boost: number) => {
     setAudioBoost(boost);
-    triggerSwitchToast(boost === 100 ? 'Audio Boost: Normal' : `Audio Boost: ${boost}%`);
+    if (boost > 100) {
+      setVolume(1.0);
+    }
+    triggerVolumeToast(boost > 100 ? 1.0 : volume, isMuted, boost);
   };
 
-  // Synchronize Audio Boost values to Web Audio API gain nodes
+  // Synchronize Audio Boost values to Web Audio API gain nodes and PlaybackController
   useEffect(() => {
     if (audioBoost > 100) {
       initAudioBoost();
     }
-    const multiplier = audioBoost / 100;
+    const multiplier = getAudioBoostMultiplier(audioBoost);
     if (videoGainRef.current) {
       videoGainRef.current.gain.setValueAtTime(multiplier, audioCtxRef.current?.currentTime || 0);
     }
     if (audioGainRef.current) {
       audioGainRef.current.gain.setValueAtTime(multiplier, audioCtxRef.current?.currentTime || 0);
+    }
+    if (playbackControllerRef.current) {
+      playbackControllerRef.current.setAudioBoost(audioBoost);
     }
   }, [audioBoost]);
 
@@ -1865,6 +1904,13 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
     }
   }, [volume, isMuted, saveVolume, activeAudioStreamIndex]);
 
+  // Reset audio boost to normal (100) if volume drops below 1.0
+  useEffect(() => {
+    if (volume < 1.0 && audioBoost > 100) {
+      setAudioBoost(100);
+    }
+  }, [volume, audioBoost]);
+
   // RequestAnimationFrame tick loop for micro-fine time updates (essential for subtitles)
   useEffect(() => {
     let frameId: number;
@@ -2095,7 +2141,8 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
             time,
             subDuration,
             onProgress,
-            signal
+            signal,
+            isAss
           );
 
           const merged = [...trackCues];
@@ -3115,11 +3162,19 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
         return;
       }
       setIsMuted(false);
-      setVolume(prev => {
-        const nextVol = Math.min(1.0, prev + 0.05);
-        triggerVolumeToast(nextVol, false);
-        return nextVol;
-      });
+      if (volume < 1.0) {
+        setVolume(prev => {
+          const nextVol = Math.min(1.0, prev + 0.05);
+          triggerVolumeToast(nextVol, false, 100);
+          return nextVol;
+        });
+      } else {
+        setAudioBoost(prev => {
+          const nextBoost = Math.min(200, prev + 5);
+          triggerVolumeToast(1.0, false, nextBoost);
+          return nextBoost;
+        });
+      }
     } else if (pressedKey === 'arrowdown') {
       e.preventDefault();
       if (showVolumeControlMode === 'disable') {
@@ -3127,11 +3182,19 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
         return;
       }
       setIsMuted(false);
-      setVolume(prev => {
-        const nextVol = Math.max(0.0, prev - 0.05);
-        triggerVolumeToast(nextVol, false);
-        return nextVol;
-      });
+      if (audioBoost > 100) {
+        setAudioBoost(prev => {
+          const nextBoost = Math.max(100, prev - 5);
+          triggerVolumeToast(1.0, false, nextBoost);
+          return nextBoost;
+        });
+      } else {
+        setVolume(prev => {
+          const nextVol = Math.max(0.0, prev - 0.05);
+          triggerVolumeToast(nextVol, false, 100);
+          return nextVol;
+        });
+      }
     }
   };
 
@@ -3216,7 +3279,7 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
         const ffmpegMgr = new FFmpegManager(video.id);
         const demuxMgr = new DemuxManager(ffmpegMgr, fileOrSource);
         controller = new PlaybackController(ffmpegMgr, demuxMgr, video.seekMap);
-        
+        controller.setAudioBoost(audioBoost);
         playbackControllerRef.current = controller;
 
         controller.setBufferingCallback((buffering) => {
@@ -5127,12 +5190,21 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
       <div className={`volume-toast-overlay ${volumeToast.visible ? 'visible' : ''}`}>
         <div className="volume-toast-content-vertical">
           <div className="volume-toast-bar-vertical">
-            <div className="volume-toast-bar-fill-vertical" style={{ height: `${volumeToast.volume * 100}%` }}>
-              {volumeToast.volume > 0 && <div className="volume-toast-bar-cap-vertical" />}
-            </div>
+            {volumeToast.boost > 100 ? (
+              <div 
+                className="volume-toast-bar-fill-vertical" 
+                style={{ height: `${volumeToast.boost - 100}%`, background: '#ff7a00', backgroundColor: '#ff7a00' }}
+              >
+                <div className="volume-toast-bar-cap-vertical" style={{ background: '#ffffff', backgroundColor: '#ffffff' }} />
+              </div>
+            ) : (
+              <div className="volume-toast-bar-fill-vertical" style={{ height: `${volumeToast.volume * 100}%` }}>
+                {volumeToast.volume > 0 && <div className="volume-toast-bar-cap-vertical" />}
+              </div>
+            )}
           </div>
           <span className="volume-toast-text-vertical">
-            {volumeToast.isMuted ? 'MUTE' : Math.round(volumeToast.volume * 100)}
+            {volumeToast.isMuted ? 'MUTE' : (volumeToast.boost > 100 ? volumeToast.boost : Math.round(volumeToast.volume * 100))}
           </span>
         </div>
       </div>
@@ -6656,18 +6728,17 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
           z-index: 100;
         }
         .flash-hud-icon-wrapper {
-          background: rgba(0, 0, 0, 0.65);
-          backdrop-filter: blur(8px);
-          -webkit-backdrop-filter: blur(8px);
-          border: 1px solid rgba(255, 255, 255, 0.1);
-          border-radius: 50%;
+          background: transparent;
+          border: none;
+          backdrop-filter: none;
+          -webkit-backdrop-filter: none;
           width: 84px;
           height: 84px;
           display: flex;
           align-items: center;
           justify-content: center;
           color: white;
-          box-shadow: 0 10px 25px rgba(0, 0, 0, 0.5);
+          box-shadow: none;
         }
         .animate-flash-hud {
           animation: flashHudAnim 0.6s cubic-bezier(0.16, 1, 0.3, 1) forwards;

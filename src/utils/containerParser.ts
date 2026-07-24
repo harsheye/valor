@@ -701,8 +701,20 @@ async function readIdAndSize(
   };
 }
 
-function processSubtitleText(text: string): string {
-  if (/^\d+,\d+,/.test(text)) {
+function processSubtitleText(text: string, isAss?: boolean): string {
+  if (isAss) {
+    let commaCount = 0;
+    let pos = 0;
+    while (commaCount < 8 && pos < text.length) {
+      if (text[pos] === ',') {
+        commaCount++;
+      }
+      pos++;
+    }
+    if (commaCount === 8) {
+      return text.substring(pos);
+    }
+  } else if (/^\d+,\d+,/.test(text)) {
     let commaCount = 0;
     let pos = 0;
     while (commaCount < 8 && pos < text.length) {
@@ -727,7 +739,8 @@ export async function extractMkvSubtitles(
   time: number,
   subDuration: number,
   onCuesProgress?: (cues: SubtitleCue[]) => void,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  isAss?: boolean
 ): Promise<SubtitleCue[]> {
   console.log('[extractMkvSubtitles] Started. TargetTrackNumber:', targetTrackNumber, 'SeekMap size:', seekMap.length, 'Time:', time);
   const cues: SubtitleCue[] = [];
@@ -860,7 +873,7 @@ export async function extractMkvSubtitles(
               id: `mkv-sub-${startTime.toFixed(3)}-${Math.random().toString(36).substring(2, 5)}`,
               startTime,
               endTime: startTime + 4.0, // default duration, capped below
-              text: cleanSubtitleText(processSubtitleText(text))
+              text: cleanSubtitleText(processSubtitleText(text, isAss))
             });
           }
         }
@@ -913,7 +926,7 @@ export async function extractMkvSubtitles(
             id: `mkv-sub-${blockStartTime.toFixed(3)}-${Math.random().toString(36).substring(2, 5)}`,
             startTime: blockStartTime,
             endTime: blockStartTime + duration,
-            text: cleanSubtitleText(processSubtitleText(blockText))
+            text: cleanSubtitleText(processSubtitleText(blockText, isAss))
           });
         }
       }
@@ -955,9 +968,11 @@ export async function extractMkvSubtitles(
 
     if (onCuesProgress && cues.length > 0 && cues.length % 5 === 0) {
       const sortedCues = [...cues].sort((a, b) => a.startTime - b.startTime);
-      for (let j = 0; j < sortedCues.length - 1; j++) {
-        if (sortedCues[j].endTime > sortedCues[j + 1].startTime) {
-          sortedCues[j].endTime = sortedCues[j + 1].startTime;
+      if (!isAss) {
+        for (let j = 0; j < sortedCues.length - 1; j++) {
+          if (sortedCues[j].endTime > sortedCues[j + 1].startTime) {
+            sortedCues[j].endTime = sortedCues[j + 1].startTime;
+          }
         }
       }
       onCuesProgress(sortedCues);
@@ -965,9 +980,11 @@ export async function extractMkvSubtitles(
   }
 
   cues.sort((a, b) => a.startTime - b.startTime);
-  for (let j = 0; j < cues.length - 1; j++) {
-    if (cues[j].endTime > cues[j + 1].startTime) {
-      cues[j].endTime = cues[j + 1].startTime;
+  if (!isAss) {
+    for (let j = 0; j < cues.length - 1; j++) {
+      if (cues[j].endTime > cues[j + 1].startTime) {
+        cues[j].endTime = cues[j + 1].startTime;
+      }
     }
   }
 

@@ -27,19 +27,23 @@ export const SubtitleOverlay: React.FC<SubtitleOverlayProps> = ({
   settings,
   controlsVisible,
 }) => {
-  // Find the active cue for the current playback time
-  const activeCue = cues.find(
-    (cue) => currentTime >= cue.startTime && currentTime <= cue.endTime
+  // Find all active cues for the current playback time, filtering out empty/whitespace ones
+  const activeCues = cues.filter(
+    (cue) => currentTime >= cue.startTime && currentTime <= cue.endTime && cue.text && cue.text.trim() !== ''
   );
 
-  if (!activeCue) return null;
+  if (activeCues.length === 0) return null;
 
-  // Format newlines into line breaks
-  const formattedText = activeCue.text.split('\n').map((line, index) => (
-    <React.Fragment key={index}>
-      {line}
-      {index < activeCue.text.split('\n').length - 1 && <br />}
-    </React.Fragment>
+  // Format newlines into line breaks for each active cue, wrapped in individual block elements
+  const formattedText = activeCues.map((cue, cueIdx) => (
+    <div key={cue.id || cueIdx} className="subtitle-line-group" style={{ marginTop: cueIdx > 0 ? '0.5rem' : 0 }}>
+      {cue.text.split('\n').map((line, lineIdx) => (
+        <React.Fragment key={lineIdx}>
+          {line}
+          {lineIdx < cue.text.split('\n').length - 1 && <br />}
+        </React.Fragment>
+      ))}
+    </div>
   ));
 
   let selectedFont = '"Poppins", system-ui, sans-serif';
