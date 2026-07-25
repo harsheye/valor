@@ -14,7 +14,9 @@ export const subOptions = [
 
 export const calendarStyleOptions = [
   { value: 'grid', label: 'Classic Grid' },
-  { value: 'list', label: 'Schedule List (Modern)' }
+  { value: 'list', label: 'Schedule List (Modern)' },
+  { value: 'booking', label: 'Hotel Bookings (Resource View)' },
+  { value: 'appointment', label: 'Client Appointments (Day View)' }
 ];
 
 export const limitOptions = [

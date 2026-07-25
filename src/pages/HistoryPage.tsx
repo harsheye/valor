@@ -4,6 +4,8 @@ import type { VideoItem } from '../types/media';
 import { CalendarView } from '../components/CalendarView';
 import Calendar02 from '../components/creative-tim/blocks/calendar-02';
 import { classifyVideoTitle } from '../utils/libraryClassifier';
+import { BookingCalendar } from '../components/BookingCalendar';
+import { AppointmentCalendar } from '../components/AppointmentCalendar';
 
 interface HistoryPageProps {
   videos: VideoItem[];
@@ -39,10 +41,17 @@ export const HistoryPage: React.FC<HistoryPageProps> = ({
         <div className="glass-panel workspace-panel">
           {historyViewMode === 'calendar' ? (
             <div style={{ display: 'flex', flexDirection: 'column', width: '100%' }}>
-              {settings.calendarStyle === 'list' ? (
+              {settings.calendarStyle === 'list' && (
                 <Calendar02 videos={videos} onPlayVideo={handlePlayVideo} isInstantlyPlayable={isInstantlyPlayable} />
-              ) : (
+              )}
+              {settings.calendarStyle === 'grid' && (
                 <CalendarView videos={videos} onPlayVideo={handlePlayVideo} />
+              )}
+              {settings.calendarStyle === 'booking' && (
+                <BookingCalendar />
+              )}
+              {settings.calendarStyle === 'appointment' && (
+                <AppointmentCalendar />
               )}
             </div>
           ) : (
