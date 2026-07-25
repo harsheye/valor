@@ -388,7 +388,7 @@ export const ActorDetailsPage: React.FC<ActorDetailsPageProps> = ({
     : '';
 
   return (
-    <div className="media-details-page-container actor-page-container animate-fade-in" style={{ position: 'relative', minHeight: '100vh', padding: '2rem 3rem' }}>
+    <div className="media-details-page-container actor-page-container animate-fade-in" style={{ minHeight: '100vh', padding: '2rem 3rem' }}>
       {/* Ambient Blurred Profile Cover Backdrop */}
       {profileImageUrl && (
         <div 
@@ -404,7 +404,7 @@ export const ActorDetailsPage: React.FC<ActorDetailsPageProps> = ({
         onClick={onClose} 
         title="Close Profile"
         style={{ 
-          position: 'fixed', 
+          position: 'absolute', 
           top: '1.25rem', 
           right: '1.25rem', 
           zIndex: 2000
@@ -674,7 +674,7 @@ export const ActorDetailsPage: React.FC<ActorDetailsPageProps> = ({
                               {titleStr}
                             </h4>
                             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '2px' }}>
-                              <span style={{ fontSize: '0.7rem', color: 'rgba(255,255,255,0.4)', fontWeight: 500 }}>
+                              <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)', fontWeight: 500 }}>
                                 {yearStr !== 'N/A' ? yearStr : ''}
                               </span>
                               <span style={{ 

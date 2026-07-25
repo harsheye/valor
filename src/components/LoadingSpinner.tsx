@@ -594,8 +594,8 @@ export const LoadingSpinner: React.FC<LoadingSpinnerProps> = ({
 
 /* ─── Gallery Thumbnail ─── */
 export const SpinnerThumbnail: React.FC<{ preset: SpinnerPreset; size?: number }> = ({ preset, size = 64 }) => (
-  <div style={{ width: size, height: size, display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', position: 'relative' }}>
-    <div style={{ transform: `scale(${size / 160})`, transformOrigin: 'center' }}>
+  <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', position: 'relative' }}>
+    <div style={{ transform: `scale(${(size * 1.45) / 150})`, transformOrigin: 'center', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
       <PresetSpinner preset={preset} fullscreen={false} />
     </div>
   </div>
@@ -607,7 +607,7 @@ export const BufferingOverlay: React.FC<{ isBuffering: boolean; customLoaderUrl?
   const [visible, setVisible] = React.useState(isBuffering);
 
   useEffect(() => {
-    let timeoutId: NodeJS.Timeout;
+    let timeoutId: ReturnType<typeof setTimeout>;
     if (isBuffering) {
       setShouldRender(true);
       // Small delay to allow DOM to mount before triggering CSS transition

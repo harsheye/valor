@@ -9,93 +9,175 @@
    -------------------------------------------------------------------------- */
 :root,
 [data-theme="dark"] {
-  /* Semantic Tokens */
-  --color-bg-canvas:       var(--pr-slate-950);
-  --color-bg-surface:      var(--pr-slate-900);
-  --color-bg-surface-alt:  var(--pr-slate-800);
-  --color-bg-card:         #161622;
-  --color-bg-card-hover:   #222234;
+  /* Canvas & Containers */
+  --bg-color:              #0b0b10;
+  --bg-primary:            #0b0b10;
+  --bg-secondary:          #12121a;
+  --background:            #0b0b10;
+  --surface:               #12121a;
+  --surface-elevated:      #161622;
+  --surface-hover:         #222234;
+  --card-bg:               #161622;
+  --card-hover-bg:         #222234;
+  --card-border:           rgba(255, 255, 255, 0.1);
+  --sidebar:               #12121a;
+  --sidebar-hover:         rgba(255, 255, 255, 0.08);
 
-  --color-text-primary:    var(--pr-white);
-  --color-text-secondary:  #d1d5db;
-  --color-text-muted:      var(--pr-slate-400);
+  /* Typography */
+  --text-primary:          #ffffff;
+  --text-secondary:        #d1d5db;
+  --text-muted:            #9ca3af;
 
-  --color-brand-primary:   var(--pr-purple-500);
-  --color-brand-hover:     var(--pr-purple-600);
-  --color-brand-glow:      rgba(139, 92, 246, 0.4);
+  /* Brand & Accents (Valor Red default) */
+  --accent-color:          #e50914;
+  --accent:                #e50914;
+  --accent-hover:          #b80710;
+  --accent-glow:           rgba(229, 9, 20, 0.4);
+  --danger:                #ef4444;
+  --success:               #10b981;
+  --warning:               #f59e0b;
 
-  --color-border-subtle:   rgba(255, 255, 255, 0.1);
-  --color-border-focus:    rgba(139, 92, 246, 0.5);
+  /* Borders & Outlines */
+  --border-color:          rgba(255, 255, 255, 0.1);
+  --border:                rgba(255, 255, 255, 0.1);
+  --border-subtle:         rgba(255, 255, 255, 0.06);
+  --border-focus:          rgba(229, 9, 20, 0.5);
 
-  --glass-bg-surface:      rgba(18, 18, 28, 0.75);
-  --glass-blur-radius:     blur(14px);
-  --glass-border-color:    rgba(255, 255, 255, 0.12);
-  --glass-elevation:       0 8px 32px 0 rgba(0, 0, 0, 0.6);
+  /* Glassmorphism & Overlays */
+  --glass-bg:              rgba(18, 18, 28, 0.82);
+  --glass-blur:            blur(16px);
+  --glass-border:          rgba(255, 255, 255, 0.12);
+  --glass-shadow:          0 8px 32px 0 rgba(0, 0, 0, 0.6);
+  --overlay-bg:            rgba(0, 0, 0, 0.8);
 
-  --theme-radius-base:     var(--radius-md);
+  /* Controls: Buttons, Inputs, Dropdowns */
+  --btn-base-color:        #e50914;
+  --btn-border-width:      1px;
+  --btn-border-radius:     8px;
+  
+  --input-bg:              #161622;
+  --input-border:          rgba(255, 255, 255, 0.12);
+  --input-text:            #ffffff;
+  --input-placeholder:     #9ca3af;
 
-  /* Legacy Variable Aliases for Backward Compatibility */
-  --bg-color:              var(--color-bg-canvas);
-  --bg-primary:            var(--color-bg-canvas);
-  --bg-secondary:          var(--color-bg-surface);
-  --card-bg:               var(--color-bg-card);
-  --card-hover-bg:         var(--color-bg-card-hover);
-  --accent-color:          var(--color-brand-primary);
-  --accent-hover:          var(--color-brand-hover);
-  --accent-glow:           var(--color-brand-glow);
-  --border-color:          var(--color-border-subtle);
-  --border-focus:          var(--color-border-focus);
-  --glass-bg:              var(--glass-bg-surface);
-  --glass-blur:            var(--glass-blur-radius);
-  --glass-border:          var(--glass-border-color);
-  --glass-shadow:          var(--glass-elevation);
+  --dropdown-bg:           #121218;
+  --dropdown-border:       rgba(255, 255, 255, 0.14);
+  --dropdown-text:         #f3f4f6;
+  --dropdown-hover-bg:     rgba(255, 255, 255, 0.08);
+  --dropdown-selected-bg:  #e50914;
+
+  /* Player Controls */
+  --player-accent:         #e50914;
+  --player-bg:             rgba(0, 0, 0, 0.95);
+  --player-control-bg:     rgba(18, 18, 28, 0.85);
+
+  /* Scrollbars */
+  --scrollbar-track:       #12121a;
+  --scrollbar-thumb:       #2d2d3f;
+  --scrollbar-thumb-hover: #3f3f5a;
+
+  /* Badges */
+  --badge-bg:              rgba(255, 255, 255, 0.08);
+  --badge-text:            #d1d5db;
+
+  /* Elevation Shadows */
+  --shadow-sm:             0 1px 3px rgba(0, 0, 0, 0.3);
+  --shadow-md:             0 4px 12px rgba(0, 0, 0, 0.4);
+  --shadow-lg:             0 8px 24px rgba(0, 0, 0, 0.5);
+  --shadow-xl:             0 16px 40px rgba(0, 0, 0, 0.7);
+
+  /* Skeleton Loaders */
+  --skeleton-base:         rgba(255, 255, 255, 0.05);
+  --skeleton-highlight:    rgba(255, 255, 255, 0.14);
 
   color-scheme: dark;
 }
 
 /* --------------------------------------------------------------------------
-   LIGHT THEME
+   LIGHT THEME (Airy, Premium, High Contrast WCAG AA)
    -------------------------------------------------------------------------- */
+html[data-theme="light"],
 [data-theme="light"] {
-  --color-bg-canvas:       var(--pr-slate-50);
-  --color-bg-surface:      var(--pr-slate-100);
-  --color-bg-surface-alt:  var(--pr-slate-200);
-  --color-bg-card:         var(--pr-white);
-  --color-bg-card-hover:   #e2e8f0;
+  /* Canvas & Containers */
+  --bg-color:              #F8FAFC;
+  --bg-primary:            #F8FAFC;
+  --bg-secondary:          #F1F5F9;
+  --background:            #F8FAFC;
+  --surface:               #F1F5F9;
+  --surface-elevated:      #FFFFFF;
+  --surface-hover:         #E2E8F0;
+  --card-bg:               #FFFFFF;
+  --card-hover-bg:         #F8FAFC;
+  --card-border:           #CBD5E1;
+  --sidebar:               #F1F5F9;
+  --sidebar-hover:         #E2E8F0;
 
-  --color-text-primary:    var(--pr-slate-900);
-  --color-text-secondary:  var(--pr-slate-700);
-  --color-text-muted:      var(--pr-slate-500);
+  /* Typography */
+  --text-primary:          #0F172A;
+  --text-secondary:        #334155;
+  --text-muted:            #64748B;
 
-  --color-brand-primary:   var(--pr-indigo-500);
-  --color-brand-hover:     var(--pr-indigo-600);
-  --color-brand-glow:      rgba(99, 102, 241, 0.3);
+  /* Brand & Accents (Valor Red) */
+  --accent-color:          #e50914;
+  --accent:                #e50914;
+  --accent-hover:          #b80710;
+  --accent-glow:           rgba(229, 9, 20, 0.12);
+  --danger:                #dc2626;
+  --success:               #059669;
+  --warning:               #d97706;
 
-  --color-border-subtle:   rgba(0, 0, 0, 0.12);
-  --color-border-focus:    rgba(99, 102, 241, 0.5);
+  /* Borders & Outlines */
+  --border-color:          #CBD5E1;
+  --border:                #CBD5E1;
+  --border-subtle:         #E2E8F0;
+  --border-focus:          rgba(229, 9, 20, 0.5);
 
-  --glass-bg-surface:      rgba(255, 255, 255, 0.85);
-  --glass-blur-radius:     blur(16px);
-  --glass-border-color:    rgba(0, 0, 0, 0.08);
-  --glass-elevation:       0 8px 24px 0 rgba(0, 0, 0, 0.12);
+  /* Glassmorphism & Overlays */
+  --glass-bg:              rgba(255, 255, 255, 0.95);
+  --glass-blur:            blur(16px);
+  --glass-border:          #CBD5E1;
+  --glass-shadow:          0 4px 20px 0 rgba(15, 23, 42, 0.08);
+  --overlay-bg:            rgba(15, 23, 42, 0.4);
 
-  --theme-radius-base:     var(--radius-md);
+  /* Controls: Buttons, Inputs, Dropdowns */
+  --btn-base-color:        #e50914;
+  --btn-border-width:      1px;
+  --btn-border-radius:     8px;
 
-  /* Legacy Variable Aliases */
-  --bg-color:              var(--color-bg-canvas);
-  --bg-primary:            var(--color-bg-canvas);
-  --bg-secondary:          var(--color-bg-surface);
-  --card-bg:               var(--color-bg-card);
-  --card-hover-bg:         var(--color-bg-card-hover);
-  --accent-color:          var(--color-brand-primary);
-  --accent-hover:          var(--color-brand-hover);
-  --accent-glow:           var(--color-brand-glow);
-  --border-color:          var(--color-border-subtle);
-  --border-focus:          var(--color-border-focus);
-  --glass-bg:              var(--glass-bg-surface);
-  --glass-blur:            var(--glass-blur-radius);
-  --glass-border:          var(--glass-border-color);
-  --glass-shadow:          var(--glass-elevation);
+  --input-bg:              #FFFFFF;
+  --input-border:          #CBD5E1;
+  --input-text:            #0F172A;
+  --input-placeholder:     #64748B;
+
+  --dropdown-bg:           #FFFFFF;
+  --dropdown-border:       #CBD5E1;
+  --dropdown-text:         #0F172A;
+  --dropdown-hover-bg:     #F1F5F9;
+  --dropdown-selected-bg:  #e50914;
+
+  /* Player Controls */
+  --player-accent:         #e50914;
+  --player-bg:             #FFFFFF;
+  --player-control-bg:     rgba(248, 250, 252, 0.95);
+
+  /* Scrollbars */
+  --scrollbar-track:       #F8FAFC;
+  --scrollbar-thumb:       #CBD5E1;
+  --scrollbar-thumb-hover: #94A3B8;
+
+  /* Badges */
+  --badge-bg:              #E2E8F0;
+  --badge-text:            #1E293B;
+
+  /* Elevation Shadows */
+  --shadow-sm:             0 1px 3px rgba(15, 23, 42, 0.08);
+  --shadow-md:             0 4px 12px rgba(15, 23, 42, 0.1);
+  --shadow-lg:             0 12px 24px rgba(15, 23, 42, 0.12);
+  --shadow-xl:             0 20px 32px rgba(15, 23, 42, 0.16);
+
+  /* Skeleton Loaders */
+  --skeleton-base:         rgba(0, 0, 0, 0.07);
+  --skeleton-highlight:    rgba(0, 0, 0, 0.16);
 
   color-scheme: light;
 }
@@ -103,47 +185,76 @@
 /* --------------------------------------------------------------------------
    OLED / BLACK AND WHITE THEME
    -------------------------------------------------------------------------- */
+html[data-theme="black-and-white"],
+html[data-theme="oled"],
 [data-theme="black-and-white"],
 [data-theme="oled"] {
-  --color-bg-canvas:       var(--pr-black);
-  --color-bg-surface:      #0a0a0a;
-  --color-bg-surface-alt:  #141414;
-  --color-bg-card:         #111111;
-  --color-bg-card-hover:   #1c1c1c;
+  --bg-color:              #000000;
+  --bg-primary:            #000000;
+  --bg-secondary:          #0a0a0a;
+  --background:            #000000;
+  --surface:               #0a0a0a;
+  --surface-elevated:      #111111;
+  --surface-hover:         #1c1c1c;
+  --card-bg:               #111111;
+  --card-hover-bg:         #1c1c1c;
+  --card-border:           rgba(255, 255, 255, 0.18);
+  --sidebar:               #0a0a0a;
+  --sidebar-hover:         rgba(255, 255, 255, 0.1);
 
-  --color-text-primary:    var(--pr-white);
-  --color-text-secondary:  #cccccc;
-  --color-text-muted:      #777777;
+  --text-primary:          #ffffff;
+  --text-secondary:        #cccccc;
+  --text-muted:            #777777;
 
-  --color-brand-primary:   var(--pr-white);
-  --color-brand-hover:     #e5e5e5;
-  --color-brand-glow:      rgba(255, 255, 255, 0.3);
+  --accent-color:          #ffffff;
+  --accent:                #ffffff;
+  --accent-hover:          #e5e5e5;
+  --accent-glow:           rgba(255, 255, 255, 0.3);
+  --danger:                #ff4444;
+  --success:               #00e676;
+  --warning:               #ffb300;
 
-  --color-border-subtle:   rgba(255, 255, 255, 0.18);
-  --color-border-focus:    rgba(255, 255, 255, 0.7);
+  --border-color:          rgba(255, 255, 255, 0.18);
+  --border:                rgba(255, 255, 255, 0.18);
+  --border-subtle:         rgba(255, 255, 255, 0.1);
+  --border-focus:          rgba(255, 255, 255, 0.7);
 
-  --glass-bg-surface:      rgba(12, 12, 12, 0.85);
-  --glass-blur-radius:     blur(16px);
-  --glass-border-color:    rgba(255, 255, 255, 0.2);
-  --glass-elevation:       0 10px 40px 0 rgba(0, 0, 0, 0.9);
+  --glass-bg:              rgba(12, 12, 12, 0.9);
+  --glass-blur:            blur(16px);
+  --glass-border:          rgba(255, 255, 255, 0.2);
+  --glass-shadow:          0 10px 40px 0 rgba(0, 0, 0, 0.9);
+  --overlay-bg:            rgba(0, 0, 0, 0.9);
 
-  --theme-radius-base:     var(--radius-sm);
+  --btn-base-color:        #ffffff;
+  --btn-border-width:      1px;
+  --btn-border-radius:     8px;
 
-  /* Legacy Variable Aliases */
-  --bg-color:              var(--color-bg-canvas);
-  --bg-primary:            var(--color-bg-canvas);
-  --bg-secondary:          var(--color-bg-surface);
-  --card-bg:               var(--color-bg-card);
-  --card-hover-bg:         var(--color-bg-card-hover);
-  --accent-color:          var(--color-brand-primary);
-  --accent-hover:          var(--color-brand-hover);
-  --accent-glow:           var(--color-brand-glow);
-  --border-color:          var(--color-border-subtle);
-  --border-focus:          var(--color-border-focus);
-  --glass-bg:              var(--glass-bg-surface);
-  --glass-blur:            var(--glass-blur-radius);
-  --glass-border:          var(--glass-border-color);
-  --glass-shadow:          var(--glass-elevation);
+  --input-bg:              #111111;
+  --input-border:          rgba(255, 255, 255, 0.2);
+  --input-text:            #ffffff;
+  --input-placeholder:     #777777;
+
+  --dropdown-bg:           #0d0d0d;
+  --dropdown-border:       rgba(255, 255, 255, 0.22);
+  --dropdown-text:         #ffffff;
+  --dropdown-hover-bg:     rgba(255, 255, 255, 0.12);
+  --dropdown-selected-bg:  #ffffff;
+
+  --player-accent:         #ffffff;
+  --player-bg:             #000000;
+  --player-control-bg:     rgba(15, 15, 15, 0.9);
+
+  --scrollbar-track:       #0a0a0a;
+  --scrollbar-thumb:       #262626;
+  --scrollbar-thumb-hover: #404040;
+
+  --badge-bg:              rgba(255, 255, 255, 0.1);
+  --badge-text:            #cccccc;
+
+  --shadow-sm:             0 2px 4px rgba(0, 0, 0, 0.8);
+  --shadow-md:             0 6px 16px rgba(0, 0, 0, 0.9);
+  --shadow-lg:             0 12px 32px rgba(0, 0, 0, 0.95);
+  --shadow-xl:             0 20px 48px rgba(0, 0, 0, 1.0);
 
   color-scheme: dark;
 }
@@ -151,46 +262,74 @@
 /* --------------------------------------------------------------------------
    CYBERPUNK THEME
    -------------------------------------------------------------------------- */
+html[data-theme="cyberpunk"],
 [data-theme="cyberpunk"] {
-  --color-bg-canvas:       var(--pr-cyber-dark);
-  --color-bg-surface:      var(--pr-cyber-card);
-  --color-bg-surface-alt:  #241640;
-  --color-bg-card:         #1a1036;
-  --color-bg-card-hover:   #2d1b5a;
+  --bg-color:              var(--pr-cyber-dark);
+  --bg-primary:            var(--pr-cyber-dark);
+  --bg-secondary:          var(--pr-cyber-card);
+  --background:            var(--pr-cyber-dark);
+  --surface:               var(--pr-cyber-card);
+  --surface-elevated:      #1a1036;
+  --surface-hover:         #2d1b5a;
+  --card-bg:               #1a1036;
+  --card-hover-bg:         #2d1b5a;
+  --card-border:           var(--pr-neon-pink);
+  --sidebar:               var(--pr-cyber-card);
+  --sidebar-hover:         rgba(255, 0, 127, 0.15);
 
-  --color-text-primary:    var(--pr-neon-yellow);
-  --color-text-secondary:  #f472b6;
-  --color-text-muted:      var(--pr-neon-pink);
+  --text-primary:          var(--pr-neon-yellow);
+  --text-secondary:        #f472b6;
+  --text-muted:            var(--pr-neon-pink);
 
-  --color-brand-primary:   var(--pr-neon-yellow);
-  --color-brand-hover:     #fff566;
-  --color-brand-glow:      rgba(255, 238, 0, 0.4);
+  --accent-color:          var(--pr-neon-yellow);
+  --accent:                var(--pr-neon-yellow);
+  --accent-hover:          #fff566;
+  --accent-glow:           rgba(255, 238, 0, 0.4);
+  --danger:                #ff0055;
+  --success:               #00ff99;
+  --warning:               #ffaa00;
 
-  --color-border-subtle:   var(--pr-neon-pink);
-  --color-border-focus:    var(--pr-neon-yellow);
+  --border-color:          var(--pr-neon-pink);
+  --border:                var(--pr-neon-pink);
+  --border-subtle:         rgba(255, 0, 127, 0.3);
+  --border-focus:          var(--pr-neon-yellow);
 
-  --glass-bg-surface:      rgba(18, 14, 36, 0.85);
-  --glass-blur-radius:     blur(12px);
-  --glass-border-color:    rgba(255, 0, 127, 0.4);
-  --glass-elevation:       0 0 20px rgba(255, 0, 127, 0.3);
+  --glass-bg:              rgba(18, 14, 36, 0.85);
+  --glass-blur:            blur(12px);
+  --glass-border:          rgba(255, 0, 127, 0.4);
+  --glass-shadow:          0 0 20px rgba(255, 0, 127, 0.3);
+  --overlay-bg:            rgba(10, 10, 18, 0.85);
 
-  --theme-radius-base:     0px; /* Cyberpunk sharp edges */
+  --btn-base-color:        var(--pr-neon-yellow);
+  --btn-border-width:      1px;
+  --btn-border-radius:     0px;
 
-  /* Legacy Variable Aliases */
-  --bg-color:              var(--color-bg-canvas);
-  --bg-primary:            var(--color-bg-canvas);
-  --bg-secondary:          var(--color-bg-surface);
-  --card-bg:               var(--color-bg-card);
-  --card-hover-bg:         var(--color-bg-card-hover);
-  --accent-color:          var(--color-brand-primary);
-  --accent-hover:          var(--color-brand-hover);
-  --accent-glow:           var(--color-brand-glow);
-  --border-color:          var(--color-border-subtle);
-  --border-focus:          var(--color-border-focus);
-  --glass-bg:              var(--glass-bg-surface);
-  --glass-blur:            var(--glass-blur-radius);
-  --glass-border:          var(--glass-border-color);
-  --glass-shadow:          var(--glass-elevation);
+  --input-bg:              #1a1036;
+  --input-border:          var(--pr-neon-pink);
+  --input-text:            var(--pr-neon-yellow);
+  --input-placeholder:     #f472b6;
+
+  --dropdown-bg:           #1a1036;
+  --dropdown-border:       var(--pr-neon-pink);
+  --dropdown-text:         var(--pr-neon-yellow);
+  --dropdown-hover-bg:     rgba(255, 0, 127, 0.2);
+  --dropdown-selected-bg:  var(--pr-neon-yellow);
+
+  --player-accent:         var(--pr-neon-yellow);
+  --player-bg:             #0a0a12;
+  --player-control-bg:     rgba(26, 16, 54, 0.9);
+
+  --scrollbar-track:       #120e24;
+  --scrollbar-thumb:       var(--pr-neon-pink);
+  --scrollbar-thumb-hover: var(--pr-neon-yellow);
+
+  --badge-bg:              rgba(255, 0, 127, 0.2);
+  --badge-text:            var(--pr-neon-yellow);
+
+  --shadow-sm:             0 0 8px rgba(255, 0, 127, 0.2);
+  --shadow-md:             0 0 16px rgba(255, 0, 127, 0.3);
+  --shadow-lg:             0 0 24px rgba(255, 0, 127, 0.4);
+  --shadow-xl:             0 0 32px rgba(255, 238, 0, 0.5);
 
   color-scheme: dark;
 }

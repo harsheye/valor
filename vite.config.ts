@@ -1,8 +1,9 @@
 import { defineConfig } from 'vite'
-import react from '@vitejs/plugin-react' // or whatever framework plugin you use
+import react from '@vitejs/plugin-react'
 
 export default defineConfig({
+  plugins: [react()],
   server: {
-    allowedHosts: true, // Disables host header checking entirely
+    allowedHosts: true,
   },
-})
+})

@@ -123,13 +123,16 @@ export default function Calendar02({ videos, onPlayVideo, isInstantlyPlayable }:
       <div 
         className="glass-panel" 
         style={{ 
-          padding: '1.5rem', 
+          padding: '1.25rem', 
           borderRadius: '12px', 
-          height: 'calc(100vh - 220px)',
-          maxHeight: 'calc(100vh - 220px)', 
+          flex: 1,
+          minHeight: 0,
           overflowY: 'auto', 
+          WebkitOverflowScrolling: 'touch',
           scrollbarWidth: 'thin',
-          border: '1px solid rgba(255, 255, 255, 0.08)'
+          border: '1px solid var(--border-color)',
+          paddingBottom: '2.5rem',
+          boxSizing: 'border-box'
         }}
       >
         {sortedDays.length === 0 ? (

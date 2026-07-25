@@ -1667,7 +1667,7 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
       cachedSourceRef.current = new CachedByteSource(byteSource, 4 * 1024 * 1024, 16); // 4MB chunks, cache size 16 (64MB)
     } else if (video.type === 'local') {
       const byteSource = activeFile
-        ? new FileByteSource(activeFile)
+        ? new FileByteSource(activeFile instanceof File ? activeFile : new File([activeFile], (activeFile as any)?.name || 'video.mp4'))
         : new HttpByteSource(video.url);
       cachedSourceRef.current = new CachedByteSource(byteSource, 4 * 1024 * 1024, 16); // 4MB chunks, cache size 16 (64MB)
     } else {
@@ -2075,7 +2075,7 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
 
       const cachedSource = cachedSourceRef.current || (
         activeFile
-          ? new CachedByteSource(new FileByteSource(activeFile), 4 * 1024 * 1024, 16)
+          ? new CachedByteSource(new FileByteSource(activeFile instanceof File ? activeFile : new File([activeFile], (activeFile as any)?.name || 'video.mp4')), 4 * 1024 * 1024, 16)
           : new CachedByteSource(new HttpByteSource(video.url), 4 * 1024 * 1024, 16)
       );
 
@@ -3199,8 +3199,14 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
       await prevDestroyPromiseRef.current;
       if (!active) return;
 
+      // Don't initialize playback for local videos without a valid file —
+      // the blob URL is dead after page reload. The lock overlay handles reassociation.
+      if (video.type === 'local' && !activeFile) return;
+
       if (videoRef.current) {
-        const fileOrSource = activeFile ? activeFile : new HttpByteSource(video.url);
+        const fileOrSource = activeFile
+          ? (activeFile instanceof File ? activeFile : new File([activeFile], (activeFile as any)?.name || 'video.mp4'))
+          : new HttpByteSource(video.url);
 
         const ffmpegMgr = new FFmpegManager(video.id);
         const demuxMgr = new DemuxManager(ffmpegMgr, fileOrSource);
@@ -6179,13 +6185,13 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
           left: 50%;
           transform: translateX(-50%);
           max-width: 95vw;
-          background: rgba(18, 18, 18, 0.88);
+          background: var(--card-bg);
           backdrop-filter: blur(25px);
           -webkit-backdrop-filter: blur(25px);
-          border: 1px solid rgba(255, 255, 255, 0.12);
+          border: 1px solid var(--border-color);
           border-radius: 12px;
           padding: 1.1rem;
-          box-shadow: 0 15px 40px rgba(0,0,0,0.7);
+          box-shadow: var(--shadow-xl);
           z-index: 100;
           transition: width 0.3s cubic-bezier(0.16, 1, 0.3, 1);
         }
@@ -6219,14 +6225,14 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
           }
         }
         .popover-transcript-col {
-          border-left: 1px solid rgba(255, 255, 255, 0.08);
+          border-left: 1px solid var(--border-subtle);
           padding-left: 1.25rem;
           display: flex;
           flex-direction: column;
           max-height: 200px;
         }
         .popover-style-col {
-          border-left: 1px solid rgba(255, 255, 255, 0.08);
+          border-left: 1px solid var(--border-subtle);
           padding-left: 1.25rem;
           display: flex;
           flex-direction: column;
@@ -6235,7 +6241,7 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
           display: flex;
           align-items: center;
           justify-content: space-between;
-          border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+          border-bottom: 1px solid var(--border-subtle);
           padding-bottom: 0.35rem;
           margin-bottom: 0.25rem;
         }
@@ -6243,12 +6249,13 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
           margin: 0 !important;
           border-bottom: none !important;
           padding-bottom: 0 !important;
+          color: var(--text-primary) !important;
         }
         .style-reset-btn-header {
-          background: rgba(255, 255, 255, 0.05);
-          border: 1px solid rgba(255, 255, 255, 0.1);
+          background: var(--surface);
+          border: 1px solid var(--border-color);
           border-radius: 4px;
-          color: rgba(255, 255, 255, 0.5);
+          color: var(--text-muted);
           font-size: 0.72rem;
           font-weight: 600;
           padding: 0.2rem 0.5rem;
@@ -6258,9 +6265,9 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
           letter-spacing: 0.03em;
         }
         .style-reset-btn-header:hover {
-          background: rgba(255, 255, 255, 0.12);
-          color: #ffffff;
-          border-color: rgba(255, 255, 255, 0.25);
+          background: var(--card-hover-bg);
+          color: var(--text-primary);
+          border-color: var(--border-focus);
         }
         .style-customizer {
           display: flex;

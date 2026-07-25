@@ -118,7 +118,7 @@ export const CustomSelect: React.FC<CustomSelectProps> = ({
       <style>{`
         .custom-select-container {
           position: relative;
-          width: 250px; /* Standardize length for all dropdowns to be consistent */
+          min-width: 120px;
           user-select: none;
           text-align: left;
           z-index: 50;
@@ -134,12 +134,14 @@ export const CustomSelect: React.FC<CustomSelectProps> = ({
           border: 1px solid var(--dropdown-border);
           border-radius: 8px;
           color: var(--dropdown-text);
-          padding: 0.45rem 0.65rem;
-          font-size: 0.88rem;
+          padding: 0.45rem 0.85rem;
+          font-size: 0.85rem;
+          font-weight: 600;
           cursor: pointer;
           transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
           width: 100%;
           outline: none;
+          white-space: nowrap;
         }
         .custom-select-trigger:hover {
           border-color: var(--accent-glow);
@@ -163,12 +165,14 @@ export const CustomSelect: React.FC<CustomSelectProps> = ({
           position: absolute;
           top: calc(100% + 5px);
           left: 0;
-          right: 0;
+          min-width: 150px;
+          width: max-content;
+          max-width: 280px;
           background: var(--dropdown-bg);
           border: 1px solid var(--dropdown-border);
           border-radius: 8px;
           z-index: 99999 !important;
-          box-shadow: 0 16px 40px rgba(0,0,0,0.95);
+          box-shadow: var(--shadow-xl);
           overflow: hidden;
           animation: dropdown-fade-in 0.15s cubic-bezier(0.16, 1, 0.3, 1);
         }
@@ -196,12 +200,9 @@ export const CustomSelect: React.FC<CustomSelectProps> = ({
           border-color: var(--accent-color);
         }
         .custom-select-options-list {
-          max-height: 180px;
+          max-height: 220px;
           overflow-y: auto;
-          scrollbar-width: none; /* Invisible scrollbar for Firefox */
-        }
-        .custom-select-options-list::-webkit-scrollbar {
-          display: none; /* Invisible scrollbar for Chrome/Safari/Edge */
+          scrollbar-width: thin;
         }
         .custom-select-empty {
           padding: 0.75rem;
@@ -212,18 +213,19 @@ export const CustomSelect: React.FC<CustomSelectProps> = ({
         .custom-select-option {
           display: flex;
           align-items: center;
-          padding: 0.5rem 0.85rem;
+          padding: 0.55rem 0.85rem;
           font-size: 0.85rem;
           color: var(--dropdown-text);
           cursor: pointer;
           transition: all 0.15s ease;
+          white-space: nowrap;
         }
         .custom-select-option:hover {
           background: var(--dropdown-hover-bg);
         }
         .custom-select-option.selected {
           background: var(--accent-color);
-          color: var(--bg-primary, #ffffff);
+          color: #ffffff;
           font-weight: 700;
         }
         .option-check-icon {
@@ -239,8 +241,6 @@ export const CustomSelect: React.FC<CustomSelectProps> = ({
         }
         .option-label-text {
           white-space: nowrap;
-          overflow: hidden;
-          text-overflow: ellipsis;
         }
       `}</style>
     </div>

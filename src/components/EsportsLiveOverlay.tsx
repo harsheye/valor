@@ -17,7 +17,7 @@ export interface EsportsMatch {
   id: string;
   game: 'valorant';
   eventName: string;
-  status: 'ongoing';
+  status: 'ongoing' | 'completed' | 'upcoming';
   bestOf: string;
   teamA: {
     name: string;
@@ -232,7 +232,6 @@ const getActiveMapName = (match: EsportsMatch): string => {
 };
 
 export const EsportsLiveOverlay: React.FC = () => {
-  // DEFAULT IS DISABLED (FALSE)
   const [isEnabled, setIsEnabled] = useState<boolean>(() => {
     return localStorage.getItem('vct_overlay_enabled') === 'true';
   });
@@ -244,7 +243,7 @@ export const EsportsLiveOverlay: React.FC = () => {
     return localStorage.getItem('vct_overlay_compact_mode') === 'true';
   });
 
-  const pollTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const pollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Listen to storage events for settings sync across tabs/views
   useEffect(() => {

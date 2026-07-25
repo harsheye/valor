@@ -84,19 +84,18 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ videos, onPlayVideo 
   }
 
   return (
-    <div className="workspace-panel-wrapper">
-      <div className="glass-panel workspace-panel" style={{ display: 'flex', flexDirection: 'column', minHeight: '100%', boxSizing: 'border-box' }}>
+    <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', overflowY: 'auto', WebkitOverflowScrolling: 'touch', paddingBottom: '2.5rem', boxSizing: 'border-box', width: '100%' }}>
         
         {/* Compact Month Navigation Bar */}
         <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', marginBottom: '0.75rem' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', background: 'rgba(255,255,255,0.03)', padding: '4px 12px', borderRadius: '20px', border: '1px solid rgba(255,255,255,0.06)' }}>
-            <button onClick={handlePrevMonth} className="settings-close-btn" style={{ width: '28px', height: '28px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', background: 'var(--surface)', padding: '4px 12px', borderRadius: '20px', border: '1px solid var(--border-color)' }}>
+            <button onClick={handlePrevMonth} className="settings-close-btn" style={{ width: '28px', height: '28px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-primary)' }}>
               <ChevronLeft size={16} />
             </button>
-            <span style={{ fontSize: '0.95rem', fontWeight: 600, minWidth: '130px', textAlign: 'center', color: '#fff' }}>
+            <span style={{ fontSize: '0.95rem', fontWeight: 600, minWidth: '130px', textAlign: 'center', color: 'var(--text-primary)' }}>
               {monthNames[month]} {year}
             </span>
-            <button onClick={handleNextMonth} className="settings-close-btn" style={{ width: '28px', height: '28px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <button onClick={handleNextMonth} className="settings-close-btn" style={{ width: '28px', height: '28px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-primary)' }}>
               <ChevronRight size={16} />
             </button>
           </div>
@@ -109,7 +108,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ videos, onPlayVideo 
             {/* Weekday Names */}
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: '4px', textAlign: 'center', marginBottom: '4px' }}>
               {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map(day => (
-                <div key={day} style={{ fontSize: '0.75rem', fontWeight: 700, color: 'rgba(255,255,255,0.4)', padding: '4px 0' }}>
+                <div key={day} style={{ fontSize: '0.75rem', fontWeight: 700, color: 'var(--text-muted)', padding: '4px 0' }}>
                   {day}
                 </div>
               ))}
@@ -132,14 +131,14 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ videos, onPlayVideo 
                     style={{
                       background: cell.isCurrentMonth 
                         ? hasVideos 
-                          ? 'rgba(59, 130, 246, 0.08)' 
-                          : 'rgba(255,255,255,0.01)'
-                        : 'rgba(255,255,255,0.003)',
+                          ? 'rgba(59, 130, 246, 0.12)' 
+                          : 'var(--card-bg)'
+                        : 'var(--surface)',
                       border: isSelected
-                        ? '1px solid #3b82f6'
+                        ? '1px solid var(--accent-color)'
                         : hasVideos
-                          ? '1px solid rgba(59, 130, 246, 0.2)'
-                          : '1px solid rgba(255,255,255,0.03)',
+                          ? '1px solid rgba(59, 130, 246, 0.3)'
+                          : '1px solid var(--border-subtle)',
                       borderRadius: '6px',
                       padding: '6px',
                       display: 'flex',
@@ -147,7 +146,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ videos, onPlayVideo 
                       minHeight: '65px',
                       cursor: cell.isCurrentMonth && hasVideos ? 'pointer' : 'default',
                       transition: 'all 0.2s',
-                      opacity: cell.isCurrentMonth ? 1 : 0.25
+                      opacity: cell.isCurrentMonth ? 1 : 0.35
                     }}
                     className={cell.isCurrentMonth && hasVideos ? 'calendar-cell-active' : ''}
                   >
@@ -157,8 +156,8 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ videos, onPlayVideo 
                       color: cell.isCurrentMonth 
                         ? hasVideos 
                           ? '#3b82f6' 
-                          : 'rgba(255,255,255,0.8)' 
-                        : 'rgba(255,255,255,0.3)',
+                          : 'var(--text-primary)' 
+                        : 'var(--text-muted)',
                       alignSelf: 'flex-start',
                       marginBottom: '4px'
                     }}>
@@ -176,24 +175,24 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ videos, onPlayVideo 
             </div>
           </div>
 
-          {/* Details Sidebar panel -> Now stacked below */}
-          <div style={{ background: 'rgba(255,255,255,0.01)', borderTop: '1px solid rgba(255,255,255,0.06)', paddingTop: '1.25rem', display: 'flex', flexDirection: 'column', width: '100%' }}>
-            <h3 style={{ margin: '0 0 0.75rem 0', fontSize: '1rem', fontWeight: 600, color: '#fff' }}>
+          {/* Details Sidebar panel -> Stacked below */}
+          <div style={{ background: 'transparent', borderTop: '1px solid var(--border-color)', paddingTop: '1.25rem', paddingBottom: '2.5rem', display: 'flex', flexDirection: 'column', width: '100%', boxSizing: 'border-box' }}>
+            <h3 style={{ margin: '0 0 0.75rem 0', fontSize: '1rem', fontWeight: 600, color: 'var(--text-primary)' }}>
               Day Details
             </h3>
             
             {!selectedDayVideos ? (
-              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', textAlign: 'center', color: 'rgba(255,255,255,0.4)', padding: '2rem 1rem' }}>
+              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', textAlign: 'center', color: 'var(--text-muted)', padding: '2rem 1rem' }}>
                 <Film size={32} style={{ marginBottom: '0.75rem', opacity: 0.5 }} />
                 <span style={{ fontSize: '0.85rem' }}>Select a day with tracked viewing activity to view metrics.</span>
               </div>
             ) : (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', width: '100%' }}>
-                <div style={{ fontSize: '0.8rem', color: 'rgba(255,255,255,0.5)', marginBottom: '0.25rem' }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.85rem', width: '100%', boxSizing: 'border-box' }}>
+                <div style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', marginBottom: '0.25rem' }}>
                   Viewing records for <b>{monthNames[month]} {selectedDayVideos.day}, {year}</b>
                 </div>
                 
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '0.75rem', width: '100%' }}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.85rem', width: '100%', boxSizing: 'border-box' }}>
                   {selectedDayVideos.list.map((vid, idx) => {
                     const playTime = (vid as any).lastPlayedDate ? new Date((vid as any).lastPlayedDate).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Unknown';
                     const rating = (vid as any).rating || 0;
@@ -205,43 +204,45 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ videos, onPlayVideo 
                         key={idx} 
                         className="glass-panel" 
                         style={{ 
-                          padding: '0.85rem', 
-                          background: 'rgba(255,255,255,0.02)', 
-                          border: '1px solid rgba(255,255,255,0.06)', 
-                          borderRadius: '8px', 
+                          padding: '1rem', 
+                          background: 'var(--card-bg)', 
+                          border: '1px solid var(--border-color)', 
+                          borderRadius: '10px', 
                           display: 'flex', 
                           flexDirection: 'column', 
-                          gap: '0.6rem',
-                          transition: 'background-color 0.2s'
+                          gap: '0.75rem',
+                          boxSizing: 'border-box',
+                          width: '100%',
+                          transition: 'background-color 0.2s, border-color 0.2s'
                         }}
                       >
-                        <div style={{ fontSize: '0.88rem', fontWeight: 600, color: '#fff', overflow: 'hidden', textOverflow: 'ellipsis', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', lineHeight: 1.3 }}>
+                        <div style={{ fontSize: '0.9rem', fontWeight: 600, color: 'var(--text-primary)', lineHeight: 1.4, wordBreak: 'break-word' }}>
                           {vid.title}
                         </div>
                         
-                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px 12px', fontSize: '0.72rem', color: 'rgba(255,255,255,0.6)' }}>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                            <Clock size={11} style={{ color: '#3b82f6' }} />
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: '8px 14px', fontSize: '0.78rem', color: 'var(--text-secondary)' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
+                            <Clock size={13} style={{ color: '#3b82f6', flexShrink: 0 }} />
                             <span>Viewed: <b>{playTime}</b></span>
                           </div>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                            <Play size={11} style={{ color: '#2ecc71' }} />
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
+                            <Play size={13} style={{ color: '#2ecc71', flexShrink: 0 }} />
                             <span>Watched: <b>{formatTime(watchedSeconds)}</b></span>
                           </div>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                            <Film size={11} style={{ color: '#e50914' }} />
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
+                            <Film size={13} style={{ color: 'var(--accent-color)', flexShrink: 0 }} />
                             <span>Length: <b>{durationStr}</b></span>
                           </div>
                           {vid.bookmarks && vid.bookmarks.length > 0 && (
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                              <Bookmark size={11} style={{ color: '#8b5cf6' }} />
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
+                              <Bookmark size={13} style={{ color: '#8b5cf6', flexShrink: 0 }} />
                               <span>Bookmarks: <b>{vid.bookmarks.length}</b></span>
                             </div>
                           )}
                           
                           {rating > 0 && (
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '4px', gridColumn: 'span 2' }}>
-                              <Star size={11} fill="#f59e0b" stroke="#f59e0b" style={{ color: '#f59e0b' }} />
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '5px', gridColumn: '1 / -1' }}>
+                              <Star size={13} fill="#f59e0b" stroke="#f59e0b" style={{ color: '#f59e0b', flexShrink: 0 }} />
                               <span>Rating: <b style={{ color: '#f59e0b' }}>{'★'.repeat(rating)}{'☆'.repeat(5 - rating)}</b></span>
                             </div>
                           )}
@@ -250,9 +251,9 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ videos, onPlayVideo 
                         <button 
                           className="btn btn-primary btn-sm"
                           onClick={() => onPlayVideo(vid)}
-                          style={{ marginTop: '0.25rem', padding: '0.35rem', fontSize: '0.78rem', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px', cursor: 'pointer' }}
+                          style={{ marginTop: '0.35rem', padding: '0.5rem 1rem', fontSize: '0.82rem', fontWeight: 600, borderRadius: '8px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '6px', cursor: 'pointer', alignSelf: 'flex-start' }}
                         >
-                          <Play size={10} fill="white" />
+                          <Play size={12} fill="white" />
                           <span>Resume Playback</span>
                         </button>
                       </div>
@@ -265,12 +266,10 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ videos, onPlayVideo 
 
         </div>
 
-      </div>
-
       <style>{`
         .calendar-cell-active:hover {
-          background: rgba(59, 130, 246, 0.14) !important;
-          border-color: rgba(59, 130, 246, 0.4) !important;
+          background: rgba(59, 130, 246, 0.18) !important;
+          border-color: #3b82f6 !important;
         }
       `}</style>
     </div>

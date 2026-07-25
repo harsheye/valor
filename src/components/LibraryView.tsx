@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Film, Play, Star, List, Tv, UploadCloud } from 'lucide-react';
+import { Film, Play, Star, Tv, UploadCloud } from 'lucide-react';
 import type { VideoItem } from '../types/media';
 import { classifyVideoTitle } from '../utils/libraryClassifier';
 
@@ -61,7 +61,7 @@ export const LibraryView: React.FC<LibraryViewProps> = ({ videos, onPlayVideo, i
       <div className="glass-panel workspace-panel" style={{ display: 'flex', flexDirection: 'column', height: '100%', maxHeight: '82vh', overflow: 'hidden' }}>
         
         {/* Underline Tab Navigation */}
-        <div className="settings-tab-nav" style={{ display: 'flex', gap: '1.5rem', borderBottom: '1px solid rgba(255, 255, 255, 0.08)', paddingBottom: '0.5rem', marginBottom: '1.5rem', flexWrap: 'wrap' }}>
+        <div className="settings-tab-nav" style={{ display: 'flex', gap: '1.5rem', borderBottom: '1px solid var(--border-color)', paddingBottom: '0.5rem', marginBottom: '1.5rem', flexWrap: 'wrap' }}>
           <button 
             onClick={() => {
               setActiveSubTab('movies');
@@ -70,8 +70,8 @@ export const LibraryView: React.FC<LibraryViewProps> = ({ videos, onPlayVideo, i
             style={{ 
               background: 'none', 
               border: 'none', 
-              borderBottom: activeSubTab === 'movies' ? '2px solid #e50914' : '2px solid transparent', 
-              color: activeSubTab === 'movies' ? '#fff' : 'rgba(255,255,255,0.6)', 
+              borderBottom: activeSubTab === 'movies' ? '2px solid var(--accent-color)' : '2px solid transparent', 
+              color: activeSubTab === 'movies' ? 'var(--text-primary)' : 'var(--text-muted)', 
               padding: '0.5rem 0.25rem', 
               fontSize: '0.95rem', 
               fontWeight: 600, 
@@ -93,8 +93,8 @@ export const LibraryView: React.FC<LibraryViewProps> = ({ videos, onPlayVideo, i
             style={{ 
               background: 'none', 
               border: 'none', 
-              borderBottom: activeSubTab === 'series' ? '2px solid #e50914' : '2px solid transparent', 
-              color: activeSubTab === 'series' ? '#fff' : 'rgba(255,255,255,0.6)', 
+              borderBottom: activeSubTab === 'series' ? '2px solid var(--accent-color)' : '2px solid transparent', 
+              color: activeSubTab === 'series' ? 'var(--text-primary)' : 'var(--text-muted)', 
               padding: '0.5rem 0.25rem', 
               fontSize: '0.95rem', 
               fontWeight: 600, 
@@ -115,7 +115,7 @@ export const LibraryView: React.FC<LibraryViewProps> = ({ videos, onPlayVideo, i
           {/* Movies Grid */}
           {activeSubTab === 'movies' && (
             movies.length === 0 ? (
-              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', minHeight: '200px', color: 'rgba(255,255,255,0.4)', textAlign: 'center' }}>
+              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', minHeight: '200px', color: 'var(--text-muted)', textAlign: 'center' }}>
                 <Film size={44} style={{ marginBottom: '1rem', opacity: 0.5 }} />
                 <span>No movies in library yet.</span>
               </div>
@@ -135,33 +135,33 @@ export const LibraryView: React.FC<LibraryViewProps> = ({ videos, onPlayVideo, i
                       onClick={() => onPlayVideo(item.video)}
                       style={{ 
                         padding: '0.85rem 1rem', 
-                        background: 'rgba(255,255,255,0.02)', 
-                        border: '1px solid rgba(255,255,255,0.06)', 
+                        background: 'var(--card-bg)', 
+                        border: '1px solid var(--border-color)', 
                         borderRadius: '10px', 
                         display: 'flex', 
                         flexDirection: 'column', 
                         gap: '0.5rem',
                         cursor: 'pointer',
-                        transition: 'transform 0.2s, background-color 0.2s',
+                        transition: 'transform 0.2s, background-color 0.2s, border-color 0.2s',
                         position: 'relative',
                         overflow: 'hidden'
                       }}
                       onMouseEnter={(e) => {
                         e.currentTarget.style.transform = 'translateY(-2px)';
-                        e.currentTarget.style.background = 'rgba(255,255,255,0.04)';
-                        e.currentTarget.style.borderColor = 'rgba(229, 9, 20, 0.3)';
+                        e.currentTarget.style.background = 'var(--card-hover-bg)';
+                        e.currentTarget.style.borderColor = 'var(--accent-color)';
                       }}
                       onMouseLeave={(e) => {
                         e.currentTarget.style.transform = 'translateY(0)';
-                        e.currentTarget.style.background = 'rgba(255,255,255,0.02)';
-                        e.currentTarget.style.borderColor = 'rgba(255,255,255,0.06)';
+                        e.currentTarget.style.background = 'var(--card-bg)';
+                        e.currentTarget.style.borderColor = 'var(--border-color)';
                       }}
                     >
-                      <div style={{ fontSize: '0.95rem', fontWeight: 700, color: '#fff', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={item.displayTitle}>
+                      <div style={{ fontSize: '0.95rem', fontWeight: 700, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={item.displayTitle}>
                         {item.displayTitle}
                       </div>
                       
-                      <div style={{ fontSize: '0.75rem', color: 'rgba(255,255,255,0.5)', display: 'flex', justifyContent: 'space-between', marginTop: 'auto', alignItems: 'center' }}>
+                      <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', display: 'flex', justifyContent: 'space-between', marginTop: 'auto', alignItems: 'center' }}>
                         <span>Length: {durationStr}</span>
                         {watchedProgress > 0 && <span style={{ color: '#3b82f6', fontWeight: 600 }}>{watchedProgress}% watched</span>}
                       </div>
@@ -177,11 +177,11 @@ export const LibraryView: React.FC<LibraryViewProps> = ({ videos, onPlayVideo, i
                         <span style={{ 
                           fontSize: '0.7rem', 
                           fontWeight: 700, 
-                          color: isInstantlyPlayable(item.video) ? '#2ecc71' : '#f59e0b',
-                          background: isInstantlyPlayable(item.video) ? 'rgba(46,204,113,0.1)' : 'rgba(245,158,11,0.1)',
+                          color: isInstantlyPlayable(item.video) ? 'var(--success)' : 'var(--warning)',
+                          background: isInstantlyPlayable(item.video) ? 'rgba(16, 185, 129, 0.12)' : 'rgba(245, 158, 11, 0.12)',
                           padding: '3px 8px',
                           borderRadius: '4px',
-                          border: isInstantlyPlayable(item.video) ? '1px solid rgba(46,204,113,0.2)' : '1px solid rgba(245,158,11,0.2)'
+                          border: isInstantlyPlayable(item.video) ? '1px solid rgba(16, 185, 129, 0.3)' : '1px solid rgba(245, 158, 11, 0.3)'
                         }}>
                           {isInstantlyPlayable(item.video) ? 'Play' : 'Select Media'}
                         </span>
@@ -193,10 +193,10 @@ export const LibraryView: React.FC<LibraryViewProps> = ({ videos, onPlayVideo, i
             )
           )}
 
-          {/* Series Groups - Restored commit 56aea42 layout */}
+          {/* Series Groups */}
           {activeSubTab === 'series' && (
             Object.keys(groupedSeries).length === 0 ? (
-              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', minHeight: '200px', color: 'rgba(255,255,255,0.4)', textAlign: 'center' }}>
+              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', minHeight: '200px', color: 'var(--text-muted)', textAlign: 'center' }}>
                 <Tv size={44} style={{ marginBottom: '1rem', opacity: 0.5 }} />
                 <span>No series in library yet.</span>
               </div>
@@ -204,7 +204,7 @@ export const LibraryView: React.FC<LibraryViewProps> = ({ videos, onPlayVideo, i
               <div style={{ display: 'flex', gap: '1.25rem', height: '100%', minHeight: '350px' }}>
                 
                 {/* Series List Sidebar Tabs */}
-                <div style={{ flex: 1.2, display: 'flex', flexDirection: 'column', gap: '6px', borderRight: '1px solid rgba(255,255,255,0.08)', paddingRight: '1rem', overflowY: 'auto' }}>
+                <div style={{ flex: 1.2, display: 'flex', flexDirection: 'column', gap: '6px', borderRight: '1px solid var(--border-color)', paddingRight: '1rem', overflowY: 'auto' }}>
                   {Object.entries(groupedSeries).map(([sTitle, episodes]) => {
                     const isSelected = (selectedSeries || Object.keys(groupedSeries)[0]) === sTitle;
                     return (
@@ -212,7 +212,7 @@ export const LibraryView: React.FC<LibraryViewProps> = ({ videos, onPlayVideo, i
                         key={sTitle}
                         onClick={() => setSelectedSeries(sTitle)}
                         style={{
-                          background: isSelected ? 'rgba(255, 255, 255, 0.05)' : 'transparent',
+                          background: isSelected ? 'var(--card-hover-bg)' : 'transparent',
                           border: 'none',
                           borderRadius: '6px',
                           padding: '8px 12px',
@@ -220,18 +220,18 @@ export const LibraryView: React.FC<LibraryViewProps> = ({ videos, onPlayVideo, i
                           display: 'flex',
                           alignItems: 'center',
                           justifyContent: 'space-between',
-                          color: isSelected ? '#fff' : 'rgba(255,255,255,0.6)',
+                          color: isSelected ? 'var(--text-primary)' : 'var(--text-secondary)',
                           transition: 'all 0.2s',
                           textAlign: 'left'
                         }}
                       >
                         <div style={{ display: 'flex', alignItems: 'center', gap: '8px', minWidth: 0 }}>
-                          <Tv size={16} color={isSelected ? '#e50914' : 'rgba(255,255,255,0.4)'} />
+                          <Tv size={16} color={isSelected ? 'var(--accent-color)' : 'var(--text-muted)'} />
                           <span style={{ fontSize: '0.85rem', fontWeight: isSelected ? 600 : 400, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                             {sTitle}
                           </span>
                         </div>
-                        <span style={{ fontSize: '0.75rem', color: isSelected ? 'rgba(255,255,255,0.8)' : 'rgba(255,255,255,0.4)', background: isSelected ? 'rgba(255,255,255,0.1)' : 'rgba(255,255,255,0.05)', padding: '2px 6px', borderRadius: '10px' }}>
+                        <span style={{ fontSize: '0.75rem', color: isSelected ? 'var(--text-primary)' : 'var(--text-muted)', background: 'var(--badge-bg)', padding: '2px 6px', borderRadius: '10px' }}>
                           {episodes.length}
                         </span>
                       </button>
@@ -258,7 +258,7 @@ export const LibraryView: React.FC<LibraryViewProps> = ({ videos, onPlayVideo, i
 
                     return (
                       <>
-                        <h3 style={{ margin: '0 0 0.5rem 0', fontSize: '1rem', fontWeight: 600, color: '#fff' }}>
+                        <h3 style={{ margin: '0 0 0.5rem 0', fontSize: '1rem', fontWeight: 600, color: 'var(--text-primary)' }}>
                           {currentSelected}
                         </h3>
                         
@@ -266,7 +266,7 @@ export const LibraryView: React.FC<LibraryViewProps> = ({ videos, onPlayVideo, i
                           {sortedSeasons.map(seasonNum => (
                             <div key={seasonNum} style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
                               {/* Season breadcrumb header */}
-                              <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.72rem', fontWeight: 700, color: 'rgba(255,255,255,0.35)', textTransform: 'uppercase', paddingBottom: '0.35rem', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.72rem', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', paddingBottom: '0.35rem', borderBottom: '1px solid var(--border-subtle)' }}>
                                 <span>{currentSelected}</span>
                                 <span>&gt;</span>
                                 <span style={{ color: '#3b82f6' }}>Season {seasonNum}</span>
@@ -285,25 +285,31 @@ export const LibraryView: React.FC<LibraryViewProps> = ({ videos, onPlayVideo, i
                                       key={idx}
                                       onClick={() => onPlayVideo(epItem.video)}
                                       style={{
-                                        background: 'rgba(255,255,255,0.01)',
-                                        border: '1px solid rgba(255,255,255,0.05)',
+                                        background: 'var(--card-bg)',
+                                        border: '1px solid var(--border-color)',
                                         borderRadius: '6px',
                                         padding: '0.65rem 0.85rem',
                                         display: 'flex',
                                         alignItems: 'center',
                                         justifyContent: 'space-between',
                                         cursor: 'pointer',
-                                        transition: 'background-color 0.2s'
+                                        transition: 'background-color 0.2s, border-color 0.2s'
                                       }}
-                                      onMouseEnter={(e) => e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.03)'}
-                                      onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.01)'}
+                                      onMouseEnter={(e) => {
+                                        e.currentTarget.style.backgroundColor = 'var(--card-hover-bg)';
+                                        e.currentTarget.style.borderColor = 'var(--accent-color)';
+                                      }}
+                                      onMouseLeave={(e) => {
+                                        e.currentTarget.style.backgroundColor = 'var(--card-bg)';
+                                        e.currentTarget.style.borderColor = 'var(--border-color)';
+                                      }}
                                     >
                                       <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
-                                        <span style={{ fontSize: '0.82rem', fontWeight: 600, color: '#fff' }}>
+                                        <span style={{ fontSize: '0.82rem', fontWeight: 600, color: 'var(--text-primary)' }}>
                                           Episode {epItem.episode}
                                         </span>
                                         <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-                                          <span style={{ fontSize: '0.7rem', color: 'rgba(255,255,255,0.4)' }}>
+                                          <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>
                                             Length: {durationStr}
                                           </span>
                                           {rating > 0 && (

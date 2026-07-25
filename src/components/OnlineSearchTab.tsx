@@ -91,7 +91,7 @@ export const OnlineSearchTab: React.FC<OnlineSearchTabProps> = ({ onSelectMedia,
     return saved ? JSON.parse(saved) : [];
   });
   
-  const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const searchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const searchWrapperRef = useRef<HTMLDivElement>(null);
 
   const addToHistory = (searchQuery: string) => {
@@ -403,10 +403,10 @@ export const OnlineSearchTab: React.FC<OnlineSearchTabProps> = ({ onSelectMedia,
           <div className="search-results-grid">
             {Array.from({ length: 12 }).map((_, i) => (
               <div key={`skeleton-${i}`} className="search-result-card skeleton">
-                <div className="card-poster-wrapper skeleton-shimmer" style={{ background: 'rgba(255,255,255,0.03)', height: '280px', borderRadius: '12px' }}></div>
+                <div className="card-poster-wrapper skeleton-shimmer" style={{ height: '280px', borderRadius: '12px' }}></div>
                 <div className="card-details" style={{ marginTop: '10px' }}>
-                  <div className="skeleton-line skeleton-shimmer" style={{ height: '16px', width: '80%', background: 'rgba(255,255,255,0.06)', borderRadius: '4px', marginBottom: '8px' }}></div>
-                  <div className="skeleton-line skeleton-shimmer" style={{ height: '12px', width: '40%', background: 'rgba(255,255,255,0.06)', borderRadius: '4px' }}></div>
+                  <div className="skeleton-line skeleton-shimmer" style={{ height: '16px', width: '80%', borderRadius: '4px', marginBottom: '8px' }}></div>
+                  <div className="skeleton-line skeleton-shimmer" style={{ height: '12px', width: '40%', borderRadius: '4px' }}></div>
                 </div>
               </div>
             ))}

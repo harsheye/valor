@@ -2,13 +2,13 @@ import React from 'react';
 
 export const MediaPageSkeleton: React.FC = () => {
   return (
-    <div style={{ width: '100vw', minHeight: '100vh', background: '#0a0a0f', color: '#fff', position: 'relative', overflow: 'hidden' }}>
+    <div style={{ width: '100vw', minHeight: '100vh', background: 'var(--bg-color)', color: 'var(--text-primary)', position: 'relative', overflow: 'hidden' }}>
       {/* Hero Backdrop Placeholder */}
       <div className="skeleton-shimmer" style={{ width: '100%', height: '55vh', position: 'absolute', top: 0, left: 0, opacity: 0.3 }} />
       
       <div style={{ position: 'relative', zIndex: 2, padding: '3rem 4rem', maxWidth: '1400px', margin: '0 auto', display: 'flex', gap: '3rem', marginTop: '15vh' }}>
         {/* Poster Skeleton */}
-        <div className="skeleton-shimmer" style={{ width: '300px', height: '450px', borderRadius: '1.25rem', flexShrink: 0, boxShadow: '0 20px 40px rgba(0,0,0,0.6)' }} />
+        <div className="skeleton-shimmer" style={{ width: '300px', height: '450px', borderRadius: '1.25rem', flexShrink: 0, boxShadow: 'var(--shadow-lg)' }} />
         
         {/* Info Skeleton */}
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
@@ -36,7 +36,7 @@ export const EpisodeGridSkeleton: React.FC<{ count?: number }> = ({ count = 6 })
   return (
     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: '1.5rem', marginTop: '1.5rem' }}>
       {Array.from({ length: count }).map((_, idx) => (
-        <div key={idx} style={{ background: 'rgba(255, 255, 255, 0.03)', borderRadius: '1rem', padding: '0.85rem', border: '1px solid rgba(255, 255, 255, 0.06)' }}>
+        <div key={idx} style={{ background: 'var(--surface)', borderRadius: '1rem', padding: '0.85rem', border: '1px solid var(--border-color)' }}>
           <div className="skeleton-shimmer" style={{ width: '100%', aspectRatio: '16/9', borderRadius: '0.75rem', marginBottom: '0.85rem' }} />
           <div className="skeleton-shimmer" style={{ width: '70%', height: '20px', borderRadius: '0.35rem', marginBottom: '0.5rem' }} />
           <div className="skeleton-shimmer" style={{ width: '40%', height: '14px', borderRadius: '0.25rem' }} />
@@ -62,7 +62,7 @@ export const CarouselSkeleton: React.FC<{ count?: number }> = ({ count = 6 }) =>
 
 export const ActorPageSkeleton: React.FC = () => {
   return (
-    <div style={{ width: '100vw', minHeight: '100vh', background: '#09090e', padding: '3rem 4rem', boxSizing: 'border-box' }}>
+    <div style={{ width: '100vw', minHeight: '100vh', background: 'var(--bg-color)', color: 'var(--text-primary)', padding: '3rem 4rem', boxSizing: 'border-box' }}>
       <div style={{ display: 'grid', gridTemplateColumns: '320px 1fr', gap: '3.5rem', maxWidth: '1400px', margin: '0 auto' }}>
         {/* Left Column */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>

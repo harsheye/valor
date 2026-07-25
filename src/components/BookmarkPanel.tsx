@@ -135,7 +135,7 @@ export const BookmarkPanel: React.FC<BookmarkPanelProps> = ({ bookmarks, onJump,
                       let color = '#34d399'; // green
                       let bg = 'rgba(52, 211, 153, 0.12)';
                       
-                      if (createdBy === 'theintrodb' || createdBy === 'tidb' || bm.id.startsWith('api-')) {
+                      if ((createdBy as string) === 'theintrodb' || (createdBy as string) === 'tidb' || bm.id.startsWith('api-')) {
                         label = 'TheIntroDB';
                         color = '#60a5fa'; // blue
                         bg = 'rgba(96, 165, 250, 0.12)';

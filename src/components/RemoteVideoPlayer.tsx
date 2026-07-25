@@ -6213,13 +6213,13 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
           left: 50%;
           transform: translateX(-50%);
           max-width: 95vw;
-          background: rgba(18, 18, 18, 0.88);
+          background: var(--card-bg);
           backdrop-filter: blur(25px);
           -webkit-backdrop-filter: blur(25px);
-          border: 1px solid rgba(255, 255, 255, 0.12);
+          border: 1px solid var(--border-color);
           border-radius: 12px;
           padding: 1.1rem;
-          box-shadow: 0 15px 40px rgba(0,0,0,0.7);
+          box-shadow: var(--shadow-xl);
           z-index: 100;
           transition: width 0.3s cubic-bezier(0.16, 1, 0.3, 1);
         }
@@ -6253,14 +6253,14 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
           }
         }
         .popover-transcript-col {
-          border-left: 1px solid rgba(255, 255, 255, 0.08);
+          border-left: 1px solid var(--border-subtle);
           padding-left: 1.25rem;
           display: flex;
           flex-direction: column;
           max-height: 200px;
         }
         .popover-style-col {
-          border-left: 1px solid rgba(255, 255, 255, 0.08);
+          border-left: 1px solid var(--border-subtle);
           padding-left: 1.25rem;
           display: flex;
           flex-direction: column;
@@ -6269,7 +6269,7 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
           display: flex;
           align-items: center;
           justify-content: space-between;
-          border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+          border-bottom: 1px solid var(--border-subtle);
           padding-bottom: 0.35rem;
           margin-bottom: 0.25rem;
         }
@@ -6277,12 +6277,13 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
           margin: 0 !important;
           border-bottom: none !important;
           padding-bottom: 0 !important;
+          color: var(--text-primary) !important;
         }
         .style-reset-btn-header {
-          background: rgba(255, 255, 255, 0.05);
-          border: 1px solid rgba(255, 255, 255, 0.1);
+          background: var(--surface);
+          border: 1px solid var(--border-color);
           border-radius: 4px;
-          color: rgba(255, 255, 255, 0.5);
+          color: var(--text-muted);
           font-size: 0.72rem;
           font-weight: 600;
           padding: 0.2rem 0.5rem;
@@ -6292,9 +6293,9 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
           letter-spacing: 0.03em;
         }
         .style-reset-btn-header:hover {
-          background: rgba(255, 255, 255, 0.12);
-          color: #ffffff;
-          border-color: rgba(255, 255, 255, 0.25);
+          background: var(--card-hover-bg);
+          color: var(--text-primary);
+          border-color: var(--border-focus);
         }
         .style-customizer {
           display: flex;

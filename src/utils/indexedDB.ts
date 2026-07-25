@@ -80,14 +80,10 @@ export async function cleanupFileHandles(activeIds: string[]): Promise<void> {
       const cursor = request.result;
       if (cursor) {
         const key = String(cursor.key);
-        const value = cursor.value;
         
-        const isBlobOrFile = value instanceof Blob || value instanceof File || (value && typeof value.size === 'number');
-        const isNotActive = !activeSet.has(key);
-        const isNotHandle = !value || (typeof value.queryPermission !== 'function' && typeof value.kind !== 'string');
-        
-        if (isNotActive || isBlobOrFile || isNotHandle) {
-          console.log(`[IndexedDB Cleanup] Deleting key ${key} from file_handles store (isNotActive: ${isNotActive}, isBlobOrFile: ${isBlobOrFile}, isNotHandle: ${isNotHandle})`);
+        // Only delete entries for videos that are no longer in the active history list.
+        // NEVER delete entries for active videos — even if they contain Blob/File objects.
+        if (!activeSet.has(key)) {
           cursor.delete();
         }
         cursor.continue();

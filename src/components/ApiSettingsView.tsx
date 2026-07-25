@@ -24,13 +24,13 @@ const SexyCheckbox: React.FC<{
         width: '15px',
         height: '15px',
         borderRadius: '4px',
-        border: checked ? '1px solid #e50914' : '1px solid rgba(255,255,255,0.3)',
-        background: checked ? '#e50914' : 'rgba(255,255,255,0.05)',
+        border: checked ? '1px solid var(--accent-color)' : '1px solid var(--border-color)',
+        background: checked ? 'var(--accent-color)' : 'var(--surface)',
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
         transition: 'all 0.2s ease-in-out',
-        boxShadow: checked ? '0 0 6px rgba(229, 9, 20, 0.4)' : 'none'
+        boxShadow: checked ? '0 0 6px var(--accent-glow)' : 'none'
       }}
     >
       {checked && (
@@ -39,7 +39,7 @@ const SexyCheckbox: React.FC<{
         </svg>
       )}
     </div>
-    <span style={{ fontSize: '0.72rem', color: checked ? '#fff' : 'rgba(255,255,255,0.65)', fontWeight: 500, transition: 'color 0.2s' }}>
+    <span style={{ fontSize: '0.72rem', color: 'var(--text-secondary)', fontWeight: 500, transition: 'color 0.2s' }}>
       {label}
     </span>
   </div>
@@ -142,7 +142,7 @@ export const ApiSettingsView: React.FC<ApiSettingsViewProps> = ({
   };
 
   return (
-    <div className="premium-api-container animate-fade-in">
+    <div className="premium-api-container animate-fade-in" style={{ paddingBottom: '2.5rem' }}>
       
       {/* ─── Responsive Grid: Integrations Cards ─── */}
       <div className="premium-api-grid">
@@ -171,16 +171,16 @@ export const ApiSettingsView: React.FC<ApiSettingsViewProps> = ({
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
                 <span className="pulse-dot pulse-green" />
-                <span style={{ fontSize: '0.75rem', fontWeight: 600, color: 'rgba(255,255,255,0.6)' }}>Connected</span>
+                <span style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-secondary)' }}>Connected</span>
               </div>
             </div>
 
-            <h3 style={{ fontSize: '1rem', fontWeight: 700, margin: '0 0 0.15rem 0', color: '#fff' }}>TheIntroDB</h3>
-            <p style={{ fontSize: '0.75rem', color: 'rgba(255,255,255,0.45)', margin: '0 0 0.85rem 0' }}>Intro & Outro skip segments DB</p>
+            <h3 style={{ fontSize: '1rem', fontWeight: 700, margin: '0 0 0.15rem 0', color: 'var(--text-primary)' }}>TheIntroDB</h3>
+            <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', margin: '0 0 0.85rem 0' }}>Intro & Outro skip segments DB</p>
 
             {/* Segmented Mode Selector */}
             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.3rem', marginBottom: '0.85rem' }}>
-              <span style={{ fontSize: '0.62rem', color: 'rgba(255,255,255,0.4)', textTransform: 'uppercase', fontWeight: 600 }}>Sync Mode</span>
+              <span style={{ fontSize: '0.65rem', color: 'var(--text-muted)', textTransform: 'uppercase', fontWeight: 600 }}>Sync Mode</span>
               <div className="segmented-control" style={{ width: '100%' }}>
                 <button 
                   onClick={() => handleDefaultLangChange('theIntroDbMode', 'fetch')}
@@ -199,10 +199,10 @@ export const ApiSettingsView: React.FC<ApiSettingsViewProps> = ({
               </div>
             </div>
 
-            {/* Masked Key Display / Edit - ONLY visible if send_fetch is active */}
+            {/* Masked Key Display / Edit */}
             {settings.theIntroDbMode === 'send_fetch' ? (
-              <div className="animate-fade-in" style={{ background: 'rgba(0,0,0,0.25)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: '8px', padding: '0.45rem 0.6rem', marginBottom: '0.85rem' }}>
-                <span style={{ display: 'block', fontSize: '0.62rem', color: 'rgba(255,255,255,0.4)', textTransform: 'uppercase', fontWeight: 600, marginBottom: '0.15rem' }}>API Key</span>
+              <div className="animate-fade-in" style={{ background: 'var(--surface)', border: '1px solid var(--border-color)', borderRadius: '8px', padding: '0.45rem 0.6rem', marginBottom: '0.85rem' }}>
+                <span style={{ display: 'block', fontSize: '0.62rem', color: 'var(--text-muted)', textTransform: 'uppercase', fontWeight: 600, marginBottom: '0.15rem' }}>API Key</span>
                 {editingIntroDb ? (
                   <div style={{ display: 'flex', gap: '0.35rem', alignItems: 'center' }}>
                     <input 
@@ -210,7 +210,7 @@ export const ApiSettingsView: React.FC<ApiSettingsViewProps> = ({
                       value={introDbKeyVal} 
                       placeholder="Enter IntroDB User Key..."
                       onChange={(e) => setIntroDbKeyVal(e.target.value)}
-                      style={{ flex: 1, background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)', color: '#fff', borderRadius: '4px', padding: '0.2rem 0.4rem', fontSize: '0.78rem', outline: 'none' }}
+                      style={{ flex: 1, background: 'var(--card-bg)', border: '1px solid var(--border-color)', color: 'var(--text-primary)', borderRadius: '4px', padding: '0.2rem 0.4rem', fontSize: '0.78rem', outline: 'none' }}
                     />
                     <button 
                       onClick={() => handleSaveKey('theIntroDbApiKey', introDbKeyVal, setEditingIntroDb)}
@@ -221,21 +221,21 @@ export const ApiSettingsView: React.FC<ApiSettingsViewProps> = ({
                   </div>
                 ) : (
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <span style={{ fontSize: '0.8rem', fontFamily: 'monospace', color: 'rgba(255,255,255,0.85)' }}>
+                    <span style={{ fontSize: '0.8rem', fontFamily: 'monospace', color: 'var(--text-primary)' }}>
                       {introDbKeyVal ? (showIntroDbKey ? introDbKeyVal : maskKey(introDbKeyVal)) : 'Not Connected'}
                     </span>
                     <div style={{ display: 'flex', gap: '0.35rem' }}>
                       {introDbKeyVal && (
-                        <button onClick={() => setShowIntroDbKey(!showIntroDbKey)} style={{ background: 'transparent', border: 'none', color: 'rgba(255,255,255,0.4)', cursor: 'pointer', padding: 0 }} title="Show/Hide">
+                        <button onClick={() => setShowIntroDbKey(!showIntroDbKey)} style={{ background: 'transparent', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', padding: 0 }} title="Show/Hide">
                           {showIntroDbKey ? <EyeOff size={13} /> : <Eye size={13} />}
                         </button>
                       )}
                       {introDbKeyVal && (
-                        <button onClick={() => copyToClipboard(introDbKeyVal, 'IntroDB Key')} style={{ background: 'transparent', border: 'none', color: 'rgba(255,255,255,0.4)', cursor: 'pointer', padding: 0 }} title="Copy">
+                        <button onClick={() => copyToClipboard(introDbKeyVal, 'IntroDB Key')} style={{ background: 'transparent', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', padding: 0 }} title="Copy">
                           <Copy size={13} />
                         </button>
                       )}
-                      <button onClick={() => setEditingIntroDb(true)} style={{ background: 'transparent', border: 'none', color: 'rgba(255,255,255,0.4)', cursor: 'pointer', padding: 0 }} title="Edit">
+                      <button onClick={() => setEditingIntroDb(true)} style={{ background: 'transparent', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', padding: 0 }} title="Edit">
                         <Edit2 size={13} />
                       </button>
                     </div>
@@ -243,7 +243,7 @@ export const ApiSettingsView: React.FC<ApiSettingsViewProps> = ({
                 )}
               </div>
             ) : (
-              <div className="animate-fade-in" style={{ background: 'rgba(34, 197, 94, 0.08)', border: '1px dashed rgba(34, 197, 94, 0.25)', borderRadius: '8px', padding: '0.5rem 0.65rem', marginBottom: '0.85rem', fontSize: '0.74rem', color: '#86efac', display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+              <div className="animate-fade-in" style={{ background: 'var(--surface)', border: '1px dashed var(--border-color)', borderRadius: '8px', padding: '0.5rem 0.65rem', marginBottom: '0.85rem', fontSize: '0.74rem', color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: '0.35rem', fontWeight: 500 }}>
                 <span>🔒 No API Key required for Fetch Only mode.</span>
               </div>
             )}
@@ -256,8 +256,8 @@ export const ApiSettingsView: React.FC<ApiSettingsViewProps> = ({
               disabled={testingIntroDb}
               style={{
                 width: '100%',
-                background: 'rgba(34, 197, 94, 0.12)', border: '1px solid rgba(34, 197, 94, 0.25)', color: '#22c55e',
-                fontSize: '0.75rem', fontWeight: 600, padding: '0.45rem 0.5rem', borderRadius: '6px', cursor: 'pointer', transition: 'all 0.2s',
+                background: 'var(--card-bg)', border: '1px solid var(--border-color)', color: 'var(--text-secondary)',
+                fontSize: '0.75rem', fontWeight: 600, padding: '0.5rem 0.5rem', borderRadius: '6px', cursor: 'pointer', transition: 'all 0.2s',
                 display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.25rem'
               }}
             >
@@ -290,16 +290,16 @@ export const ApiSettingsView: React.FC<ApiSettingsViewProps> = ({
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
                 <span className={`pulse-dot ${settings.traktAccessToken ? 'pulse-green' : 'pulse-gray'}`} />
-                <span style={{ fontSize: '0.75rem', fontWeight: 600, color: 'rgba(255,255,255,0.6)' }}>
+                <span style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-secondary)' }}>
                   {settings.traktAccessToken ? 'Connected' : 'Disconnected'}
                 </span>
               </div>
             </div>
 
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', margin: '0 0 0.15rem 0' }}>
-              <h3 style={{ fontSize: '1rem', fontWeight: 700, margin: 0, color: '#fff' }}>Trakt.tv</h3>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', margin: '0 0 0.15rem 0', flexWrap: 'wrap', gap: '0.5rem' }}>
+              <h3 style={{ fontSize: '1rem', fontWeight: 700, margin: 0, color: 'var(--text-primary)' }}>Trakt.tv</h3>
               
-              {/* Sync Preferences (Inline next to title) */}
+              {/* Sync Preferences */}
               <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
                 <SexyCheckbox 
                   checked={settings.traktSyncHistory !== false}
@@ -313,11 +313,11 @@ export const ApiSettingsView: React.FC<ApiSettingsViewProps> = ({
                 />
               </div>
             </div>
-            <p style={{ fontSize: '0.75rem', color: 'rgba(255,255,255,0.45)', margin: '0 0 0.85rem 0' }}>Watch history & bookmarks sync</p>
+            <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', margin: '0 0 0.85rem 0' }}>Watch history & bookmarks sync</p>
 
             {/* Masked Key Display / Edit */}
-            <div style={{ background: 'rgba(0,0,0,0.25)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: '8px', padding: '0.45rem 0.6rem', marginBottom: '0.85rem' }}>
-              <span style={{ display: 'block', fontSize: '0.62rem', color: 'rgba(255,255,255,0.4)', textTransform: 'uppercase', fontWeight: 600, marginBottom: '0.15rem' }}>Access Token</span>
+            <div style={{ background: 'var(--surface)', border: '1px solid var(--border-color)', borderRadius: '8px', padding: '0.45rem 0.6rem', marginBottom: '0.85rem' }}>
+              <span style={{ display: 'block', fontSize: '0.62rem', color: 'var(--text-muted)', textTransform: 'uppercase', fontWeight: 600, marginBottom: '0.15rem' }}>Access Token</span>
               {editingTrakt ? (
                 <div style={{ display: 'flex', gap: '0.35rem', alignItems: 'center' }}>
                   <input 
@@ -325,7 +325,7 @@ export const ApiSettingsView: React.FC<ApiSettingsViewProps> = ({
                     value={traktKeyVal} 
                     placeholder="Paste Access Token..."
                     onChange={(e) => setTraktKeyVal(e.target.value)}
-                    style={{ flex: 1, background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)', color: '#fff', borderRadius: '4px', padding: '0.2rem 0.4rem', fontSize: '0.78rem', outline: 'none' }}
+                    style={{ flex: 1, background: 'var(--card-bg)', border: '1px solid var(--border-color)', color: 'var(--text-primary)', borderRadius: '4px', padding: '0.2rem 0.4rem', fontSize: '0.78rem', outline: 'none' }}
                   />
                   <button 
                     onClick={() => handleSaveKey('traktAccessToken', traktKeyVal, setEditingTrakt)}
@@ -336,17 +336,17 @@ export const ApiSettingsView: React.FC<ApiSettingsViewProps> = ({
                 </div>
               ) : (
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <span style={{ fontSize: '0.8rem', fontFamily: 'monospace', color: 'rgba(255,255,255,0.85)' }}>
+                  <span style={{ fontSize: '0.8rem', fontFamily: 'monospace', color: 'var(--text-primary)' }}>
                     {maskKey(traktKeyVal)}
                   </span>
                   <div style={{ display: 'flex', gap: '0.35rem' }}>
-                    <button onClick={() => setShowTraktKey(!showTraktKey)} style={{ background: 'transparent', border: 'none', color: 'rgba(255,255,255,0.4)', cursor: 'pointer', padding: 0 }} title="Show/Hide">
+                    <button onClick={() => setShowTraktKey(!showTraktKey)} style={{ background: 'transparent', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', padding: 0 }} title="Show/Hide">
                       {showTraktKey ? <EyeOff size={13} /> : <Eye size={13} />}
                     </button>
-                    <button onClick={() => copyToClipboard(traktKeyVal, 'Trakt Token')} style={{ background: 'transparent', border: 'none', color: 'rgba(255,255,255,0.4)', cursor: 'pointer', padding: 0 }} title="Copy">
+                    <button onClick={() => copyToClipboard(traktKeyVal, 'Trakt Token')} style={{ background: 'transparent', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', padding: 0 }} title="Copy">
                       <Copy size={13} />
                     </button>
-                    <button onClick={() => setEditingTrakt(true)} style={{ background: 'transparent', border: 'none', color: 'rgba(255,255,255,0.4)', cursor: 'pointer', padding: 0 }} title="Edit">
+                    <button onClick={() => setEditingTrakt(true)} style={{ background: 'transparent', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', padding: 0 }} title="Edit">
                       <Edit2 size={13} />
                     </button>
                   </div>
@@ -370,10 +370,10 @@ export const ApiSettingsView: React.FC<ApiSettingsViewProps> = ({
                 }}
                 style={{
                   flex: 1.2,
-                  background: settings.traktAccessToken ? 'rgba(239, 68, 68, 0.15)' : '#ed1c24',
-                  border: settings.traktAccessToken ? '1px solid rgba(239, 68, 68, 0.3)' : 'none',
+                  background: settings.traktAccessToken ? '#1f1f1f' : 'var(--accent-color)',
+                  border: settings.traktAccessToken ? '1px solid #333' : '1px solid var(--accent-color)',
                   color: '#fff',
-                  fontSize: '0.75rem', fontWeight: 600, padding: '0.45rem 0.5rem', borderRadius: '6px', cursor: 'pointer', transition: 'all 0.2s'
+                  fontSize: '0.75rem', fontWeight: 600, padding: '0.5rem 0.5rem', borderRadius: '6px', cursor: 'pointer', transition: 'all 0.2s'
                 }}
               >
                 {settings.traktAccessToken ? 'Disconnect' : 'Connect'}
@@ -383,8 +383,8 @@ export const ApiSettingsView: React.FC<ApiSettingsViewProps> = ({
                 disabled={testingTrakt}
                 style={{
                   flex: 1,
-                  background: 'rgba(237, 28, 36, 0.12)', border: '1px solid rgba(237, 28, 36, 0.25)', color: '#ed1c24',
-                  fontSize: '0.75rem', fontWeight: 600, padding: '0.45rem 0.5rem', borderRadius: '6px', cursor: 'pointer', transition: 'all 0.2s',
+                  background: 'var(--card-bg)', border: '1px solid var(--border-color)', color: 'var(--text-secondary)',
+                  fontSize: '0.75rem', fontWeight: 600, padding: '0.5rem 0.5rem', borderRadius: '6px', cursor: 'pointer', transition: 'all 0.2s',
                   display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.25rem'
                 }}
               >
@@ -393,14 +393,14 @@ export const ApiSettingsView: React.FC<ApiSettingsViewProps> = ({
             </div>
             
             {/* Redirect URI Input */}
-            <div style={{ background: 'rgba(0,0,0,0.25)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: '8px', padding: '0.45rem 0.6rem', marginTop: '0.65rem' }}>
-              <span style={{ display: 'block', fontSize: '0.62rem', color: 'rgba(255,255,255,0.4)', textTransform: 'uppercase', fontWeight: 600, marginBottom: '0.15rem' }}>Redirect URI</span>
+            <div style={{ background: 'var(--surface)', border: '1px solid var(--border-color)', borderRadius: '8px', padding: '0.45rem 0.6rem', marginTop: '0.65rem' }}>
+              <span style={{ display: 'block', fontSize: '0.62rem', color: 'var(--text-muted)', textTransform: 'uppercase', fontWeight: 600, marginBottom: '0.15rem' }}>Redirect URI</span>
               <input 
                 type="text" 
                 value={settings.traktRedirectUri || ''}
                 placeholder="e.g. http://localhost:50000"
                 onChange={(e) => handleDefaultLangChange('traktRedirectUri', e.target.value)}
-                style={{ width: '100%', background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)', color: '#fff', borderRadius: '4px', padding: '0.35rem 0.5rem', fontSize: '0.8rem', outline: 'none', boxSizing: 'border-box' }}
+                style={{ width: '100%', background: 'var(--card-bg)', border: '1px solid var(--border-color)', color: 'var(--text-primary)', borderRadius: '4px', padding: '0.35rem 0.5rem', fontSize: '0.8rem', outline: 'none', boxSizing: 'border-box' }}
               />
             </div>
           </div>
@@ -430,18 +430,18 @@ export const ApiSettingsView: React.FC<ApiSettingsViewProps> = ({
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
                 <span className={`pulse-dot ${settings.openSubtitlesApiKey ? 'pulse-green' : 'pulse-gray'}`} />
-                <span style={{ fontSize: '0.75rem', fontWeight: 600, color: 'rgba(255,255,255,0.6)' }}>
+                <span style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-secondary)' }}>
                   {settings.openSubtitlesApiKey ? 'Connected' : 'Disconnected'}
                 </span>
               </div>
             </div>
 
-            <h3 style={{ fontSize: '1rem', fontWeight: 700, margin: '0 0 0.15rem 0', color: '#fff' }}>OpenSubtitles</h3>
-            <p style={{ fontSize: '0.75rem', color: 'rgba(255,255,255,0.45)', margin: '0 0 0.85rem 0' }}>Subtitle search & downloader</p>
+            <h3 style={{ fontSize: '1rem', fontWeight: 700, margin: '0 0 0.15rem 0', color: 'var(--text-primary)' }}>OpenSubtitles</h3>
+            <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', margin: '0 0 0.85rem 0' }}>Subtitle search & downloader</p>
 
             {/* Masked Key Display / Edit */}
-            <div style={{ background: 'rgba(0,0,0,0.25)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: '8px', padding: '0.45rem 0.6rem', marginBottom: '0.85rem' }}>
-              <span style={{ display: 'block', fontSize: '0.62rem', color: 'rgba(255,255,255,0.4)', textTransform: 'uppercase', fontWeight: 600, marginBottom: '0.15rem' }}>API Key</span>
+            <div style={{ background: 'var(--surface)', border: '1px solid var(--border-color)', borderRadius: '8px', padding: '0.45rem 0.6rem', marginBottom: '0.85rem' }}>
+              <span style={{ display: 'block', fontSize: '0.62rem', color: 'var(--text-muted)', textTransform: 'uppercase', fontWeight: 600, marginBottom: '0.15rem' }}>API Key</span>
               {editingOs ? (
                 <div style={{ display: 'flex', gap: '0.35rem', alignItems: 'center' }}>
                   <input 
@@ -449,7 +449,7 @@ export const ApiSettingsView: React.FC<ApiSettingsViewProps> = ({
                     value={osKeyVal} 
                     placeholder="Enter OpenSubtitles API Key..."
                     onChange={(e) => setOsKeyVal(e.target.value)}
-                    style={{ flex: 1, background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)', color: '#fff', borderRadius: '4px', padding: '0.2rem 0.4rem', fontSize: '0.78rem', outline: 'none' }}
+                    style={{ flex: 1, background: 'var(--card-bg)', border: '1px solid var(--border-color)', color: 'var(--text-primary)', borderRadius: '4px', padding: '0.2rem 0.4rem', fontSize: '0.78rem', outline: 'none' }}
                   />
                   <button 
                     onClick={() => handleSaveKey('openSubtitlesApiKey', osKeyVal, setEditingOs)}
@@ -460,17 +460,17 @@ export const ApiSettingsView: React.FC<ApiSettingsViewProps> = ({
                 </div>
               ) : (
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <span style={{ fontSize: '0.8rem', fontFamily: 'monospace', color: 'rgba(255,255,255,0.85)' }}>
+                  <span style={{ fontSize: '0.8rem', fontFamily: 'monospace', color: 'var(--text-primary)' }}>
                     {showOsKey ? osKeyVal : maskKey(osKeyVal)}
                   </span>
                   <div style={{ display: 'flex', gap: '0.35rem' }}>
-                    <button onClick={() => setShowOsKey(!showOsKey)} style={{ background: 'transparent', border: 'none', color: 'rgba(255,255,255,0.4)', cursor: 'pointer', padding: 0 }} title="Show/Hide">
+                    <button onClick={() => setShowOsKey(!showOsKey)} style={{ background: 'transparent', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', padding: 0 }} title="Show/Hide">
                       {showOsKey ? <EyeOff size={13} /> : <Eye size={13} />}
                     </button>
-                    <button onClick={() => copyToClipboard(osKeyVal, 'OpenSubtitles Key')} style={{ background: 'transparent', border: 'none', color: 'rgba(255,255,255,0.4)', cursor: 'pointer', padding: 0 }} title="Copy">
+                    <button onClick={() => copyToClipboard(osKeyVal, 'OpenSubtitles Key')} style={{ background: 'transparent', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', padding: 0 }} title="Copy">
                       <Copy size={13} />
                     </button>
-                    <button onClick={() => setEditingOs(true)} style={{ background: 'transparent', border: 'none', color: 'rgba(255,255,255,0.4)', cursor: 'pointer', padding: 0 }} title="Edit">
+                    <button onClick={() => setEditingOs(true)} style={{ background: 'transparent', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', padding: 0 }} title="Edit">
                       <Edit2 size={13} />
                     </button>
                   </div>
@@ -492,10 +492,10 @@ export const ApiSettingsView: React.FC<ApiSettingsViewProps> = ({
               }}
               style={{
                 flex: 1.2,
-                background: settings.openSubtitlesApiKey ? 'rgba(239, 68, 68, 0.15)' : 'rgba(255,255,255,0.08)',
-                border: settings.openSubtitlesApiKey ? '1px solid rgba(239, 68, 68, 0.3)' : '1px solid rgba(255,255,255,0.1)',
-                color: settings.openSubtitlesApiKey ? '#ef4444' : '#fff',
-                fontSize: '0.75rem', fontWeight: 600, padding: '0.45rem 0.5rem', borderRadius: '6px', cursor: 'pointer', transition: 'all 0.2s'
+                background: settings.openSubtitlesApiKey ? '#1f1f1f' : 'var(--card-bg)',
+                border: settings.openSubtitlesApiKey ? '1px solid #333' : '1px solid var(--border-color)',
+                color: settings.openSubtitlesApiKey ? '#fff' : 'var(--text-primary)',
+                fontSize: '0.75rem', fontWeight: 600, padding: '0.5rem 0.5rem', borderRadius: '6px', cursor: 'pointer', transition: 'all 0.2s'
               }}
             >
               {settings.openSubtitlesApiKey ? 'Disconnect' : 'Connect'}
@@ -505,8 +505,8 @@ export const ApiSettingsView: React.FC<ApiSettingsViewProps> = ({
               disabled={testingOs}
               style={{
                 flex: 1,
-                background: 'rgba(245, 158, 11, 0.12)', border: '1px solid rgba(245, 158, 11, 0.25)', color: '#f59e0b',
-                fontSize: '0.75rem', fontWeight: 600, padding: '0.45rem 0.5rem', borderRadius: '6px', cursor: 'pointer', transition: 'all 0.2s',
+                background: 'var(--card-bg)', border: '1px solid var(--border-color)', color: 'var(--text-secondary)',
+                fontSize: '0.75rem', fontWeight: 600, padding: '0.5rem 0.5rem', borderRadius: '6px', cursor: 'pointer', transition: 'all 0.2s',
                 display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.25rem'
               }}
             >
@@ -539,18 +539,18 @@ export const ApiSettingsView: React.FC<ApiSettingsViewProps> = ({
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
                 <span className={`pulse-dot ${settings.getOverlayDataFromTmdb ? 'pulse-green' : 'pulse-gray'}`} />
-                <span style={{ fontSize: '0.75rem', fontWeight: 600, color: 'rgba(255,255,255,0.6)' }}>
+                <span style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-secondary)' }}>
                   {settings.getOverlayDataFromTmdb ? 'Connected' : 'Disconnected'}
                 </span>
               </div>
             </div>
 
-            <h3 style={{ fontSize: '1rem', fontWeight: 700, margin: '0 0 0.15rem 0', color: '#fff' }}>TMDB</h3>
-            <p style={{ fontSize: '0.75rem', color: 'rgba(255,255,255,0.45)', margin: '0 0 0.85rem 0' }}>Movie & Show metadata provider</p>
+            <h3 style={{ fontSize: '1rem', fontWeight: 700, margin: '0 0 0.15rem 0', color: 'var(--text-primary)' }}>TMDB</h3>
+            <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', margin: '0 0 0.85rem 0' }}>Movie & Show metadata provider</p>
 
             {/* Masked Key Display / Edit */}
-            <div style={{ background: 'rgba(0,0,0,0.25)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: '8px', padding: '0.45rem 0.6rem', marginBottom: '0.85rem' }}>
-              <span style={{ display: 'block', fontSize: '0.62rem', color: 'rgba(255,255,255,0.4)', textTransform: 'uppercase', fontWeight: 600, marginBottom: '0.15rem' }}>API Key</span>
+            <div style={{ background: 'var(--surface)', border: '1px solid var(--border-color)', borderRadius: '8px', padding: '0.45rem 0.6rem', marginBottom: '0.85rem' }}>
+              <span style={{ display: 'block', fontSize: '0.62rem', color: 'var(--text-muted)', textTransform: 'uppercase', fontWeight: 600, marginBottom: '0.15rem' }}>API Key</span>
               {editingTmdb ? (
                 <div style={{ display: 'flex', gap: '0.35rem', alignItems: 'center' }}>
                   <input 
@@ -558,7 +558,7 @@ export const ApiSettingsView: React.FC<ApiSettingsViewProps> = ({
                     value={tmdbKeyVal} 
                     placeholder="Enter TMDB Access Token..."
                     onChange={(e) => setTmdbKeyVal(e.target.value)}
-                    style={{ flex: 1, background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)', color: '#fff', borderRadius: '4px', padding: '0.2rem 0.4rem', fontSize: '0.78rem', outline: 'none' }}
+                    style={{ flex: 1, background: 'var(--card-bg)', border: '1px solid var(--border-color)', color: 'var(--text-primary)', borderRadius: '4px', padding: '0.2rem 0.4rem', fontSize: '0.78rem', outline: 'none' }}
                   />
                   <button 
                     onClick={() => handleSaveKey('tmdbApiKey', tmdbKeyVal, setEditingTmdb)}
@@ -569,17 +569,17 @@ export const ApiSettingsView: React.FC<ApiSettingsViewProps> = ({
                 </div>
               ) : (
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <span style={{ fontSize: '0.8rem', fontFamily: 'monospace', color: 'rgba(255,255,255,0.85)' }}>
+                  <span style={{ fontSize: '0.8rem', fontFamily: 'monospace', color: 'var(--text-primary)' }}>
                     {showTmdbKey ? (tmdbKeyVal || 'Using internal key') : maskKey(tmdbKeyVal || 'using_internal_key')}
                   </span>
                   <div style={{ display: 'flex', gap: '0.35rem' }}>
-                    <button onClick={() => setShowTmdbKey(!showTmdbKey)} style={{ background: 'transparent', border: 'none', color: 'rgba(255,255,255,0.4)', cursor: 'pointer', padding: 0 }} title="Show/Hide">
+                    <button onClick={() => setShowTmdbKey(!showTmdbKey)} style={{ background: 'transparent', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', padding: 0 }} title="Show/Hide">
                       {showTmdbKey ? <EyeOff size={13} /> : <Eye size={13} />}
                     </button>
-                    <button onClick={() => copyToClipboard(tmdbKeyVal || 'eyJhbGciOiJIUzI1NiJ9...', 'TMDB Key')} style={{ background: 'transparent', border: 'none', color: 'rgba(255,255,255,0.4)', cursor: 'pointer', padding: 0 }} title="Copy">
+                    <button onClick={() => copyToClipboard(tmdbKeyVal || 'eyJhbGciOiJIUzI1NiJ9...', 'TMDB Key')} style={{ background: 'transparent', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', padding: 0 }} title="Copy">
                       <Copy size={13} />
                     </button>
-                    <button onClick={() => setEditingTmdb(true)} style={{ background: 'transparent', border: 'none', color: 'rgba(255,255,255,0.4)', cursor: 'pointer', padding: 0 }} title="Edit">
+                    <button onClick={() => setEditingTmdb(true)} style={{ background: 'transparent', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', padding: 0 }} title="Edit">
                       <Edit2 size={13} />
                     </button>
                   </div>
@@ -594,10 +594,10 @@ export const ApiSettingsView: React.FC<ApiSettingsViewProps> = ({
               onClick={() => handleDefaultLangChange('getOverlayDataFromTmdb', !settings.getOverlayDataFromTmdb)}
               style={{
                 flex: 1.2,
-                background: settings.getOverlayDataFromTmdb ? 'rgba(239, 68, 68, 0.15)' : 'rgba(255,255,255,0.08)',
-                border: settings.getOverlayDataFromTmdb ? '1px solid rgba(239, 68, 68, 0.3)' : '1px solid rgba(255,255,255,0.1)',
-                color: settings.getOverlayDataFromTmdb ? '#ef4444' : '#fff',
-                fontSize: '0.75rem', fontWeight: 600, padding: '0.45rem 0.5rem', borderRadius: '6px', cursor: 'pointer', transition: 'all 0.2s'
+                background: settings.getOverlayDataFromTmdb ? '#1f1f1f' : 'var(--card-bg)',
+                border: settings.getOverlayDataFromTmdb ? '1px solid #333' : '1px solid var(--border-color)',
+                color: settings.getOverlayDataFromTmdb ? '#fff' : 'var(--text-primary)',
+                fontSize: '0.75rem', fontWeight: 600, padding: '0.5rem 0.5rem', borderRadius: '6px', cursor: 'pointer', transition: 'all 0.2s'
               }}
             >
               {settings.getOverlayDataFromTmdb ? 'Disconnect' : 'Connect'}
@@ -607,8 +607,8 @@ export const ApiSettingsView: React.FC<ApiSettingsViewProps> = ({
               disabled={testingTmdb}
               style={{
                 flex: 1,
-                background: 'rgba(1, 180, 228, 0.12)', border: '1px solid rgba(1, 180, 228, 0.25)', color: '#01b4e4',
-                fontSize: '0.75rem', fontWeight: 600, padding: '0.45rem 0.5rem', borderRadius: '6px', cursor: 'pointer', transition: 'all 0.2s',
+                background: 'var(--card-bg)', border: '1px solid var(--border-color)', color: 'var(--text-secondary)',
+                fontSize: '0.75rem', fontWeight: 600, padding: '0.5rem 0.5rem', borderRadius: '6px', cursor: 'pointer', transition: 'all 0.2s',
                 display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.25rem'
               }}
             >
@@ -620,12 +620,12 @@ export const ApiSettingsView: React.FC<ApiSettingsViewProps> = ({
       </div>
 
       {/* ─── Segmented Row: Experience Mode & Developer Tools ─── */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1.2fr', gap: '1rem' }} className="dev-tools-grid">
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '1rem', marginTop: '1.25rem' }} className="dev-tools-grid">
         
         {/* Experience Mode Selector Card */}
         <div className="premium-glass-card card-accent-developer glow-hover-developer">
-          <h3 style={{ fontSize: '0.95rem', fontWeight: 700, margin: '0 0 0.25rem 0', color: '#fff' }}>Experience Mode</h3>
-          <p style={{ fontSize: '0.75rem', color: 'rgba(255,255,255,0.45)', margin: '0 0 0.85rem 0' }}>Configure default behavior for background metadata syncing</p>
+          <h3 style={{ fontSize: '0.95rem', fontWeight: 700, margin: '0 0 0.25rem 0', color: 'var(--text-primary)' }}>Experience Mode</h3>
+          <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', margin: '0 0 0.85rem 0' }}>Configure default behavior for background metadata syncing</p>
           
           <div className="segmented-control" style={{ marginBottom: '0.75rem' }}>
             <button 
@@ -648,7 +648,7 @@ export const ApiSettingsView: React.FC<ApiSettingsViewProps> = ({
             </button>
           </div>
 
-          <div style={{ fontSize: '0.72rem', color: 'rgba(255,255,255,0.5)', lineHeight: '1.4' }}>
+          <div style={{ fontSize: '0.72rem', color: 'var(--text-secondary)', lineHeight: '1.4' }}>
             {settings.experienceMode === 'local' && (
               <span className="animate-fade-in" style={{ display: 'block' }}>🔒 <strong>Local Only:</strong> All metadata is kept locally in browser DB. No scrobbling or synchronization takes place with cloud services.</span>
             )}
@@ -663,8 +663,8 @@ export const ApiSettingsView: React.FC<ApiSettingsViewProps> = ({
 
         {/* Developer Tools Toolbox Card */}
         <div className="premium-glass-card card-accent-developer glow-hover-developer">
-          <h3 style={{ fontSize: '0.95rem', fontWeight: 700, margin: '0 0 0.15rem 0', color: '#fff' }}>Developer Tools</h3>
-          <p style={{ fontSize: '0.75rem', color: 'rgba(255,255,255,0.45)', margin: '0 0 0.85rem 0' }}>Manage the OpenAPI 3.0 specification endpoints and interact with testing sandboxes</p>
+          <h3 style={{ fontSize: '0.95rem', fontWeight: 700, margin: '0 0 0.15rem 0', color: 'var(--text-primary)' }}>Developer Tools</h3>
+          <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', margin: '0 0 0.85rem 0' }}>Manage the OpenAPI 3.0 specification endpoints and interact with testing sandboxes</p>
 
           <div>
             <a 
@@ -680,11 +680,13 @@ export const ApiSettingsView: React.FC<ApiSettingsViewProps> = ({
                 gap: '0.5rem', 
                 borderRadius: '8px',
                 width: '100%',
+                background: 'var(--surface)',
+                border: '1px solid var(--border-color)',
                 boxSizing: 'border-box'
               }}
             >
               <Database size={16} style={{ color: '#aa3bff' }} />
-              <span style={{ fontSize: '0.8rem', fontWeight: 700, color: '#fff' }}>Interactive API Reference (Swagger Docs)</span>
+              <span style={{ fontSize: '0.8rem', fontWeight: 700, color: 'var(--text-primary)' }}>Interactive API Reference (Swagger Docs)</span>
             </a>
           </div>
         </div>
@@ -694,8 +696,8 @@ export const ApiSettingsView: React.FC<ApiSettingsViewProps> = ({
       {/* ─── VCT Live Score Overlay Settings ─── */}
       <div style={{
         marginTop: '1.25rem',
-        background: 'linear-gradient(135deg, rgba(255,255,255,0.03) 0%, rgba(255,255,255,0.01) 100%)',
-        border: '1px solid rgba(255,255,255,0.08)',
+        background: 'var(--surface)',
+        border: '1px solid var(--border-color)',
         borderRadius: '16px',
         padding: '1.25rem',
         display: 'flex',
@@ -705,34 +707,34 @@ export const ApiSettingsView: React.FC<ApiSettingsViewProps> = ({
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
             <div style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#e50914', boxShadow: '0 0 8px #e50914' }} />
-            <h3 style={{ margin: 0, fontSize: '0.95rem', fontWeight: 800, color: '#fff' }}>VCT Esports Overlay Settings</h3>
+            <h3 style={{ margin: 0, fontSize: '0.95rem', fontWeight: 800, color: 'var(--text-primary)' }}>VCT Esports Overlay Settings</h3>
           </div>
           <span style={{ fontSize: '0.68rem', background: 'rgba(229, 9, 20, 0.15)', border: '1px solid rgba(229, 9, 20, 0.3)', color: '#ff4d4d', padding: '2px 8px', borderRadius: '6px', fontWeight: 800 }}>LIVE VCT</span>
         </div>
 
-        <p style={{ margin: 0, fontSize: '0.74rem', color: 'rgba(255,255,255,0.6)', lineHeight: 1.5 }}>
+        <p style={{ margin: 0, fontSize: '0.74rem', color: 'var(--text-muted)', lineHeight: 1.5 }}>
           Customize how live Valorant Champions Tour score overlay displays on your screen during live matches.
         </p>
 
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.85rem', background: 'rgba(0,0,0,0.3)', padding: '0.85rem', borderRadius: '10px', border: '1px solid rgba(255,255,255,0.05)' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.85rem', background: 'var(--card-bg)', padding: '0.85rem', borderRadius: '10px', border: '1px solid var(--border-color)' }}>
           <SexyCheckbox 
             checked={localStorage.getItem('vct_overlay_enabled') === 'true'}
             onChange={(checked) => {
               localStorage.setItem('vct_overlay_enabled', checked ? 'true' : 'false');
               window.dispatchEvent(new Event('storage'));
-              addToast(checked ? 'VCT Live Score Overlay enabled' : 'VCT Live Score Overlay disabled', 'info');
+              addToast(checked ? 'VCT Live Score Overlay enabled' : 'VCT Live Score Overlay disabled', 'success');
             }}
             label="Enable Live VCT Score Overlay (Disabled by default)"
           />
 
           {localStorage.getItem('vct_overlay_enabled') === 'true' && (
-            <div style={{ paddingLeft: '1.25rem', borderLeft: '2px solid rgba(229, 9, 20, 0.4)' }}>
+            <div style={{ paddingLeft: '1.25rem', borderLeft: '2px solid var(--accent-color)' }}>
               <SexyCheckbox 
                 checked={localStorage.getItem('vct_overlay_compact_mode') === 'true'}
                 onChange={(checked) => {
                   localStorage.setItem('vct_overlay_compact_mode', checked ? 'true' : 'false');
                   window.dispatchEvent(new Event('storage'));
-                  addToast(checked ? 'Score Only mode enabled (no team/map names on pill)' : 'Full VCT overlay mode enabled', 'info');
+                  addToast(checked ? 'Score Only mode enabled (no team/map names on pill)' : 'Full VCT overlay mode enabled', 'success');
                 }}
                 label="Compact 'Score Only' Mode (Hide team & map names on collapsed button, show ONLY live round score)"
               />
@@ -743,18 +745,19 @@ export const ApiSettingsView: React.FC<ApiSettingsViewProps> = ({
 
       {/* ─── Powered By: Branded Footer ─── */}
       <div style={{
-        marginTop: '1.25rem',
-        padding: '0.85rem 1.25rem',
-        background: 'linear-gradient(135deg, rgba(255,255,255,0.02) 0%, rgba(255,255,255,0.005) 100%)',
-        border: '1px solid rgba(255,255,255,0.05)',
-        borderRadius: '12px',
+        marginTop: '0.75rem',
+        marginBottom: '0',
+        padding: '0.65rem 1rem',
+        background: 'var(--surface)',
+        border: '1px solid var(--border-color)',
+        borderRadius: '10px',
       }}>
         <p style={{ 
           textAlign: 'center', 
           fontSize: '0.65rem', 
           textTransform: 'uppercase', 
           letterSpacing: '0.15em', 
-          color: 'rgba(255,255,255,0.3)', 
+          color: 'var(--text-muted)', 
           marginBottom: '0.65rem',
           marginTop: 0,
           fontWeight: 700
