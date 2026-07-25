@@ -51,7 +51,7 @@ export const HistoryPage: React.FC<HistoryPageProps> = ({
                 <BookingCalendar />
               )}
               {settings.calendarStyle === 'appointment' && (
-                <AppointmentCalendar />
+                <AppointmentCalendar videos={videos} onPlayVideo={handlePlayVideo} />
               )}
             </div>
           ) : (

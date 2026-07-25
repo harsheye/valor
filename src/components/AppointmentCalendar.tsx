@@ -1,6 +1,6 @@
 "use client"
 
-import React, { useMemo, useRef } from "react"
+import React, { useMemo, useRef, useEffect } from "react"
 import {
   EventCalendar,
   type EventCalendarApi,
@@ -13,12 +13,8 @@ import type {
   EventCalendarSlotDraft,
 } from "./reui/event-calendar/event-calendar-types"
 import { addMinutes, setHours, startOfDay, format, subDays, addDays } from "./reui/event-calendar/date-utils"
+import type { VideoItem } from "../types/media"
 
-import {
-  Avatar,
-  AvatarFallback,
-  AvatarImage,
-} from "./ui/avatar"
 import { Card, CardContent } from "./ui/card"
 import { ListIcon, PlusIcon } from 'lucide-react'
 
@@ -38,76 +34,47 @@ interface ApptData {
   initials: string
   avatar?: string
   service?: Service
+  video?: VideoItem
 }
 
-function buildAppointments(anchor: Date): CalendarEvent<ApptData>[] {
-  const base = startOfDay(anchor)
-  const at = (hour: number, minute = 0) =>
-    addMinutes(setHours(base, hour), minute)
+function buildAppointmentsFromHistory(videos: VideoItem[]): CalendarEvent<ApptData>[] {
+  const events: CalendarEvent<ApptData>[] = []
 
-  const appt = (
-    id: string,
-    client: string,
-    initials: string,
-    avatar: string,
-    service: Service,
-    startHour: number,
-    startMinute: number,
-    minutes: number
-  ): CalendarEvent<ApptData> => {
-    const start = at(startHour, startMinute)
-    return {
-      id,
+  videos.forEach((video, index) => {
+    const playDate = (video as any).lastPlayedDate ? new Date((video as any).lastPlayedDate) : null
+    if (!playDate) return
+
+    // Ensure it shows in daylight business hours (9 AM - 6 PM) for presentation
+    let start = new Date(playDate)
+    if (start.getHours() < 9 || start.getHours() >= 18) {
+      const indexOffset = index % 5
+      start.setHours(9 + indexOffset * 1.5, 0, 0, 0)
+    }
+
+    // Set end time based on duration (minimum 30 minutes, default 45 mins)
+    const durSeconds = typeof video.duration === 'string' ? parseFloat(video.duration) : (video.duration || 45 * 60)
+    const durMinutes = Math.min(Math.max(Math.round(durSeconds / 60), 30), 120)
+    const end = new Date(start.getTime() + durMinutes * 60000)
+
+    // Select category service cyclically
+    const services: Service[] = ["consultation", "followup", "assessment", "therapy"]
+    const service = services[index % services.length]
+
+    const client = video.title
+    const initials = video.title.split(' ').map(n => n[0]).join('').substring(0, 2).toUpperCase() || "V"
+    const avatar = video.posterPath || ""
+
+    events.push({
+      id: video.id || `hist-${index}`,
       title: client,
       start,
-      end: addMinutes(start, minutes),
+      end,
       color: SERVICE[service].color,
-      data: { client, initials, avatar, service },
-    }
-  }
+      data: { client, initials, avatar, service, video },
+    })
+  })
 
-  return [
-    appt(
-      "a1",
-      "Dana Whitfield",
-      "DW",
-      "https://randomuser.me/api/portraits/women/44.jpg",
-      "consultation",
-      9,
-      0,
-      45
-    ),
-    appt(
-      "a2",
-      "Marco Reyes",
-      "MR",
-      "https://randomuser.me/api/portraits/men/32.jpg",
-      "followup",
-      11,
-      0,
-      45
-    ),
-    appt(
-      "a3",
-      "Priya Nair",
-      "PN",
-      "https://randomuser.me/api/portraits/women/68.jpg",
-      "assessment",
-      14,
-      0,
-      60
-    ),
-    appt(
-      "a4",
-      "Leon Fischer",
-      "LF",
-      "https://randomuser.me/api/portraits/men/75.jpg",
-      "therapy",
-      16,
-      0,
-      45
-    ),
-  ]
+  return events
 }
 
 function renderChip({
@@ -213,10 +180,25 @@ const CustomHeader: React.FC<CustomHeaderProps> = ({ onNewAppointment }) => {
   )
 }
 
-export const AppointmentCalendar: React.FC = () => {
-  const events = useMemo(() => buildAppointments(new Date()), [])
+interface AppointmentCalendarProps {
+  videos?: VideoItem[]
+  onPlayVideo?: (video: VideoItem) => void
+}
+
+export const AppointmentCalendar: React.FC<AppointmentCalendarProps> = ({ videos = [], onPlayVideo }) => {
+  const events = useMemo(() => buildAppointmentsFromHistory(videos), [videos])
   const apiRef = useRef<EventCalendarApi | null>(null)
   const counter = useRef(0)
+
+  // Expose play hook to window context for absolute child trigger
+  useEffect(() => {
+    if (onPlayVideo) {
+      ;(window as any)._onPlayCalendarVideo = onPlayVideo
+    }
+    return () => {
+      delete (window as any)._onPlayCalendarVideo
+    }
+  }, [onPlayVideo])
 
   const bookSlot = (slot: EventCalendarSlotDraft) => {
     const api = apiRef.current

@@ -96,6 +96,11 @@ export const EventCalendarContent: React.FC = () => {
       <div
         key={event.id}
         className="premium-event-card"
+        onClick={() => {
+          if (event.data?.video && typeof window !== 'undefined' && (window as any)._onPlayCalendarVideo) {
+            (window as any)._onPlayCalendarVideo(event.data.video);
+          }
+        }}
         style={{
           ...pos,
           ...cardStyles,
