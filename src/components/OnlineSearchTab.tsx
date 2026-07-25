@@ -1,12 +1,13 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { CustomSelect } from './CustomSelect';
+import { Search, Play, History, Clock, X } from 'lucide-react';
+import type { VideoItem } from '../types/media';
+import './OnlineSearchTabV2.css';
 
 const categoryOptions = [
   { value: 'all', label: '🎬 Movies/TV' },
   { value: 'anime', label: '🌸 Anime' }
 ];
-import { Search, Play, History, Clock, X } from 'lucide-react';
-import type { VideoItem } from '../types/media';
 
 interface OnlineSearchTabProps {
   onSelectMedia: (video: VideoItem) => void;
@@ -26,7 +27,11 @@ interface SearchResult {
 
 const DEFAULT_TMDB_TOKEN = "eyJhbGciOiJIUzI1NiJ9.eyJhdWQiOiJlMzQwMGRhZWZjODJjNTJlZDEyYzk1MWU1ZWFmYmVhYyIsIm5iZiI6MTc4MzU0MTI2OS44NzUsInN1YiI6IjZhNGVhZTE1MzFhOWUyYmNhZjBmY2RlMiIsInNjb3BlcyI6WyJhcGlfcmVhZCJdLCJ2ZXJzaW9uIjoxfQ.GT6_b6NSJwjYCXlbaCi_djq09ug0rKDxY9iouqVrYWY";
 
-export const OnlineSearchTab: React.FC<OnlineSearchTabProps> = ({ onSelectMedia, tmdbApiKey, traktAccessToken }) => {
+export const OnlineSearchTab: React.FC<OnlineSearchTabProps> = ({
+  onSelectMedia,
+  tmdbApiKey,
+  traktAccessToken
+}) => {
   const [query, setQuery] = useState(() => {
     return localStorage.getItem('valor_online_search_query') || '';
   });
@@ -85,12 +90,12 @@ export const OnlineSearchTab: React.FC<OnlineSearchTabProps> = ({ onSelectMedia,
 
     fetchTraktWatched();
   }, [traktAccessToken]);
-  
+
   const [history, setHistory] = useState<string[]>(() => {
     const saved = localStorage.getItem('valor_online_search_history');
     return saved ? JSON.parse(saved) : [];
   });
-  
+
   const searchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const searchWrapperRef = useRef<HTMLDivElement>(null);
 
@@ -115,10 +120,10 @@ export const OnlineSearchTab: React.FC<OnlineSearchTabProps> = ({ onSelectMedia,
     try {
       const isBearer = tmdbApiKey ? tmdbApiKey.length > 50 : true;
       const token = tmdbApiKey || DEFAULT_TMDB_TOKEN;
-      
+
       let url = `https://api.themoviedb.org/3/search/multi?query=${encodeURIComponent(searchQuery)}&include_adult=false`;
       let headers: HeadersInit = { 'accept': 'application/json' };
-      
+
       if (isBearer) {
         headers['Authorization'] = `Bearer ${token}`;
       } else {
@@ -128,7 +133,7 @@ export const OnlineSearchTab: React.FC<OnlineSearchTabProps> = ({ onSelectMedia,
       const res = await fetch(url, { headers });
       if (!res.ok) throw new Error(`TMDB Search failed with status: ${res.status}`);
       const data = await res.json();
-      
+
       const mapped: SearchResult[] = (data.results || [])
         .filter((r: any) => r.media_type === 'movie' || r.media_type === 'tv')
         .map((r: any) => {
@@ -136,10 +141,10 @@ export const OnlineSearchTab: React.FC<OnlineSearchTabProps> = ({ onSelectMedia,
           const title = isMovie ? r.title : r.name;
           const date = isMovie ? r.release_date : r.first_air_date;
           const year = date ? date.split('-')[0] : 'N/A';
-          const posterPath = r.poster_path 
-            ? `https://images.weserv.nl/?url=https://image.tmdb.org/t/p/w500${r.poster_path}` 
+          const posterPath = r.poster_path
+            ? `https://images.weserv.nl/?url=https://image.tmdb.org/t/p/w500${r.poster_path}`
             : '';
-            
+
           return {
             id: r.id,
             title: title || 'Unknown Title',
@@ -210,12 +215,12 @@ export const OnlineSearchTab: React.FC<OnlineSearchTabProps> = ({ onSelectMedia,
       if (!res.ok) throw new Error(`AniList Search failed with status: ${res.status}`);
       const body = await res.json();
       const mediaList = body.data?.Page?.media || [];
-      
+
       const mapped: SearchResult[] = mediaList.map((m: any) => {
         const title = m.title.english || m.title.romaji || m.title.native || 'Unknown Anime';
         const rawPoster = m.coverImage.extraLarge || m.coverImage.large || '';
         const posterPath = rawPoster ? `https://images.weserv.nl/?url=${encodeURIComponent(rawPoster)}` : '';
-        
+
         return {
           id: m.id,
           title,
@@ -300,10 +305,10 @@ export const OnlineSearchTab: React.FC<OnlineSearchTabProps> = ({ onSelectMedia,
   };
 
   return (
-    <div className="online-search-container">
-      {/* Search Header Row (Dropdown on LEFT "start" next to Search Bar, NO hero title/container card) */}
-      <div className="search-bar-row">
-        <div className="category-select-wrapper">
+    <div className="os2-container">
+      {/* Search Header Row */}
+      <div className="os2-toolbar">
+        <div className="os2-category">
           <CustomSelect
             value={category}
             onChange={(val) => {
@@ -317,28 +322,28 @@ export const OnlineSearchTab: React.FC<OnlineSearchTabProps> = ({ onSelectMedia,
           />
         </div>
 
-        <div className="search-input-wrapper" ref={searchWrapperRef}>
-          <Search className="search-bar-icon" size={20} />
+        <div className="os2-search" ref={searchWrapperRef}>
+          <Search className="os2-search-icon" size={20} />
           <input
             type="text"
-            className="search-bar-input"
+            className="os2-search-input"
             placeholder={category === 'all' ? "Search Movie or TV Series name..." : "Search Anime (e.g. Naruto, One Piece)..."}
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             onFocus={() => setIsFocused(true)}
           />
-          {loading && <div className="search-inline-spinner"></div>}
+          {loading && <div className="os2-spinner-inline"></div>}
 
-          {/* Autocomplete Sexier Recent Searches Dropdown inside search input */}
+          {/* Autocomplete Recent Searches Dropdown */}
           {isFocused && query.trim() === '' && history.length > 0 && (
-            <div className="search-history-dropdown">
-              <div className="dropdown-header">
-                <span className="header-title-text">
+            <div className="os2-history">
+              <div className="os2-dropdown-header">
+                <span className="os2-dropdown-title">
                   <History size={13} style={{ marginRight: '6px' }} />
                   Recent Searches
                 </span>
-                <button 
-                  className="clear-all-btn"
+                <button
+                  className="os2-clear-all-btn"
                   onClick={(e) => {
                     e.stopPropagation();
                     setHistory([]);
@@ -348,22 +353,22 @@ export const OnlineSearchTab: React.FC<OnlineSearchTabProps> = ({ onSelectMedia,
                   Clear All
                 </button>
               </div>
-              <div className="dropdown-list">
+              <div className="os2-dropdown-list">
                 {history.map((h, i) => (
-                  <div 
-                    key={i} 
-                    className="dropdown-item"
+                  <div
+                    key={i}
+                    className="os2-dropdown-item"
                     onClick={() => {
                       setQuery(h);
                       setIsFocused(false);
                     }}
                   >
-                    <div className="item-left">
-                      <Clock size={13} className="item-clock-icon" />
-                      <span className="item-text">{h}</span>
+                    <div className="os2-item-left">
+                      <Clock size={13} className="os2-item-clock-icon" />
+                      <span className="os2-item-text">{h}</span>
                     </div>
-                    <button 
-                      className="delete-item-btn"
+                    <button
+                      className="os2-delete-item-btn"
                       onClick={(e) => {
                         e.stopPropagation();
                         setHistory(prev => {
@@ -386,98 +391,82 @@ export const OnlineSearchTab: React.FC<OnlineSearchTabProps> = ({ onSelectMedia,
 
       {/* Error Message */}
       {error && (
-        <div className="search-error-alert">
+        <div className="os2-error-alert">
           <span>{error}</span>
         </div>
       )}
 
       {/* Search Results Grid */}
-      <div className="search-results-section">
+      <div className="os2-results">
         {!loading && results.length === 0 && query.trim().length > 0 && (
-          <div className="search-no-results">
+          <div className="os2-no-results">
             <span>No results found for "{query}"</span>
           </div>
         )}
 
         {loading ? (
-          <div className="search-results-grid">
+          <div className="os2-grid">
             {Array.from({ length: 12 }).map((_, i) => (
-              <div key={`skeleton-${i}`} className="search-result-card skeleton">
-                <div className="card-poster-wrapper skeleton-shimmer" style={{ height: '280px', borderRadius: '12px' }}></div>
-                <div className="card-details" style={{ marginTop: '10px' }}>
-                  <div className="skeleton-line skeleton-shimmer" style={{ height: '16px', width: '80%', borderRadius: '4px', marginBottom: '8px' }}></div>
-                  <div className="skeleton-line skeleton-shimmer" style={{ height: '12px', width: '40%', borderRadius: '4px' }}></div>
+              <div key={`skeleton-${i}`} className="os2-card os2-skeleton">
+                <div className="os2-poster os2-shimmer" style={{ height: '280px', borderRadius: '12px' }}></div>
+                <div className="os2-details" style={{ marginTop: '10px' }}>
+                  <div className="os2-skeleton-line os2-shimmer" style={{ height: '16px', width: '80%', borderRadius: '4px', marginBottom: '8px' }}></div>
+                  <div className="os2-skeleton-line os2-shimmer" style={{ height: '12px', width: '40%', borderRadius: '4px' }}></div>
                 </div>
               </div>
             ))}
           </div>
         ) : (
-          <div className="search-results-grid">
+          <div className="os2-grid">
             {results.map((res) => {
               const hasError = imageErrors[res.id] || !res.posterPath;
               const isWatchedOnTrakt = res.type !== 'anime' && watchedTmdbIds.has(Number(res.id));
-              
+
               return (
-                <div 
-                  key={`${res.type}-${res.id}`} 
-                  className="search-result-card"
+                <div
+                  key={`${res.type}-${res.id}`}
+                  className="os2-card"
                   onClick={() => handleCardClick(res)}
                 >
-                  <div className="card-poster-wrapper">
+                  <div className="os2-poster">
                     {!hasError ? (
-                      <img 
-                        src={res.posterPath} 
-                        alt={res.title} 
-                        className="card-poster-image" 
+                      <img
+                        src={res.posterPath}
+                        alt={res.title}
+                        className="os2-image"
                         loading="lazy"
                         crossOrigin="anonymous"
                         onError={() => handleImageError(res.id)}
                       />
                     ) : (
-                      <div className="card-poster-fallback">
-                        <div className="fallback-backdrop"></div>
-                        <span className="fallback-title-text">{res.title}</span>
+                      <div className="os2-fallback">
+                        <span className="os2-title">{res.title}</span>
                       </div>
                     )}
-                    
-                    <div className="card-hover-overlay">
-                      <button className="play-overlay-btn">
+
+                    <div className="os2-overlay">
+                      <button className="os2-play">
                         <Play fill="currentColor" size={20} />
                       </button>
                     </div>
-                    
+
                     {res.rating && (
-                      <div className="card-rating-badge">
+                      <div className="os2-rating">
                         ⭐ {res.rating.toFixed(1)}
                       </div>
                     )}
 
                     {isWatchedOnTrakt && (
-                      <div className="card-watched-badge" style={{
-                        position: 'absolute',
-                        top: '10px',
-                        left: '10px',
-                        background: '#8b5cf6',
-                        color: 'white',
-                        padding: '3px 8px',
-                        borderRadius: '4px',
-                        fontSize: '10px',
-                        fontWeight: 700,
-                        zIndex: 10,
-                        boxShadow: '0 2px 8px rgba(0,0,0,0.4)',
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: '4px'
-                      }}>
+                      <div className="os2-watched">
                         ✓ Watched
                       </div>
                     )}
                   </div>
-                  <div className="card-details">
-                    <h3 className="card-title" title={res.title}>{res.title}</h3>
-                    <div className="card-meta">
-                      <span className="card-year">{res.year}</span>
-                      <span className={`card-type-tag ${res.type}`}>
+                  <div className="os2-details">
+                    <h3 className="os2-title" title={res.title}>{res.title}</h3>
+                    <div className="os2-meta">
+                      <span className="os2-year">{res.year}</span>
+                      <span className={`os2-tag ${res.type}`}>
                         {res.type === 'movie' ? 'Movie' : (res.type === 'tv' ? 'TV' : 'Anime')}
                       </span>
                     </div>

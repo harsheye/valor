@@ -427,51 +427,49 @@ export const OnlineDetailsPage: React.FC<OnlineDetailsPageProps> = ({
 
             {/* Facts bar */}
             <div style={{
-              display: 'inline-flex',
-              width: 'fit-content',
-              maxWidth: '100%',
+              display: 'flex',
               flexWrap: 'wrap',
               gap: '24px',
               margin: '1.5rem 0',
-              padding: '12px 20px',
-              background: 'var(--card-bg)',
-              border: '1px solid var(--border-color)',
+              padding: '12px 16px',
+              background: 'var(--surface, rgba(255, 255, 255, 0.02))',
+              border: '1px solid var(--border-color, rgba(255, 255, 255, 0.05))',
               borderRadius: '8px'
             }}>
               {details.status && (
                 <div>
-                  <span style={{ display: 'block', fontSize: '0.7rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '2px' }}>Status</span>
-                  <span style={{ fontSize: '0.85rem', color: 'var(--text-primary)', fontWeight: 600 }}>{details.status}</span>
+                  <span style={{ display: 'block', fontSize: '0.7rem', color: 'var(--text-muted, rgba(255,255,255,0.4))', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '2px' }}>Status</span>
+                  <span style={{ fontSize: '0.85rem', color: 'var(--text-primary, white)', fontWeight: 600 }}>{details.status}</span>
                 </div>
               )}
               {details.original_language && (
                 <div>
-                  <span style={{ display: 'block', fontSize: '0.7rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '2px' }}>Language</span>
-                  <span style={{ fontSize: '0.85rem', color: 'var(--text-primary)', fontWeight: 600 }}>{details.original_language.toUpperCase()}</span>
+                  <span style={{ display: 'block', fontSize: '0.7rem', color: 'var(--text-muted, rgba(255,255,255,0.4))', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '2px' }}>Language</span>
+                  <span style={{ fontSize: '0.85rem', color: 'var(--text-primary, white)', fontWeight: 600 }}>{details.original_language.toUpperCase()}</span>
                 </div>
               )}
               {isMovie && details.budget > 0 && (
                 <div>
-                  <span style={{ display: 'block', fontSize: '0.7rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '2px' }}>Budget</span>
-                  <span style={{ fontSize: '0.85rem', color: 'var(--text-primary)', fontWeight: 600 }}>${(details.budget / 1000000).toFixed(1)}M</span>
+                  <span style={{ display: 'block', fontSize: '0.7rem', color: 'var(--text-muted, rgba(255,255,255,0.4))', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '2px' }}>Budget</span>
+                  <span style={{ fontSize: '0.85rem', color: 'var(--text-primary, white)', fontWeight: 600 }}>${(details.budget / 1000000).toFixed(1)}M</span>
                 </div>
               )}
               {isMovie && details.revenue > 0 && (
                 <div>
-                  <span style={{ display: 'block', fontSize: '0.7rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '2px' }}>Revenue</span>
-                  <span style={{ fontSize: '0.85rem', color: 'var(--text-primary)', fontWeight: 600 }}>${(details.revenue / 1000000).toFixed(1)}M</span>
+                  <span style={{ display: 'block', fontSize: '0.7rem', color: 'var(--text-muted, rgba(255,255,255,0.4))', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '2px' }}>Revenue</span>
+                  <span style={{ fontSize: '0.85rem', color: 'var(--text-primary, white)', fontWeight: 600 }}>${(details.revenue / 1000000).toFixed(1)}M</span>
                 </div>
               )}
               {!isMovie && details.number_of_seasons && (
                 <div>
-                  <span style={{ display: 'block', fontSize: '0.7rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '2px' }}>Seasons</span>
-                  <span style={{ fontSize: '0.85rem', color: 'var(--text-primary)', fontWeight: 600 }}>{details.number_of_seasons}</span>
+                  <span style={{ display: 'block', fontSize: '0.7rem', color: 'var(--text-muted, rgba(255,255,255,0.4))', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '2px' }}>Seasons</span>
+                  <span style={{ fontSize: '0.85rem', color: 'var(--text-primary, white)', fontWeight: 600 }}>{details.number_of_seasons}</span>
                 </div>
               )}
               {!isMovie && details.number_of_episodes && (
                 <div>
-                  <span style={{ display: 'block', fontSize: '0.7rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '2px' }}>Total Episodes</span>
-                  <span style={{ fontSize: '0.85rem', color: 'var(--text-primary)', fontWeight: 600 }}>{details.number_of_episodes}</span>
+                  <span style={{ display: 'block', fontSize: '0.7rem', color: 'var(--text-muted, rgba(255,255,255,0.4))', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '2px' }}>Total Episodes</span>
+                  <span style={{ fontSize: '0.85rem', color: 'var(--text-primary, white)', fontWeight: 600 }}>{details.number_of_episodes}</span>
                 </div>
               )}
             </div>
@@ -482,7 +480,7 @@ export const OnlineDetailsPage: React.FC<OnlineDetailsPageProps> = ({
                 className="media-details-play-btn"
                 onClick={() => onPlay(video)}
               >
-                <Play size={18} fill="white" />
+                <Play size={20} fill="currentColor" />
                 <span>Play Movie</span>
               </button>
             )}
@@ -492,22 +490,23 @@ export const OnlineDetailsPage: React.FC<OnlineDetailsPageProps> = ({
         {/* Cast Section */}
         {cast.length > 0 && (
           <div className="media-details-section">
-            <h3 className="section-title">Cast</h3>
-            <div 
-              ref={castScrollRef} 
-              className="cast-grid"
-              style={{
-                display: 'flex',
-                gap: '1.25rem',
-                overflowX: 'auto',
-                paddingBottom: '1rem',
-                scrollbarWidth: 'thin'
-              }}
-            >
+            <div className="section-header-row">
+              <h2>Cast & Characters</h2>
+              <div className="scroll-arrow-controls">
+                <button className="arrow-scroll-btn" onClick={() => handleScrollCast('left')}>
+                  <ChevronLeft size={16} />
+                </button>
+                <button className="arrow-scroll-btn" onClick={() => handleScrollCast('right')}>
+                  <ChevronRight size={16} />
+                </button>
+              </div>
+            </div>
+
+            <div className="cast-scroll-container" ref={castScrollRef}>
               {cast.map((actor) => (
                 <div 
-                  key={actor.id} 
-                  className="cast-card"
+                  className="actor-card-item" 
+                  key={actor.id}
                   onClick={() => {
                     if (onSelectActor) {
                       onSelectActor({ id: actor.id, name: actor.name, profilePath: actor.profilePath });
@@ -515,47 +514,53 @@ export const OnlineDetailsPage: React.FC<OnlineDetailsPageProps> = ({
                       setSelectedActor({ id: actor.id, name: actor.name, profilePath: actor.profilePath });
                     }
                   }}
-                  style={{
-                    flex: '0 0 130px',
-                    cursor: 'pointer',
-                    transition: 'transform 0.2s ease',
-                    display: 'flex',
-                    flexDirection: 'column',
-                    alignItems: 'center',
-                    textAlign: 'center'
-                  }}
-                  onMouseEnter={(e) => e.currentTarget.style.transform = 'translateY(-4px)'}
-                  onMouseLeave={(e) => e.currentTarget.style.transform = 'translateY(0)'}
+                  style={{ cursor: 'pointer' }}
                 >
-                  <div className="actor-image-container" style={{ width: '110px', height: '110px', borderRadius: '50%', overflow: 'hidden', marginBottom: '0.5rem', border: '2px solid var(--border-color)' }}>
+                  <div className="actor-profile-image-wrapper">
                     {actor.profilePath ? (
-                      <img 
-                        src={actor.profilePath} 
-                        alt={actor.name}
-                        style={{ width: '100%', height: '100%', objectFit: 'cover' }}
-                      />
+                      <img src={actor.profilePath} alt={actor.name} className="actor-profile-image" />
                     ) : (
-                      <div className="actor-placeholder" style={{ width: '100%', height: '100%', background: 'var(--surface)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-muted)' }}>
-                        <User size={40} />
+                      <div className="actor-profile-fallback">
+                        <User size={24} />
                       </div>
                     )}
+                    <div style={{
+                      position: 'absolute',
+                      bottom: 0,
+                      left: 0,
+                      right: 0,
+                      background: 'linear-gradient(to top, rgba(0,0,0,0.85) 0%, rgba(0,0,0,0) 100%)',
+                      padding: '8px 10px',
+                      color: '#fff',
+                      fontSize: '0.75rem',
+                      fontWeight: 600,
+                      textAlign: 'center',
+                      whiteSpace: 'nowrap',
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                      zIndex: 2
+                    }}>
+                      {actor.character}
+                    </div>
                   </div>
-                  <span className="actor-character" style={{ color: 'var(--text-primary)', fontSize: '0.85rem', fontWeight: 700, display: 'block', maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{actor.character}</span>
-                  <span className="actor-real-name" style={{ color: 'var(--text-secondary)', fontSize: '0.82rem', fontWeight: 600 }}>{actor.name}</span>
+                  <div className="actor-card-details" style={{ padding: '0 4px', textAlign: 'center' }}>
+                    <span className="actor-real-name" style={{ color: 'var(--text-muted, rgba(255,255,255,0.7))', fontSize: '0.82rem', fontWeight: 600 }}>{actor.name}</span>
+                  </div>
                 </div>
               ))}
             </div>
           </div>
         )}
 
-        {/* TV Series Season & Episode Selector */}
+        {/* Episodes Section for TV Shows and Anime */}
         {!isMovie && (
-          <div className="media-details-section">
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem', flexWrap: 'wrap', gap: '1rem' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
-                <h3 className="section-title" style={{ margin: 0 }}>Episodes</h3>
+          <div className="media-details-section" style={{ marginTop: '2rem' }}>
+            <div className="section-header-row tv-selector-row" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.75rem', marginBottom: '1rem', width: '100%' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flex: 1, minWidth: 0 }}>
+                <h2 style={{ fontSize: '1.3rem', fontWeight: 800, margin: 0 }}>Episodes</h2>
+                
                 {video.type === 'online_tv' && seasons.length > 0 && (
-                  <div style={{ width: '150px' }}>
+                  <div className="season-selector-dropdown-wrapper">
                     <CustomSelect
                       value={currentSeason}
                       onChange={(val) => setCurrentSeason(Number(val))}
@@ -572,15 +577,15 @@ export const OnlineDetailsPage: React.FC<OnlineDetailsPageProps> = ({
                 )}
               </div>
 
-              {/* View Mode Toggle Controls */}
-              <div style={{ display: 'flex', alignItems: 'center', background: 'var(--surface)', padding: '3px', borderRadius: '0.65rem', border: '1px solid var(--border-color)' }}>
+              {/* View Mode Toggle Controls (Icon-only buttons in 1 row) */}
+              <div style={{ display: 'flex', alignItems: 'center', background: 'var(--surface, rgba(255, 255, 255, 0.05))', padding: '3px', borderRadius: '0.65rem', border: '1px solid var(--border-color, rgba(255, 255, 255, 0.08))' }}>
                 <button
                   title="Tiles View"
                   onClick={() => setEpisodeViewMode('grid')}
                   style={{
-                    background: episodeViewMode === 'grid' ? 'var(--accent-glow)' : 'transparent',
+                    background: episodeViewMode === 'grid' ? 'var(--accent-glow, rgba(139, 92, 246, 0.3))' : 'transparent',
                     border: 'none',
-                    color: episodeViewMode === 'grid' ? 'var(--accent-color)' : 'var(--text-muted)',
+                    color: episodeViewMode === 'grid' ? 'var(--accent-color, #a78bfa)' : 'var(--text-muted, rgba(255,255,255,0.5))',
                     padding: '6px 10px',
                     borderRadius: '0.45rem',
                     cursor: 'pointer',
@@ -595,9 +600,9 @@ export const OnlineDetailsPage: React.FC<OnlineDetailsPageProps> = ({
                   title="List View"
                   onClick={() => setEpisodeViewMode('list')}
                   style={{
-                    background: episodeViewMode === 'list' ? 'var(--accent-glow)' : 'transparent',
+                    background: episodeViewMode === 'list' ? 'var(--accent-glow, rgba(139, 92, 246, 0.3))' : 'transparent',
                     border: 'none',
-                    color: episodeViewMode === 'list' ? 'var(--accent-color)' : 'var(--text-muted)',
+                    color: episodeViewMode === 'list' ? 'var(--accent-color, #a78bfa)' : 'var(--text-muted, rgba(255,255,255,0.5))',
                     padding: '6px 10px',
                     borderRadius: '0.45rem',
                     cursor: 'pointer',
@@ -612,9 +617,9 @@ export const OnlineDetailsPage: React.FC<OnlineDetailsPageProps> = ({
                   title="Compact View"
                   onClick={() => setEpisodeViewMode('compact')}
                   style={{
-                    background: episodeViewMode === 'compact' ? 'var(--accent-glow)' : 'transparent',
+                    background: episodeViewMode === 'compact' ? 'var(--accent-glow, rgba(139, 92, 246, 0.3))' : 'transparent',
                     border: 'none',
-                    color: episodeViewMode === 'compact' ? 'var(--accent-color)' : 'var(--text-muted)',
+                    color: episodeViewMode === 'compact' ? 'var(--accent-color, #a78bfa)' : 'var(--text-muted, rgba(255,255,255,0.5))',
                     padding: '6px 10px',
                     borderRadius: '0.45rem',
                     cursor: 'pointer',
@@ -627,6 +632,7 @@ export const OnlineDetailsPage: React.FC<OnlineDetailsPageProps> = ({
                 </button>
               </div>
             </div>
+
             {loadingEpisodes ? (
               <EpisodeGridSkeleton count={8} />
             ) : (
@@ -639,8 +645,8 @@ export const OnlineDetailsPage: React.FC<OnlineDetailsPageProps> = ({
                         key={ep.episodeNumber}
                         onClick={() => onPlay(video, currentSeason, ep.episodeNumber)}
                         style={{
-                          background: 'var(--card-bg)',
-                          border: '1px solid var(--border-color)',
+                          background: 'rgba(255, 255, 255, 0.03)',
+                          border: '1px solid rgba(255, 255, 255, 0.08)',
                           borderRadius: '1rem',
                           overflow: 'hidden',
                           cursor: 'pointer',
@@ -650,34 +656,34 @@ export const OnlineDetailsPage: React.FC<OnlineDetailsPageProps> = ({
                         }}
                         onMouseEnter={(e) => {
                           e.currentTarget.style.transform = 'translateY(-4px)';
-                          e.currentTarget.style.borderColor = 'var(--accent-glow)';
-                          e.currentTarget.style.boxShadow = 'var(--shadow-lg)';
+                          e.currentTarget.style.borderColor = 'rgba(139, 92, 246, 0.4)';
+                          e.currentTarget.style.boxShadow = '0 12px 24px rgba(0, 0, 0, 0.4)';
                         }}
                         onMouseLeave={(e) => {
                           e.currentTarget.style.transform = 'none';
-                          e.currentTarget.style.borderColor = 'var(--border-color)';
+                          e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.08)';
                           e.currentTarget.style.boxShadow = 'none';
                         }}
                       >
-                        <div style={{ width: '100%', aspectRatio: '16/9', position: 'relative', background: 'var(--surface)', overflow: 'hidden' }}>
+                        <div style={{ width: '100%', aspectRatio: '16/9', position: 'relative', background: '#121218' }}>
                           {(ep.stillPath || posterUrl) ? (
-                            <img src={ep.stillPath || posterUrl} alt={ep.name} style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', objectFit: 'cover' }} />
+                            <img src={ep.stillPath || posterUrl} alt={ep.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
                           ) : (
-                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: 'var(--text-muted)' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: 'rgba(255,255,255,0.4)' }}>
                               <Play size={28} />
                             </div>
                           )}
-                          <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(to top, rgba(0,0,0,0.8) 0%, transparent 60%)', display: 'flex', alignItems: 'flex-end', padding: '0.75rem', zIndex: 2 }}>
+                          <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(to top, rgba(0,0,0,0.8) 0%, transparent 60%)', display: 'flex', alignItems: 'flex-end', padding: '0.75rem' }}>
                             <span style={{ background: '#8b5cf6', color: '#fff', fontSize: '0.7rem', fontWeight: 800, padding: '2px 8px', borderRadius: '4px' }}>
                               EP {ep.episodeNumber}
                             </span>
                           </div>
                         </div>
                         <div style={{ padding: '0.85rem 1rem' }}>
-                          <h4 style={{ margin: '0 0 0.35rem 0', fontSize: '0.9rem', fontWeight: 700, color: 'var(--text-primary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                          <h4 style={{ margin: '0 0 0.35rem 0', fontSize: '0.9rem', fontWeight: 700, color: 'var(--text-primary, #fff)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                             {ep.name}
                           </h4>
-                          <p style={{ margin: 0, fontSize: '0.75rem', color: 'var(--text-muted)', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
+                          <p style={{ margin: 0, fontSize: '0.75rem', color: 'var(--text-muted, rgba(255,255,255,0.5))', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
                             {ep.overview || 'No overview available.'}
                           </p>
                         </div>
@@ -699,8 +705,8 @@ export const OnlineDetailsPage: React.FC<OnlineDetailsPageProps> = ({
                           alignItems: 'center',
                           gap: '16px',
                           padding: '10px 14px',
-                          background: 'var(--card-bg)',
-                          border: '1px solid var(--border-color)',
+                          background: 'rgba(255, 255, 255, 0.03)',
+                          border: '1px solid rgba(255, 255, 255, 0.05)',
                           borderRadius: '8px',
                           cursor: 'pointer',
                           transition: 'all 0.2s ease',
@@ -712,7 +718,7 @@ export const OnlineDetailsPage: React.FC<OnlineDetailsPageProps> = ({
                             height: '40px',
                             borderRadius: '4px',
                             overflow: 'hidden',
-                            background: 'var(--surface)',
+                            background: '#121212',
                             flexShrink: 0,
                             position: 'relative'
                           }}
@@ -724,7 +730,7 @@ export const OnlineDetailsPage: React.FC<OnlineDetailsPageProps> = ({
                               style={{ width: '100%', height: '100%', objectFit: 'cover' }} 
                             />
                           ) : (
-                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: 'var(--text-muted)' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: 'var(--text-muted, rgba(255,255,255,0.4))' }}>
                               <Play size={14} />
                             </div>
                           )}
@@ -733,7 +739,7 @@ export const OnlineDetailsPage: React.FC<OnlineDetailsPageProps> = ({
                           </div>
                         </div>
                         <div style={{ flexGrow: 1, minWidth: 0 }}>
-                          <h4 style={{ margin: 0, fontSize: '0.85rem', color: 'var(--text-primary)', fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          <h4 style={{ margin: 0, fontSize: '0.85rem', color: 'var(--text-primary, white)', fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                             {ep.name}
                           </h4>
                         </div>
@@ -753,19 +759,19 @@ export const OnlineDetailsPage: React.FC<OnlineDetailsPageProps> = ({
                         style={{
                           display: 'flex',
                           gap: '1.25rem',
-                          background: 'var(--card-bg)',
-                          border: '1px solid var(--border-color)',
+                          background: 'rgba(255, 255, 255, 0.03)',
+                          border: '1px solid rgba(255, 255, 255, 0.08)',
                           borderRadius: '1rem',
                           padding: '1rem',
                           cursor: 'pointer',
                           transition: 'all 0.25s ease'
                         }}
                       >
-                        <div style={{ width: '180px', height: '105px', borderRadius: '0.75rem', overflow: 'hidden', flexShrink: 0, position: 'relative', background: 'var(--surface)' }}>
+                        <div style={{ width: '180px', height: '105px', borderRadius: '0.75rem', overflow: 'hidden', flexShrink: 0, position: 'relative', background: '#121218' }}>
                           {(ep.stillPath || posterUrl) ? (
                             <img src={ep.stillPath || posterUrl} alt={ep.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
                           ) : (
-                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: 'var(--text-muted)' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: 'var(--text-muted, rgba(255,255,255,0.4))' }}>
                               <Play size={24} />
                             </div>
                           )}
@@ -774,10 +780,10 @@ export const OnlineDetailsPage: React.FC<OnlineDetailsPageProps> = ({
                           </div>
                         </div>
                         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
-                          <h4 style={{ margin: '0 0 0.35rem 0', fontSize: '1rem', fontWeight: 700, color: 'var(--text-primary)' }}>
+                          <h4 style={{ margin: '0 0 0.35rem 0', fontSize: '1rem', fontWeight: 700, color: 'var(--text-primary, #fff)' }}>
                             {ep.name}
                           </h4>
-                          <p style={{ margin: 0, fontSize: '0.825rem', color: 'var(--text-muted)', lineHeight: 1.5 }}>
+                          <p style={{ margin: 0, fontSize: '0.825rem', color: 'var(--text-muted, rgba(255,255,255,0.6))', lineHeight: 1.5 }}>
                             {ep.overview || 'No overview available for this episode.'}
                           </p>
                         </div>
@@ -792,8 +798,8 @@ export const OnlineDetailsPage: React.FC<OnlineDetailsPageProps> = ({
 
         {/* Recommendations / More Like This */}
         {recommendations.length > 0 && (
-          <div className="media-details-section" style={{ marginTop: '2.5rem', borderTop: '1px solid var(--border-color)', paddingTop: '2rem' }}>
-            <h2 style={{ fontSize: '1.4rem', fontWeight: 800, margin: '0 0 1.25rem 0', color: 'var(--text-primary)' }}>More Like This</h2>
+          <div className="media-details-section" style={{ marginTop: '2.5rem', borderTop: '1px solid rgba(255, 255, 255, 0.05)', paddingTop: '2rem' }}>
+            <h2 style={{ fontSize: '1.4rem', fontWeight: 800, margin: '0 0 1.25rem 0' }}>More Like This</h2>
             {loadingRecommendations ? (
               <CarouselSkeleton count={7} />
             ) : (
@@ -825,28 +831,26 @@ export const OnlineDetailsPage: React.FC<OnlineDetailsPageProps> = ({
                         });
                       }
                     }}
+                    className="media-rec-card"
                     style={{
-                      width: '120px',
-                      flexShrink: 0,
-                      cursor: 'pointer',
                       transition: 'transform 0.2s',
                     }}
                     onMouseEnter={(e) => e.currentTarget.style.transform = 'scale(1.03)'}
                     onMouseLeave={(e) => e.currentTarget.style.transform = 'none'}
                   >
-                    <div style={{ width: '120px', height: '180px', borderRadius: '8px', overflow: 'hidden', background: 'var(--card-bg)', boxShadow: 'var(--shadow-md)', border: '1px solid var(--border-color)' }}>
+                    <div className="media-rec-card-image-wrapper">
                       {rec.posterPath ? (
                         <img src={rec.posterPath} alt={rec.title} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
                       ) : (
-                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: 'var(--text-muted)', fontSize: '0.8rem', padding: '10px', textAlign: 'center' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: 'var(--text-muted, rgba(255,255,255,0.4))', fontSize: '0.8rem', padding: '10px', textAlign: 'center' }}>
                           {rec.title}
                         </div>
                       )}
                     </div>
-                    <h4 style={{ margin: '8px 0 2px 0', fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={rec.title}>
+                    <h4 style={{ margin: '8px 0 2px 0', fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-primary, white)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={rec.title}>
                       {rec.title}
                     </h4>
-                    <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>
+                    <span style={{ fontSize: '0.7rem', color: 'var(--text-muted, rgba(255,255,255,0.4))' }}>
                       {rec.year}
                     </span>
                   </div>

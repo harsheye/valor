@@ -388,7 +388,7 @@ export const ActorDetailsPage: React.FC<ActorDetailsPageProps> = ({
     : '';
 
   return (
-    <div className="media-details-page-container actor-page-container animate-fade-in" style={{ minHeight: '100vh', padding: '2rem 3rem' }}>
+    <div className="media-details-page-container actor-page-container animate-fade-in" style={{ minHeight: '100vh' }}>
       {/* Ambient Blurred Profile Cover Backdrop */}
       {profileImageUrl && (
         <div 

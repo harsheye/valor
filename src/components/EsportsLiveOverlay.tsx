@@ -299,22 +299,24 @@ export const EsportsLiveOverlay: React.FC = () => {
       // ALWAYS refresh detail page directly for 100% real-time map & round score updates
       let isMatchFinished = false;
       if (liveMatches.length > 0) {
-        const primary = liveMatches[0];
-        const targetUrl = primary.vlrUrl || 'https://www.vlr.gg/701052/jdg-esports-vs-trace-esports-vct-2026-china-stage-2-w3';
-        const detailHtml = await fetchDetailHtmlWithFallback(targetUrl);
-        if (detailHtml) {
-          const detailData = parseMatchDetailsHtml(detailHtml);
-          primary.maps = detailData.maps;
-          primary.currentMapName = detailData.liveMapName;
-          primary.currentMapRoundScore = {
-            teamA: detailData.roundScoreA,
-            teamB: detailData.roundScoreB
-          };
+        for (const match of liveMatches) {
+          const targetUrl = match.vlrUrl;
+          if (!targetUrl) continue;
+          const detailHtml = await fetchDetailHtmlWithFallback(targetUrl);
+          if (detailHtml) {
+            const detailData = parseMatchDetailsHtml(detailHtml);
+            match.maps = detailData.maps;
+            match.currentMapName = detailData.liveMapName;
+            match.currentMapRoundScore = {
+              teamA: detailData.roundScoreA,
+              teamB: detailData.roundScoreB
+            };
 
-          // Detect if match is completely finished
-          if (detailData.maps.length > 0 && detailData.maps.every(m => m.isCompleted)) {
-            isMatchFinished = true;
-            primary.status = 'completed';
+            // Detect if match is completely finished
+            if (match === liveMatches[0] && detailData.maps.length > 0 && detailData.maps.every(m => m.isCompleted)) {
+              isMatchFinished = true;
+              match.status = 'completed';
+            }
           }
         }
       }
@@ -594,6 +596,17 @@ export const EsportsLiveOverlay: React.FC = () => {
               const cleanEvent = (m.eventName || 'VCT Match').replace(/&ndash;/g, '-').replace(/&amp;/g, '&');
               const activeMapTitle = getActiveMapName(m);
 
+              // Local maps fallbacks for each match
+              const localMapList: MapData[] = (m.maps && m.maps.length > 0) ? m.maps : [
+                { mapIndex: 1, mapName: 'Lotus', scoreA: 13, scoreB: 10, isMapActive: false, isCompleted: true, status: 'completed' },
+                { mapIndex: 2, mapName: 'Ascent', scoreA: m.currentMapRoundScore?.teamA ?? 8, scoreB: m.currentMapRoundScore?.teamB ?? 4, isMapActive: true, isCompleted: false, status: 'live' },
+                { mapIndex: 3, mapName: 'Split', scoreA: 0, scoreB: 0, isMapActive: false, isCompleted: false, status: 'upcoming' }
+              ];
+
+              const localActiveMapObj = localMapList.find(map => map.isMapActive) || localMapList.find(map => !map.isCompleted) || localMapList[localMapList.length - 1];
+              const localRoundScoreA = m.currentMapRoundScore?.teamA ?? localActiveMapObj.scoreA;
+              const localRoundScoreB = m.currentMapRoundScore?.teamB ?? localActiveMapObj.scoreB;
+
               return (
                 <div
                   key={m.id}
@@ -632,7 +645,7 @@ export const EsportsLiveOverlay: React.FC = () => {
                         {activeMapTitle}
                       </span>
                       <span style={{ fontSize: '0.88rem', fontWeight: 900, color: '#fff' }}>
-                        <strong style={{ color: '#2ecc71' }}>{roundScoreA}</strong> - <strong style={{ color: '#e74c3c' }}>{roundScoreB}</strong>
+                        <strong style={{ color: '#2ecc71' }}>{localRoundScoreA}</strong> - <strong style={{ color: '#e74c3c' }}>{localRoundScoreB}</strong>
                       </span>
                     </div>
 
@@ -660,7 +673,7 @@ export const EsportsLiveOverlay: React.FC = () => {
                       Series Maps (BO3)
                     </div>
 
-                    {mapList.map((mapItem) => (
+                    {localMapList.map((mapItem) => (
                       <div 
                         key={mapItem.mapIndex}
                         style={{
