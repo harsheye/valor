@@ -3067,7 +3067,7 @@ function App() {
       {/* Main Content Area */}
       <div className="main-layout-wrapper">
         {/* Main Content Pane */}
-        <main className={`main-content ${isSidebarCollapsed || activeTab === 'online' ? 'full-width-details' : 'container'} animate-fade-in`}>
+        <main className="main-content full-width-details animate-fade-in">
           {selectedActor ? (
             <ActorDetailsPage
               actorId={selectedActor.id}
