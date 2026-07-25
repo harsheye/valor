@@ -1,7 +1,15 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { CustomSelect } from './CustomSelect';
-import { Search, Play, History, Clock, X } from 'lucide-react';
+import { Search, Play, History, Clock, X, ChevronLeft, ChevronRight } from 'lucide-react';
 import type { VideoItem } from '../types/media';
+import { Input } from './ui/input';
+import {
+  Pagination,
+  PaginationContent,
+  PaginationEllipsis,
+  PaginationItem,
+  PaginationLink,
+} from './ui/pagination';
 import './OnlineSearchTabV2.css';
 
 const categoryOptions = [
@@ -44,6 +52,11 @@ export const OnlineSearchTab: React.FC<OnlineSearchTabProps> = ({
   const [imageErrors, setImageErrors] = useState<Record<string, boolean>>({});
   const [isFocused, setIsFocused] = useState(false);
   const [watchedTmdbIds, setWatchedTmdbIds] = useState<Set<number>>(new Set());
+  const [currentPage, setCurrentPage] = useState(1);
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [results, category]);
 
   useEffect(() => {
     if (!traktAccessToken) return;
@@ -300,6 +313,67 @@ export const OnlineSearchTab: React.FC<OnlineSearchTabProps> = ({
     onSelectMedia(videoItem);
   };
 
+  const itemsPerPage = 12;
+  const totalPages = Math.ceil(results.length / itemsPerPage);
+  const paginatedResults = results.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage);
+
+  const handlePageChange = (page: number) => {
+    if (page >= 1 && page <= totalPages) {
+      setCurrentPage(page);
+    }
+  };
+
+  const renderPageNumbers = () => {
+    const pageNumbers = [];
+    const maxVisible = 3;
+    let start = Math.max(1, currentPage - 1);
+    let end = Math.min(totalPages, start + maxVisible - 1);
+    if (end - start + 1 < maxVisible) {
+      start = Math.max(1, end - maxVisible + 1);
+    }
+
+    if (start > 1) {
+      pageNumbers.push(
+        <PaginationItem key={1}>
+          <PaginationLink onClick={() => handlePageChange(1)}>
+            1
+          </PaginationLink>
+        </PaginationItem>
+      );
+      if (start > 2) {
+        pageNumbers.push(<PaginationEllipsis key="ellipsis-start" />);
+      }
+    }
+
+    for (let i = start; i <= end; i++) {
+      pageNumbers.push(
+        <PaginationItem key={i}>
+          <PaginationLink
+            onClick={() => handlePageChange(i)}
+            isActive={currentPage === i}
+          >
+            {i}
+          </PaginationLink>
+        </PaginationItem>
+      );
+    }
+
+    if (end < totalPages) {
+      if (end < totalPages - 1) {
+        pageNumbers.push(<PaginationEllipsis key="ellipsis-end" />);
+      }
+      pageNumbers.push(
+        <PaginationItem key={totalPages}>
+          <PaginationLink onClick={() => handlePageChange(totalPages)}>
+            {totalPages}
+          </PaginationLink>
+        </PaginationItem>
+      );
+    }
+
+    return pageNumbers;
+  };
+
   const handleImageError = (id: string | number) => {
     setImageErrors(prev => ({ ...prev, [id]: true }));
   };
@@ -417,64 +491,98 @@ export const OnlineSearchTab: React.FC<OnlineSearchTabProps> = ({
             ))}
           </div>
         ) : (
-          <div className="os2-grid">
-            {results.map((res) => {
-              const hasError = imageErrors[res.id] || !res.posterPath;
-              const isWatchedOnTrakt = res.type !== 'anime' && watchedTmdbIds.has(Number(res.id));
+          <>
+            <div className="os2-grid">
+              {paginatedResults.map((res) => {
+                const hasError = imageErrors[res.id] || !res.posterPath;
+                const isWatchedOnTrakt = res.type !== 'anime' && watchedTmdbIds.has(Number(res.id));
 
-              return (
-                <div
-                  key={`${res.type}-${res.id}`}
-                  className="os2-card"
-                  onClick={() => handleCardClick(res)}
-                >
-                  <div className="os2-poster">
-                    {!hasError ? (
-                      <img
-                        src={res.posterPath}
-                        alt={res.title}
-                        className="os2-image"
-                        loading="lazy"
-                        crossOrigin="anonymous"
-                        onError={() => handleImageError(res.id)}
-                      />
-                    ) : (
-                      <div className="os2-fallback">
-                        <span className="os2-title">{res.title}</span>
+                return (
+                  <div
+                    key={`${res.type}-${res.id}`}
+                    className="os2-card"
+                    onClick={() => handleCardClick(res)}
+                  >
+                    <div className="os2-poster">
+                      {!hasError ? (
+                        <img
+                          src={res.posterPath}
+                          alt={res.title}
+                          className="os2-image"
+                          loading="lazy"
+                          crossOrigin="anonymous"
+                          onError={() => handleImageError(res.id)}
+                        />
+                      ) : (
+                        <div className="os2-fallback">
+                          <span className="os2-title">{res.title}</span>
+                        </div>
+                      )}
+
+                      <div className="os2-overlay">
+                        <button className="os2-play">
+                          <Play fill="currentColor" size={20} />
+                        </button>
                       </div>
-                    )}
 
-                    <div className="os2-overlay">
-                      <button className="os2-play">
-                        <Play fill="currentColor" size={20} />
-                      </button>
+                      {res.rating && (
+                        <div className="os2-rating">
+                          ⭐ {res.rating.toFixed(1)}
+                        </div>
+                      )}
+
+                      {isWatchedOnTrakt && (
+                        <div className="os2-watched">
+                          ✓ Watched
+                        </div>
+                      )}
                     </div>
-
-                    {res.rating && (
-                      <div className="os2-rating">
-                        ⭐ {res.rating.toFixed(1)}
+                    <div className="os2-details">
+                      <h3 className="os2-title" title={res.title}>{res.title}</h3>
+                      <div className="os2-meta">
+                        <span className="os2-year">{res.year}</span>
+                        <span className={`os2-tag ${res.type}`}>
+                          {res.type === 'movie' ? 'Movie' : (res.type === 'tv' ? 'TV' : 'Anime')}
+                        </span>
                       </div>
-                    )}
-
-                    {isWatchedOnTrakt && (
-                      <div className="os2-watched">
-                        ✓ Watched
-                      </div>
-                    )}
-                  </div>
-                  <div className="os2-details">
-                    <h3 className="os2-title" title={res.title}>{res.title}</h3>
-                    <div className="os2-meta">
-                      <span className="os2-year">{res.year}</span>
-                      <span className={`os2-tag ${res.type}`}>
-                        {res.type === 'movie' ? 'Movie' : (res.type === 'tv' ? 'TV' : 'Anime')}
-                      </span>
                     </div>
                   </div>
-                </div>
-              );
-            })}
-          </div>
+                );
+              })}
+            </div>
+
+            {totalPages > 1 && (
+              <div className="pagination-container" style={{ borderTop: '1px solid var(--border-color)', width: '100%' }}>
+                <Pagination>
+                  <PaginationContent>
+                    <PaginationItem>
+                      <PaginationLink
+                        onClick={() => handlePageChange(currentPage - 1)}
+                        disabled={currentPage === 1}
+                        size="icon"
+                        aria-label="Go to previous page"
+                      >
+                        <ChevronLeft className="size-4" />
+                      </PaginationLink>
+                    </PaginationItem>
+                    
+                    {renderPageNumbers()}
+                    
+                    <PaginationItem>
+                      <PaginationLink
+                        onClick={() => handlePageChange(currentPage + 1)}
+                        disabled={currentPage === totalPages}
+                        size="icon"
+                        aria-label="Go to next page"
+                      >
+                        <ChevronRight className="size-4" />
+                      </PaginationLink>
+                    </PaginationItem>
+                  </PaginationContent>
+                </Pagination>
+              </div>
+            )}
+          </>
         )}
       </div>
     </div>

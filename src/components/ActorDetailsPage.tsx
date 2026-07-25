@@ -1,10 +1,18 @@
 import React, { useState, useEffect } from 'react';
 import { 
-  X, Link as LinkIcon, Calendar, MapPin, Star, Film, Tv, Sparkles, Filter, Search, ArrowUpDown 
+   X, Link as LinkIcon, Calendar, MapPin, Star, Film, Tv, Sparkles, Filter, Search, ArrowUpDown, ChevronLeft, ChevronRight
 } from 'lucide-react';
 import type { VideoItem } from '../types/media';
 import { CustomSelect } from './CustomSelect';
 import { ActorPageSkeleton } from './SkeletonLoader';
+import { Input } from './ui/input';
+import {
+  Pagination,
+  PaginationContent,
+  PaginationEllipsis,
+  PaginationItem,
+  PaginationLink,
+} from './ui/pagination';
 
 const cleanBiography = (rawBio: string | undefined, name: string): string => {
   if (!rawBio) return `We don't have a biography for ${name} yet.`;
@@ -108,10 +116,10 @@ export const ActorDetailsPage: React.FC<ActorDetailsPageProps> = ({
   const [yearFilter, setYearFilter] = useState<string>('all');
   const [sortOrder, setSortOrder] = useState<'year_desc' | 'year_asc' | 'popularity_desc' | 'rating_desc'>('year_desc');
   const [isBioExpanded, setIsBioExpanded] = useState(false);
-  const [displayCount, setDisplayCount] = useState(24);
+  const [currentPage, setCurrentPage] = useState(1);
 
   useEffect(() => {
-    setDisplayCount(24);
+    setCurrentPage(1);
   }, [searchQuery, categoryFilter, yearFilter, sortOrder]);
 
   useEffect(() => {
@@ -369,6 +377,67 @@ export const ActorDetailsPage: React.FC<ActorDetailsPageProps> = ({
     )
   ).sort((a, b) => b.localeCompare(a));
 
+  const itemsPerPage = 10;
+  const totalPages = Math.ceil(filteredCredits.length / itemsPerPage);
+  const paginatedCredits = filteredCredits.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage);
+
+  const handlePageChange = (page: number) => {
+    if (page >= 1 && page <= totalPages) {
+      setCurrentPage(page);
+    }
+  };
+
+  const renderPageNumbers = () => {
+    const pageNumbers = [];
+    const maxVisible = 3;
+    let start = Math.max(1, currentPage - 1);
+    let end = Math.min(totalPages, start + maxVisible - 1);
+    if (end - start + 1 < maxVisible) {
+      start = Math.max(1, end - maxVisible + 1);
+    }
+
+    if (start > 1) {
+      pageNumbers.push(
+        <PaginationItem key={1}>
+          <PaginationLink onClick={() => handlePageChange(1)}>
+            1
+          </PaginationLink>
+        </PaginationItem>
+      );
+      if (start > 2) {
+        pageNumbers.push(<PaginationEllipsis key="ellipsis-start" />);
+      }
+    }
+
+    for (let i = start; i <= end; i++) {
+      pageNumbers.push(
+        <PaginationItem key={i}>
+          <PaginationLink
+            onClick={() => handlePageChange(i)}
+            isActive={currentPage === i}
+          >
+            {i}
+          </PaginationLink>
+        </PaginationItem>
+      );
+    }
+
+    if (end < totalPages) {
+      if (end < totalPages - 1) {
+        pageNumbers.push(<PaginationEllipsis key="ellipsis-end" />);
+      }
+      pageNumbers.push(
+        <PaginationItem key={totalPages}>
+          <PaginationLink onClick={() => handlePageChange(totalPages)}>
+            {totalPages}
+          </PaginationLink>
+        </PaginationItem>
+      );
+    }
+
+    return pageNumbers;
+  };
+
   if (loading) {
     return <ActorPageSkeleton />;
   }
@@ -554,7 +623,7 @@ export const ActorDetailsPage: React.FC<ActorDetailsPageProps> = ({
               <div className="credits-header-row">
                 <h3 className="section-title">Known For ({filteredCredits.length})</h3>
                 
-                <div className="credits-filter-actions" style={{ marginRight: '2.5rem' }}>
+                <div className="credits-filter-actions">
                   {/* Search Bar */}
                   <div className="filter-search-wrapper">
                     <Search size={16} className="search-icon" />
@@ -608,7 +677,7 @@ export const ActorDetailsPage: React.FC<ActorDetailsPageProps> = ({
               {filteredCredits.length > 0 ? (
                 <>
                   <div className="actor-credits-grid">
-                    {filteredCredits.slice(0, displayCount).map(c => {
+                    {paginatedCredits.map(c => {
                       const posterUrl = c.poster_path
                         ? `https://images.weserv.nl/?url=https://image.tmdb.org/t/p/w185${c.poster_path}`
                         : '';
@@ -696,26 +765,35 @@ export const ActorDetailsPage: React.FC<ActorDetailsPageProps> = ({
                     })}
                   </div>
 
-                  {filteredCredits.length > displayCount && (
-                    <div style={{ display: 'flex', justifyContent: 'center', marginTop: '1.5rem', width: '100%' }}>
-                      <button
-                        onClick={() => setDisplayCount(prev => prev + 24)}
-                        style={{
-                          background: 'rgba(255, 255, 255, 0.06)',
-                          border: '1px solid rgba(255, 255, 255, 0.12)',
-                          color: '#fff',
-                          padding: '0.6rem 1.5rem',
-                          borderRadius: '8px',
-                          fontSize: '0.85rem',
-                          fontWeight: 600,
-                          cursor: 'pointer',
-                          transition: 'all 0.2s'
-                        }}
-                        onMouseEnter={e => e.currentTarget.style.background = 'rgba(255, 255, 255, 0.12)'}
-                        onMouseLeave={e => e.currentTarget.style.background = 'rgba(255, 255, 255, 0.06)'}
-                      >
-                        Load More ({filteredCredits.length - displayCount} remaining)
-                      </button>
+                  {totalPages > 1 && (
+                    <div className="pagination-container" style={{ borderTop: '1px solid var(--border-color)', width: '100%' }}>
+                      <Pagination>
+                        <PaginationContent>
+                          <PaginationItem>
+                            <PaginationLink
+                              onClick={() => handlePageChange(currentPage - 1)}
+                              disabled={currentPage === 1}
+                              size="icon"
+                              aria-label="Go to previous page"
+                            >
+                              <ChevronLeft className="size-4" />
+                            </PaginationLink>
+                          </PaginationItem>
+                          
+                          {renderPageNumbers()}
+                          
+                          <PaginationItem>
+                            <PaginationLink
+                              onClick={() => handlePageChange(currentPage + 1)}
+                              disabled={currentPage === totalPages}
+                              size="icon"
+                              aria-label="Go to next page"
+                            >
+                              <ChevronRight className="size-4" />
+                            </PaginationLink>
+                          </PaginationItem>
+                        </PaginationContent>
+                      </Pagination>
                     </div>
                   )}
                 </>
