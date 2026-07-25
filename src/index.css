@@ -3950,17 +3950,17 @@ a:hover {
 /* Event Chip Style */
 .premium-event-card {
   position: absolute;
-  left: 6px;
-  right: 6px;
+  left: 2px;
+  right: 2px;
   border-radius: 8px;
-  padding: 8px 10px;
+  padding: 4px 8px;
   box-sizing: border-box;
   overflow: hidden;
   cursor: pointer;
   transition: all 150ms ease;
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 2px;
 }
 
 .premium-event-card:hover {

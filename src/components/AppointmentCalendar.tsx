@@ -65,7 +65,7 @@ function buildAppointmentsFromHistory(videos: VideoItem[]): CalendarEvent<ApptDa
 
     const watchedSec = video.totalTimeWatched || 0
     const watchMin = Math.round(watchedSec / 60)
-    const durMinutes = Math.max(watchMin, 15) // Enforce minimum 15 minutes for visibility
+    const durMinutes = Math.max(watchMin, 30) // Enforce minimum 30 minutes for visibility
     const end = new Date(start.getTime() + durMinutes * 60000)
 
     lastEnd = end
