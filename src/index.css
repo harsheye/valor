@@ -4083,6 +4083,291 @@ a:hover {
   border-color: #e6e6e6;
 }
 
+/* Quick Actions Overlay styles for premium calendar cards */
+.quick-actions-overlay {
+  position: absolute;
+  right: 6px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 150ms ease;
+  z-index: 20;
+}
+
+.premium-event-card:hover .quick-actions-overlay {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.quick-action-btn {
+  background: rgba(22, 22, 22, 0.85);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  color: rgba(255, 255, 255, 0.8);
+  border-radius: 6px;
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 150ms ease;
+  font-size: 11px;
+}
+
+.quick-action-btn:hover {
+  background: #ffffff;
+  color: #161616;
+  border-color: #ffffff;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
+}
+
+/* Activity Timeline CSS */
+.activity-timeline-container {
+  display: flex;
+  flex-direction: column;
+  color: #fff;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+  width: 100%;
+}
+
+.activity-timeline-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 24px;
+}
+
+.activity-timeline-title {
+  font-size: 28px;
+  font-weight: 700;
+  color: #ffffff;
+  margin: 0 0 4px 0;
+}
+
+.activity-timeline-subtitle {
+  font-size: 14px;
+  color: rgba(255, 255, 255, 0.5);
+  margin: 0;
+}
+
+.activity-timeline-controls {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.activity-timeline-btn {
+  background: transparent;
+  border: 1px solid #2b2b2b;
+  color: #fff;
+  border-radius: 8px;
+  height: 38px;
+  padding: 0 16px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  transition: all 150ms ease;
+}
+
+.activity-timeline-btn:hover {
+  background: #1b1b1b;
+  border-color: #3d3d3d;
+}
+
+.activity-timeline-list {
+  position: relative;
+  padding-left: 100px;
+  box-sizing: border-box;
+  margin-top: 10px;
+}
+
+.activity-timeline-line {
+  position: absolute;
+  left: 90px;
+  top: 10px;
+  bottom: 10px;
+  width: 2px;
+  background: #2b2b2b;
+}
+
+.activity-timeline-item {
+  position: relative;
+  margin-bottom: 20px;
+  display: flex;
+  align-items: center;
+}
+
+.activity-timeline-time {
+  position: absolute;
+  right: calc(100% - 75px);
+  width: 80px;
+  text-align: right;
+  font-size: 13px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.6);
+}
+
+.activity-timeline-dot {
+  position: absolute;
+  left: 86px;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  z-index: 2;
+  box-shadow: 0 0 0 4px #101010;
+}
+
+.activity-timeline-card {
+  flex: 1;
+  background: #161616;
+  border: 1px solid #222222;
+  border-radius: 12px;
+  padding: 16px 20px;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  transition: all 200ms ease;
+}
+
+.activity-timeline-card:hover {
+  border-color: var(--card-hover-border, #333333);
+  background: #181818;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
+}
+
+.activity-timeline-avatar {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+  font-weight: 700;
+  color: #fff;
+  flex-shrink: 0;
+}
+
+.activity-timeline-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  text-align: left;
+}
+
+.activity-timeline-card-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: #ffffff;
+  margin: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.activity-timeline-source-badge {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 6px;
+  padding: 2px 8px;
+  font-size: 10px;
+  font-weight: 700;
+  width: max-content;
+}
+
+.activity-timeline-meta-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.5);
+  font-weight: 500;
+}
+
+.activity-timeline-meta-separator {
+  color: rgba(255, 255, 255, 0.2);
+}
+
+.activity-timeline-actions-wrapper {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  flex-shrink: 0;
+}
+
+.activity-timeline-action-btns {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.activity-timeline-action-btn {
+  background: #1b1b1b;
+  border: 1px solid #2b2b2b;
+  color: rgba(255, 255, 255, 0.8);
+  border-radius: 8px;
+  width: 36px;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 150ms ease;
+}
+
+.activity-timeline-action-btn:hover {
+  background: #ffffff;
+  color: #161616;
+  border-color: #ffffff;
+}
+
+.activity-timeline-progress-container {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 140px;
+}
+
+.activity-timeline-progress-track {
+  flex: 1;
+  background: rgba(255, 255, 255, 0.1);
+  height: 4px;
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.activity-timeline-progress-fill {
+  height: 100%;
+  border-radius: 2px;
+}
+
+.activity-timeline-progress-text {
+  font-size: 12px;
+  font-weight: 700;
+  color: rgba(255, 255, 255, 0.8);
+  min-width: 28px;
+  text-align: right;
+}
+
+.activity-timeline-load-more {
+  display: flex;
+  justify-content: center;
+  margin-top: 24px;
+}
+
+
 
 
 

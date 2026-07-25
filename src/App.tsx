@@ -1114,6 +1114,25 @@ function App() {
   }, []);
 
   useEffect(() => {
+    (window as any)._onShowMediaDetails = (video: VideoItem) => {
+      setSelectedActor(null);
+      setSelectedDetailsMedia(video);
+    };
+    (window as any)._onRateCalendarVideo = (video: VideoItem, rating: number) => {
+      handleUpdateVideo((prev) => ({ ...prev, rating }), false, video.id, true);
+    };
+    (window as any)._onDeleteCalendarVideo = (video: VideoItem) => {
+      const mockEvent = { stopPropagation: () => {} } as any;
+      handleRemoveVideo(video.id, mockEvent);
+    };
+    return () => {
+      delete (window as any)._onShowMediaDetails;
+      delete (window as any)._onRateCalendarVideo;
+      delete (window as any)._onDeleteCalendarVideo;
+    };
+  }, [playingVideo, videos]);
+
+  useEffect(() => {
     const interval = setInterval(() => {
       setToasts(prev => {
         let hasChanges = false;
