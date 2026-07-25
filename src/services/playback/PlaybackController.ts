@@ -280,6 +280,35 @@ export class PlaybackController {
     this.scheduler.reset();
   }
 
+  private async restartDecodeWorker(workerIndex: number): Promise<void> {
+    const oldWorker = this.decodeWorkers[workerIndex];
+    if (!oldWorker) return;
+
+    logger.warn(`[PlaybackController-${this.instanceId}] Restarting decode worker ${workerIndex} due to crash`);
+
+    try {
+      await oldWorker.demux.cleanup(oldWorker.ff).catch(() => {});
+      await oldWorker.manager.destroy().catch(() => {});
+    } catch (e) {}
+
+    try {
+      const manager = oldWorker.manager === this.ffmpegMgr ? this.ffmpegMgr : this.ffmpegMgr.createSibling();
+      const ff = await manager.load();
+      const demux = oldWorker.demux === this.demuxMgr ? this.demuxMgr : this.demuxMgr.createSibling(manager);
+      await demux.getMountedInputPath(ff);
+      const reader = new PacketReader(demux, this.audioCtx);
+
+      this.decodeWorkers[workerIndex] = { ff, manager, demux, reader };
+      if (oldWorker.manager === this.ffmpegMgr) {
+        this.ff = ff; // Update the primary ff reference
+      }
+      this.workerTails.delete(oldWorker.ff);
+      logger.success(`[PlaybackController-${this.instanceId}] Worker ${workerIndex} restarted successfully.`);
+    } catch (e) {
+      console.error(`[PlaybackController-${this.instanceId}] Failed to restart worker ${workerIndex}:`, e);
+    }
+  }
+
   beginSeekTransaction(reason = 'external'): number {
     this.session.maintenanceFrozen = true;
     this.stopHeartbeat();
@@ -492,6 +521,13 @@ export class PlaybackController {
           this.playbackQueue.update(this.videoEl.currentTime, this.state.playbackRate);
         }
       } catch (err: any) {
+        const isDead = err?.message?.includes('memory access out of bounds') || err?.message?.includes('aborted') || err?.message?.includes('out of memory') || err?.message?.includes('not found');
+        if (isDead) {
+          const workerIndex = Math.floor(target / 10) % this.decodeWorkers.length;
+          console.warn(`[PlaybackController-${this.instanceId}] Worker ${workerIndex} for chunk ${target} died. Attempting restart...`);
+          this.restartDecodeWorker(workerIndex).catch(e => console.error("Worker restart failed", e));
+        }
+
         console.warn(`[PlaybackController-${this.instanceId}] Buffering chunk ${target} failed: ${err?.message || err}`);
         
         this.manifest.transitionTo(target, 'FAILED');

@@ -25,6 +25,9 @@ export class FFmpegManager {
 
     ff.on('log', ({ message }) => {
       this.logCollector.push(message);
+      if (this.logCollector.length > 1000) {
+        this.logCollector.shift();
+      }
       if (import.meta.env?.DEV) {
         const msg = message.toLowerCase();
         if (msg.includes('error') || msg.includes('failed')) {
