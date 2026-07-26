@@ -63,7 +63,7 @@ export class BufferScheduler {
     const limit = startChunk + this.highWaterMark;
     for (let t = startChunk; t < limit; t += this.chunkSize) {
       const state = this.manifest.getState(t);
-      const requiredStart = Math.max(t, currentTime);
+      const requiredStart = t;
       const requiredEnd = t + this.chunkSize;
       const hasCoverage = this.cache.hasCoverage(requiredStart, requiredEnd);
       const hasChunk = this.cache.hasChunk(t);

@@ -261,18 +261,19 @@ export class DemuxManager {
 
   async cleanup(ff: FFmpeg): Promise<void> {
     if (this.mountedPath) {
+      const path = this.mountedPath;
+      this.mountedPath = null;
       if (this.isFile(this.videoFileOrSource)) {
-        const mountPoint = this.mountedPath.substring(0, this.mountedPath.lastIndexOf('/'));
+        const mountPoint = path.substring(0, path.lastIndexOf('/'));
         try {
           await ff.unmount(mountPoint);
           await ff.deleteDir(mountPoint);
         } catch {}
       } else {
         try {
-          await ff.deleteFile(this.mountedPath);
+          await ff.deleteFile(path);
         } catch {}
       }
-      this.mountedPath = null;
     }
   }
 }

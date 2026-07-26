@@ -200,6 +200,7 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
   const activeFile = isFile(video.file) ? video.file : resolvedFile;
 
   useEffect(() => {
+    setHasFileAccessError(false);
     if (isFile(video.file)) {
       setResolvedFile(video.file);
     } else {
@@ -213,6 +214,7 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
   const [openSubtitles, setOpenSubtitles] = useState<any[]>([]);
   const [isOpenSubLoading, setIsOpenSubLoading] = useState(false);
   const [hasFetchedOpenSubtitles, setHasFetchedOpenSubtitles] = useState(false);
+  const [hasFileAccessError, setHasFileAccessError] = useState(false);
 
   const updateVideoLayout = useCallback(() => {
     if (!videoRef.current || !containerRef.current) return;
@@ -3219,6 +3221,20 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
           if (active) setIsBuffering(buffering);
         });
 
+        controller.setOnErrorCallback((err) => {
+          if (!active) return;
+          console.error(`[LocalVideoPlayer] PlaybackController reported error:`, err);
+          const errMsg = err?.message || String(err);
+          const isFileAccessError = errMsg.includes('FileReaderSync') || 
+                                    errMsg.includes('could not be found') || 
+                                    errMsg.includes('NotFoundError') ||
+                                    errMsg.includes('revoked');
+          if (isFileAccessError) {
+            console.warn('[LocalVideoPlayer] File access error detected. Showing restore access overlay.');
+            setHasFileAccessError(true);
+          }
+        });
+
         try {
           await controller.initialize(videoRef.current, activeAudioStreamIndex);
         } catch (err) {
@@ -3811,26 +3827,16 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
   return (
     <div 
       ref={containerRef} 
-      className={`player-container ${controlsVisible && !hideUIOverlays ? 'show-cursor' : 'hide-cursor'} ${hideUIOverlays ? 'keyboard-only' : ''} ${disableAnimations ? 'no-animations' : ''} ${hoveredSetting === 'lockModeActive' || hoveredSetting === 'pauseOnFocusChange' || hoveredSetting === 'disableAnimations' ? 'highlight-active' : ''}`}
+      className={`player-container ${controlsVisible ? 'show-cursor' : 'hide-cursor'} ${hideUIOverlays ? 'keyboard-only' : ''} ${disableAnimations ? 'no-animations' : ''} ${hoveredSetting === 'lockModeActive' || hoveredSetting === 'pauseOnFocusChange' || hoveredSetting === 'disableAnimations' ? 'highlight-active' : ''}`}
       onMouseMove={(e) => {
         if (!isLocked) handleMouseMove(e);
       }}
       onDoubleClick={(e) => {
-        const target = e.target as HTMLElement;
-        if (
-          target.closest('button') || 
-          target.closest('input') || 
-          target.closest('.seekbar-row') || 
-          target.closest('.volume-control-group-premium') ||
-          target.closest('.popover-wrapper') ||
-          target.closest('.audio-sub-popover')
-        ) {
-          return;
-        }
-        toggleFullscreen();
+        // Removed toggleFullscreen() on double click to prevent accidental fullscreen exits
+        // when the user clicks multiple times rapidly to pause/play.
       }}
     >
-      {video.type === 'local' && !activeFile && (
+      {video.type === 'local' && (!activeFile || hasFileAccessError) && (
         <div style={{
           position: 'absolute',
           inset: 0,
@@ -4204,7 +4210,7 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
       )}
 
       {/* Lock Overlay to block mouse clicks and all settings */}
-      {isLocked && (
+      {isLocked && activeFile && !hasFileAccessError && (
         <div 
           className="player-lock-overlay"
           onClick={(e) => {

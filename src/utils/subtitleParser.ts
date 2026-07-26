@@ -48,7 +48,7 @@ export function cleanSubtitleText(text: string): string {
  */
 export function parseSRT(content: string): SubtitleCue[] {
   const normalized = content.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
-  const blocks = normalized.split('\n\n');
+  const blocks = normalized.split(/\n\s*\n/);
   const cues: SubtitleCue[] = [];
 
   let cueCount = 0;
@@ -102,7 +102,7 @@ export function parseVTT(content: string): SubtitleCue[] {
   const headerIndex = normalized.indexOf('\n\n');
   const body = headerIndex !== -1 ? normalized.substring(headerIndex + 2) : normalized;
 
-  const blocks = body.split('\n\n');
+  const blocks = body.split(/\n\s*\n/);
   const cues: SubtitleCue[] = [];
   let cueCount = 0;
 

@@ -66,6 +66,7 @@ export class PlaybackController {
   private manifest = new ChunkManifest();
   private listenersBound = false;
   private onBufferingChange: ((buffering: boolean) => void) | null = null;
+  private onErrorCallback: ((err: any) => void) | null = null;
   private gainNode: GainNode;
   private audioBoost = 100;
   // The first play after initialize must keep the generation that fetched the
@@ -210,6 +211,10 @@ export class PlaybackController {
     });
   }
 
+  setOnErrorCallback(cb: (err: any) => void): void {
+    this.onErrorCallback = cb;
+  }
+
   private startHeartbeat(): void {
     if (this.session.heartbeatIntervalId) return;
     logger.scheduler(`controller=${this.instanceId} heartbeat started (1s safety net)`);
@@ -280,9 +285,20 @@ export class PlaybackController {
     this.scheduler.reset();
   }
 
+  private restartingWorkers = new Set<number>();
+
   private async restartDecodeWorker(workerIndex: number): Promise<void> {
+    if (this.restartingWorkers.has(workerIndex)) {
+      logger.warn(`[PlaybackController-${this.instanceId}] Worker ${workerIndex} restart already in progress, skipping duplicate request.`);
+      return;
+    }
+    this.restartingWorkers.add(workerIndex);
+
     const oldWorker = this.decodeWorkers[workerIndex];
-    if (!oldWorker) return;
+    if (!oldWorker) {
+      this.restartingWorkers.delete(workerIndex);
+      return;
+    }
 
     logger.warn(`[PlaybackController-${this.instanceId}] Restarting decode worker ${workerIndex} due to crash`);
 
@@ -306,6 +322,8 @@ export class PlaybackController {
       logger.success(`[PlaybackController-${this.instanceId}] Worker ${workerIndex} restarted successfully.`);
     } catch (e) {
       console.error(`[PlaybackController-${this.instanceId}] Failed to restart worker ${workerIndex}:`, e);
+    } finally {
+      this.restartingWorkers.delete(workerIndex);
     }
   }
 
@@ -460,7 +478,7 @@ export class PlaybackController {
 
       const key = `audio_${this.state.activeStreamIndex}_${target}`;
       const targetHasCoverage = this.bufferManager.getCache().hasCoverage(
-        Math.max(target, currentTime),
+        target,
         target + chunkSize
       );
       const targetHasChunk = this.bufferManager.getCache().hasChunk(target);
@@ -486,8 +504,8 @@ export class PlaybackController {
       }
 
       try {
-        const requestStart = target === currentChunk ? Math.max(currentTime, target) : target;
-        const requestDuration = Math.max(0.25, target + chunkSize - requestStart);
+        const requestStart = target;
+        const requestDuration = chunkSize;
         logger.buffer(`chunk ${target}s -> ${requestStart.toFixed(3)}s + ${requestDuration.toFixed(3)}s`);
         const worker = this.getDecodeWorker(target);
         const packet = await this.enqueueWorkerDecode(worker, () => this.bufferManager.getOrFetchPacket(
@@ -521,7 +539,26 @@ export class PlaybackController {
           this.playbackQueue.update(this.videoEl.currentTime, this.state.playbackRate);
         }
       } catch (err: any) {
-        const isDead = err?.message?.includes('memory access out of bounds') || err?.message?.includes('aborted') || err?.message?.includes('out of memory') || err?.message?.includes('not found');
+        const errMsg = (err?.message || String(err)).toLowerCase();
+        const isFileAccessError = errMsg.includes('filereadersync') || 
+                                  errMsg.includes('could not be found') || 
+                                  errMsg.includes('notfounderror') ||
+                                  errMsg.includes('revoked');
+        
+        if (isFileAccessError && this.onErrorCallback) {
+          console.error(`[PlaybackController-${this.instanceId}] Fatal file access error detected:`, err);
+          this.onErrorCallback(err);
+        }
+
+        const isDead = errMsg.includes('memory access') || 
+                       errMsg.includes('bounds') || 
+                       errMsg.includes('aborted') || 
+                       errMsg.includes('out of memory') || 
+                       errMsg.includes('not found') ||
+                       errMsg.includes('runtimeerror') ||
+                       errMsg.includes('wasm') ||
+                       errMsg.includes('oom') ||
+                       errMsg.includes('null function');
         if (isDead) {
           const workerIndex = Math.floor(target / 10) % this.decodeWorkers.length;
           console.warn(`[PlaybackController-${this.instanceId}] Worker ${workerIndex} for chunk ${target} died. Attempting restart...`);
@@ -540,8 +577,6 @@ export class PlaybackController {
             this.manifest.transitionTo(target, 'EMPTY');
           }
         }, 8000);
-
-        this.playbackQueue.clear(); // Safe state cleanup on failure
       } finally {
         this.fetchingKeys.delete(target);
         this.reservedTargets.delete(target);
@@ -679,8 +714,6 @@ export class PlaybackController {
     
     this.fetchingKeys.clear();
     this.playbackQueue.clear();
-    this.manifest.clear();
-    this.bufferManager.clear();
     this.bufferManager.resetFailures();
     this.scheduler.reset();
     this.audioScheduler.stopAll();

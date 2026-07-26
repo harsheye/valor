@@ -3896,23 +3896,13 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
   return (
     <div 
       ref={containerRef} 
-      className={`player-container ${controlsVisible && !hideUIOverlays ? 'show-cursor' : 'hide-cursor'} ${hideUIOverlays ? 'keyboard-only' : ''} ${disableAnimations ? 'no-animations' : ''} ${hoveredSetting === 'lockModeActive' || hoveredSetting === 'pauseOnFocusChange' || hoveredSetting === 'disableAnimations' ? 'highlight-active' : ''}`}
+      className={`player-container ${controlsVisible ? 'show-cursor' : 'hide-cursor'} ${hideUIOverlays ? 'keyboard-only' : ''} ${disableAnimations ? 'no-animations' : ''} ${hoveredSetting === 'lockModeActive' || hoveredSetting === 'pauseOnFocusChange' || hoveredSetting === 'disableAnimations' ? 'highlight-active' : ''}`}
       onMouseMove={(e) => {
         if (!isLocked) handleMouseMove(e);
       }}
       onDoubleClick={(e) => {
-        const target = e.target as HTMLElement;
-        if (
-          target.closest('button') || 
-          target.closest('input') || 
-          target.closest('.seekbar-row') || 
-          target.closest('.volume-control-group-premium') ||
-          target.closest('.popover-wrapper') ||
-          target.closest('.audio-sub-popover')
-        ) {
-          return;
-        }
-        toggleFullscreen();
+        // Removed toggleFullscreen() on double click to prevent accidental fullscreen exits
+        // when the user clicks multiple times rapidly to pause/play.
       }}
     >
 

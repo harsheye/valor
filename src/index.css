@@ -4367,6 +4367,42 @@ a:hover {
   margin-top: 24px;
 }
 
+/* Hover Quick Actions for Activity Timeline Card */
+.activity-timeline-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 150ms ease;
+}
+
+.activity-timeline-card:hover .activity-timeline-actions {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.activity-timeline-hover-action-btn {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: rgba(255, 255, 255, 0.8);
+  border-radius: 6px;
+  padding: 4px 10px;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  transition: all 150ms ease;
+}
+
+.activity-timeline-hover-action-btn:hover {
+  background: #ffffff;
+  color: #161616;
+  border-color: #ffffff;
+}
+
 
 
 

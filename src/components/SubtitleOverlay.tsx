@@ -32,10 +32,8 @@ export const SubtitleOverlay: React.FC<SubtitleOverlayProps> = ({
     (cue) => currentTime >= cue.startTime && currentTime <= cue.endTime && cue.text && cue.text.trim() !== ''
   );
 
-  if (activeCues.length === 0) return null;
-
   // Format newlines into line breaks for each active cue, wrapped in individual block elements
-  const formattedText = activeCues.map((cue, cueIdx) => (
+  const formattedText = activeCues.length > 0 ? activeCues.map((cue, cueIdx) => (
     <div key={cue.id || cueIdx} className="subtitle-line-group" style={{ marginTop: cueIdx > 0 ? '0.5rem' : 0 }}>
       {cue.text.split('\n').map((line, lineIdx) => (
         <React.Fragment key={lineIdx}>
@@ -44,7 +42,7 @@ export const SubtitleOverlay: React.FC<SubtitleOverlayProps> = ({
         </React.Fragment>
       ))}
     </div>
-  ));
+  )) : null;
 
   let selectedFont = '"Poppins", system-ui, sans-serif';
   if (settings.fontFamily === 'poppins') selectedFont = '"Poppins", system-ui, sans-serif';
@@ -102,7 +100,7 @@ export const SubtitleOverlay: React.FC<SubtitleOverlayProps> = ({
           justify-content: center;
           align-items: center;
           pointer-events: none;
-          z-index: 10;
+          z-index: 40;
           text-align: center;
           user-select: none;
           transition: bottom 0.25s cubic-bezier(0.25, 1, 0.5, 1);
