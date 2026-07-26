@@ -43,6 +43,7 @@ import { RemoteVideoPlayer } from './components/RemoteVideoPlayer';
 import { OnlineSearchTab } from './components/OnlineSearchTab';
 import { OnlineEmbedPlayer } from './components/OnlineEmbedPlayer';
 import { OnlineDetailsPage } from './components/OnlineDetailsPage';
+import { EmbedPlayerPage } from './pages/EmbedPlayerPage';
 import { GraphQLStorageProvider } from './services/storage/GraphQLStorageProvider';
 import { LocalIndexedDBProvider } from './services/storage/LocalIndexedDBProvider';
 import { ActorDetailsPage } from './components/ActorDetailsPage';
@@ -4746,6 +4747,14 @@ function App() {
 }
 
 export default function AppWithErrorBoundary() {
+  if (window.location.pathname.startsWith('/embed')) {
+    return (
+      <ErrorBoundary>
+        <EmbedPlayerPage />
+      </ErrorBoundary>
+    );
+  }
+
   return (
     <ErrorBoundary>
       <App />

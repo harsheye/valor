@@ -1,0 +1,13 @@
+{
+  "name": "@our-player/vue",
+  "version": "1.0.0",
+  "description": "Vue Wrapper for the Embeddable Media Player SDK",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "dependencies": {
+    "@our-player/sdk": "1.0.0"
+  },
+  "peerDependencies": {
+    "vue": "^3.0.0"
+  }
+}

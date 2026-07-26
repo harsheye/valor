@@ -1,0 +1,13 @@
+{
+  "name": "@our-player/sdk",
+  "version": "1.0.0",
+  "description": "Vanilla JavaScript SDK for the Embeddable Media Player",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc"
+  },
+  "devDependencies": {
+    "typescript": "^5.0.0"
+  }
+}

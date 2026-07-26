@@ -1,0 +1,9 @@
+{
+  "name": "@our-player/angular",
+  "version": "1.0.0",
+  "description": "Angular Wrapper for the Embeddable Media Player SDK",
+  "peerDependencies": {
+    "@angular/core": "^15.0.0",
+    "@our-player/sdk": "1.0.0"
+  }
+}
