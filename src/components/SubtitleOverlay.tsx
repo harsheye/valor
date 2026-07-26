@@ -108,7 +108,7 @@ export const SubtitleOverlay: React.FC<SubtitleOverlayProps> = ({
           justify-content: center;
           align-items: center;
           pointer-events: none;
-          z-index: 40;
+          z-index: 10;
           text-align: center;
           user-select: none;
           transition: bottom 0.25s cubic-bezier(0.25, 1, 0.5, 1);

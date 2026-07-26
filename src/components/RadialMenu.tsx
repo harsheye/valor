@@ -63,9 +63,10 @@ interface RadialMenuProps {
   items: RadialMenuItem[];
   centerItem?: { icon: React.ReactNode; onClick: () => void; disabled?: boolean };
   onClose: () => void;
+  inline?: boolean;
 }
 
-export const RadialMenu: React.FC<RadialMenuProps> = ({ x, y, items, centerItem, onClose }) => {
+export const RadialMenu: React.FC<RadialMenuProps> = ({ x, y, items, centerItem, onClose, inline }) => {
   const [mounted, setMounted] = useState(false);
   const [hoveredId, setHoveredId] = useState<string | null>(null);
   
@@ -97,24 +98,26 @@ export const RadialMenu: React.FC<RadialMenuProps> = ({ x, y, items, centerItem,
   return (
     <div 
       style={{
-        position: 'fixed',
-        inset: 0,
-        zIndex: 9999,
-        backgroundColor: 'rgba(0, 0, 0, 0.5)',
-        backdropFilter: 'blur(3px)',
+        position: inline ? 'relative' : 'fixed',
+        inset: inline ? undefined : 0,
+        width: inline ? size : undefined,
+        height: inline ? size : undefined,
+        zIndex: inline ? 1 : 9999,
+        backgroundColor: inline ? 'transparent' : 'rgba(0, 0, 0, 0.5)',
+        backdropFilter: inline ? 'none' : 'blur(3px)',
         opacity: mounted ? 1 : 0,
         transition: 'opacity 0.2s ease',
       }}
       // Context menu on the backdrop should close the menu
-      onContextMenu={(e) => { e.preventDefault(); onClose(); }}
-      onClick={onClose}
-      onWheel={onClose}
+      onContextMenu={(e) => { e.preventDefault(); if (!inline) onClose(); }}
+      onClick={() => { if (!inline) onClose(); }}
+      onWheel={() => { if (!inline) onClose(); }}
     >
       <div
         style={{
           position: 'absolute',
-          left: safeX - center,
-          top: safeY - center,
+          left: inline ? 0 : safeX - center,
+          top: inline ? 0 : safeY - center,
           width: size,
           height: size,
           transform: mounted ? 'scale(1)' : 'scale(0.8)',

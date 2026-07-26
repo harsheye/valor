@@ -1,8 +1,9 @@
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
+import Hls from 'hls.js';
 import { 
   Play, Pause, RotateCcw, RotateCw, Cast, X, 
   MessageSquare, Maximize, Minimize, MonitorPlay,
-  Volume2, Volume1, VolumeX, AlertCircle, Lock,
+  Volume2, Volume1, VolumeX, AlertCircle, Lock, Unlock,
   Layers, Type, Clock, Sliders, SkipForward, Ban, FastForward, Zap, Coffee, ChevronRight, ChevronLeft, Eye, Settings, Bookmark as BookmarkIcon, Activity, Terminal
 } from 'lucide-react';
 import { Button } from './ui/button';
@@ -39,6 +40,7 @@ import { classifyVideoTitle } from '../utils/libraryClassifier';
 import { LoadingSpinner, BufferingOverlay } from './LoadingSpinner';
 import { RadialMenu } from './RadialMenu';
 import { ConsoleOverlay } from './ConsoleOverlay';
+import { SpeedPopover } from './SpeedPopover';
 
 interface VideoPlayerProps {
   video: VideoItem;
@@ -78,6 +80,7 @@ interface VideoPlayerProps {
   autoSkipSexScenes?: boolean;
   lockModeActive?: boolean;
   settingsOrder?: string[];
+  radialMenuConfig?: any;
   uiHideTimeout?: number;
   onReassociate?: (videoId: string) => Promise<void>;
 }
@@ -187,6 +190,7 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
   autoSkipSexScenes = true,
   lockModeActive: propLockModeActive = false,
   settingsOrder,
+  radialMenuConfig,
   uiHideTimeout = 1.5,
   onReassociate
 }) => {
@@ -233,6 +237,57 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
     
     setVideoLayout({ left, top, width, height });
   }, []);
+
+  useEffect(() => {
+    // Only use hls.js for raw .m3u8 URLs when no custom hlsPlaylist is provided by the backend
+    const isDirectHls = video.url.includes('.m3u8') && !video.hlsPlaylist;
+
+    if (isDirectHls && videoRef.current) {
+      if (Hls.isSupported()) {
+        class CustomLoader extends Hls.DefaultConfig.loader {
+          constructor(config: any) {
+            super(config);
+          }
+          load(context: any, config: any, callbacks: any) {
+            if (context.url && (context.url.includes('ttvnw.net') || context.url.includes('doppiocdn')) && !context.url.includes('/twitch-usher/') && !context.url.includes('/twitch-proxy/')) {
+              context.url = '/twitch-proxy/' + context.url;
+            }
+            super.load(context, config, callbacks);
+          }
+        }
+
+        const hls = new Hls({ 
+          autoStartLoad: true,
+          loader: CustomLoader as any
+        });
+        hls.loadSource(video.url);
+        hls.attachMedia(videoRef.current);
+        
+        hls.on(Hls.Events.ERROR, (event, data) => {
+          if (data.fatal) {
+            switch(data.type) {
+              case Hls.ErrorTypes.NETWORK_ERROR:
+                hls.startLoad();
+                break;
+              case Hls.ErrorTypes.MEDIA_ERROR:
+                hls.recoverMediaError();
+                break;
+              default:
+                hls.destroy();
+                break;
+            }
+          }
+        });
+
+        return () => {
+          hls.destroy();
+        };
+      } else if (videoRef.current.canPlayType('application/vnd.apple.mpegurl')) {
+        // Fallback for native Safari support
+        videoRef.current.src = video.url;
+      }
+    }
+  }, [video.url, video.hlsPlaylist]);
 
   useEffect(() => {
     const handleResize = () => {
@@ -1388,6 +1443,7 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
   const [showControls, setShowControls] = useState(true);
   const [showConsoleOverlay, setShowConsoleOverlay] = useState(false);
   const [isLocked, setIsLocked] = useState(false);
+  const [playbackRate, setPlaybackRate] = useState(1.0);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [radialMenuState, setRadialMenuState] = useState<{ visible: boolean; x: number; y: number }>({ visible: false, x: 0, y: 0 });
   const [hoverTime, setHoverTime] = useState<string | null>(null);
@@ -1452,6 +1508,7 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
   const [selectedSubTrack, setSelectedSubTrack] = useState<CustomSubtitleTrack | null>(null);
   const [extractingStreamIndex, setExtractingStreamIndex] = useState<number | null>(null);
   const [showAudioSubMenu, setShowAudioSubMenu] = useState(false);
+  const [showSpeedMenu, setShowSpeedMenu] = useState(false);
   const [isKeyInitiated, setIsKeyInitiated] = useState(false);
   if (false as boolean) {
     console.log(extractingStreamIndex, isKeyInitiated);
@@ -2076,10 +2133,12 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
 
   // Audio/subtitle segment chunk loading on demand
   const loadAudioChunk = async (time: number, streamIndex: number, codec: string, isSeek = false) => {
+    if (isDirectHls) return;
     // Legacy Blob-based audio loading is disabled. Audio playback is handled entirely by PlaybackController via Web Audio API.
   };
 
   const loadSubtitleChunk = async (time: number, streamIndex: number) => {
+    if (isDirectHls) return;
     // Seek optimization: abort any active remote fetches
     if (subAbortControllerRef.current) {
       subAbortControllerRef.current.abort();
@@ -2410,6 +2469,7 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
 
   // On-the-fly selection handlers for embedded streams selected in-player using container-direct chunk reading
   const handleSelectEmbeddedAudio = async (streamIndex: number, codec: string, language?: string, skipLoad = false) => {
+    if (isDirectHls) return; // Prevent extraction for live streams
     // Guard: if this stream is already active, don't restart the engine
     if (activeAudioStreamIndex === streamIndex && selectedAudioTrack?.streamIndex === streamIndex && selectedAudioTrack?.url) {
       return;
@@ -2435,6 +2495,7 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
   };
 
   const handleSelectEmbeddedSubtitle = async (streamIndex: number, codec: string, language?: string, skipLoad = false) => {
+    if (isDirectHls) return; // Prevent extraction for live streams
     if (subDebounceTimeoutRef.current) {
       clearTimeout(subDebounceTimeoutRef.current);
       subDebounceTimeoutRef.current = null;
@@ -2486,7 +2547,7 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
   };
 
   const prepareRemoteSubtitleForSeek = async (targetTime: number) => {
-    if (activeSubStreamIndex === null) return;
+    if (activeSubStreamIndex === null || isDirectHls) return;
 
     const containerType = (video.containerType || '').toLowerCase();
     const isMkv = containerType.includes('mkv') || containerType.includes('matroska') || (video.format || '').toLowerCase().includes('mkv') || (video.format || '').toLowerCase().includes('matroska');
@@ -3933,7 +3994,7 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
     if (showSettingsPanel || showAddDialog || showBookmarksPopover || showAudioSubMenu || showConsoleOverlay) return;
     
     const target = e.target as HTMLElement;
-    if (target.closest('.player-settings-panel') || target.closest('.bookmarks-popover') || target.closest('.audio-sub-popover')) return;
+    if (target.closest('.player-settings-panel') || target.closest('.bookmarks-popover') || target.closest('.audio-sub-popover') || target.closest('.speed-popover-container')) return;
 
     if (e.deltaY < 0) {
       handleKeyDownRef.current?.(new KeyboardEvent('keydown', { key: 'ArrowUp' }));
@@ -3949,7 +4010,9 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
       onMouseMove={(e) => {
         if (!isLocked) handleMouseMove(e);
       }}
-      onMouseLeave={handleMouseLeave}
+      onMouseLeave={() => {
+        if (!isScrubbing) setShowControls(false);
+      }}
       onClick={(e) => {
         if (!isLocked && !hideUIOverlays) {
           handleContainerClick(e);
@@ -3988,7 +4051,7 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
         <video
           ref={videoRef}
           onContextMenu={(e) => e.preventDefault()}
-          src={video.url}
+          src={(video.url.includes('.m3u8') && !video.hlsPlaylist && Hls.isSupported()) ? undefined : video.url}
           controls={false}
           crossOrigin={video.playbackMode === 'advanced' ? 'anonymous' : undefined}
           className="main-video-element"
@@ -4967,6 +5030,47 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
                     <span>Marking... tap to end ({formatTime(markingStartTime)} - {formatTime(currentTime)})</span>
                   </button>
                 )}
+                
+                {/* Speed Button & Popover */}
+                <div 
+                  style={{ position: 'relative', marginRight: '50px' }}
+                  onMouseEnter={() => setShowSpeedMenu(true)}
+                  onMouseLeave={() => setShowSpeedMenu(false)}
+                >
+                  <button 
+                    className="control-btn-speed" 
+                    onClick={() => setShowSpeedMenu(prev => !prev)} 
+                    title="Playback Speed"
+                    style={{
+                      background: 'none',
+                      border: 'none',
+                      color: '#fff',
+                      cursor: 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      padding: '8px',
+                      opacity: 0.8,
+                      transition: 'opacity 0.2s',
+                      outline: 'none',
+                      fontSize: '1rem',
+                      fontWeight: '600'
+                    }}
+                    onMouseEnter={(e) => e.currentTarget.style.opacity = '1'}
+                    onMouseLeave={(e) => e.currentTarget.style.opacity = '0.8'}
+                  >
+                    {playbackRate}x
+                  </button>
+                  {showSpeedMenu && (
+                    <SpeedPopover
+                      playbackRate={playbackRate}
+                      setPlaybackRate={setPlaybackRate}
+                      videoRef={videoRef}
+                      onClose={() => setShowSpeedMenu(false)}
+                    />
+                  )}
+                </div>
+
                 <button 
                   className="control-btn-settings" 
                   onClick={() => setShowSettingsPanel(prev => !prev)} 
@@ -7306,41 +7410,86 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
         }
       `}</style>
 
-      {radialMenuState.visible && (
-        <RadialMenu
-          x={radialMenuState.x}
-          y={radialMenuState.y}
-          onClose={() => setRadialMenuState({ visible: false, x: 0, y: 0 })}
-          items={[
-            {
-              id: 'stats',
-              label: 'Console',
-              icon: <Terminal size={24} />,
-              onClick: () => setShowConsoleOverlay(prev => !prev),
-              disabled: false
-            },
-            {
-              id: 'fullscreen',
-              label: isFullscreen ? 'Exit Fullscreen' : 'Fullscreen',
-              icon: isFullscreen ? <Minimize size={24} /> : <Maximize size={24} />,
-              onClick: toggleFullscreen,
+      {radialMenuState.visible && (() => {
+        // Build items dynamically based on settings
+        const config = radialMenuConfig || {
+          console: true, audioSubs: true, fullscreen: true, unlock: true, bookmark: true, mute: true, speed: true, pip: false, loop: false
+        };
+
+        const rItems = [];
+        if (config.console) {
+          rItems.push({
+            id: 'stats', label: 'Console', icon: <Terminal size={24} />, onClick: () => setShowConsoleOverlay(prev => !prev), disabled: false
+          });
+        }
+        if (config.audioSubs) {
+          rItems.push({
+            id: 'audio', label: 'Audio/Subs', icon: <MessageSquare size={24} />, onClick: () => setShowAudioSubMenu(true), disabled: isLocked
+          });
+        }
+        if (config.fullscreen) {
+          rItems.push({
+            id: 'fullscreen', label: isFullscreen ? 'Exit Fullscreen' : 'Fullscreen', icon: isFullscreen ? <Minimize size={24} /> : <Maximize size={24} />, onClick: toggleFullscreen, disabled: isLocked
+          });
+        }
+        if (config.bookmark) {
+          rItems.push({
+            id: 'bookmark', label: 'Bookmark', icon: <BookmarkIcon size={24} />, onClick: () => handleBookmarkAdd(), disabled: isLocked
+          });
+        }
+        if (config.mute) {
+          rItems.push({
+            id: 'mute', label: isMuted ? 'Unmute' : 'Mute', icon: isMuted ? <VolumeX size={24} /> : <Volume2 size={24} />, onClick: () => setIsMuted(prev => !prev), disabled: isLocked
+          });
+        }
+        if (config.speed) {
+          rItems.push({
+            id: 'speed', label: `${playbackRate}x Speed`, icon: <FastForward size={24} />, onClick: () => {
+              const speeds = [1.0, 1.25, 1.5, 1.75, 2.0];
+              const currentIdx = speeds.indexOf(playbackRate);
+              const nextSpeed = speeds[(currentIdx + 1) % speeds.length];
+              if (videoRef.current) {
+                videoRef.current.playbackRate = nextSpeed;
+                setPlaybackRate(nextSpeed);
+              }
+            }, disabled: isLocked
+          });
+        }
+        if (config.pip && document.pictureInPictureEnabled) {
+          rItems.push({
+            id: 'pip', label: 'PiP', icon: <Maximize size={24} />, onClick: () => {
+              if (document.pictureInPictureElement) document.exitPictureInPicture();
+              else if (videoRef.current) videoRef.current.requestPictureInPicture();
+            }, disabled: isLocked
+          });
+        }
+        if (config.loop) {
+          rItems.push({
+            id: 'loop', label: (videoRef.current && videoRef.current.loop) ? 'Unloop' : 'Loop', icon: <RotateCcw size={24} />, onClick: () => {
+              if (videoRef.current) videoRef.current.loop = !videoRef.current.loop;
+            }, disabled: isLocked
+          });
+        }
+        if (config.unlock && isLocked) {
+          rItems.push({
+            id: 'unlock', label: 'Unlock UI', icon: <Unlock size={24} />, onClick: () => setIsLocked(false), disabled: false
+          });
+        }
+
+        return (
+          <RadialMenu
+            x={radialMenuState.x}
+            y={radialMenuState.y}
+            onClose={() => setRadialMenuState({ visible: false, x: 0, y: 0 })}
+            items={rItems}
+            centerItem={{
+              icon: isPlaying ? <Pause size={24} fill="white" /> : <Play size={24} fill="white" />,
+              onClick: togglePlay,
               disabled: isLocked
-            },
-            {
-              id: 'audio',
-              label: 'Audio/Subs',
-              icon: <MessageSquare size={24} />,
-              onClick: () => setShowAudioSubMenu(true),
-              disabled: isLocked
-            }
-          ]}
-          centerItem={{
-            icon: isPlaying ? <Pause size={24} fill="white" /> : <Play size={24} fill="white" />,
-            onClick: togglePlay,
-            disabled: isLocked
-          }}
-        />
-      )}
+            }}
+          />
+        );
+      })()}
 
       {showConsoleOverlay && (
         <ConsoleOverlay onClose={() => setShowConsoleOverlay(false)} />

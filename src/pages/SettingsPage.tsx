@@ -3,8 +3,10 @@ import { CustomSelect } from '../components/CustomSelect';
 import { ToggleSwitch } from '../components/ToggleSwitch';
 import { ApiSettingsView } from '../components/ApiSettingsView';
 import { SpinnerSettingsView } from '../components/SpinnerSettingsView';
+import { RadialMenu } from '../components/RadialMenu';
 import { 
-  RotateCcw, UserPlus, LogOut, Trash2, Volume2, X, ChevronRight, ChevronLeft 
+  RotateCcw, UserPlus, LogOut, Trash2, Volume2, X, ChevronRight, ChevronLeft,
+  Terminal, MessageSquare, Maximize, Bookmark, FastForward, Unlock, Play
 } from 'lucide-react';
 import { 
   audioOptions, subOptions, calendarStyleOptions, limitOptions, 
@@ -13,8 +15,8 @@ import {
 } from '../utils/constants';
 
 interface SettingsPageProps {
-  settingsTab: 'general' | 'hotkeys' | 'subtitle' | 'bookmarks' | 'storage' | 'api' | 'loader' | 'gridOverlay';
-  setSettingsTab: (tab: 'general' | 'hotkeys' | 'subtitle' | 'bookmarks' | 'storage' | 'api' | 'loader' | 'gridOverlay') => void;
+  settingsTab: 'general' | 'hotkeys' | 'subtitle' | 'bookmarks' | 'storage' | 'api' | 'loader' | 'gridOverlay' | 'radialMenu';
+  setSettingsTab: (tab: 'general' | 'hotkeys' | 'subtitle' | 'bookmarks' | 'storage' | 'api' | 'loader' | 'gridOverlay' | 'radialMenu') => void;
   uiOverlaySection: 'gridOverlay' | 'pauseOverlay';
   setUiOverlaySection: (section: 'gridOverlay' | 'pauseOverlay') => void;
   settings: any;
@@ -133,6 +135,12 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
             onClick={() => setSettingsTab('loader')}
           >
             Spinner
+          </button>
+          <button 
+            className={`settings-nav-btn ${settingsTab === 'radialMenu' ? 'active' : ''}`}
+            onClick={() => setSettingsTab('radialMenu')}
+          >
+            Radial Menu
           </button>
         </div>
 
@@ -1315,6 +1323,82 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
               />
             </div>
           )}
+
+          {/* Radial Menu Config Tab */}
+          {settingsTab === 'radialMenu' && (() => {
+            const config = settings.radialMenuConfig || {};
+            const rItems = [];
+            if (config.console) rItems.push({ id: 'stats', label: 'Console', icon: <Terminal size={24} />, onClick: () => {} });
+            if (config.audioSubs) rItems.push({ id: 'audio', label: 'Audio/Subs', icon: <MessageSquare size={24} />, onClick: () => {} });
+            if (config.fullscreen) rItems.push({ id: 'fullscreen', label: 'Fullscreen', icon: <Maximize size={24} />, onClick: () => {} });
+            if (config.bookmark) rItems.push({ id: 'bookmark', label: 'Bookmark', icon: <Bookmark size={24} />, onClick: () => {} });
+            if (config.mute) rItems.push({ id: 'mute', label: 'Mute', icon: <Volume2 size={24} />, onClick: () => {} });
+            if (config.speed) rItems.push({ id: 'speed', label: '1.0x Speed', icon: <FastForward size={24} />, onClick: () => {} });
+            if (config.pip) rItems.push({ id: 'pip', label: 'PiP', icon: <Maximize size={24} />, onClick: () => {} });
+            if (config.loop) rItems.push({ id: 'loop', label: 'Loop', icon: <RotateCcw size={24} />, onClick: () => {} });
+            if (config.unlock) rItems.push({ id: 'unlock', label: 'Unlock UI', icon: <Unlock size={24} />, onClick: () => {} });
+
+            return (
+              <div className="settings-tab-content animate-fade-in" style={{ padding: '0 24px', display: 'flex', gap: '32px', height: '100%' }}>
+                
+                {/* Left side: Interactive Preview */}
+                <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(0,0,0,0.2)', borderRadius: '12px', border: '1px solid rgba(255,255,255,0.05)', position: 'relative', overflow: 'hidden' }}>
+                  <h3 style={{ position: 'absolute', top: 16, left: 16, margin: 0, color: 'rgba(255,255,255,0.5)', fontSize: '0.9rem', textTransform: 'uppercase', letterSpacing: '1px' }}>Live Preview</h3>
+                  {rItems.length > 0 ? (
+                    <div style={{ width: 320, height: 320 }}>
+                      <RadialMenu 
+                        x={0} y={0} 
+                        items={rItems} 
+                        centerItem={{ icon: <Play size={24} fill="white" />, onClick: () => {} }} 
+                        onClose={() => {}} 
+                        inline 
+                      />
+                    </div>
+                  ) : (
+                    <div style={{ color: 'rgba(255,255,255,0.3)' }}>Enable items to see preview</div>
+                  )}
+                </div>
+
+                {/* Right side: Toggles */}
+                <div style={{ flex: 1, overflowY: 'auto', paddingRight: '8px' }}>
+                  <div className="settings-section" style={{ margin: 0 }}>
+                    <h3>Radial Menu Features</h3>
+                    <p className="settings-section-desc">Toggle features inside the right-click menu. Changes will reflect in the live preview.</p>
+                    
+                    <div className="settings-section-content" style={{ marginTop: '24px' }}>
+                      {[
+                        { key: 'console', title: 'Developer Console' },
+                        { key: 'audioSubs', title: 'Audio & Subtitles' },
+                        { key: 'fullscreen', title: 'Fullscreen Toggle' },
+                        { key: 'unlock', title: 'Unlock UI Feature' },
+                        { key: 'bookmark', title: 'Quick Bookmark' },
+                        { key: 'mute', title: 'Mute/Unmute' },
+                        { key: 'speed', title: 'Playback Speed' },
+                        { key: 'pip', title: 'Picture-in-Picture' },
+                        { key: 'loop', title: 'Loop Video' },
+                      ].map(({ key, title }) => {
+                        const value = config[key] ?? false;
+                        return (
+                          <div className="pref-row" key={key}>
+                            <span className="pref-label">{title}</span>
+                            <ToggleSwitch 
+                              checked={Boolean(value)}
+                              onChange={() => {
+                                const newConfig = { ...config, [key]: !value };
+                                handleDefaultLangChange('radialMenuConfig', newConfig);
+                                saveSettingsToStorage({ ...settings, radialMenuConfig: newConfig });
+                              }}
+                            />
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </div>
+
+              </div>
+            );
+          })()}
 
           {/* Settings Grid Overlay Section */}
           {settingsTab === 'gridOverlay' && (

@@ -313,7 +313,18 @@ const defaultSettings = {
   },
   customLoaderUrl: '' as string,
   customLoaderType: 'default' as 'default' | 'image' | 'video' | 'gif',
-  spinnerPreset: 'fire-circle' as string
+  spinnerPreset: 'fire-circle' as string,
+  radialMenuConfig: {
+    console: true,
+    audioSubs: true,
+    fullscreen: true,
+    unlock: true,
+    bookmark: true,
+    mute: true,
+    speed: true,
+    pip: false,
+    loop: false
+  }
 };
 
 function App() {
@@ -447,7 +458,10 @@ function App() {
   const [historyViewMode, setHistoryViewMode] = useState<'list' | 'calendar'>('list');
   const [activeTab, setActiveTab] = useState<'home' | 'history' | 'calendar' | 'library' | 'settings' | 'online' | 'vlr'>(() => {
     const saved = localStorage.getItem('valor_active_tab');
-    return (saved as any) || 'home';
+    if (saved && ['home', 'history', 'calendar', 'library', 'settings', 'online', 'vlr'].includes(saved)) {
+      return saved as any;
+    }
+    return 'home';
   });
 
   useEffect(() => {
@@ -463,7 +477,7 @@ function App() {
     }
   }, [playingVideo, isPlaybackRestoring]);
 
-  const [settingsTab, setSettingsTab] = useState<'general' | 'hotkeys' | 'subtitle' | 'storage' | 'gridOverlay' | 'api' | 'bookmarks' | 'loader'>('general');
+  const [settingsTab, setSettingsTab] = useState<'general' | 'hotkeys' | 'subtitle' | 'storage' | 'gridOverlay' | 'api' | 'bookmarks' | 'loader' | 'radialMenu'>('general');
   const [uiOverlaySection, setUiOverlaySection] = useState<'gridOverlay' | 'pauseOverlay'>('gridOverlay');
   const [previewExpanded, setPreviewExpanded] = useState(false);
   const [showResetConfirm, setShowResetConfirm] = useState(false);
@@ -2898,6 +2912,7 @@ function App() {
       autoSkipSexScenes: settings.autoSkipSexScenes,
       lockModeActive: settings.lockModeActive,
       settingsOrder: settings.settingsOrder,
+      radialMenuConfig: settings.radialMenuConfig,
       onUpdateSubSettings: (newSubSettings: any) => {
         const updated = {
           ...settings,

@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react'
 import { 
   Play, Pause, RotateCcw, RotateCw, Cast, X, 
   MessageSquare, Maximize, Minimize, MonitorPlay,
-  Volume2, Volume1, VolumeX, AlertCircle, Lock,
+  Volume2, Volume1, VolumeX, AlertCircle, Lock, Unlock,
   Layers, Type, Clock, Sliders, SkipForward, Ban, FastForward, Zap, Coffee, ChevronRight, ChevronLeft, Eye, Settings, Bookmark as BookmarkIcon, Activity, Terminal
 } from 'lucide-react';
 import { Button } from './ui/button';
@@ -39,6 +39,7 @@ import { classifyVideoTitle } from '../utils/libraryClassifier';
 import { LoadingSpinner, BufferingOverlay } from './LoadingSpinner';
 import { RadialMenu } from './RadialMenu';
 import { ConsoleOverlay } from './ConsoleOverlay';
+import { SpeedPopover } from './SpeedPopover';
 
 interface VideoPlayerProps {
   video: VideoItem;
@@ -78,6 +79,7 @@ interface VideoPlayerProps {
   autoSkipSexScenes?: boolean;
   lockModeActive?: boolean;
   settingsOrder?: string[];
+  radialMenuConfig?: any;
   uiHideTimeout?: number;
   onReassociate?: (videoId: string) => void;
 }
@@ -187,6 +189,7 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
   autoSkipSexScenes = true,
   lockModeActive: propLockModeActive = false,
   settingsOrder,
+  radialMenuConfig,
   uiHideTimeout = 1.5,
   onReassociate
 }) => {
@@ -1404,6 +1407,7 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
   const [showControls, setShowControls] = useState(true);
   const [showConsoleOverlay, setShowConsoleOverlay] = useState(false);
   const [isLocked, setIsLocked] = useState(false);
+  const [playbackRate, setPlaybackRate] = useState(1.0);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [radialMenuState, setRadialMenuState] = useState<{ visible: boolean; x: number; y: number }>({ visible: false, x: 0, y: 0 });
   const [hoverTime, setHoverTime] = useState<string | null>(null);
@@ -1468,6 +1472,7 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
   const [selectedSubTrack, setSelectedSubTrack] = useState<CustomSubtitleTrack | null>(null);
   const [extractingStreamIndex, setExtractingStreamIndex] = useState<number | null>(null);
   const [showAudioSubMenu, setShowAudioSubMenu] = useState(false);
+  const [showSpeedMenu, setShowSpeedMenu] = useState(false);
   const [isKeyInitiated, setIsKeyInitiated] = useState(false);
   if (false as boolean) {
     console.log(extractingStreamIndex, isKeyInitiated);
@@ -3838,7 +3843,7 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
     if (showSettingsPanel || showAddDialog || showBookmarksPopover || showAudioSubMenu || showConsoleOverlay) return;
     
     const target = e.target as HTMLElement;
-    if (target.closest('.player-settings-panel') || target.closest('.bookmarks-popover') || target.closest('.audio-sub-popover')) return;
+    if (target.closest('.player-settings-panel') || target.closest('.bookmarks-popover') || target.closest('.audio-sub-popover') || target.closest('.speed-popover-container')) return;
 
     if (e.deltaY < 0) {
       handleKeyDownRef.current?.(new KeyboardEvent('keydown', { key: 'ArrowUp' }));
@@ -3860,8 +3865,8 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
         // when the user clicks multiple times rapidly to pause/play.
       }}
       onContextMenu={(e) => {
-        if (!isLocked && !hideUIOverlays) {
-          e.preventDefault();
+        e.preventDefault();
+        if (!hideUIOverlays) {
           setRadialMenuState({ visible: true, x: e.clientX, y: e.clientY });
         }
       }}
@@ -4938,6 +4943,47 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
                     <span>Marking... tap to end ({formatTime(markingStartTime)} - {formatTime(currentTime)})</span>
                   </button>
                 )}
+                
+                {/* Speed Button & Popover */}
+                <div 
+                  style={{ position: 'relative', marginRight: '50px' }}
+                  onMouseEnter={() => setShowSpeedMenu(true)}
+                  onMouseLeave={() => setShowSpeedMenu(false)}
+                >
+                  <button 
+                    className="control-btn-speed" 
+                    onClick={() => setShowSpeedMenu(prev => !prev)} 
+                    title="Playback Speed"
+                    style={{
+                      background: 'none',
+                      border: 'none',
+                      color: '#fff',
+                      cursor: 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      padding: '8px',
+                      opacity: 0.8,
+                      transition: 'opacity 0.2s',
+                      outline: 'none',
+                      fontSize: '1rem',
+                      fontWeight: '600'
+                    }}
+                    onMouseEnter={(e) => e.currentTarget.style.opacity = '1'}
+                    onMouseLeave={(e) => e.currentTarget.style.opacity = '0.8'}
+                  >
+                    {playbackRate}x
+                  </button>
+                  {showSpeedMenu && (
+                    <SpeedPopover
+                      playbackRate={playbackRate}
+                      setPlaybackRate={setPlaybackRate}
+                      videoRef={videoRef}
+                      onClose={() => setShowSpeedMenu(false)}
+                    />
+                  )}
+                </div>
+
                 <button 
                   className="control-btn-settings" 
                   onClick={() => setShowSettingsPanel(prev => !prev)} 
@@ -7243,41 +7289,86 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
         }
       `}</style>
 
-      {radialMenuState.visible && (
-        <RadialMenu
-          x={radialMenuState.x}
-          y={radialMenuState.y}
-          onClose={() => setRadialMenuState({ visible: false, x: 0, y: 0 })}
-          items={[
-            {
-              id: 'stats',
-              label: 'Console',
-              icon: <Terminal size={24} />,
-              onClick: () => setShowConsoleOverlay(prev => !prev),
-              disabled: false
-            },
-            {
-              id: 'fullscreen',
-              label: isFullscreen ? 'Exit Fullscreen' : 'Fullscreen',
-              icon: isFullscreen ? <Minimize size={24} /> : <Maximize size={24} />,
-              onClick: toggleFullscreen,
+      {radialMenuState.visible && (() => {
+        // Build items dynamically based on settings
+        const config = radialMenuConfig || {
+          console: true, audioSubs: true, fullscreen: true, unlock: true, bookmark: true, mute: true, speed: true, pip: false, loop: false
+        };
+
+        const rItems = [];
+        if (config.console) {
+          rItems.push({
+            id: 'stats', label: 'Console', icon: <Terminal size={24} />, onClick: () => setShowConsoleOverlay(prev => !prev), disabled: false
+          });
+        }
+        if (config.audioSubs) {
+          rItems.push({
+            id: 'audio', label: 'Audio/Subs', icon: <MessageSquare size={24} />, onClick: () => setShowAudioSubMenu(true), disabled: isLocked
+          });
+        }
+        if (config.fullscreen) {
+          rItems.push({
+            id: 'fullscreen', label: isFullscreen ? 'Exit Fullscreen' : 'Fullscreen', icon: isFullscreen ? <Minimize size={24} /> : <Maximize size={24} />, onClick: toggleFullscreen, disabled: isLocked
+          });
+        }
+        if (config.bookmark) {
+          rItems.push({
+            id: 'bookmark', label: 'Bookmark', icon: <BookmarkIcon size={24} />, onClick: () => handleBookmarkAdd(), disabled: isLocked
+          });
+        }
+        if (config.mute) {
+          rItems.push({
+            id: 'mute', label: isMuted ? 'Unmute' : 'Mute', icon: isMuted ? <VolumeX size={24} /> : <Volume2 size={24} />, onClick: () => setIsMuted(prev => !prev), disabled: isLocked
+          });
+        }
+        if (config.speed) {
+          rItems.push({
+            id: 'speed', label: `${playbackRate}x Speed`, icon: <FastForward size={24} />, onClick: () => {
+              const speeds = [1.0, 1.25, 1.5, 1.75, 2.0];
+              const currentIdx = speeds.indexOf(playbackRate);
+              const nextSpeed = speeds[(currentIdx + 1) % speeds.length];
+              if (videoRef.current) {
+                videoRef.current.playbackRate = nextSpeed;
+                setPlaybackRate(nextSpeed);
+              }
+            }, disabled: isLocked
+          });
+        }
+        if (config.pip && document.pictureInPictureEnabled) {
+          rItems.push({
+            id: 'pip', label: 'PiP', icon: <Maximize size={24} />, onClick: () => {
+              if (document.pictureInPictureElement) document.exitPictureInPicture();
+              else if (videoRef.current) videoRef.current.requestPictureInPicture();
+            }, disabled: isLocked
+          });
+        }
+        if (config.loop) {
+          rItems.push({
+            id: 'loop', label: (videoRef.current && videoRef.current.loop) ? 'Unloop' : 'Loop', icon: <RotateCcw size={24} />, onClick: () => {
+              if (videoRef.current) videoRef.current.loop = !videoRef.current.loop;
+            }, disabled: isLocked
+          });
+        }
+        if (config.unlock && isLocked) {
+          rItems.push({
+            id: 'unlock', label: 'Unlock UI', icon: <Unlock size={24} />, onClick: () => setIsLocked(false), disabled: false
+          });
+        }
+
+        return (
+          <RadialMenu
+            x={radialMenuState.x}
+            y={radialMenuState.y}
+            onClose={() => setRadialMenuState({ visible: false, x: 0, y: 0 })}
+            items={rItems}
+            centerItem={{
+              icon: isPlaying ? <Pause size={24} fill="white" /> : <Play size={24} fill="white" />,
+              onClick: togglePlay,
               disabled: isLocked
-            },
-            {
-              id: 'audio',
-              label: 'Audio/Subs',
-              icon: <MessageSquare size={24} />,
-              onClick: () => setShowAudioSubMenu(true),
-              disabled: isLocked
-            }
-          ]}
-          centerItem={{
-            icon: isPlaying ? <Pause size={24} fill="white" /> : <Play size={24} fill="white" />,
-            onClick: togglePlay,
-            disabled: isLocked
-          }}
-        />
-      )}
+            }}
+          />
+        );
+      })()}
 
       {showConsoleOverlay && (
         <ConsoleOverlay onClose={() => setShowConsoleOverlay(false)} />
