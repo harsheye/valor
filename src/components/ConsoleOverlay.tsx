@@ -101,8 +101,11 @@ export const ConsoleOverlay: React.FC<ConsoleOverlayProps> = ({ onClose }) => {
       win.document.body.innerHTML = `
         <title>Developer Console</title>
         <style>
-          body { background: #0f0f14; color: #fff; font-family: monospace; margin: 0; padding: 12px; height: 100vh; box-sizing: border-box; display: flex; flex-direction: column; }
-          #logs-container { flex: 1; overflow-y: auto; }
+          body { background: #0f0f14; color: #fff; font-family: monospace; margin: 0; padding: 0; height: 100vh; box-sizing: border-box; display: flex; flex-direction: column; }
+          .header { background: rgba(255, 255, 255, 0.05); padding: 8px 12px; display: flex; gap: 8px; border-bottom: 1px solid rgba(255, 255, 255, 0.1); justify-content: flex-end; }
+          button { background: transparent; border: 1px solid rgba(255,255,255,0.2); color: #fff; padding: 4px 12px; border-radius: 4px; cursor: pointer; font-family: monospace; font-size: 12px; transition: background 0.2s; }
+          button:hover { background: rgba(255, 255, 255, 0.1); }
+          #logs-container { flex: 1; overflow-y: auto; padding: 12px; }
           .log { font-size: 13px; border-bottom: 1px solid rgba(255,255,255,0.05); padding-bottom: 4px; margin-bottom: 4px; word-break: break-all; white-space: pre-wrap; }
           .time { color: rgba(255,255,255,0.3); margin-right: 8px; font-size: 11px; }
           .error { color: #ef4444; }
@@ -110,6 +113,10 @@ export const ConsoleOverlay: React.FC<ConsoleOverlayProps> = ({ onClose }) => {
           .info { color: #3b82f6; }
           .log { color: #d1d5db; }
         </style>
+        <div class="header">
+          <button id="copy-btn">Copy</button>
+          <button id="clear-btn">Clear</button>
+        </div>
         <div id="logs-container">
           ${logs.map(l => `
             <div class="log ${l.type}">
@@ -118,8 +125,31 @@ export const ConsoleOverlay: React.FC<ConsoleOverlayProps> = ({ onClose }) => {
           `).join('')}
         </div>
       `;
-      // Close the in-app overlay since it's now detached
-      onClose();
+      
+      const copyBtn = win.document.getElementById('copy-btn');
+      if (copyBtn) {
+        copyBtn.onclick = () => {
+          const text = logs.map(l => `[${l.timestamp.toLocaleTimeString()}] [${l.type.toUpperCase()}] ${l.message}`).join('\\n');
+          win.navigator.clipboard.writeText(text);
+          copyBtn.innerText = 'Copied!';
+          setTimeout(() => { copyBtn.innerText = 'Copy'; }, 2000);
+        };
+      }
+
+      const clearBtn = win.document.getElementById('clear-btn');
+      if (clearBtn) {
+        clearBtn.onclick = () => {
+          setLogs([]);
+          const container = win.document.getElementById('logs-container');
+          if (container) container.innerHTML = '';
+        };
+      }
+      // Listen for the external window closing to completely unmount
+      win.addEventListener('beforeunload', () => {
+        onClose();
+      });
+      // Hide the in-app overlay since it's now detached
+      setIsDetached(true);
     }
   };
 
@@ -127,6 +157,8 @@ export const ConsoleOverlay: React.FC<ConsoleOverlayProps> = ({ onClose }) => {
     setIsDragging(true);
     dragStartPos.current = { x: e.clientX - position.x, y: e.clientY - position.y };
   };
+
+  const [isDetached, setIsDetached] = useState(false);
 
   useEffect(() => {
     const onMouseMove = (e: MouseEvent) => {
@@ -140,14 +172,18 @@ export const ConsoleOverlay: React.FC<ConsoleOverlayProps> = ({ onClose }) => {
     const onMouseUp = () => setIsDragging(false);
 
     if (isDragging) {
-      window.addEventListener('mousemove', onMouseMove);
-      window.addEventListener('mouseup', onMouseUp);
+      window.addEventListener('mousemove', onMouseMove, { capture: true });
+      window.addEventListener('mouseup', onMouseUp, { capture: true });
     }
     return () => {
-      window.removeEventListener('mousemove', onMouseMove);
-      window.removeEventListener('mouseup', onMouseUp);
+      window.removeEventListener('mousemove', onMouseMove, { capture: true });
+      window.removeEventListener('mouseup', onMouseUp, { capture: true });
     };
   }, [isDragging]);
+
+  if (isDetached) {
+    return null; // Keep component mounted so interceptors run, but hide in-app UI
+  }
 
   return (
     <div style={{
@@ -168,7 +204,12 @@ export const ConsoleOverlay: React.FC<ConsoleOverlayProps> = ({ onClose }) => {
       userSelect: isDragging ? 'none' : 'auto'
     }}
     onClick={e => e.stopPropagation()}
-    onContextMenu={e => e.stopPropagation()}
+    onContextMenu={e => {
+      e.preventDefault();
+      e.stopPropagation();
+    }}
+    onMouseDown={e => e.stopPropagation()}
+    onMouseUp={e => e.stopPropagation()}
     >
       <div 
         onMouseDown={onMouseDown}

@@ -3915,45 +3915,7 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
         }
       }}
     >
-      {radialMenuState.visible && (
-        <RadialMenu
-          x={radialMenuState.x}
-          y={radialMenuState.y}
-          onClose={() => setRadialMenuState({ visible: false, x: 0, y: 0 })}
-          items={[
-            {
-              id: 'stats',
-              label: 'Console',
-              icon: <Terminal size={24} />,
-              onClick: () => setShowConsoleOverlay(prev => !prev),
-              disabled: false
-            },
-            {
-              id: 'fullscreen',
-              label: isFullscreen ? 'Exit Fullscreen' : 'Fullscreen',
-              icon: isFullscreen ? <Minimize size={24} /> : <Maximize size={24} />,
-              onClick: toggleFullscreen,
-              disabled: isLocked
-            },
-            {
-              id: 'audio',
-              label: 'Audio/Subs',
-              icon: <MessageSquare size={24} />,
-              onClick: () => setShowAudioSubMenu(true),
-              disabled: isLocked
-            }
-          ]}
-          centerItem={{
-            icon: isPlaying ? <Pause size={24} fill="white" /> : <Play size={24} fill="white" />,
-            onClick: togglePlay,
-            disabled: isLocked
-          }}
-        />
-      )}
 
-      {showConsoleOverlay && (
-        <ConsoleOverlay onClose={() => setShowConsoleOverlay(false)} />
-      )}
 
       <div 
         style={{ 
@@ -7217,6 +7179,46 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
           background: #f40b17 !important;
         }
       `}</style>
+
+      {radialMenuState.visible && (
+        <RadialMenu
+          x={radialMenuState.x}
+          y={radialMenuState.y}
+          onClose={() => setRadialMenuState({ visible: false, x: 0, y: 0 })}
+          items={[
+            {
+              id: 'stats',
+              label: 'Console',
+              icon: <Terminal size={24} />,
+              onClick: () => setShowConsoleOverlay(prev => !prev),
+              disabled: false
+            },
+            {
+              id: 'fullscreen',
+              label: isFullscreen ? 'Exit Fullscreen' : 'Fullscreen',
+              icon: isFullscreen ? <Minimize size={24} /> : <Maximize size={24} />,
+              onClick: toggleFullscreen,
+              disabled: isLocked
+            },
+            {
+              id: 'audio',
+              label: 'Audio/Subs',
+              icon: <MessageSquare size={24} />,
+              onClick: () => setShowAudioSubMenu(true),
+              disabled: isLocked
+            }
+          ]}
+          centerItem={{
+            icon: isPlaying ? <Pause size={24} fill="white" /> : <Play size={24} fill="white" />,
+            onClick: togglePlay,
+            disabled: isLocked
+          }}
+        />
+      )}
+
+      {showConsoleOverlay && (
+        <ConsoleOverlay onClose={() => setShowConsoleOverlay(false)} />
+      )}
     </div>
   );
 };

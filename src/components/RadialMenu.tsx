@@ -128,7 +128,8 @@ export const RadialMenu: React.FC<RadialMenuProps> = ({ x, y, items, centerItem,
                   key={item.id}
                   onMouseEnter={() => !item.disabled && setHoveredId(item.id)}
                   onMouseLeave={() => setHoveredId(null)}
-                  onClick={(e) => { 
+                  onMouseUp={(e) => e.stopPropagation()}
+                  onMouseDown={(e) => { 
                     e.stopPropagation(); 
                     if (!item.disabled) {
                       item.onClick(); 
@@ -143,7 +144,11 @@ export const RadialMenu: React.FC<RadialMenuProps> = ({ x, y, items, centerItem,
                       onClose(); 
                     }
                   }}
-                  style={{ cursor: item.disabled ? 'not-allowed' : 'pointer', opacity: item.disabled ? 0.4 : 1 }}
+                  style={{ 
+                    cursor: item.disabled ? 'not-allowed' : 'pointer', 
+                    opacity: item.disabled ? 0.4 : 1,
+                    pointerEvents: item.disabled ? 'none' : 'auto'
+                  }}
                 >
                   <path
                     d={pathData}
@@ -189,7 +194,8 @@ export const RadialMenu: React.FC<RadialMenuProps> = ({ x, y, items, centerItem,
               <g 
                 onMouseEnter={() => !centerItem.disabled && setHoveredId('center')}
                 onMouseLeave={() => setHoveredId(null)}
-                onClick={(e) => { 
+                onMouseUp={(e) => e.stopPropagation()}
+                onMouseDown={(e) => { 
                   e.stopPropagation(); 
                   if (!centerItem.disabled) {
                     centerItem.onClick(); 
@@ -204,7 +210,11 @@ export const RadialMenu: React.FC<RadialMenuProps> = ({ x, y, items, centerItem,
                     onClose(); 
                   }
                 }}
-                style={{ cursor: centerItem.disabled ? 'not-allowed' : 'pointer', opacity: centerItem.disabled ? 0.4 : 1 }}
+                style={{ 
+                  cursor: centerItem.disabled ? 'not-allowed' : 'pointer', 
+                  opacity: centerItem.disabled ? 0.4 : 1,
+                  pointerEvents: centerItem.disabled ? 'none' : 'auto'
+                }}
               >
                 <circle 
                   cx={center} 
