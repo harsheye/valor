@@ -3,7 +3,7 @@ import {
   Play, Pause, RotateCcw, RotateCw, Cast, X, 
   MessageSquare, Maximize, Minimize, MonitorPlay,
   Volume2, Volume1, VolumeX, AlertCircle, Lock,
-  Layers, Type, Clock, Sliders, SkipForward, Ban, FastForward, Zap, Coffee, ChevronRight, ChevronLeft, Eye, Settings, Bookmark as BookmarkIcon
+  Layers, Type, Clock, Sliders, SkipForward, Ban, FastForward, Zap, Coffee, ChevronRight, ChevronLeft, Eye, Settings, Bookmark as BookmarkIcon, Activity, Terminal
 } from 'lucide-react';
 import type { VideoItem, CustomAudioTrack, CustomSubtitleTrack, Bookmark } from '../types/media';
 import { SubtitleOverlay } from './SubtitleOverlay';
@@ -36,6 +36,8 @@ const getAudioBoostMultiplier = (boostPercent: number): number => {
 };
 import { classifyVideoTitle } from '../utils/libraryClassifier';
 import { LoadingSpinner, BufferingOverlay } from './LoadingSpinner';
+import { RadialMenu } from './RadialMenu';
+import { ConsoleOverlay } from './ConsoleOverlay';
 
 interface VideoPlayerProps {
   video: VideoItem;
@@ -1399,8 +1401,10 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
     }, 1500);
   };
   const [showControls, setShowControls] = useState(true);
+  const [showConsoleOverlay, setShowConsoleOverlay] = useState(false);
   const [isLocked, setIsLocked] = useState(propLockModeActive);
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [radialMenuState, setRadialMenuState] = useState<{ visible: boolean; x: number; y: number }>({ visible: false, x: 0, y: 0 });
   const [hoverTime, setHoverTime] = useState<string | null>(null);
   const [hoverPercent, setHoverPercent] = useState(0);
   const [isScrubbing, setIsScrubbing] = useState(false);
@@ -3835,7 +3839,53 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
         // Removed toggleFullscreen() on double click to prevent accidental fullscreen exits
         // when the user clicks multiple times rapidly to pause/play.
       }}
+      onContextMenu={(e) => {
+        if (!isLocked && !hideUIOverlays) {
+          e.preventDefault();
+          setRadialMenuState({ visible: true, x: e.clientX, y: e.clientY });
+        }
+      }}
     >
+      {radialMenuState.visible && (
+        <RadialMenu
+          x={radialMenuState.x}
+          y={radialMenuState.y}
+          onClose={() => setRadialMenuState({ visible: false, x: 0, y: 0 })}
+          items={[
+            {
+              id: 'stats',
+              label: 'Console',
+              icon: <Terminal size={24} />,
+              onClick: () => setShowConsoleOverlay(prev => !prev),
+              disabled: false
+            },
+            {
+              id: 'fullscreen',
+              label: isFullscreen ? 'Exit Fullscreen' : 'Fullscreen',
+              icon: isFullscreen ? <Minimize size={24} /> : <Maximize size={24} />,
+              onClick: toggleFullscreen,
+              disabled: isLocked
+            },
+            {
+              id: 'audio',
+              label: 'Audio/Subs',
+              icon: <MessageSquare size={24} />,
+              onClick: () => setShowAudioSubMenu(true),
+              disabled: isLocked
+            }
+          ]}
+          centerItem={{
+            icon: isPlaying ? <Pause size={24} fill="white" /> : <Play size={24} fill="white" />,
+            onClick: togglePlay,
+            disabled: isLocked
+          }}
+        />
+      )}
+
+      {showConsoleOverlay && (
+        <ConsoleOverlay onClose={() => setShowConsoleOverlay(false)} />
+      )}
+
       {video.type === 'local' && (!activeFile || hasFileAccessError) && (
         <div style={{
           position: 'absolute',
@@ -3926,9 +3976,15 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
           e.stopPropagation();
           togglePlay();
         }}
+        onContextMenu={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          setRadialMenuState({ visible: true, x: e.clientX, y: e.clientY });
+        }}
       >
         <video
           ref={videoRef}
+          onContextMenu={(e) => e.preventDefault()}
           src={video.url}
           controls={false}
           crossOrigin={video.playbackMode === 'advanced' ? 'anonymous' : undefined}
@@ -4228,6 +4284,11 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
           onMouseMove={(e) => {
             e.preventDefault();
             e.stopPropagation();
+          }}
+          onContextMenu={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            setRadialMenuState({ visible: true, x: e.clientX, y: e.clientY });
           }}
           style={{
             position: 'absolute',
