@@ -40,6 +40,7 @@ import { LoadingSpinner, BufferingOverlay } from './LoadingSpinner';
 import { RadialMenu } from './RadialMenu';
 import { ConsoleOverlay } from './ConsoleOverlay';
 import { SpeedPopover } from './SpeedPopover';
+import { EsportsLiveOverlay } from './EsportsLiveOverlay';
 
 interface VideoPlayerProps {
   video: VideoItem;
@@ -476,6 +477,13 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
     disableAnimations: !!disableAnimations,
     pauseOnFocusChange: !!pauseOnFocusChange
   });
+
+  const [vctOverlayEnabled, setVctOverlayEnabled] = useState(() => localStorage.getItem('vct_overlay_enabled') === 'true');
+  useEffect(() => {
+    const handleStorage = () => setVctOverlayEnabled(localStorage.getItem('vct_overlay_enabled') === 'true');
+    window.addEventListener('storage', handleStorage);
+    return () => window.removeEventListener('storage', handleStorage);
+  }, []);
 
   useEffect(() => {
     // If settings already exist in state, don't overwrite with raw boolean props
@@ -5099,7 +5107,33 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
                     'showFullscreen', 'disableAnimations', 'pauseOnFocusChange', 'allowUiSkipping', 'blockSeekingCompletely', 'autoSkipIntroOutro', 'lockModeActive'
                   ]).slice(0, 5).map((key) => renderSettingsButton(key))}
                   
-                  {/* 6th item is the uncollapse button */}
+                  {/* Esports Overlay Toggle */}
+                  <button
+                    onClick={() => {
+                      const nextVal = !vctOverlayEnabled;
+                      setVctOverlayEnabled(nextVal);
+                      localStorage.setItem('vct_overlay_enabled', nextVal ? 'true' : 'false');
+                      window.dispatchEvent(new Event('storage'));
+                    }}
+                    title="Toggle Esports Live Overlay"
+                    className="settings-icon-toggle"
+                    style={{
+                      background: vctOverlayEnabled ? 'rgba(46, 204, 113, 0.2)' : 'rgba(255, 255, 255, 0.05)',
+                      border: `1px solid ${vctOverlayEnabled ? 'rgba(46, 204, 113, 0.5)' : 'rgba(255, 255, 255, 0.1)'}`,
+                      color: vctOverlayEnabled ? '#2ecc71' : 'rgba(255, 255, 255, 0.8)',
+                      borderRadius: '12px',
+                      padding: '8px',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      cursor: 'pointer',
+                      transition: 'all 0.2s ease'
+                    }}
+                  >
+                    <Activity size={22} />
+                  </button>
+
+                  {/* 7th item is the uncollapse button */}
                   <button
                     onClick={() => setIsSettingsExpanded(true)}
                     title="Show More Settings"
@@ -7288,6 +7322,9 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
           background: #f40b17 !important;
         }
       `}</style>
+
+      {/* Render EsportsLiveOverlay here so it shows in Fullscreen */}
+      <EsportsLiveOverlay />
 
       {radialMenuState.visible && (() => {
         // Build items dynamically based on settings
