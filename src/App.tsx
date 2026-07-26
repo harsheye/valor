@@ -2455,7 +2455,6 @@ function App() {
         }
       }
 
-      addToast("Syncing watch history to Trakt.tv...", "success");
       const res = await fetch('https://api.trakt.tv/sync/history', {
         method: 'POST',
         headers: {
@@ -2469,7 +2468,7 @@ function App() {
 
       if (res.ok) {
         const resData = await res.json();
-        addToast(`Trakt Sync: Added ${resData.added?.movies || resData.added?.episodes || 1} item to history`, "success");
+        let syncMessage = `Trakt Sync: Added ${resData.added?.movies || resData.added?.episodes || 1} item to history`;
         handleUpdateVideo((prev) => ({ ...prev, hasScrobbledTrakt: true }), false, video.id, true);
 
         // Sync rating to Trakt if present
@@ -2520,7 +2519,7 @@ function App() {
 
             if (ratingRes.ok) {
               console.log('[Trakt Rating Sync] Successfully synced rating to Trakt.tv!');
-              addToast(`Trakt Rating Sync: Rated ${userRating * 2}/10 successfully`, "success");
+              syncMessage += ` & Rated ${userRating * 2}/10`;
             } else {
               console.warn(`[Trakt Rating Sync] Trakt.tv rating sync failed with status: ${ratingRes.status}`);
             }
@@ -2528,6 +2527,8 @@ function App() {
             console.error('[Trakt Rating Sync] Error syncing rating:', ratingErr);
           }
         }
+        
+        addToast(syncMessage, "success");
       } else {
         const errText = await res.text();
         addToast(`Trakt Sync Failed: ${res.status} - ${errText.substring(0, 40)}`, "error");

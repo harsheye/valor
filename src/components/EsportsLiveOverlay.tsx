@@ -399,7 +399,7 @@ export const EsportsLiveOverlay: React.FC = () => {
       className="esports-live-overlay-container"
       style={{
         position: 'fixed',
-        right: '1.25rem',
+        right: '0',
         top: '50%',
         transform: 'translateY(-50%)',
         zIndex: 9999,
@@ -407,104 +407,116 @@ export const EsportsLiveOverlay: React.FC = () => {
       }}
     >
       {!isExpanded ? (
-        /* COLLAPSED BUTTON: COMPACT SCORE ONLY MODE VS FULL MODE */
-        isCompactOnly ? (
-          /* SCORE ONLY COMPACT MODE: NO TEAM NAMES, NO MAP NAMES, ONLY LIVE ROUND SCORE */
-          <button
-            onClick={() => setIsExpanded(true)}
-            style={{
-              background: 'rgba(12, 12, 18, 0.95)',
-              backdropFilter: 'blur(16px)',
-              WebkitBackdropFilter: 'blur(16px)',
-              border: '1px solid rgba(229, 9, 20, 0.5)',
-              borderRadius: '20px',
-              padding: '6px 14px',
-              color: '#fff',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '6px',
-              cursor: 'pointer',
-              boxShadow: '0 10px 30px rgba(0, 0, 0, 0.6), 0 0 20px rgba(229, 9, 20, 0.3)',
-              fontSize: '0.9rem',
-              fontWeight: 900
-            }}
-            title="Score Only Mode (Click to expand details)"
-          >
-            {inMapBreak ? (
-              <span style={{ color: '#facc15', fontSize: '0.75rem', fontWeight: 800, display: 'flex', alignItems: 'center', gap: '3px' }}>
-                <Clock size={12} />
-                <span>Break</span>
-              </span>
-            ) : (
-              <>
-                <span style={{ color: '#2ecc71' }}>{roundScoreA}</span>
-                <span style={{ color: 'rgba(255,255,255,0.4)' }}>:</span>
-                <span style={{ color: '#e74c3c' }}>{roundScoreB}</span>
-              </>
-            )}
-          </button>
-        ) : (
-          /* FULL MODE: MATCHES USER WIREFRAME */
-          <button
-            onClick={() => setIsExpanded(true)}
-            style={{
-              background: 'rgba(12, 12, 18, 0.95)',
-              backdropFilter: 'blur(16px)',
-              WebkitBackdropFilter: 'blur(16px)',
-              border: '1px solid rgba(229, 9, 20, 0.4)',
-              borderRadius: '24px',
-              padding: '8px 16px',
-              color: '#fff',
-              display: 'flex',
-              flexDirection: 'column',
-              alignItems: 'center',
-              gap: '3px',
-              cursor: 'pointer',
-              boxShadow: '0 10px 30px rgba(0, 0, 0, 0.6), 0 0 20px rgba(229, 9, 20, 0.3)'
-            }}
-            title="Click to view all 3 maps live scores"
-          >
-            {/* Top: Real Current Map Name (e.g. ASCENT) */}
-            <span style={{ fontSize: '0.68rem', color: '#60a5fa', fontWeight: 900, textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-              {inMapBreak ? `${currentMap} Break` : currentMap}
-            </span>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', alignItems: 'flex-end' }}>
+          {matches.map((match, idx) => {
+            const mList: MapData[] = (match.maps && match.maps.length > 0) ? match.maps : mapList;
+            const activeMap = mList.find(m => m.isMapActive) || mList.find(m => !m.isCompleted) || mList[mList.length - 1];
+            const rScoreA = match.currentMapRoundScore?.teamA ?? activeMap.scoreA;
+            const rScoreB = match.currentMapRoundScore?.teamB ?? activeMap.scoreB;
+            const curMapName = getActiveMapName(match);
+            const isInBreak = match.status === 'in_progress' && match.currentMapRoundScore === null;
 
-            {/* Bottom Row: [map score A] [name A] [round score A : B] [name B] [map score B] */}
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.82rem', fontWeight: 900 }}>
-              {/* Box 1: map score A */}
-              <span style={{ background: '#2ecc71', color: '#000', padding: '1px 7px', borderRadius: '5px', fontSize: '0.78rem', fontWeight: 900 }}>
-                {primaryMatch.teamA.score}
-              </span>
-
-              {/* Box 2: name A */}
-              <span style={{ color: '#fff', fontWeight: 900 }}>{primaryMatch.teamA.tag}</span>
-
-              {/* Box 3 & 4: round score A : round score B */}
-              <div style={{ display: 'flex', alignItems: 'center', gap: '4px', background: 'rgba(255,255,255,0.08)', padding: '2px 8px', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.12)' }}>
-                {inMapBreak ? (
-                  <span style={{ color: '#facc15', fontSize: '0.72rem', fontWeight: 800, display: 'flex', alignItems: 'center', gap: '3px' }}>
-                    <Clock size={11} />
-                    <span>Map Break</span>
+            return isCompactOnly ? (
+              /* SCORE ONLY COMPACT MODE: NO TEAM NAMES, NO MAP NAMES, ONLY LIVE ROUND SCORE */
+              <button
+                key={idx}
+                onClick={() => setIsExpanded(true)}
+                style={{
+                  background: 'rgba(12, 12, 18, 0.95)',
+                  backdropFilter: 'blur(16px)',
+                  WebkitBackdropFilter: 'blur(16px)',
+                  border: '1px solid rgba(229, 9, 20, 0.5)',
+                  borderRight: 'none',
+                  borderRadius: '16px 0 0 16px',
+                  padding: '14px 8px',
+                  color: '#fff',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  alignItems: 'center',
+                  gap: '6px',
+                  cursor: 'pointer',
+                  boxShadow: '-5px 10px 20px rgba(0, 0, 0, 0.6), -2px 0 15px rgba(229, 9, 20, 0.3)',
+                  fontSize: '0.9rem',
+                  fontWeight: 900
+                }}
+                title={`Score Only Mode - ${match.teamA.tag} vs ${match.teamB.tag} (Click to expand)`}
+              >
+                {isInBreak ? (
+                  <span style={{ color: '#facc15', fontSize: '0.75rem', fontWeight: 800, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '3px' }}>
+                    <Clock size={12} />
+                    <span>Brk</span>
                   </span>
                 ) : (
                   <>
-                    <span style={{ color: '#2ecc71', fontWeight: 900, fontSize: '0.84rem' }}>{roundScoreA}</span>
-                    <span style={{ color: 'rgba(255,255,255,0.4)', fontSize: '0.75rem' }}>:</span>
-                    <span style={{ color: '#e74c3c', fontWeight: 900, fontSize: '0.84rem' }}>{roundScoreB}</span>
+                    <span style={{ color: '#2ecc71', writingMode: 'horizontal-tb' }}>{rScoreA}</span>
+                    <span style={{ color: 'rgba(255,255,255,0.4)', writingMode: 'horizontal-tb', lineHeight: '0.5' }}>-</span>
+                    <span style={{ color: '#e74c3c', writingMode: 'horizontal-tb' }}>{rScoreB}</span>
                   </>
                 )}
-              </div>
+              </button>
+            ) : (
+              /* FULL MODE: MATCHES USER WIREFRAME */
+              <button
+                key={idx}
+                onClick={() => setIsExpanded(true)}
+                style={{
+                  background: 'rgba(12, 12, 18, 0.95)',
+                  backdropFilter: 'blur(16px)',
+                  WebkitBackdropFilter: 'blur(16px)',
+                  border: '1px solid rgba(229, 9, 20, 0.4)',
+                  borderRight: 'none',
+                  borderRadius: '20px 0 0 20px',
+                  padding: '16px 10px',
+                  color: '#fff',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  alignItems: 'center',
+                  gap: '8px',
+                  cursor: 'pointer',
+                  boxShadow: '-5px 10px 20px rgba(0, 0, 0, 0.6), -2px 0 15px rgba(229, 9, 20, 0.3)'
+                }}
+                title={`Click to view all live scores - ${match.teamA.tag} vs ${match.teamB.tag}`}
+              >
+                {/* 1. Map Name */}
+                <span style={{ fontSize: '0.68rem', color: '#60a5fa', fontWeight: 900, textTransform: 'uppercase', letterSpacing: '0.5px', writingMode: 'horizontal-tb', textAlign: 'center' }}>
+                  {isInBreak ? `${curMapName} Brk` : curMapName}
+                </span>
 
-              {/* Box 5: name B */}
-              <span style={{ color: '#fff', fontWeight: 900 }}>{primaryMatch.teamB.tag}</span>
+                {/* 2. Map Score A */}
+                <span style={{ background: '#2ecc71', color: '#000', padding: '2px 8px', borderRadius: '6px', fontSize: '0.8rem', fontWeight: 900, writingMode: 'horizontal-tb' }}>
+                  {match.teamA.score}
+                </span>
 
-              {/* Box 6: map score B */}
-              <span style={{ background: '#e74c3c', color: '#fff', padding: '1px 7px', borderRadius: '5px', fontSize: '0.78rem', fontWeight: 900 }}>
-                {primaryMatch.teamB.score}
-              </span>
-            </div>
-          </button>
-        )
+                {/* 3. Team A Name */}
+                <span style={{ color: '#fff', fontWeight: 900, fontSize: '0.85rem', writingMode: 'horizontal-tb' }}>{match.teamA.tag}</span>
+
+                {/* 4. Round Score Pill (Vertical) */}
+                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px', background: 'rgba(255,255,255,0.08)', padding: '8px 10px', borderRadius: '10px', border: '1px solid rgba(255,255,255,0.12)' }}>
+                  {isInBreak ? (
+                    <span style={{ color: '#facc15', fontSize: '0.72rem', fontWeight: 800, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px' }}>
+                      <Clock size={12} />
+                      <span>Brk</span>
+                    </span>
+                  ) : (
+                    <>
+                      <span style={{ color: '#2ecc71', fontWeight: 900, fontSize: '0.9rem', writingMode: 'horizontal-tb' }}>{rScoreA}</span>
+                      <span style={{ color: 'rgba(255,255,255,0.4)', fontSize: '0.8rem', writingMode: 'horizontal-tb', lineHeight: '0.5' }}>-</span>
+                      <span style={{ color: '#e74c3c', fontWeight: 900, fontSize: '0.9rem', writingMode: 'horizontal-tb' }}>{rScoreB}</span>
+                    </>
+                  )}
+                </div>
+
+                {/* 5. Team B Name */}
+                <span style={{ color: '#fff', fontWeight: 900, fontSize: '0.85rem', writingMode: 'horizontal-tb' }}>{match.teamB.tag}</span>
+
+                {/* 6. Map Score B */}
+                <span style={{ background: '#e74c3c', color: '#fff', padding: '2px 8px', borderRadius: '6px', fontSize: '0.8rem', fontWeight: 900, writingMode: 'horizontal-tb' }}>
+                  {match.teamB.score}
+                </span>
+              </button>
+            );
+          })}
+        </div>
       ) : (
         /* EXPANDED CARD */
         <div 
@@ -516,7 +528,8 @@ export const EsportsLiveOverlay: React.FC = () => {
             backdropFilter: 'blur(20px)',
             WebkitBackdropFilter: 'blur(20px)',
             border: '1px solid rgba(229, 9, 20, 0.4)',
-            borderRadius: '20px',
+            borderRight: 'none',
+            borderRadius: '20px 0 0 20px',
             padding: '1rem',
             display: 'flex',
             flexDirection: 'column',
