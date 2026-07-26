@@ -19,6 +19,7 @@ interface SubtitleOverlayProps {
   currentTime: number;
   settings: SubtitleSettings;
   controlsVisible: boolean;
+  menuVisible?: boolean;
 }
 
 export const SubtitleOverlay: React.FC<SubtitleOverlayProps> = ({
@@ -26,14 +27,18 @@ export const SubtitleOverlay: React.FC<SubtitleOverlayProps> = ({
   currentTime,
   settings,
   controlsVisible,
+  menuVisible = false,
 }) => {
   // Find all active cues for the current playback time, filtering out empty/whitespace ones
   const activeCues = cues.filter(
     (cue) => currentTime >= cue.startTime && currentTime <= cue.endTime && cue.text && cue.text.trim() !== ''
   );
 
+  // Deduplicate overlapping cues with the same text to prevent collision
+  const uniqueActiveCues = Array.from(new Map(activeCues.map(c => [c.text.trim(), c])).values());
+
   // Format newlines into line breaks for each active cue, wrapped in individual block elements
-  const formattedText = activeCues.length > 0 ? activeCues.map((cue, cueIdx) => (
+  const formattedText = uniqueActiveCues.length > 0 ? uniqueActiveCues.map((cue, cueIdx) => (
     <div key={cue.id || cueIdx} className="subtitle-line-group" style={{ marginTop: cueIdx > 0 ? '0.5rem' : 0 }}>
       {cue.text.split('\n').map((line, lineIdx) => (
         <React.Fragment key={lineIdx}>
@@ -82,7 +87,10 @@ export const SubtitleOverlay: React.FC<SubtitleOverlayProps> = ({
   const isCustomSize = !!settings.customSize && settings.customSize > 0;
 
   return (
-    <div className={`subtitle-overlay-container ${controlsVisible ? 'controls-showing' : ''}`}>
+    <div 
+      className={`subtitle-overlay-container ${menuVisible ? 'menu-showing' : (controlsVisible ? 'controls-showing' : '')}`}
+      style={menuVisible ? { top: '10%', bottom: 'auto' } : undefined}
+    >
       <div 
         className={`subtitle-text ${isCustomSize ? '' : `font-${settings.fontSize}`} ${isCustomColor ? '' : `color-${settings.color}`} ${isCustomBg ? '' : `backdrop-${settings.backdrop}`}`}
         style={fontStyleStyles}
@@ -107,6 +115,9 @@ export const SubtitleOverlay: React.FC<SubtitleOverlayProps> = ({
         }
         .subtitle-overlay-container.controls-showing {
           bottom: 22%;
+        }
+        .subtitle-overlay-container.menu-showing {
+          bottom: 75%;
         }
         .subtitle-text {
           line-height: 1.4;

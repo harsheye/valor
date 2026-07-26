@@ -10,12 +10,12 @@ export const EmbedPlayerPage: React.FC = () => {
     const mediaUrl = params.get('url');
     if (mediaUrl) {
       return {
-        id: mediaUrl,
+        id: 'embed-session',
         title: params.get('title') || 'Embedded Video',
         url: mediaUrl,
-        type: 'remote',
+        type: 'url',
         currentTime: 0,
-        duration: 0,
+        duration: '0',
         audioTracks: [],
         subtitleTracks: []
       };
@@ -66,12 +66,15 @@ export const EmbedPlayerPage: React.FC = () => {
       switch (cmd.type) {
         case 'LOAD':
           setVideo({
-            id: cmd.payload.url,
-            title: 'Embedded Video',
-            url: cmd.payload.url,
-            type: 'remote',
-            currentTime: 0,
-            duration: 0,
+            id: 'embed-session',
+            title: 'Embedded Media',
+            url: cmd.payload.media || cmd.payload.url || '',
+            type: 'url',
+            currentTime: cmd.payload.currentTime || 0,
+            duration: String(cmd.payload.duration || 0),
+            isRemote: true,
+            hlsPlaylist: cmd.payload.hlsPlaylist,
+            playbackMode: (cmd.payload.playbackMode as any) || undefined,
             audioTracks: [],
             subtitleTracks: []
           });

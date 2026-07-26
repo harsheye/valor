@@ -94,7 +94,7 @@ export const OnlineVideoPlayer: React.FC<OnlineVideoPlayerProps> = ({
   const [showAddDialog, setShowAddDialog] = useState(false);
   const [editingBookmark, setEditingBookmark] = useState<Bookmark | undefined>(undefined);
   const [markingStartTime, setMarkingStartTime] = useState<number | null>(null);
-  const [isLocked, setIsLocked] = useState(lockModeActive);
+  const [isLocked, setIsLocked] = useState(false);
   
   // Native control mode (pointer events auto)
   const [interactWithNative, setInteractWithNative] = useState(false);
@@ -534,6 +534,11 @@ export const OnlineVideoPlayer: React.FC<OnlineVideoPlayerProps> = ({
       const activeTag = document.activeElement?.tagName.toLowerCase();
       if (activeTag === 'input' || activeTag === 'textarea' || activeTag === 'select') return;
 
+      // Ignore browser/system shortcuts
+      if (e.ctrlKey || e.metaKey || e.altKey) {
+        return;
+      }
+
       switch (e.key) {
         case ' ':
           e.preventDefault();
@@ -816,17 +821,17 @@ export const OnlineVideoPlayer: React.FC<OnlineVideoPlayerProps> = ({
     addToast("Bookmark Deleted");
   };
 
-  const handleToggleLock = () => {
-    setIsLocked(prev => {
-      const next = !prev;
-      addToast(next ? "Controls Locked" : "Controls Unlocked");
-      return next;
-    });
-  };
+  const handleWheel = (e: React.WheelEvent) => {
+    if (showSettingsPanel || showAddDialog || interactWithNative) return;
+    
+    const target = e.target as HTMLElement;
+    if (target.closest('.player-quick-settings-panel')) return;
 
-  const handleNativeConfigMode = () => {
-    setInteractWithNative(true);
-    addToast("Direct streaming interaction enabled. Press ESC to return.");
+    if (e.deltaY < 0) {
+      adjustVolume(0.1);
+    } else if (e.deltaY > 0) {
+      adjustVolume(-0.1);
+    }
   };
 
   return (
@@ -834,6 +839,7 @@ export const OnlineVideoPlayer: React.FC<OnlineVideoPlayerProps> = ({
       ref={playerContainerRef}
       className={`local-player-container ${isLocked ? 'is-locked' : ''}`}
       onMouseMove={handleMouseMove}
+      onWheel={handleWheel}
       onMouseLeave={() => !interactWithNative && isPlaying && setShowControls(false)}
       style={{ background: 'black', fontFamily: 'Outfit, sans-serif' }}
     >
@@ -1248,53 +1254,6 @@ export const OnlineVideoPlayer: React.FC<OnlineVideoPlayerProps> = ({
           z-index: 1000;
           box-shadow: 0 4px 15px rgba(0,0,0,0.3);
         }
-
-        /* Quick Settings Panel */
-        .player-quick-settings-panel {
-          position: absolute;
-          bottom: 120px;
-          right: 2rem;
-          width: 320px;
-          background: rgba(10, 10, 15, 0.9);
-          backdrop-filter: blur(20px);
-          -webkit-backdrop-filter: blur(20px);
-          border: 1px solid rgba(255, 255, 255, 0.08);
-          border-radius: 16px;
-          padding: 1.25rem;
-          color: white;
-          z-index: 1000;
-          box-shadow: 0 15px 40px rgba(0, 0, 0, 0.6);
-        }
-        .player-quick-settings-panel .settings-header {
-          display: flex;
-          align-items: center;
-          justify-content: space-between;
-          border-bottom: 1px solid rgba(255, 255, 255, 0.08);
-          padding-bottom: 8px;
-          margin-bottom: 12px;
-        }
-        .player-quick-settings-panel .settings-header h3 {
-          margin: 0;
-          font-size: 15px;
-          font-weight: 700;
-        }
-        .player-quick-settings-panel .settings-header button {
-          background: transparent;
-          border: none;
-          color: rgba(255,255,255,0.6);
-          cursor: pointer;
-        }
-        .player-quick-settings-panel .settings-options-list {
-          display: flex;
-          flex-direction: column;
-          gap: 12px;
-        }
-        .player-quick-settings-panel .pref-toggle-row {
-          display: flex;
-          align-items: center;
-          justify-content: space-between;
-          font-size: 13px;
-        }
       `}</style>
 
       {/* Direct Interactive Streaming HUD */}
@@ -1326,7 +1285,14 @@ export const OnlineVideoPlayer: React.FC<OnlineVideoPlayerProps> = ({
           style={{ zIndex: 10, background: 'transparent', pointerEvents: 'none' }}
         >
           {/* Top Bar controls - Only X Close Button */}
-          <div className="top-bar-overlay" style={{ background: 'transparent', justifyContent: 'flex-end', padding: '16px 20px', pointerEvents: 'none' }}>
+          <div className="top-bar-overlay" style={{ background: 'transparent', justifyContent: 'space-between', padding: '16px 20px', pointerEvents: 'none' }}>
+            <button
+              onClick={() => setIsLocked(!isLocked)}
+              className={`control-btn ${isLocked ? 'active' : ''}`}
+              style={{ pointerEvents: 'auto', background: isLocked ? 'rgba(229, 9, 20, 0.2)' : 'rgba(0,0,0,0.6)', border: `1px solid ${isLocked ? '#e50914' : 'rgba(255,255,255,0.15)'}`, borderRadius: '8px', padding: '8px', color: isLocked ? '#e50914' : '#fff' }}
+            >
+              <Lock size={20} />
+            </button>
             <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginLeft: 'auto', pointerEvents: 'auto' }}>
               {/* Close Button X */}
               <button 

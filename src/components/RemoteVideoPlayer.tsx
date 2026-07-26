@@ -5,6 +5,7 @@ import {
   Volume2, Volume1, VolumeX, AlertCircle, Lock,
   Layers, Type, Clock, Sliders, SkipForward, Ban, FastForward, Zap, Coffee, ChevronRight, ChevronLeft, Eye, Settings, Bookmark as BookmarkIcon, Activity, Terminal
 } from 'lucide-react';
+import { Button } from './ui/button';
 import type { VideoItem, CustomAudioTrack, CustomSubtitleTrack, Bookmark } from '../types/media';
 import { SubtitleOverlay } from './SubtitleOverlay';
 import type { SubtitleSettings } from './SubtitleOverlay';
@@ -1386,7 +1387,7 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
   };
   const [showControls, setShowControls] = useState(true);
   const [showConsoleOverlay, setShowConsoleOverlay] = useState(false);
-  const [isLocked, setIsLocked] = useState(propLockModeActive);
+  const [isLocked, setIsLocked] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [radialMenuState, setRadialMenuState] = useState<{ visible: boolean; x: number; y: number }>({ visible: false, x: 0, y: 0 });
   const [hoverTime, setHoverTime] = useState<string | null>(null);
@@ -1626,6 +1627,32 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
   const activeSubtitleStartOffsetRef = useRef(0);
   const remoteSeekGenerationRef = useRef(0);
   const remoteHardSeekActiveRef = useRef(false);
+  const seekedDebounceTimeoutRef = useRef<any>(null);
+  const [cumulativeSkipDelta, setCumulativeSkipDelta] = useState<number | null>(null);
+  const cumulativeSkipTimeoutRef = useRef<any>(null);
+  const targetSeekTimeRef = useRef<number | null>(null);
+
+  const executeRelativeSeek = (delta: number) => {
+    if (!videoRef.current) return;
+    const baseTime = targetSeekTimeRef.current !== null ? targetSeekTimeRef.current : videoRef.current.currentTime;
+    const newTarget = Math.max(0, Math.min(videoRef.current.duration || 0, baseTime + delta));
+    
+    targetSeekTimeRef.current = newTarget;
+    
+    setCumulativeSkipDelta(prev => (prev || 0) + delta);
+    if (cumulativeSkipTimeoutRef.current) clearTimeout(cumulativeSkipTimeoutRef.current);
+    cumulativeSkipTimeoutRef.current = setTimeout(() => {
+      setCumulativeSkipDelta(null);
+    }, 800);
+    
+    setCurrentTime(newTarget);
+    videoRef.current.currentTime = newTarget;
+    
+    if (controlsTimeoutRef.current) clearTimeout(controlsTimeoutRef.current);
+    controlsTimeoutRef.current = setTimeout(() => {
+       targetSeekTimeRef.current = null;
+    }, 800);
+  };
 
   useEffect(() => {
     hasAutoSelectedRef.current = false;
@@ -2320,7 +2347,7 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
     setPlaybackError(message);
   };
 
-  const handleVideoSeeked = async () => {
+  const handleVideoSeeked = () => {
     if (!videoRef.current) return;
     const newTime = videoRef.current.currentTime;
 
@@ -2338,41 +2365,47 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
 
     setIsBuffering(false);
 
-    // Sync PlaybackController playhead on seek
-    if (playbackControllerRef.current) {
-      const ctrlTime = playbackControllerRef.current.getCurrentTime();
-      if (Math.abs(ctrlTime - newTime) > 0.2) {
-        logger.player(`Seek detected to ${newTime}s in player. Updating playback controller...`);
-        activeAudioStartOffsetRef.current = Math.floor(newTime / 10) * 10;
-        playbackControllerRef.current.seek(newTime).catch(console.error);
-      }
+    if (seekedDebounceTimeoutRef.current) {
+      clearTimeout(seekedDebounceTimeoutRef.current);
     }
 
-    const containerType = (video.containerType || '').toLowerCase();
-    const isMkv = containerType.includes('mkv') || containerType.includes('matroska') || (video.format || '').toLowerCase().includes('mkv') || (video.format || '').toLowerCase().includes('matroska');
-
-    if (activeSubStreamIndex !== null && !subDebounceTimeoutRef.current) {
-      let needLoad = false;
-      if (video.containerType === 'hls' && video.hlsPlaylist) {
-        const segments = video.hlsPlaylist.segments || [];
-        const oldSegIdx = segments.findIndex((s: any) => s.startTime <= activeSubtitleStartOffsetRef.current && activeSubtitleStartOffsetRef.current < s.startTime + s.duration);
-        const newSegIdx = segments.findIndex((s: any) => s.startTime <= newTime && newTime < s.startTime + s.duration);
-        if (oldSegIdx !== newSegIdx) {
-          needLoad = true;
-        }
-      } else {
-        const isRemote = video.isRemote;
-        const subDuration = isRemote ? (isMkv ? 300 : 60) : 300;
-        if (newTime < activeSubtitleStartOffsetRef.current || newTime > activeSubtitleStartOffsetRef.current + subDuration - 5) {
-          needLoad = true;
+    seekedDebounceTimeoutRef.current = setTimeout(async () => {
+      // Sync PlaybackController playhead on seek
+      if (playbackControllerRef.current) {
+        const ctrlTime = playbackControllerRef.current.getCurrentTime();
+        if (Math.abs(ctrlTime - newTime) > 0.2) {
+          logger.player(`Seek detected to ${newTime}s in player. Updating playback controller...`);
+          activeAudioStartOffsetRef.current = Math.floor(newTime / 10) * 10;
+          playbackControllerRef.current.seek(newTime).catch(console.error);
         }
       }
 
-      if (needLoad) {
-        logger.player(`Seek detected to ${newTime}s outside current subtitle range. Fetching new subtitles.`);
-        await loadSubtitleChunk(newTime, activeSubStreamIndex);
+      const containerType = (video.containerType || '').toLowerCase();
+      const isMkv = containerType.includes('mkv') || containerType.includes('matroska') || (video.format || '').toLowerCase().includes('mkv') || (video.format || '').toLowerCase().includes('matroska');
+
+      if (activeSubStreamIndex !== null && !subDebounceTimeoutRef.current) {
+        let needLoad = false;
+        if (video.containerType === 'hls' && video.hlsPlaylist) {
+          const segments = video.hlsPlaylist.segments || [];
+          const oldSegIdx = segments.findIndex((s: any) => s.startTime <= activeSubtitleStartOffsetRef.current && activeSubtitleStartOffsetRef.current < s.startTime + s.duration);
+          const newSegIdx = segments.findIndex((s: any) => s.startTime <= newTime && newTime < s.startTime + s.duration);
+          if (oldSegIdx !== newSegIdx) {
+            needLoad = true;
+          }
+        } else {
+          const isRemote = video.isRemote;
+          const subDuration = isRemote ? (isMkv ? 300 : 60) : 300;
+          if (newTime < activeSubtitleStartOffsetRef.current || newTime > activeSubtitleStartOffsetRef.current + subDuration - 5) {
+            needLoad = true;
+          }
+        }
+
+        if (needLoad) {
+          logger.player(`Seek detected to ${newTime}s outside current subtitle range. Fetching new subtitles.`);
+          await loadSubtitleChunk(newTime, activeSubStreamIndex);
+        }
       }
-    }
+    }, 250);
   };
 
   // On-the-fly selection handlers for embedded streams selected in-player using container-direct chunk reading
@@ -2907,6 +2940,11 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
       return;
     }
 
+    // Ignore browser/system shortcuts
+    if (e.ctrlKey || e.metaKey || e.altKey) {
+      return;
+    }
+
     // Load keybind settings
     const saved = localStorage.getItem('valor_settings');
     const defaultKeybinds = {
@@ -3017,7 +3055,8 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
       const isVolumeKey = pressedKey === 'arrowup' || pressedKey === 'arrowdown';
       const isBoostKey = pressedKey === audioBoostKey;
       const isScreenshotKey = pressedKey === screenshotKey;
-      if (!isVolumeKey && !isBoostKey && !isScreenshotKey) {
+      const isSkipKey = pressedKey === 'c';
+      if (!isVolumeKey && !isBoostKey && !isScreenshotKey && !isSkipKey) {
         e.preventDefault();
         e.stopPropagation();
         triggerSwitchToast("Controls are Locked");
@@ -3079,10 +3118,7 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
         triggerSwitchToast('Seeking is blocked');
         return;
       }
-      if (videoRef.current) {
-        videoRef.current.currentTime = Math.max(0, videoRef.current.currentTime - 10);
-        triggerHudFlash('rewind');
-      }
+      executeRelativeSeek(-10);
     } else if (pressedKey === forwardKey) {
       e.preventDefault();
       if (showPlayBarMode === 'disable') {
@@ -3093,10 +3129,7 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
         triggerSwitchToast('Seeking is blocked');
         return;
       }
-      if (videoRef.current) {
-        videoRef.current.currentTime = Math.min(videoRef.current.duration || 0, videoRef.current.currentTime + 10);
-        triggerHudFlash('forward');
-      }
+      executeRelativeSeek(10);
     } else if (pressedKey === 'c') {
       e.preventDefault();
       if (activeSkipBookmarkRef.current) {
@@ -3853,8 +3886,7 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
           <button
             key="lockModeActive"
             onClick={() => {
-              const nextVal = !playerSettings.lockModeActive;
-              updatePlayerSetting('lockModeActive', nextVal);
+              const nextVal = !isLocked;
               setIsLocked(nextVal);
               if (nextVal) {
                 setShowSettingsPanel(false);
@@ -3867,8 +3899,8 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
             }}
             onMouseEnter={() => setHoveredSetting('lockModeActive')}
             onMouseLeave={() => setHoveredSetting(null)}
-            title="Lock Mode Active (Lock Controls on Startup)"
-            className={`settings-icon-toggle ${playerSettings.lockModeActive ? 'active-blue' : ''}`}
+            title="Lock Controls"
+            className={`settings-icon-toggle ${isLocked ? 'active-blue' : ''}`}
           >
             <Lock size={22} />
           </button>
@@ -3896,6 +3928,19 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
 
   const controlsVisible = showControls && !isLocked;
   const effectiveDuration = duration || parseDurationToSeconds(video.duration) || 0;
+  
+  const handleWheel = (e: React.WheelEvent) => {
+    if (showSettingsPanel || showAddDialog || showBookmarksPopover || showAudioSubMenu || showConsoleOverlay) return;
+    
+    const target = e.target as HTMLElement;
+    if (target.closest('.player-settings-panel') || target.closest('.bookmarks-popover') || target.closest('.audio-sub-popover')) return;
+
+    if (e.deltaY < 0) {
+      handleKeyDownRef.current?.(new KeyboardEvent('keydown', { key: 'ArrowUp' }));
+    } else if (e.deltaY > 0) {
+      handleKeyDownRef.current?.(new KeyboardEvent('keydown', { key: 'ArrowDown' }));
+    }
+  };
 
   return (
     <div 
@@ -3904,13 +3949,20 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
       onMouseMove={(e) => {
         if (!isLocked) handleMouseMove(e);
       }}
+      onMouseLeave={handleMouseLeave}
+      onClick={(e) => {
+        if (!isLocked && !hideUIOverlays) {
+          handleContainerClick(e);
+        }
+      }}
+      onWheel={handleWheel}
       onDoubleClick={(e) => {
         // Removed toggleFullscreen() on double click to prevent accidental fullscreen exits
         // when the user clicks multiple times rapidly to pause/play.
       }}
       onContextMenu={(e) => {
+        e.preventDefault();
         if (!isLocked && !hideUIOverlays) {
-          e.preventDefault();
           setRadialMenuState({ visible: true, x: e.clientX, y: e.clientY });
         }
       }}
@@ -4047,6 +4099,7 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
           currentTime={currentTime} 
           settings={subSettings} 
           controlsVisible={controlsVisible}
+          menuVisible={showAudioSubMenu}
         />
       )}
 
@@ -4496,29 +4549,11 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
 
       {/* Skip Button */}
       {activeSkipBookmark && (
-        <button
-          className="skip-btn"
-          style={{
-            position: 'absolute',
-            bottom: controlsVisible ? '160px' : '40px',
-            right: '40px',
-            zIndex: 90,
-            background: 'rgba(0,0,0,0.7)',
-            color: 'white',
-            border: '1px solid rgba(255,255,255,0.2)',
-            padding: '12px 24px',
-            borderRadius: '8px',
-            fontSize: '16px',
-            fontWeight: '600',
-            cursor: 'pointer',
-            transition: 'all 0.2s',
-            backdropFilter: 'blur(8px)',
-            boxShadow: '0 4px 12px rgba(0,0,0,0.5)',
-            display: 'flex',
-            alignItems: 'center',
-            gap: '8px'
-          }}
-          onClick={(e) => {
+        <Button
+          key={activeSkipBookmark.id}
+          variant='destructive'
+          className="skip-btn-premium animate-heartbeat bg-destructive! dark:bg-destructive! text-white"
+          onClick={(e: React.MouseEvent) => {
             e.stopPropagation();
             const targetTime = (activeSkipBookmark.isOutro || activeSkipBookmark.category === 'Outro') 
               ? duration 
@@ -4530,12 +4565,14 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
             }
           }}
         >
-          Skip {
+          <span>Skip {
             activeSkipBookmark.category === 'Intro' || activeSkipBookmark.isIntro ? 'Intro' 
             : activeSkipBookmark.category === 'Outro' || activeSkipBookmark.isOutro ? 'Outro' 
             : activeSkipBookmark.label || activeSkipBookmark.category || 'Scene'
-          } (C)
-        </button>
+          } (C)</span>
+          <FastForward size={18} />
+          <div className="skip-progress-bar" />
+        </Button>
       )}
 
       {/* Bottom Controls Overlay */}
@@ -5216,6 +5253,32 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
         </div>
       )}
 
+      {/* Cumulative Skip HUD */}
+      {cumulativeSkipDelta !== null && (
+        <div className="flash-hud-overlay">
+          <div style={{ 
+            padding: '20px 30px', 
+            fontSize: '32px', 
+            fontWeight: 'bold', 
+            gap: '10px',
+            backgroundColor: 'rgba(0, 0, 0, 0.6)',
+            borderRadius: '8px',
+            display: 'flex',
+            alignItems: 'center',
+            color: 'white',
+            boxShadow: '0 4px 12px rgba(0,0,0,0.5)',
+            transform: 'scale(1.1)',
+            transition: 'opacity 0.2s ease-in-out'
+          }}>
+            {cumulativeSkipDelta < 0 ? (
+              <><RotateCcw size={40} strokeWidth={2} /> {cumulativeSkipDelta}s</>
+            ) : (
+              <><RotateCw size={40} strokeWidth={2} /> +{cumulativeSkipDelta}s</>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* Track Selection Switch Toast Overlay */}
       {switchToast.visible && (
         <div 
@@ -5314,6 +5377,69 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
           .marking-hud-button-mobile {
             display: none !important;
           }
+        }
+
+        /* Skip Button Premium */
+        @keyframes skipProgressPremium {
+          from { width: 100%; }
+          to { width: 0%; }
+        }
+        @keyframes skipFadePremium {
+          0% { opacity: 0; transform: translateY(10px) scale(0.95); }
+          5% { opacity: 1; transform: translateY(0) scale(1); }
+          90% { opacity: 1; transform: translateY(0) scale(1); }
+          100% { opacity: 0; transform: translateY(0) scale(1); pointer-events: none; }
+        }
+        @keyframes heartbeat {
+          0% {
+            box-shadow: 0 0 0 0 var(--heartbeat-color, var(--destructive));
+            transform: scale(1);
+          }
+          50% {
+            box-shadow: 0 0 0 6px transparent;
+            transform: scale(1.03);
+          }
+          100% {
+            box-shadow: 0 0 0 0 transparent;
+            transform: scale(1);
+          }
+        }
+        .skip-btn-premium {
+          position: absolute;
+          right: 40px;
+          bottom: 140px;
+          z-index: 90;
+          padding: 14px 28px;
+          border-radius: 4px;
+          font-size: 16px;
+          font-weight: 500;
+          cursor: pointer;
+          backdrop-filter: blur(10px);
+          -webkit-backdrop-filter: blur(10px);
+          display: flex;
+          align-items: center;
+          gap: 12px;
+          overflow: hidden;
+          transition: background 0.2s, color 0.2s;
+        }
+        .animate-heartbeat {
+          animation: skipFadePremium 7s cubic-bezier(0.4, 0, 0.2, 1) forwards, heartbeat 2s infinite ease-in-out;
+        }
+        .skip-btn-premium:hover {
+          background: white;
+          color: black;
+          animation-play-state: paused, paused;
+        }
+        .skip-btn-premium:hover .skip-progress-bar {
+          animation-play-state: paused;
+        }
+        .skip-progress-bar {
+          position: absolute;
+          bottom: 0;
+          left: 0;
+          height: 3px;
+          background: #e50914;
+          animation: skipProgressPremium 7s linear forwards;
         }
 
         .player-container {

@@ -13,7 +13,7 @@ export type EmbedCommand =
   | { type: 'SET_MUTE'; payload: { muted: boolean } }
   | { type: 'SET_SPEED'; payload: { speed: number } }
   | { type: 'SET_FULLSCREEN'; payload: { fullscreen: boolean } }
-  | { type: 'LOAD'; payload: { url: string; autoPlay?: boolean } }
+  | { type: 'LOAD'; payload: { url: string; media?: string; autoPlay?: boolean; currentTime?: number; duration?: number; hlsPlaylist?: any; playbackMode?: string; } }
   | { type: 'UPDATE_CONFIG'; payload: { controls?: Partial<ControlsConfig>; theme?: Partial<ThemeConfig> } }
   | { type: 'DESTROY' };
 

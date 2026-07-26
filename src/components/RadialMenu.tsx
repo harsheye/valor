@@ -16,7 +16,6 @@ function describeArc(x: number, y: number, innerRadius: number, outerRadius: num
   const endInner = polarToCartesian(x, y, innerRadius, startAngle);
   // Support slices > 180 degrees
   const largeArcFlag = endAngle - startAngle <= 180 ? "0" : "1";
-
   return [
     "M", start.x, start.y,
     "A", outerRadius, outerRadius, 0, largeArcFlag, 0, end.x, end.y,
@@ -24,6 +23,29 @@ function describeArc(x: number, y: number, innerRadius: number, outerRadius: num
     "A", innerRadius, innerRadius, 0, largeArcFlag, 1, startInner.x, startInner.y,
     "Z"
   ].join(" ");
+}
+
+function describeTextArc(x: number, y: number, radius: number, startAngle: number, endAngle: number) {
+  const midAngle = startAngle + (endAngle - startAngle) / 2;
+  const normalizedMid = (midAngle % 360 + 360) % 360;
+  const isBottom = normalizedMid > 90 && normalizedMid < 270;
+  const largeArcFlag = endAngle - startAngle <= 180 ? "0" : "1";
+
+  if (isBottom) {
+    const start = polarToCartesian(x, y, radius, endAngle);
+    const end = polarToCartesian(x, y, radius, startAngle);
+    return [
+      "M", start.x, start.y,
+      "A", radius, radius, 0, largeArcFlag, 0, end.x, end.y
+    ].join(" ");
+  } else {
+    const start = polarToCartesian(x, y, radius, startAngle);
+    const end = polarToCartesian(x, y, radius, endAngle);
+    return [
+      "M", start.x, start.y,
+      "A", radius, radius, 0, largeArcFlag, 1, end.x, end.y
+    ].join(" ");
+  }
 }
 
 export interface RadialMenuItem {
@@ -62,7 +84,7 @@ export const RadialMenu: React.FC<RadialMenuProps> = ({ x, y, items, centerItem,
   const center = size / 2;
   const innerRadius = 45;
   const outerRadius = 125;
-  const sliceGap = 2; // Gap in degrees between slices for aesthetic styling
+  const sliceGap = 0; // Removed gap for a complete pie chart
   
   // Keep menu fully within viewport bounds
   const safeX = Math.max(size/2, Math.min(window.innerWidth - size/2, x));
@@ -116,8 +138,15 @@ export const RadialMenu: React.FC<RadialMenuProps> = ({ x, y, items, centerItem,
               
               // Calculate center of slice for label positioning
               const midAngle = startAngle + ((endAngle - startAngle) / 2);
-              const labelRadius = innerRadius + (outerRadius - innerRadius) / 2;
-              const labelPos = polarToCartesian(center, center, labelRadius, midAngle);
+              const normalizedMid = (midAngle % 360 + 360) % 360;
+              const isBottom = normalizedMid > 90 && normalizedMid < 270;
+
+              const iconRadius = innerRadius + (outerRadius - innerRadius) * 0.35;
+              const textRadius = innerRadius + (outerRadius - innerRadius) * 0.75;
+              
+              const iconPos = polarToCartesian(center, center, iconRadius, midAngle);
+              const textPathId = `text-path-${item.id}`;
+              const textPathData = describeTextArc(center, center, textRadius, startAngle, endAngle);
               
               const isHovered = hoveredId === item.id && !item.disabled;
               const defaultColor = 'rgba(28, 28, 32, 0.85)';
@@ -158,30 +187,47 @@ export const RadialMenu: React.FC<RadialMenuProps> = ({ x, y, items, centerItem,
                     style={{ transition: 'fill 0.15s ease' }}
                   />
                   
-                  <g transform={`translate(${labelPos.x}, ${labelPos.y})`} style={{ pointerEvents: 'none' }}>
-                    <foreignObject x="-45" y="-35" width="90" height="70">
+                  {/* Invisible path for curved text */}
+                  <path id={textPathId} d={textPathData} fill="none" stroke="none" />
+                  
+                  {/* Curved Text */}
+                  <text 
+                    fill="white" 
+                    fontSize="11px" 
+                    fontWeight="600"
+                    fontFamily="Inter, system-ui, sans-serif"
+                    textAnchor="middle"
+                    style={{
+                      pointerEvents: 'none',
+                      transform: isHovered ? 'scale(1.05)' : 'scale(1)',
+                      transformOrigin: `${center}px ${center}px`,
+                      transition: 'transform 0.15s cubic-bezier(0.175, 0.885, 0.32, 1.275)',
+                      textShadow: '0 2px 4px rgba(0,0,0,0.8)'
+                    }}
+                  >
+                    <textPath 
+                      href={`#${textPathId}`} 
+                      startOffset="50%" 
+                      baselineShift={isBottom ? "-2px" : "2px"}
+                    >
+                      {item.label}
+                    </textPath>
+                  </text>
+
+                  {/* Icon */}
+                  <g transform={`translate(${iconPos.x}, ${iconPos.y})`} style={{ pointerEvents: 'none' }}>
+                    <foreignObject x="-20" y="-20" width="40" height="40">
                       <div style={{
                         display: 'flex',
-                        flexDirection: 'column',
                         alignItems: 'center',
                         justifyContent: 'center',
                         width: '100%',
                         height: '100%',
                         color: 'white',
-                        fontFamily: 'Inter, system-ui, sans-serif',
                         transform: isHovered ? 'scale(1.15)' : 'scale(1)',
                         transition: 'transform 0.15s cubic-bezier(0.175, 0.885, 0.32, 1.275)'
                       }}>
                         {item.icon}
-                        <span style={{ 
-                          fontSize: '11px', 
-                          marginTop: '6px', 
-                          fontWeight: 600, 
-                          textAlign: 'center', 
-                          textShadow: '0 2px 4px rgba(0,0,0,0.8)' 
-                        }}>
-                          {item.label}
-                        </span>
                       </div>
                     </foreignObject>
                   </g>
