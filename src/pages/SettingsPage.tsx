@@ -223,6 +223,48 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                       />
                     </div>
                     <div className="pref-row">
+                      <span className="pref-label" style={{ opacity: 0.8 }}>Watch History Backup</span>
+                      <button 
+                        className="btn-primary" 
+                        style={{ 
+                          padding: '8px 16px', 
+                          fontSize: '0.85rem', 
+                          background: '#e50914', 
+                          color: '#fff', 
+                          border: 'none', 
+                          borderRadius: '4px', 
+                          cursor: 'pointer',
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '6px',
+                          fontWeight: 500
+                        }}
+                        onClick={async () => {
+                          try {
+                            const res = await fetch(`http://127.0.0.1:50001/api/history`);
+                            if (!res.ok) throw new Error('Failed to fetch history backup');
+                            const fileHistory = await res.json();
+                            if (Array.isArray(fileHistory)) {
+                              const restored = fileHistory.map((v: any) => ({
+                                ...v,
+                                audioTracks: v.audioTracks || [],
+                                subtitleTracks: v.subtitleTracks || []
+                              }));
+                              setVideos(restored);
+                              addToast("History restored successfully from server backup", "success");
+                            } else {
+                              addToast("No valid history backup found on server", "warning");
+                            }
+                          } catch (e: any) {
+                            addToast(`Failed to restore history: ${e.message}`, "error");
+                          }
+                        }}
+                      >
+                        <RotateCcw size={14} />
+                        <span>Restore Watch History from Server</span>
+                      </button>
+                    </div>
+                    <div className="pref-row">
                       <span className="pref-label">Toast Duration (Seconds)</span>
                       <CustomSelect 
                         value={settings.toastDuration} 

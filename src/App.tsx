@@ -23,12 +23,24 @@ class ErrorBoundary extends Component<{ children: ReactNode }, { hasError: boole
           <p style={{ color: 'var(--text-secondary)', maxWidth: '500px', margin: '1rem 0 1.5rem 0' }}>
             {this.state.error?.message || 'An unexpected error occurred in the application.'}
           </p>
-          <button 
-            onClick={() => { this.setState({ hasError: false, error: null }); window.location.reload(); }}
-            style={{ background: 'var(--accent-color)', color: '#fff', border: 'none', padding: '0.65rem 1.5rem', borderRadius: '8px', cursor: 'pointer', fontWeight: 600 }}
-          >
-            Reload Application
-          </button>
+          <div style={{ display: 'flex', gap: '12px' }}>
+            <button 
+              onClick={() => { this.setState({ hasError: false, error: null }); window.location.reload(); }}
+              style={{ background: 'var(--accent-color)', color: '#fff', border: 'none', padding: '0.65rem 1.5rem', borderRadius: '8px', cursor: 'pointer', fontWeight: 600 }}
+            >
+              Reload Application
+            </button>
+            <button 
+              onClick={() => {
+                const emailSubject = 'Valor Player Crash Report';
+                const emailBody = `Hi Developer,\n\nValor crashed with the following error:\n\n${this.state.error?.stack || this.state.error?.message || this.state.error}\n\n---\nSystem Information:\nUser Agent: ${navigator.userAgent}\nPlatform: ${navigator.platform}\nTime: ${new Date().toString()}`;
+                window.location.href = `mailto:leetwhitesnake0@proton.me?subject=${encodeURIComponent(emailSubject)}&body=${encodeURIComponent(emailBody)}`;
+              }}
+              style={{ background: 'rgba(239, 68, 68, 0.1)', color: '#ef4444', border: '1px solid rgba(239, 68, 68, 0.2)', padding: '0.65rem 1.5rem', borderRadius: '8px', cursor: 'pointer', fontWeight: 600 }}
+            >
+              Report Error to Dev
+            </button>
+          </div>
         </div>
       );
     }
@@ -210,10 +222,25 @@ export const sanitizeVideoList = (list: VideoItem[], useIdStream: boolean): Vide
 const originalConsoleLog = console.log;
 const originalConsoleWarn = console.warn;
 const originalConsoleError = console.error;
+const originalConsoleInfo = console.info;
+
+const minimizeMessage = (msg: string): string => {
+  if (typeof msg !== 'string') return msg;
+  if (msg.includes('[FFmpeg Command] ffmpeg')) {
+    const match = msg.match(/-ss\s+([^\s]+)\s+-i\s+([^\s]+)\s+-t\s+([^\s]+)\s+-map\s+([^\s]+).*\s+([^\s]+)$/);
+    if (match) {
+      const [_, ss, input, t, map, output] = match;
+      const getBasename = (p: string) => p.split(/[/\\]/).pop() || p;
+      return `[FFmpeg Command] ffmpeg -ss ${ss} -i ${getBasename(input)} -t ${t} -map ${map} -> ${getBasename(output)} (minimized)`;
+    }
+  }
+  return msg;
+};
 
 const sendLogToServer = (type: string, args: any[]) => {
   try {
-    const message = args.map(a => typeof a === 'object' ? JSON.stringify(a) : String(a)).join(' ');
+    const rawMessage = args.map(a => typeof a === 'object' ? JSON.stringify(a) : String(a)).join(' ');
+    const message = minimizeMessage(rawMessage);
     fetch(`${BACKEND_ORIGIN}/api/log`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -223,16 +250,24 @@ const sendLogToServer = (type: string, args: any[]) => {
 };
 
 console.log = (...args) => {
-  originalConsoleLog(...args);
+  const minimizedArgs = args.map(a => typeof a === 'string' ? minimizeMessage(a) : a);
+  originalConsoleLog(...minimizedArgs);
   sendLogToServer('INFO', args);
 };
 console.warn = (...args) => {
-  originalConsoleWarn(...args);
+  const minimizedArgs = args.map(a => typeof a === 'string' ? minimizeMessage(a) : a);
+  originalConsoleWarn(...minimizedArgs);
   sendLogToServer('WARN', args);
 };
 console.error = (...args) => {
-  originalConsoleError(...args);
+  const minimizedArgs = args.map(a => typeof a === 'string' ? minimizeMessage(a) : a);
+  originalConsoleError(...minimizedArgs);
   sendLogToServer('ERROR', args);
+};
+console.info = (...args) => {
+  const minimizedArgs = args.map(a => typeof a === 'string' ? minimizeMessage(a) : a);
+  originalConsoleInfo(...minimizedArgs);
+  sendLogToServer('INFO', args);
 };
 
 const defaultSettings = {
@@ -1079,7 +1114,9 @@ function App() {
         lastPlayedDate: nowIso,
         playedDates: [nowIso]
       };
-      const filtered = prev.filter(v => v.url !== newItem.url);
+      const filtered = (newItem.url && newItem.url.trim() !== '')
+        ? prev.filter(v => v.url !== newItem.url)
+        : prev;
       return [initItem, ...filtered];
     }
   };

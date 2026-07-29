@@ -1,231 +1,407 @@
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.Drawing;
 using System.IO;
-using System.Net;
+using System.Net.Http;
+using System.Net.Sockets;
+using System.Text;
 using System.Threading;
+using System.Threading.Tasks;
 using System.Windows.Forms;
 
 namespace ValorTray
 {
-    static class Program
+    internal static class Program
     {
+        private const string MutexName = "Global\\ValorPlayerMutex";
+        private const int DefaultPort = 50000;
+
         private static NotifyIcon trayIcon;
-        private static Process serverProcess;
-        private static string appDir;
         private static Mutex mutex;
-        private static readonly string ServerPort = "50000";
+        private static Process serverProcess;
+
+        private static string appDir;
+        private static string nodeExe;
+        private static string startScript;
+        private static string pidFile;
+        private static string portFile;
+        private static string logFile;
+private static string[] launchArgs;
 
         [STAThread]
         static void Main(string[] args)
         {
             appDir = AppDomain.CurrentDomain.BaseDirectory;
+launchArgs = args;
 
-            // Enforce single instance of the tray app using a global mutex
+            nodeExe = Path.Combine(appDir, "node.exe");
+            startScript = Path.Combine(appDir, "start-app.js");
+
+            Directory.CreateDirectory(Path.Combine(appDir, ".valor_data"));
+
+            pidFile = Path.Combine(appDir, ".valor_data", "server.pid");
+            portFile = Path.Combine(appDir, ".valor_data", "active_port.txt");
+            logFile = Path.Combine(appDir, ".valor_data", "launcher.log");
+
             bool createdNew;
-            mutex = new Mutex(true, "Global\\ValorPlayerMutex", out createdNew);
 
-            string fileArg = "";
-
-            // Parse arguments
-            foreach (string arg in args)
-            {
-                if (arg.Equals("--vlc", StringComparison.OrdinalIgnoreCase))
-                {
-                    // Handled directly by start.bat
-                }
-                else if (!arg.StartsWith("-"))
-                {
-                    fileArg = arg;
-                }
-            }
-
-            string port = ServerPort;
-            try
-            {
-                string portFilePath = Path.Combine(appDir, ".valor_data", "active_port.txt");
-                if (File.Exists(portFilePath))
-                {
-                    string filePort = File.ReadAllText(portFilePath).Trim();
-                    if (!string.IsNullOrEmpty(filePort))
-                    {
-                        port = filePort;
-                    }
-                }
-            }
-            catch {}
+            mutex = new Mutex(true, MutexName, out createdNew);
 
             if (!createdNew)
             {
-                // Another tray instance is running. Try to reuse the running server.
-                if (SendPlayRequest(fileArg, port))
-                {
+                if (TryReuseRunningInstance(args))
                     return;
-                }
-                // Server is dead. Start a new server process and exit.
-                StartServer(args);
-                return;
             }
 
-            // Start the application tray
             Application.EnableVisualStyles();
             Application.SetCompatibleTextRenderingDefault(false);
 
-            // Initialize Tray Menu with modern dark theme and rounded corners
-            ContextMenuStrip contextMenu = new ContextMenuStrip();
-            contextMenu.BackColor = Color.FromArgb(15, 15, 15);
-            contextMenu.ForeColor = Color.White;
-            contextMenu.ShowImageMargin = false;
-            contextMenu.Font = new Font("Segoe UI", 9.5f, FontStyle.Regular);
-            contextMenu.Renderer = new DarkRenderer();
-
-            var openItem = new ToolStripMenuItem("Open Valor", null, OnOpen);
-            openItem.ForeColor = Color.White;
-            
-            var logsItem = new ToolStripMenuItem("View Logs", null, OnViewLogs);
-            logsItem.ForeColor = Color.White;
-
-            var exitItem = new ToolStripMenuItem("Exit", null, OnExit);
-            exitItem.ForeColor = Color.White;
-
-            contextMenu.Items.Add(openItem);
-            contextMenu.Items.Add(new ToolStripSeparator());
-            contextMenu.Items.Add(logsItem);
-            contextMenu.Items.Add(new ToolStripSeparator());
-            contextMenu.Items.Add(exitItem);
-
-            // Load Tray Icon
-            Icon appIcon = SystemIcons.Application;
-            string iconPath = @"F:\data-img\Valor.ico";
-            if (!File.Exists(iconPath))
-            {
-                iconPath = Path.Combine(appDir, "public", "logo.ico");
-            }
-            if (File.Exists(iconPath))
-            {
-                try
-                {
-                    appIcon = new Icon(iconPath);
-                }
-                catch {}
-            }
-
-            // Create Tray Icon
-            trayIcon = new NotifyIcon();
-            trayIcon.Text = "Valor Video Player";
-            trayIcon.Icon = appIcon;
-            trayIcon.ContextMenuStrip = contextMenu;
-            trayIcon.Visible = true;
-            trayIcon.DoubleClick += OnOpen;
-
-            // Start Node server in the background
             StartServer(args);
-
-            // Browser launching on startup is handled by the server (start.bat) to prevent double tabs
-
-            // Run the message loop
+            CreateTray();
+            WaitForServer();
             Application.Run();
         }
 
-        private static bool SendPlayRequest(string file, string port)
+        private static void CreateTray()
+        {
+            ContextMenuStrip menu = new ContextMenuStrip();
+
+            menu.BackColor = Color.FromArgb(20,20,20);
+            menu.ForeColor = Color.White;
+            menu.ShowImageMargin = false;
+	menu.Renderer = new DarkRenderer();
+menu.Font = new Font("Segoe UI", 9F);
+
+            menu.Items.Add("Open Valor", null, OnOpen);
+            menu.Items.Add(new ToolStripSeparator());
+            menu.Items.Add("View Logs", null, OnLogs);
+            menu.Items.Add(new ToolStripSeparator());
+            menu.Items.Add("Restart Server", null, OnRestart);
+            menu.Items.Add(new ToolStripSeparator());
+            menu.Items.Add("Exit", null, OnExit);
+
+            Icon icon = SystemIcons.Application;
+
+            string iconPath = Path.Combine(appDir,"public","logo.ico");
+
+            if(File.Exists(iconPath))
+            {
+                try
+                {
+                    icon = new Icon(iconPath);
+                }
+                catch{}
+            }
+
+            trayIcon = new NotifyIcon
+            {
+                Icon = icon,
+                Text = "Valor",
+                Visible = true,
+                ContextMenuStrip = menu
+            };
+
+            trayIcon.DoubleClick += OnOpen;
+        }
+
+        private static void Log(string message)
         {
             try
             {
-                string url = "http://127.0.0.1:50001/api/play";
-                if (!string.IsNullOrEmpty(file))
+                File.AppendAllText(
+                    logFile,
+                    string.Format("[{0:yyyy-MM-dd HH:mm:ss}] {1}{2}", DateTime.Now, message, Environment.NewLine));
+            }
+            catch{}
+        }
+
+
+	        private static void StartServer(string[] args)
+        {
+            if (!File.Exists(nodeExe))
+            {
+                MessageBox.Show(
+                    "node.exe could not be found.",
+                    "Valor",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Error);
+
+                Application.Exit();
+                return;
+            }
+
+            if (!File.Exists(startScript))
+            {
+                MessageBox.Show(
+                    "start-app.js could not be found.",
+                    "Valor",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Error);
+
+                Application.Exit();
+                return;
+            }
+
+            List<string> arguments = new List<string>();
+
+            arguments.Add(string.Format("\"{0}\"", startScript));
+
+            foreach (string arg in args)
+                arguments.Add(arg);
+
+            if (!arguments.Contains("--tray"))
+                arguments.Add("--tray");
+
+            ProcessStartInfo psi = new ProcessStartInfo
+            {
+                FileName = nodeExe,
+                Arguments = string.Join(" ", arguments),
+                WorkingDirectory = appDir,
+
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                WindowStyle = ProcessWindowStyle.Hidden,
+
+                RedirectStandardOutput = true,
+                RedirectStandardError = true
+            };
+
+            serverProcess = new Process();
+            serverProcess.StartInfo = psi;
+            serverProcess.EnableRaisingEvents = true;
+
+            serverProcess.OutputDataReceived += (_, e) =>
+            {
+                if (!string.IsNullOrWhiteSpace(e.Data))
+                    Log("[NODE] " + e.Data);
+            };
+
+            serverProcess.ErrorDataReceived += (_, e) =>
+            {
+                if (!string.IsNullOrWhiteSpace(e.Data))
+                    Log("[ERROR] " + e.Data);
+            };
+
+            serverProcess.Exited += (_, __) =>
+            {
+                Log("Server exited.");
+
+                try
                 {
-                    url += "?file=" + Uri.EscapeDataString(file);
+                    if (File.Exists(pidFile))
+                        File.Delete(pidFile);
                 }
-                var request = (HttpWebRequest)WebRequest.Create(url);
-                request.Method = "GET";
-                request.Timeout = 1500;
-                using (var response = (HttpWebResponse)request.GetResponse())
+                catch
                 {
-                    return response.StatusCode == HttpStatusCode.OK;
+                }
+
+                if (trayIcon != null)
+                {
+                    trayIcon.ShowBalloonTip(
+                        3000,
+                        "Valor",
+                        "Background server stopped.",
+                        ToolTipIcon.Warning);
+                }
+            };
+
+            try
+            {
+                serverProcess.Start();
+
+                serverProcess.BeginOutputReadLine();
+                serverProcess.BeginErrorReadLine();
+
+                File.WriteAllText(
+                    pidFile,
+                    serverProcess.Id.ToString());
+
+                Log(string.Format("Server started. PID={0}", serverProcess.Id));
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(
+                    ex.ToString(),
+                    "Unable to start server",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Error);
+
+                Application.Exit();
+            }
+        }
+
+        private static void StopServer()
+        {
+            try
+            {
+                if (serverProcess != null)
+                {
+                    if (!serverProcess.HasExited)
+                    {
+                        Log("Stopping server...");
+                        if (!serverProcess.CloseMainWindow())
+                        {
+                            serverProcess.Kill();
+                        }
+
+                        serverProcess.WaitForExit(5000);
+
+                        if (!serverProcess.HasExited)
+                        {
+                            serverProcess.Kill();
+                        }
+                    }
+
+                    serverProcess.Dispose();
+                    serverProcess = null;
+                }
+            }
+            catch (Exception ex)
+            {
+                Log(ex.ToString());
+            }
+
+            try
+            {
+                if (File.Exists(pidFile))
+                    File.Delete(pidFile);
+            }
+            catch
+            {
+            }
+        }
+
+        private static void RestartServer()
+        {
+            Log("Restart requested.");
+
+            StopServer();
+
+            Thread.Sleep(1000);
+
+            StartServer(launchArgs);
+
+            WaitForServer();
+        }
+
+        private static bool WaitForServer(int timeout = 30000)
+        {
+            Stopwatch sw = Stopwatch.StartNew();
+
+            while (sw.ElapsedMilliseconds < timeout)
+            {
+                try
+                {
+                    using (TcpClient client = new TcpClient())
+                    {
+                        IAsyncResult result = client.BeginConnect(
+                            "127.0.0.1",
+                            GetServerPort(),
+                            null,
+                            null);
+
+                        bool success = result.AsyncWaitHandle.WaitOne(500);
+
+                        if (success)
+                        {
+                            client.EndConnect(result);
+
+                            Log("Server is ready.");
+
+                            return true;
+                        }
+                    }
+                }
+                catch
+                {
+                }
+
+                Thread.Sleep(300);
+            }
+
+            Log("Timed out waiting for server.");
+
+            if (trayIcon != null)
+            {
+                trayIcon.ShowBalloonTip(
+                    3000,
+                    "Valor",
+                    "Server failed to start.",
+                    ToolTipIcon.Error);
+            }
+
+            return false;
+        }
+
+        private static int GetServerPort()
+        {
+            try
+            {
+                if (File.Exists(portFile))
+                {
+                    string value = File.ReadAllText(portFile).Trim();
+
+                    int port;
+                    if (int.TryParse(value, out port))
+                        return port;
                 }
             }
             catch
             {
-                return false;
             }
+
+            return DefaultPort;
         }
 
-        private static void StartServer(string[] args)
+        private static bool TryReuseRunningInstance(string[] args)
         {
-            string exePath = Path.Combine(appDir, "start.bat");
-            if (!File.Exists(exePath))
-            {
-                MessageBox.Show("Could not find start.bat in the application directory.", "Valor Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
-                Application.Exit();
-                return;
-            }
+            string file = "";
 
-            ProcessStartInfo startInfo = new ProcessStartInfo();
-            startInfo.FileName = exePath;
-            
-            // Append --tray argument
-            System.Collections.Generic.List<string> serverArgs = new System.Collections.Generic.List<string>(args);
-            if (!serverArgs.Contains("--tray"))
+            foreach (string arg in args)
             {
-                serverArgs.Add("--tray");
+                if (!arg.StartsWith("-"))
+                {
+                    file = arg;
+                    break;
+                }
             }
-            startInfo.Arguments = string.Join(" ", serverArgs.ToArray());
-
-            startInfo.CreateNoWindow = true;
-            startInfo.UseShellExecute = false;
-            startInfo.WindowStyle = ProcessWindowStyle.Hidden;
-            startInfo.WorkingDirectory = appDir;
 
             try
             {
-                serverProcess = Process.Start(startInfo);
-            }
-            catch (Exception ex)
-            {
-                MessageBox.Show("Failed to start the background server: " + ex.Message, "Valor Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
-                Application.Exit();
-            }
-        }
-
-        private static void OpenBrowser(string file, bool vlc, string customPort = null)
-        {
-            if (vlc && !string.IsNullOrEmpty(file))
-            {
-                ProcessStartInfo vlcStart = new ProcessStartInfo();
-                vlcStart.FileName = Path.Combine(appDir, "start.bat");
-                vlcStart.Arguments = "--vlc \"" + file + "\"";
-                vlcStart.CreateNoWindow = true;
-                vlcStart.UseShellExecute = false;
-                vlcStart.WindowStyle = ProcessWindowStyle.Hidden;
-                try
+                using (HttpClient client = new HttpClient())
                 {
-                    Process.Start(vlcStart);
-                }
-                catch {}
-                return;
-            }
+                    client.Timeout = TimeSpan.FromSeconds(2);
 
-            string port = customPort;
-            if (string.IsNullOrEmpty(port))
-            {
-                port = ServerPort;
-                try
-                {
-                    string portFilePath = Path.Combine(appDir, ".valor_data", "active_port.txt");
-                    if (File.Exists(portFilePath))
+                    string url = string.Format("http://127.0.0.1:{0}/api/play", GetServerPort());
+
+                    if (!string.IsNullOrWhiteSpace(file))
                     {
-                        string filePort = File.ReadAllText(portFilePath).Trim();
-                        if (!string.IsNullOrEmpty(filePort))
-                        {
-                            port = filePort;
-                        }
+                        url += "?file=" + Uri.EscapeDataString(file);
+                    }
+
+                    HttpResponseMessage response =
+                        client.GetAsync(url).Result;
+
+                    if (response.IsSuccessStatusCode)
+                    {
+                        Log("Forwarded request to running instance.");
+                        return true;
                     }
                 }
-                catch {}
+            }
+            catch
+            {
             }
 
-            string url = "http://127.0.0.1:" + port;
-            if (!string.IsNullOrEmpty(file))
+            return false;
+        }
+
+        private static void OpenBrowser(string file = "")
+        {
+            string url = string.Format("http://127.0.0.1:{0}", GetServerPort());
+
+            if (!string.IsNullOrWhiteSpace(file))
             {
                 url += "/?file=" + Uri.EscapeDataString(file);
             }
@@ -238,114 +414,211 @@ namespace ValorTray
                     UseShellExecute = true
                 });
             }
-            catch {}
+            catch (Exception ex)
+            {
+                Log(ex.ToString());
+            }
         }
 
         private static void OnOpen(object sender, EventArgs e)
         {
-            OpenBrowser("", false);
+            OpenBrowser();
+        }
+
+        private static void OnRestart(object sender, EventArgs e)
+        {
+            trayIcon.ShowBalloonTip(
+                1500,
+                "Valor",
+                "Restarting background server...",
+                ToolTipIcon.Info);
+
+            RestartServer();
+        }
+
+        private static void OnLogs(object sender, EventArgs e)
+        {
+            try
+            {
+                if (!File.Exists(logFile))
+                {
+                    File.WriteAllText(logFile, "");
+                }
+
+                Process.Start(new ProcessStartInfo
+                {
+                    FileName = "notepad.exe",
+                    Arguments = "\"" + logFile + "\"",
+                    UseShellExecute = true
+                });
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(
+                    ex.Message,
+                    "Valor",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Error);
+            }
         }
 
         private static void OnExit(object sender, EventArgs e)
         {
-            // Clean up tray icon
-            if (trayIcon != null)
-            {
-                trayIcon.Visible = false;
-                trayIcon.Dispose();
-            }
-
-            // Stop server process
-            if (serverProcess != null && !serverProcess.HasExited)
-            {
-                try
-                {
-                    serverProcess.Kill();
-                    serverProcess.Dispose();
-                }
-                catch {}
-            }
-
-            // Also kill any remaining start.bat processes to be clean
             try
             {
-                foreach (var p in Process.GetProcessesByName("start-app"))
-                {
-                    p.Kill();
-                }
+                trayIcon.Visible = false;
             }
-            catch {}
+            catch
+            {
+            }
 
-            if (mutex != null)
+            StopServer();
+
+            try
             {
                 mutex.ReleaseMutex();
             }
+            catch
+            {
+            }
+
+            try
+            {
+                mutex.Dispose();
+            }
+            catch
+            {
+            }
+
+            try
+            {
+                trayIcon.Dispose();
+            }
+            catch
+            {
+            }
+
             Application.Exit();
         }
 
-        private static void OnViewLogs(object sender, EventArgs e)
+        private sealed class DarkRenderer : ToolStripProfessionalRenderer
         {
-            string logPath = Path.Combine(appDir, ".valor_data", "app.log");
-            if (File.Exists(logPath))
+            public DarkRenderer() : base(new DarkColorTable())
             {
-                try
-                {
-                    Process.Start("notepad.exe", logPath);
-                }
-                catch (Exception ex)
-                {
-                    MessageBox.Show("Failed to open log file: " + ex.Message, "Valor Logs", MessageBoxButtons.OK, MessageBoxIcon.Error);
-                }
             }
-            else
-            {
-                MessageBox.Show("No log file found yet. Start playing media to generate logs.", "Valor Logs", MessageBoxButtons.OK, MessageBoxIcon.Information);
-            }
-        }
 
-        private class DarkRenderer : ToolStripProfessionalRenderer
-        {
-            public DarkRenderer() : base(new DarkColorTable()) { }
-            
+            protected override void OnRenderToolStripBackground(ToolStripRenderEventArgs e)
+            {
+                using (SolidBrush brush = new SolidBrush(Color.FromArgb(18, 18, 18)))
+                {
+                    e.Graphics.FillRectangle(brush, e.AffectedBounds);
+                }
+            }
+
+            protected override void OnRenderImageMargin(ToolStripRenderEventArgs e)
+            {
+            }
+
             protected override void OnRenderMenuItemBackground(ToolStripItemRenderEventArgs e)
             {
-                if (e.Item.Selected)
+                Rectangle rect = new Rectangle(
+                    2,
+                    2,
+                    e.Item.Width - 4,
+                    e.Item.Height - 4);
+
+                Color color = e.Item.Selected
+                    ? Color.FromArgb(229, 9, 20)
+                    : Color.FromArgb(18, 18, 18);
+
+                using (SolidBrush brush = new SolidBrush(color))
                 {
-                    // Hover color: Netflix red
-                    using (var brush = new SolidBrush(Color.FromArgb(229, 9, 20)))
-                    {
-                        e.Graphics.FillRectangle(brush, e.Item.ContentRectangle);
-                    }
+                    e.Graphics.FillRectangle(brush, rect);
                 }
-                else
+            }
+
+            protected override void OnRenderSeparator(ToolStripSeparatorRenderEventArgs e)
+            {
+                using (Pen pen = new Pen(Color.FromArgb(45, 45, 45)))
                 {
-                    using (var brush = new SolidBrush(Color.FromArgb(15, 15, 15)))
-                    {
-                        e.Graphics.FillRectangle(brush, e.Item.ContentRectangle);
-                    }
+                    int y = e.Item.Height / 2;
+
+                    e.Graphics.DrawLine(
+                        pen,
+                        10,
+                        y,
+                        e.Item.Width - 10,
+                        y);
                 }
             }
 
             protected override void OnRenderToolStripBorder(ToolStripRenderEventArgs e)
             {
-                using (var pen = new Pen(Color.FromArgb(44, 44, 44), 1))
+                using (Pen pen = new Pen(Color.FromArgb(55, 55, 55)))
                 {
-                    e.Graphics.DrawRectangle(pen, 0, 0, e.ToolStrip.Width - 1, e.ToolStrip.Height - 1);
+                    e.Graphics.DrawRectangle(
+                        pen,
+                        0,
+                        0,
+                        e.ToolStrip.Width - 1,
+                        e.ToolStrip.Height - 1);
                 }
+            }
+
+            protected override void OnRenderItemText(ToolStripItemTextRenderEventArgs e)
+            {
+                e.TextColor = Color.White;
+
+                base.OnRenderItemText(e);
             }
         }
 
-        private class DarkColorTable : ProfessionalColorTable
+        private sealed class DarkColorTable : ProfessionalColorTable
         {
-            public override Color ToolStripDropDownBackground { get { return Color.FromArgb(15, 15, 15); } }
-            public override Color ImageMarginGradientBegin { get { return Color.FromArgb(15, 15, 15); } }
-            public override Color ImageMarginGradientMiddle { get { return Color.FromArgb(15, 15, 15); } }
-            public override Color ImageMarginGradientEnd { get { return Color.FromArgb(15, 15, 15); } }
-            public override Color MenuBorder { get { return Color.FromArgb(44, 44, 44); } }
-            public override Color MenuItemSelected { get { return Color.FromArgb(229, 9, 20); } }
-            public override Color MenuItemBorder { get { return Color.FromArgb(229, 9, 20); } }
-            public override Color SeparatorDark { get { return Color.FromArgb(33, 33, 33); } }
-            public override Color SeparatorLight { get { return Color.FromArgb(15, 15, 15); } }
+            public override Color ToolStripDropDownBackground
+            {
+                get { return Color.FromArgb(18, 18, 18); }
+            }
+
+            public override Color MenuBorder
+            {
+                get { return Color.FromArgb(45, 45, 45); }
+            }
+
+            public override Color MenuItemBorder
+            {
+                get { return Color.FromArgb(229, 9, 20); }
+            }
+
+            public override Color MenuItemSelected
+            {
+                get { return Color.FromArgb(229, 9, 20); }
+            }
+
+            public override Color ImageMarginGradientBegin
+            {
+                get { return Color.FromArgb(18, 18, 18); }
+            }
+
+            public override Color ImageMarginGradientMiddle
+            {
+                get { return Color.FromArgb(18, 18, 18); }
+            }
+
+            public override Color ImageMarginGradientEnd
+            {
+                get { return Color.FromArgb(18, 18, 18); }
+            }
+
+            public override Color SeparatorDark
+            {
+                get { return Color.FromArgb(45, 45, 45); }
+            }
+
+            public override Color SeparatorLight
+            {
+                get { return Color.FromArgb(18, 18, 18); }
+            }
         }
     }
 }

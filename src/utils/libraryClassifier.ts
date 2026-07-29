@@ -1,7 +1,7 @@
 export interface ParsedLibraryItem {
   id: string;
   title: string;
-  type: 'movie' | 'series';
+  type: 'movie' | 'series' | 'unknown';
   seriesTitle?: string;
   season?: number;
   episode?: number;
@@ -9,7 +9,7 @@ export interface ParsedLibraryItem {
 }
 
 export function classifyVideoTitle(title: string): {
-  type: 'movie' | 'series';
+  type: 'movie' | 'series' | 'unknown';
   seriesTitle?: string;
   season?: number;
   episode?: number;
@@ -104,9 +104,20 @@ export function classifyVideoTitle(title: string): {
     };
   }
 
-  // Fallback to Movie
+  // Check if it matches movie patterns (year or video quality tags)
+  const yearPattern = /\b(19\d\d|20\d\d)\b/;
+  const qualityPattern = /\b(720p|1080p|2160p|4k|bluray|web-dl|webrip|hdrip|bdrip|hevc|x264|x265|h264|h265|directv)\b/i;
+
+  if (yearPattern.test(cleanTitle) || qualityPattern.test(cleanTitle)) {
+    return {
+      type: 'movie',
+      displayTitle: cleanTitle
+    };
+  }
+
+  // Fallback to Unknown / Local Media
   return {
-    type: 'movie',
+    type: 'unknown',
     displayTitle: cleanTitle
   };
 }

@@ -78,6 +78,17 @@ export const SpeedPopover: React.FC<SpeedPopoverProps> = ({ playbackRate, setPla
         </button>
       ))}
 
+      {/* Invisible bridge to prevent mouseleave on hover gap */}
+      <div style={{
+        position: 'absolute',
+        bottom: '-14px',
+        left: 0,
+        right: 0,
+        height: '14px',
+        background: 'transparent',
+        cursor: 'default'
+      }} />
+
       {/* Downward pointing caret */}
       <div style={{
         position: 'absolute',

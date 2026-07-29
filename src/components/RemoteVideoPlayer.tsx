@@ -201,6 +201,13 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
     file: isFile(rawVideo.file) ? rawVideo.file : undefined
   }), [rawVideo]);
 
+  const isUndetectedLocalMedia = useMemo(() => {
+    if (video.type === 'online_movie' || video.type === 'online_tv' || video.type === 'online_anime') {
+      return false;
+    }
+    return classifyVideoTitle(video.title).type === 'unknown';
+  }, [video.title, video.type]);
+
   const [isPlaying, setIsPlaying] = useState(false);
   const [mediaDetails, setMediaDetails] = useState<MediaDetails | null>(null);
   const [videoLayout, setVideoLayout] = useState({ left: 0, top: 0, width: 0, height: 0 });
@@ -3064,6 +3071,9 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
 
     if (pressedKey === addBookmarkKey) {
       e.preventDefault();
+      if (isUndetectedLocalMedia) {
+        return;
+      }
       if (isLocked) {
         triggerSwitchToast("Controls are Locked");
         return;
@@ -3550,7 +3560,7 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
           totalTimeWatchedRef.current += delta;
 
           // Check if remaining time is below rating threshold (minutes) to show rating prompt
-          if (videoRef.current && duration > 0 && !ratingPromptedRef.current) {
+          if (videoRef.current && duration > 0 && !ratingPromptedRef.current && !isUndetectedLocalMedia) {
             const remaining = duration - videoRef.current.currentTime;
             if (remaining <= (ratingThreshold || 3) * 60 && remaining > 5) {
               setShowRatingPrompt(true);
@@ -4121,7 +4131,7 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
           onError={handleVideoError}
           onEnded={() => {
             scrobbleToTrakt();
-            if (!ratingPromptedRef.current) {
+            if (!ratingPromptedRef.current && !isUndetectedLocalMedia) {
               setShowRatingPrompt(true);
               ratingPromptedRef.current = true;
             }
@@ -4881,107 +4891,111 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
               </div>
 
               <div className="bottom-controls-center-group">
-                <div 
-                  className="popover-wrapper"
-                  onMouseEnter={() => {
-                    if (audioSubTimeoutRef.current) clearTimeout(audioSubTimeoutRef.current);
-                    setShowAudioSubMenu(true);
-                  }}
-                  onMouseLeave={() => {
-                    audioSubTimeoutRef.current = setTimeout(() => {
-                      setShowAudioSubMenu(false);
-                    }, 150);
-                  }}
-                >
-                  <button className="audio-sub-trigger-btn">
-                    <MessageSquare size={18} />
-                    <span>Audio & Subtitles</span>
-                  </button>
-                  
-                  {showAudioSubMenu && (
-                    <AudioSubPopover
-                      audioStreams={audioStreams}
-                      audioTracks={audioTracks}
-                      selectedAudioTrack={selectedAudioTrack}
-                      setSelectedAudioTrack={handleSelectAudioTrack}
-                      setActiveAudioStreamIndex={setActiveAudioStreamIndex}
-                      handleSelectEmbeddedAudio={handleSelectEmbeddedAudio}
-                      customAudioInputRef={customAudioInputRef}
-                      subtitleStreams={subtitleStreams}
-                      subtitleTracks={subtitleTracks}
-                      selectedSubTrack={selectedSubTrack}
-                      setSelectedSubTrack={handleSelectSubTrack}
-                      setActiveSubStreamIndex={setActiveSubStreamIndex}
-                      handleSelectEmbeddedSubtitle={handleSelectEmbeddedSubtitle}
-                      customSubInputRef={customSubInputRef}
-                      currentTime={currentTime}
-                      videoRef={videoRef}
-                      setCurrentTime={setCurrentTime}
-                      setShowAudioSubMenu={setShowAudioSubMenu}
-                      audioSubTimeoutRef={audioSubTimeoutRef}
-                      getLangLabel={getLangLabel}
-                      formatTime={formatTime}
-                      cleanSubtitleText={cleanSubtitleText}
-                      subSettings={subSettings}
-                      onUpdateSubSettings={onUpdateSubSettings}
-                      audioBoost={audioBoost}
-                      setAudioBoost={handleSetAudioBoost}
-                      openSubtitles={openSubtitles}
-                      isOpenSubLoading={isOpenSubLoading}
-                      onDownloadOpenSubtitle={downloadOpenSubtitle}
-                      hasFetchedOpenSubtitles={hasFetchedOpenSubtitles}
-                      onFetchOpenSubtitles={fetchOpenSubtitles}
-                    />
-                  )}
-                </div>
-
-                <div 
-                  className="popover-wrapper"
-                  style={{ marginLeft: '50px' }}
-                  onMouseEnter={() => {
-                    if (bookmarksTimeoutRef.current) clearTimeout(bookmarksTimeoutRef.current);
-                    setShowBookmarksPopover(true);
-                  }}
-                  onMouseLeave={() => {
-                    bookmarksTimeoutRef.current = setTimeout(() => {
-                      setShowBookmarksPopover(false);
-                    }, 150);
-                  }}
-                >
-                  <button 
-                    className="control-btn-bookmark-list" 
-                    onClick={() => setShowBookmarksPopover(prev => !prev)} 
-                    title="Bookmarks"
+                {!isUndetectedLocalMedia && (
+                  <div 
+                    className="popover-wrapper"
+                    onMouseEnter={() => {
+                      if (audioSubTimeoutRef.current) clearTimeout(audioSubTimeoutRef.current);
+                      setShowAudioSubMenu(true);
+                    }}
+                    onMouseLeave={() => {
+                      audioSubTimeoutRef.current = setTimeout(() => {
+                        setShowAudioSubMenu(false);
+                      }, 150);
+                    }}
                   >
-                    <BookmarkIcon size={20} />
-                  </button>
+                    <button className="audio-sub-trigger-btn">
+                      <MessageSquare size={18} />
+                      <span>Audio & Subtitles</span>
+                    </button>
+                    
+                    {showAudioSubMenu && (
+                      <AudioSubPopover
+                        audioStreams={audioStreams}
+                        audioTracks={audioTracks}
+                        selectedAudioTrack={selectedAudioTrack}
+                        setSelectedAudioTrack={handleSelectAudioTrack}
+                        setActiveAudioStreamIndex={setActiveAudioStreamIndex}
+                        handleSelectEmbeddedAudio={handleSelectEmbeddedAudio}
+                        customAudioInputRef={customAudioInputRef}
+                        subtitleStreams={subtitleStreams}
+                        subtitleTracks={subtitleTracks}
+                        selectedSubTrack={selectedSubTrack}
+                        setSelectedSubTrack={handleSelectSubTrack}
+                        setActiveSubStreamIndex={setActiveSubStreamIndex}
+                        handleSelectEmbeddedSubtitle={handleSelectEmbeddedSubtitle}
+                        customSubInputRef={customSubInputRef}
+                        currentTime={currentTime}
+                        videoRef={videoRef}
+                        setCurrentTime={setCurrentTime}
+                        setShowAudioSubMenu={setShowAudioSubMenu}
+                        audioSubTimeoutRef={audioSubTimeoutRef}
+                        getLangLabel={getLangLabel}
+                        formatTime={formatTime}
+                        cleanSubtitleText={cleanSubtitleText}
+                        subSettings={subSettings}
+                        onUpdateSubSettings={onUpdateSubSettings}
+                        audioBoost={audioBoost}
+                        setAudioBoost={handleSetAudioBoost}
+                        openSubtitles={openSubtitles}
+                        isOpenSubLoading={isOpenSubLoading}
+                        onDownloadOpenSubtitle={downloadOpenSubtitle}
+                        hasFetchedOpenSubtitles={hasFetchedOpenSubtitles}
+                        onFetchOpenSubtitles={fetchOpenSubtitles}
+                      />
+                    )}
+                  </div>
+                )}
 
-                  {showBookmarksPopover && (
-                    <BookmarkPanel
-                      bookmarks={bookmarks}
-                      onJump={(time) => {
-                        if (videoRef.current) {
-                          videoRef.current.currentTime = time;
-                          setCurrentTime(time);
-                        }
-                      }}
-                      onEdit={(bm) => {
-                        setEditingBookmark(bm);
-                        setShowAddDialog(true);
+                {!isUndetectedLocalMedia && (
+                  <div 
+                    className="popover-wrapper"
+                    style={{ marginLeft: '50px' }}
+                    onMouseEnter={() => {
+                      if (bookmarksTimeoutRef.current) clearTimeout(bookmarksTimeoutRef.current);
+                      setShowBookmarksPopover(true);
+                    }}
+                    onMouseLeave={() => {
+                      bookmarksTimeoutRef.current = setTimeout(() => {
                         setShowBookmarksPopover(false);
-                      }}
-                      onDelete={handleDeleteBookmark}
-                      onAdd={() => {
-                        if (videoRef.current) {
-                          setEditingBookmark(undefined);
-                          setMarkingStartTime(Math.round(videoRef.current.currentTime));
+                      }, 150);
+                    }}
+                  >
+                    <button 
+                      className="control-btn-bookmark-list" 
+                      onClick={() => setShowBookmarksPopover(prev => !prev)} 
+                      title="Bookmarks"
+                    >
+                      <BookmarkIcon size={20} />
+                    </button>
+
+                    {showBookmarksPopover && (
+                      <BookmarkPanel
+                        bookmarks={bookmarks}
+                        onJump={(time) => {
+                          if (videoRef.current) {
+                            videoRef.current.currentTime = time;
+                            setCurrentTime(time);
+                          }
+                        }}
+                        onEdit={(bm) => {
+                          setEditingBookmark(bm);
+                          setShowAddDialog(true);
                           setShowBookmarksPopover(false);
-                        }
-                      }}
-                      onClose={() => setShowBookmarksPopover(false)}
-                    />
-                  )}
-                </div>
+                        }}
+                        onDelete={handleDeleteBookmark}
+                        onAdd={() => {
+                          if (videoRef.current) {
+                            setEditingBookmark(undefined);
+                            setMarkingStartTime(Math.round(videoRef.current.currentTime));
+                            setShowBookmarksPopover(false);
+                          }
+                        }}
+                        onClose={() => setShowBookmarksPopover(false)}
+                      />
+                    )}
+                  </div>
+                )}
 
               </div>
 
@@ -7459,7 +7473,7 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
             id: 'stats', label: 'Console', icon: <Terminal size={24} />, onClick: () => setShowConsoleOverlay(prev => !prev), disabled: false
           });
         }
-        if (config.audioSubs) {
+        if (config.audioSubs && !isUndetectedLocalMedia) {
           rItems.push({
             id: 'audio', label: 'Audio/Subs', icon: <MessageSquare size={24} />, onClick: () => setShowAudioSubMenu(true), disabled: isLocked
           });
@@ -7469,7 +7483,7 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
             id: 'fullscreen', label: isFullscreen ? 'Exit Fullscreen' : 'Fullscreen', icon: isFullscreen ? <Minimize size={24} /> : <Maximize size={24} />, onClick: toggleFullscreen, disabled: isLocked
           });
         }
-        if (config.bookmark) {
+        if (config.bookmark && !isUndetectedLocalMedia) {
           rItems.push({
             id: 'bookmark', label: 'Bookmark', icon: <BookmarkIcon size={24} />, onClick: () => handleBookmarkAdd(), disabled: isLocked
           });

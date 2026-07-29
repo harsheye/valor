@@ -158,6 +158,11 @@ db.exec(`
     streams TEXT,
     audioTracks TEXT,
     subtitleTracks TEXT,
+    episode INTEGER,
+    season INTEGER,
+    color TEXT,
+    tmdbId INTEGER,
+    hasScrobbledTrakt INTEGER DEFAULT 0,
     PRIMARY KEY (userId, videoId)
   );
 `);
@@ -187,6 +192,26 @@ try {
 }
 try {
   db.exec(`ALTER TABLE history ADD COLUMN subtitleTracks TEXT;`);
+} catch (e) {
+}
+try {
+  db.exec(`ALTER TABLE history ADD COLUMN episode INTEGER;`);
+} catch (e) {
+}
+try {
+  db.exec(`ALTER TABLE history ADD COLUMN season INTEGER;`);
+} catch (e) {
+}
+try {
+  db.exec(`ALTER TABLE history ADD COLUMN color TEXT;`);
+} catch (e) {
+}
+try {
+  db.exec(`ALTER TABLE history ADD COLUMN tmdbId INTEGER;`);
+} catch (e) {
+}
+try {
+  db.exec(`ALTER TABLE history ADD COLUMN hasScrobbledTrakt INTEGER DEFAULT 0;`);
 } catch (e) {
 }
 db.exec(`
@@ -280,18 +305,54 @@ var logFilePath = import_path.default.join(dataDir, "app.log");
 var logStream = import_fs.default.createWriteStream(logFilePath, { flags: "a" });
 var originalLog = console.log;
 var originalError = console.error;
-console.log = (...args2) => {
-  const msg = args2.map((a) => typeof a === "object" ? JSON.stringify(a) : String(a)).join(" ");
-  logStream.write(`[${(/* @__PURE__ */ new Date()).toISOString()}] [INFO] ${msg}
-`);
-  originalLog(...args2);
+var originalWarn = console.warn;
+var originalInfo = console.info;
+var LOG_MODE = process.env.VALOR_LOG_MODE || "release";
+var colors = {
+  info: "\x1B[32m",
+  // Green
+  warn: "\x1B[33m",
+  // Yellow
+  error: "\x1B[31m",
+  // Red
+  reset: "\x1B[0m"
 };
-console.error = (...args2) => {
-  const msg = args2.map((a) => typeof a === "object" ? JSON.stringify(a) : String(a)).join(" ");
-  logStream.write(`[${(/* @__PURE__ */ new Date()).toISOString()}] [ERROR] ${msg}
+function minimizeMessage(msg) {
+  if (typeof msg !== "string") return msg;
+  if (msg.includes("[FFmpeg Command] ffmpeg")) {
+    const match = msg.match(/-ss\s+([^\s]+)\s+-i\s+([^\s]+)\s+-t\s+([^\s]+)\s+-map\s+([^\s]+).*\s+([^\s]+)$/);
+    if (match) {
+      const [_, ss, input, t, map, output] = match;
+      const getBasename = (p) => p.split(/[/\\]/).pop() || p;
+      return `[FFmpeg Command] ffmpeg -ss ${ss} -i ${getBasename(input)} -t ${t} -map ${map} -> ${getBasename(output)} (minimized)`;
+    }
+  }
+  return msg;
+}
+var writeToLogFile = (level, msg) => {
+  try {
+    logStream.write(`[${(/* @__PURE__ */ new Date()).toISOString()}] [${level}] ${msg}
 `);
-  originalError(...args2);
+  } catch (err) {
+  }
 };
+var handleLog = (level, originalFn, colorCode, args2) => {
+  const rawMsg = args2.map((a) => typeof a === "object" ? JSON.stringify(a) : String(a)).join(" ");
+  const minimizedMsg = minimizeMessage(rawMsg);
+  writeToLogFile(level, minimizedMsg);
+  if (LOG_MODE === "release") {
+    const isErrorOrWarn = level === "ERROR" || level === "WARN";
+    const isHighLevel = rawMsg.startsWith("[Server] Valor") || rawMsg.startsWith("[Server] Running") || rawMsg.includes("[ALERT]") || rawMsg.startsWith("[VLC]");
+    if (!isErrorOrWarn && !isHighLevel) {
+      return;
+    }
+  }
+  originalFn(`${colorCode}[${level}] ${minimizedMsg}${colors.reset}`);
+};
+console.log = (...args2) => handleLog("INFO", originalLog, colors.info, args2);
+console.info = (...args2) => handleLog("INFO", originalInfo, colors.info, args2);
+console.warn = (...args2) => handleLog("WARN", originalWarn, colors.warn, args2);
+console.error = (...args2) => handleLog("ERROR", originalError, colors.error, args2);
 var PORT_SERVICE = 5e4;
 var PORT_BACKEND = 50001;
 var getJsonBody = (req) => new Promise((resolve) => {
@@ -840,6 +901,11 @@ var backendServer = import_http.default.createServer((req, res) => {
               streams: row.streams ? JSON.parse(row.streams) : [],
               audioTracks: row.audioTracks ? JSON.parse(row.audioTracks) : [],
               subtitleTracks: row.subtitleTracks ? JSON.parse(row.subtitleTracks) : [],
+              episode: row.episode,
+              season: row.season,
+              color: row.color,
+              tmdbId: row.tmdbId,
+              hasScrobbledTrakt: row.hasScrobbledTrakt === 1,
               bookmarks: videoBookmarks
             };
           });
@@ -886,8 +952,8 @@ var backendServer = import_http.default.createServer((req, res) => {
             deleteBookmarks.run(userId);
             const insertHistory = db.prepare(`
               INSERT OR REPLACE INTO history 
-              (userId, videoId, title, url, type, fileName, duration, currentTime, lastPlayedDate, totalTimeWatched, rating, timeToFinish, sessions, localFilePath, playedDates, format, streams, audioTracks, subtitleTracks)
-              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+              (userId, videoId, title, url, type, fileName, duration, currentTime, lastPlayedDate, totalTimeWatched, rating, timeToFinish, sessions, localFilePath, playedDates, format, streams, audioTracks, subtitleTracks, episode, season, color, tmdbId, hasScrobbledTrakt)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             `);
             const insertBookmark = db.prepare(`
               INSERT OR REPLACE INTO bookmarks
@@ -915,7 +981,12 @@ var backendServer = import_http.default.createServer((req, res) => {
                   video.format || null,
                   video.streams ? JSON.stringify(video.streams) : null,
                   video.audioTracks ? JSON.stringify(video.audioTracks) : null,
-                  video.subtitleTracks ? JSON.stringify(video.subtitleTracks) : null
+                  video.subtitleTracks ? JSON.stringify(video.subtitleTracks) : null,
+                  video.episode !== void 0 && video.episode !== null ? video.episode : null,
+                  video.season !== void 0 && video.season !== null ? video.season : null,
+                  video.color || null,
+                  video.tmdbId !== void 0 && video.tmdbId !== null ? video.tmdbId : null,
+                  video.hasScrobbledTrakt ? 1 : 0
                 );
                 if (video.bookmarks && Array.isArray(video.bookmarks)) {
                   for (const bm of video.bookmarks) {
@@ -1144,6 +1215,11 @@ var backendServer = import_http.default.createServer((req, res) => {
           streams: row.streams ? JSON.parse(row.streams) : [],
           audioTracks: row.audioTracks ? JSON.parse(row.audioTracks) : [],
           subtitleTracks: row.subtitleTracks ? JSON.parse(row.subtitleTracks) : [],
+          episode: row.episode,
+          season: row.season,
+          color: row.color,
+          tmdbId: row.tmdbId,
+          hasScrobbledTrakt: row.hasScrobbledTrakt === 1,
           bookmarks: videoBookmarks
         };
       });
@@ -1242,8 +1318,8 @@ var backendServer = import_http.default.createServer((req, res) => {
         insertSettings.run(userId, JSON.stringify(settings));
         const insertHistory = db.prepare(`
           INSERT OR REPLACE INTO history 
-          (userId, videoId, title, url, type, fileName, duration, currentTime, lastPlayedDate, totalTimeWatched, rating, timeToFinish, sessions, localFilePath, playedDates, format, streams, audioTracks, subtitleTracks)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          (userId, videoId, title, url, type, fileName, duration, currentTime, lastPlayedDate, totalTimeWatched, rating, timeToFinish, sessions, localFilePath, playedDates, format, streams, audioTracks, subtitleTracks, episode, season, color, tmdbId, hasScrobbledTrakt)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `);
         const insertBookmark = db.prepare(`
           INSERT OR REPLACE INTO bookmarks
@@ -1270,7 +1346,12 @@ var backendServer = import_http.default.createServer((req, res) => {
             video.format || null,
             video.streams ? JSON.stringify(video.streams) : null,
             video.audioTracks ? JSON.stringify(video.audioTracks) : null,
-            video.subtitleTracks ? JSON.stringify(video.subtitleTracks) : null
+            video.subtitleTracks ? JSON.stringify(video.subtitleTracks) : null,
+            video.episode !== void 0 && video.episode !== null ? video.episode : null,
+            video.season !== void 0 && video.season !== null ? video.season : null,
+            video.color || null,
+            video.tmdbId !== void 0 && video.tmdbId !== null ? video.tmdbId : null,
+            video.hasScrobbledTrakt ? 1 : 0
           );
           if (video.bookmarks && Array.isArray(video.bookmarks)) {
             for (const bm of video.bookmarks) {
@@ -1354,8 +1435,8 @@ var backendServer = import_http.default.createServer((req, res) => {
             deleteBookmarks.run(userId);
             const insertHistory = db.prepare(`
               INSERT OR REPLACE INTO history 
-              (userId, videoId, title, url, type, fileName, duration, currentTime, lastPlayedDate, totalTimeWatched, rating, timeToFinish, sessions, localFilePath, playedDates, format, streams, audioTracks, subtitleTracks)
-              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+              (userId, videoId, title, url, type, fileName, duration, currentTime, lastPlayedDate, totalTimeWatched, rating, timeToFinish, sessions, localFilePath, playedDates, format, streams, audioTracks, subtitleTracks, episode, season, color, tmdbId, hasScrobbledTrakt)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             `);
             const insertBookmark = db.prepare(`
               INSERT OR REPLACE INTO bookmarks
@@ -1383,7 +1464,12 @@ var backendServer = import_http.default.createServer((req, res) => {
                   video.format || null,
                   video.streams ? JSON.stringify(video.streams) : null,
                   video.audioTracks ? JSON.stringify(video.audioTracks) : null,
-                  video.subtitleTracks ? JSON.stringify(video.subtitleTracks) : null
+                  video.subtitleTracks ? JSON.stringify(video.subtitleTracks) : null,
+                  video.episode !== void 0 && video.episode !== null ? video.episode : null,
+                  video.season !== void 0 && video.season !== null ? video.season : null,
+                  video.color || null,
+                  video.tmdbId !== void 0 && video.tmdbId !== null ? video.tmdbId : null,
+                  video.hasScrobbledTrakt ? 1 : 0
                 );
                 if (video.bookmarks && Array.isArray(video.bookmarks)) {
                   for (const bm of video.bookmarks) {
@@ -1467,6 +1553,11 @@ var backendServer = import_http.default.createServer((req, res) => {
               streams: row.streams ? JSON.parse(row.streams) : [],
               audioTracks: row.audioTracks ? JSON.parse(row.audioTracks) : [],
               subtitleTracks: row.subtitleTracks ? JSON.parse(row.subtitleTracks) : [],
+              episode: row.episode,
+              season: row.season,
+              color: row.color,
+              tmdbId: row.tmdbId,
+              hasScrobbledTrakt: row.hasScrobbledTrakt === 1,
               bookmarks: videoBookmarks
             };
           });
