@@ -18,10 +18,10 @@ export const SpeedPopover: React.FC<SpeedPopoverProps> = ({ playbackRate, setPla
       right: '50%',
       transform: 'translateX(50%)',
       marginBottom: '12px',
-      background: 'rgba(20, 25, 30, 0.75)',
+      background: 'var(--dropdown-bg, rgba(20, 25, 30, 0.75))',
       backdropFilter: 'blur(16px)',
       WebkitBackdropFilter: 'blur(16px)',
-      border: '1px solid rgba(255, 255, 255, 0.1)',
+      border: '1px solid var(--dropdown-border, rgba(255, 255, 255, 0.1))',
       borderRadius: '12px',
       padding: '12px 0',
       width: '160px',
@@ -34,8 +34,8 @@ export const SpeedPopover: React.FC<SpeedPopoverProps> = ({ playbackRate, setPla
         padding: '0 16px 8px 16px',
         fontSize: '0.9rem',
         fontWeight: '600',
-        color: 'rgba(255,255,255,0.9)',
-        borderBottom: '1px solid rgba(255,255,255,0.05)',
+        color: 'var(--text-primary, rgba(255,255,255,0.9))',
+        borderBottom: '1px solid var(--border-subtle, rgba(255,255,255,0.05))',
         marginBottom: '4px',
         textAlign: 'center'
       }}>
@@ -53,10 +53,10 @@ export const SpeedPopover: React.FC<SpeedPopoverProps> = ({ playbackRate, setPla
             onClose();
           }}
           style={{
-            background: playbackRate === speed ? 'rgba(255,255,255,0.1)' : 'transparent',
+            background: playbackRate === speed ? 'var(--border-subtle, rgba(255,255,255,0.1))' : 'transparent',
             border: 'none',
             padding: '10px 16px',
-            color: '#fff',
+            color: 'var(--text-secondary, #fff)',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
@@ -65,8 +65,8 @@ export const SpeedPopover: React.FC<SpeedPopoverProps> = ({ playbackRate, setPla
             transition: 'background 0.2s',
             position: 'relative'
           }}
-          onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(255,255,255,0.1)'}
-          onMouseLeave={(e) => e.currentTarget.style.background = playbackRate === speed ? 'rgba(255,255,255,0.1)' : 'transparent'}
+          onMouseEnter={(e) => e.currentTarget.style.background = 'var(--surface-hover, rgba(255,255,255,0.1))'}
+          onMouseLeave={(e) => e.currentTarget.style.background = playbackRate === speed ? 'var(--border-subtle, rgba(255,255,255,0.1))' : 'transparent'}
         >
           {playbackRate === speed && (
             <Check size={16} style={{ position: 'absolute', left: '16px' }} />
@@ -97,9 +97,9 @@ export const SpeedPopover: React.FC<SpeedPopoverProps> = ({ playbackRate, setPla
         transform: 'translateX(-50%) rotate(45deg)',
         width: '12px',
         height: '12px',
-        background: 'rgba(20, 25, 30, 0.75)',
-        borderRight: '1px solid rgba(255, 255, 255, 0.1)',
-        borderBottom: '1px solid rgba(255, 255, 255, 0.1)',
+        background: 'var(--dropdown-bg, rgba(20, 25, 30, 0.75))',
+        borderRight: '1px solid var(--dropdown-border, rgba(255, 255, 255, 0.1))',
+        borderBottom: '1px solid var(--dropdown-border, rgba(255, 255, 255, 0.1))',
         zIndex: -1
       }} />
     </div>

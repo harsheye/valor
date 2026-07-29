@@ -291,7 +291,7 @@ const defaultSettings = {
   defaultSub: 'ENG',
   historyLimit: 10 as number | 'Infinite',
   historySaveInterval: 5 as number,
-  theme: 'dark' as 'dark' | 'black-and-white' | 'light',
+  theme: 'dark' as 'dark' | 'black-and-white' | 'light' | 'garden' | 'black' | 'luxury' | 'dim' | 'abyss' | 'aqua' | 'valentine',
   hideUIOverlays: false,
   hideVideoName: false,
   uiHideTimeout: 1.5,
@@ -3197,6 +3197,7 @@ function App() {
                   isInstantlyPlayable={isInstantlyPlayable}
                   parseDurationToSeconds={parseDurationToSeconds}
                   formatTime={formatTime}
+                  theme={settings.theme}
                 />
               )}
 

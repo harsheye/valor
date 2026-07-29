@@ -75,6 +75,8 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
   renderMockPreviewButton,
   setShowResetConfirm,
 }) => {
+  const isMonochrome = settings.theme === 'black-and-white' || settings.theme === 'oled';
+
   return (
     <div className="workspace-panel-wrapper">
       <div className="glass-panel workspace-panel settings-panel" style={{ display: 'flex', flexDirection: 'column', height: '100%', position: 'relative' }}>
@@ -161,9 +163,16 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                         value={settings.theme || 'dark'} 
                         onChange={(val) => handleDefaultLangChange('theme' as any, val)}
                         options={[
-                          { value: 'dark', label: '🌙 Dark Mode (Default)' },
-                          { value: 'black-and-white', label: '🏁 Black & White (Monochrome Noir)' },
-                          { value: 'light', label: '☀️ Light Mode' }
+                          { value: 'dark', label: '🍿 Cinematic Dark (Default)' },
+                          { value: 'black-and-white', label: '🏁 Monochrome Noir' },
+                          { value: 'light', label: '🧪 Custom Teal' },
+                          { value: 'garden', label: '🏡 Cozy Garden' },
+                          { value: 'black', label: '🖤 OLED Black' },
+                          { value: 'luxury', label: '👑 Luxury Gold' },
+                          { value: 'dim', label: '🌑 Dim Slate' },
+                          { value: 'abyss', label: '🌌 Deep Abyss' },
+                          { value: 'aqua', label: '🌊 Aqua Ocean' },
+                          { value: 'valentine', label: '💖 Sweet Valentine' }
                         ]}
                       />
                     </div>
@@ -229,8 +238,8 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                         style={{ 
                           padding: '8px 16px', 
                           fontSize: '0.85rem', 
-                          background: '#e50914', 
-                          color: '#fff', 
+                          background: isMonochrome ? '#ffffff' : '#e50914', 
+                          color: isMonochrome ? '#000000' : '#fff', 
                           border: 'none', 
                           borderRadius: '4px', 
                           cursor: 'pointer',
@@ -1060,14 +1069,14 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                                   fontWeight: 600,
                                   borderRadius: '6px',
                                   cursor: 'pointer',
-                                  background: '#e50914',
-                                  color: '#fff',
+                                  background: isMonochrome ? '#ffffff' : '#e50914',
+                                  color: isMonochrome ? '#000000' : '#fff',
                                   border: 'none',
                                   transition: 'background 0.2s',
                                   fontFamily: 'Outfit, sans-serif'
                                 }}
-                                onMouseEnter={e => e.currentTarget.style.background = '#ff0914'}
-                                onMouseLeave={e => e.currentTarget.style.background = '#e50914'}
+                                onMouseEnter={e => e.currentTarget.style.background = isMonochrome ? '#e5e5e5' : '#ff0914'}
+                                onMouseLeave={e => e.currentTarget.style.background = isMonochrome ? '#ffffff' : '#e50914'}
                               >
                                 <UserPlus size={14} />
                                 <span>Create Server Profile & Sync</span>
@@ -1543,8 +1552,8 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                           style={{
                             padding: '0.4rem 1rem',
                             fontSize: '0.8rem',
-                            background: !previewExpanded ? '#e50914' : 'rgba(255,255,255,0.08)',
-                            color: '#fff',
+                            background: !previewExpanded ? (isMonochrome ? '#ffffff' : '#e50914') : 'rgba(255,255,255,0.08)',
+                            color: !previewExpanded ? (isMonochrome ? '#000000' : '#fff') : '#fff',
                             border: 'none',
                             borderRadius: '4px',
                             cursor: 'pointer',
@@ -1559,8 +1568,8 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                           style={{
                             padding: '0.4rem 1rem',
                             fontSize: '0.8rem',
-                            background: previewExpanded ? '#e50914' : 'rgba(255,255,255,0.08)',
-                            color: '#fff',
+                            background: previewExpanded ? (isMonochrome ? '#ffffff' : '#e50914') : 'rgba(255,255,255,0.08)',
+                            color: previewExpanded ? (isMonochrome ? '#000000' : '#fff') : '#fff',
                             border: 'none',
                             borderRadius: '4px',
                             cursor: 'pointer',
@@ -1798,11 +1807,11 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                                   width: '16px',
                                   height: '16px',
                                   borderRadius: '50%',
-                                  border: isSel ? '2px solid #e50914' : '2px dashed rgba(255,255,255,0.3)',
-                                  background: isSel ? 'rgba(229, 9, 20, 0.4)' : 'transparent',
+                                  border: isSel ? (isMonochrome ? '2px solid #ffffff' : '2px solid #e50914') : '2px dashed rgba(255,255,255,0.3)',
+                                  background: isSel ? (isMonochrome ? 'rgba(255, 255, 255, 0.4)' : 'rgba(229, 9, 20, 0.4)') : 'transparent',
                                   zIndex: 20,
                                   transition: 'all 0.2s ease',
-                                  boxShadow: isSel ? '0 0 10px rgba(229, 9, 20, 0.6)' : 'none'
+                                  boxShadow: isSel ? (isMonochrome ? '0 0 10px rgba(255, 255, 255, 0.6)' : '0 0 10px rgba(229, 9, 20, 0.6)') : 'none'
                                 }}
                               />
                             );

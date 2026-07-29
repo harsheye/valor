@@ -20,6 +20,7 @@ interface HomePageProps {
   isInstantlyPlayable: (video: VideoItem) => boolean;
   parseDurationToSeconds: (duration: string | number | undefined) => number;
   formatTime: (secs: number) => string;
+  theme?: string;
 }
 
 export const HomePage: React.FC<HomePageProps> = ({
@@ -39,20 +40,27 @@ export const HomePage: React.FC<HomePageProps> = ({
   isInstantlyPlayable,
   parseDurationToSeconds,
   formatTime,
+  theme,
 }) => {
   const continueWatchingList = videos.filter(v => v.currentTime && v.currentTime > 2 && (typeof v.duration !== 'number' || v.currentTime < v.duration - 5));
   const primaryContinue = continueWatchingList.length > 0 ? continueWatchingList[0] : (videos.length > 0 ? videos[0] : null);
 
   return (
-    <div className="workspace-panel-wrapper">
+    <div style={{ padding: '2rem', display: 'flex', flexDirection: 'column', gap: '2rem', boxSizing: 'border-box', width: '100%' }}>
       {primaryContinue && (
-        <div className="continue-watching-section animate-fade-in" style={{ marginBottom: '1.5rem', width: '100%' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', width: '100%' }}>
+          {/* Section Header */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', paddingBottom: '0.75rem', borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
+            <Play size={22} color="var(--accent-color)" />
+            <h2 style={{ fontSize: '1.25rem', fontWeight: 800, margin: 0, color: '#ffffff' }}>Continue Watching</h2>
+          </div>
+
           {/* Primary Red Banner (Full-Width, Clickable Container, Red Gradient, Big Resume Button) */}
           <div 
             onClick={() => handlePlayVideo(primaryContinue)}
             style={{ 
               width: '100%', 
-              background: 'linear-gradient(135deg, #e50914 0%, #9b040c 100%)', 
+              background: 'var(--banner-bg, linear-gradient(135deg, #e50914 0%, #9b040c 100%))', 
               borderRadius: '12px', 
               padding: '1.5rem', 
               marginBottom: '0',
@@ -60,7 +68,7 @@ export const HomePage: React.FC<HomePageProps> = ({
               justifyContent: 'space-between',
               alignItems: 'center',
               cursor: 'pointer',
-              boxShadow: '0 8px 24px rgba(229, 9, 20, 0.25)',
+              boxShadow: 'var(--banner-shadow, 0 8px 24px rgba(229, 9, 20, 0.25))',
               border: '1px solid rgba(255, 255, 255, 0.1)',
               transition: 'transform 0.2s, box-shadow 0.2s',
               boxSizing: 'border-box'
@@ -105,13 +113,13 @@ export const HomePage: React.FC<HomePageProps> = ({
             <button 
               className="btn btn-primary" 
               style={{ 
-                background: '#ffffff', 
-                color: '#e50914', 
+                background: 'var(--play-btn-bg, #ffffff)', 
+                color: 'var(--play-btn-text, #e50914)', 
                 border: 'none',
                 padding: '0.65rem 1.5rem',
                 fontSize: '0.88rem',
                 fontWeight: 700,
-                borderRadius: '8px',
+                borderRadius: 'var(--btn-border-radius, 8px)',
                 display: 'flex',
                 alignItems: 'center',
                 gap: '8px',
@@ -122,12 +130,12 @@ export const HomePage: React.FC<HomePageProps> = ({
             >
               {isInstantlyPlayable(primaryContinue) ? (
                 <>
-                  <Play size={14} fill="#e50914" stroke="#e50914" />
+                  <Play size={14} fill="currentColor" stroke="currentColor" />
                   <span>Resume Playback</span>
                 </>
               ) : (
                 <>
-                  <UploadCloud size={14} stroke="#e50914" />
+                  <UploadCloud size={14} stroke="currentColor" />
                   <span>Select Media</span>
                 </>
               )}
@@ -138,7 +146,7 @@ export const HomePage: React.FC<HomePageProps> = ({
       <div className="glass-panel workspace-panel">
         {/* Select Media Section Header */}
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '1.25rem', paddingBottom: '0.75rem', borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
-          <UploadCloud size={22} color="#e50914" />
+          <UploadCloud size={22} color="var(--accent-color)" />
           <h2 style={{ fontSize: '1.25rem', fontWeight: 800, margin: 0, color: '#ffffff' }}>Select Media</h2>
         </div>
 
@@ -196,7 +204,7 @@ export const HomePage: React.FC<HomePageProps> = ({
                 required
               />
               <button type="submit" className="btn btn-primary inline-url-btn" title="Play Stream">
-                <Play size={14} fill="white" />
+                <Play size={14} fill="currentColor" stroke="none" />
                 <span>Play</span>
               </button>
             </div>

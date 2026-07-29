@@ -128,7 +128,7 @@ a:hover {
 
 .btn-primary {
   background-color: var(--accent-color);
-  color: #ffffff;
+  color: var(--btn-text-color, #ffffff);
 }
 
 .btn-primary:hover {
@@ -4402,6 +4402,7 @@ a:hover {
   color: #161616;
   border-color: #ffffff;
 }
+
 
 
 

@@ -122,17 +122,17 @@ const OdometerClock: React.FC<{ date: Date }> = ({ date }) => {
 
   return (
     <div className="odo-clock-container">
-      <span className="odo-hours-group" style={{ color: '#e50914', display: 'inline-flex' }}>
+      <span className="odo-hours-group" style={{ color: 'var(--player-accent, #e50914)', display: 'inline-flex' }}>
         <OdometerDigit val={hh[0]} />
         <OdometerDigit val={hh[1]} />
       </span>
-      <span className="odo-separator" style={{ color: 'rgba(255, 255, 255, 0.6)' }}>:</span>
-      <span className="odo-minutes-group" style={{ color: '#ffffff', display: 'inline-flex' }}>
+      <span className="odo-separator" style={{ color: 'var(--text-secondary, rgba(255, 255, 255, 0.6))' }}>:</span>
+      <span className="odo-minutes-group" style={{ color: 'var(--text-primary, #ffffff)', display: 'inline-flex' }}>
         <OdometerDigit val={mm[0]} />
         <OdometerDigit val={mm[1]} />
       </span>
-      <span className="odo-separator" style={{ color: 'rgba(255, 255, 255, 0.6)' }}>:</span>
-      <span className="odo-seconds-group" style={{ color: '#ffffff', display: 'inline-flex' }}>
+      <span className="odo-separator" style={{ color: 'var(--text-secondary, rgba(255, 255, 255, 0.6))' }}>:</span>
+      <span className="odo-seconds-group" style={{ color: 'var(--text-primary, #ffffff)', display: 'inline-flex' }}>
         <OdometerDigit val={ss[0]} />
         <OdometerDigit val={ss[1]} />
       </span>
@@ -4266,7 +4266,7 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
               margin: 0, 
               fontSize: '2.8rem', 
               fontWeight: 800, 
-              color: '#fff',
+              color: 'var(--text-primary, #fff)',
               fontFamily: "'Outfit', 'Inter', sans-serif",
               letterSpacing: '-0.02em',
               lineHeight: '1.1'
@@ -4303,7 +4303,7 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
               margin: '2px 0 0 0', 
               fontSize: '1.2rem', 
               fontWeight: 700, 
-              color: '#fff',
+              color: 'var(--text-primary, #fff)',
               fontFamily: "'Inter', sans-serif"
             }}>
               {mediaDetails.episodeTitle}
@@ -5023,8 +5023,8 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
                     }}
                     className="marking-hud-button-controls marking-hud-button-desktop"
                     style={{
-                      background: '#e50914',
-                      color: '#ffffff',
+                      background: 'var(--player-accent, #e50914)',
+                      color: 'var(--text-primary, #ffffff)',
                       border: 'none',
                       borderRadius: '20px',
                       padding: '6px 14px',
@@ -5066,7 +5066,7 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
                     style={{
                       background: 'none',
                       border: 'none',
-                      color: '#fff',
+                      color: 'var(--text-primary, #fff)',
                       cursor: 'pointer',
                       display: 'flex',
                       alignItems: 'center',
@@ -5100,7 +5100,7 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
                   style={{
                     background: 'none',
                     border: 'none',
-                    color: '#fff',
+                    color: 'var(--text-primary, #fff)',
                     cursor: 'pointer',
                     display: 'flex',
                     alignItems: 'center',
@@ -5163,8 +5163,8 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
             className="settings-modal-card animate-slide-in-right" 
             onClick={(e) => e.stopPropagation()}
             style={{
-              background: 'rgba(18, 18, 18, 0.96)',
-              border: '1px solid rgba(255, 255, 255, 0.1)',
+              background: 'var(--dropdown-bg, rgba(18, 18, 18, 0.96))',
+              border: '1px solid var(--dropdown-border, rgba(255, 255, 255, 0.1))',
               borderRight: 'none',
               borderRadius: '16px 0 0 16px',
               padding: '1.25rem 1rem',
@@ -5178,15 +5178,15 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
             }}
           >
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <h3 style={{ margin: 0, fontSize: '1rem', fontWeight: 600, color: '#ffffff' }}>UI Settings</h3>
+              <h3 style={{ margin: 0, fontSize: '1rem', fontWeight: 600, color: 'var(--text-primary, #ffffff)' }}>UI Settings</h3>
               <button 
                 onClick={() => {
                   setShowSettingsPanel(false);
                   setIsSettingsExpanded(false);
                 }}
-                style={{ background: 'none', border: 'none', color: 'rgba(255, 255, 255, 0.6)', cursor: 'pointer', padding: '4px', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'color 0.15s ease' }}
-                onMouseEnter={(e) => e.currentTarget.style.color = '#fff'}
-                onMouseLeave={(e) => e.currentTarget.style.color = 'rgba(255, 255, 255, 0.6)'}
+                style={{ background: 'none', border: 'none', color: 'var(--text-secondary, rgba(255, 255, 255, 0.6))', cursor: 'pointer', padding: '4px', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'color 0.15s ease' }}
+                onMouseEnter={(e) => e.currentTarget.style.color = 'var(--text-primary)'}
+                onMouseLeave={(e) => e.currentTarget.style.color = 'var(--text-secondary)'}
               >
                 <X size={18} />
               </button>
@@ -5219,9 +5219,9 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
                     title="Toggle Esports Live Overlay"
                     className="settings-icon-toggle"
                     style={{
-                      background: vctOverlayEnabled ? 'rgba(46, 204, 113, 0.2)' : 'rgba(255, 255, 255, 0.05)',
-                      border: `1px solid ${vctOverlayEnabled ? 'rgba(46, 204, 113, 0.5)' : 'rgba(255, 255, 255, 0.1)'}`,
-                      color: vctOverlayEnabled ? '#2ecc71' : 'rgba(255, 255, 255, 0.8)',
+                      background: vctOverlayEnabled ? 'rgba(46, 204, 113, 0.2)' : 'var(--border-subtle, rgba(255, 255, 255, 0.05))',
+                      border: `1px solid ${vctOverlayEnabled ? 'rgba(46, 204, 113, 0.5)' : 'var(--border-color, rgba(255, 255, 255, 0.1))'}`,
+                      color: vctOverlayEnabled ? '#2ecc71' : 'var(--text-secondary, rgba(255, 255, 255, 0.8))',
                       borderRadius: '12px',
                       padding: '8px',
                       display: 'flex',
@@ -5240,9 +5240,9 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
                     title="Show More Settings"
                     className="settings-icon-toggle"
                     style={{
-                      background: 'rgba(255, 255, 255, 0.05)',
-                      border: '1px solid rgba(255, 255, 255, 0.1)',
-                      color: 'rgba(255, 255, 255, 0.8)',
+                      background: 'var(--border-subtle, rgba(255, 255, 255, 0.05))',
+                      border: '1px solid var(--dropdown-border, rgba(255, 255, 255, 0.1))',
+                      color: 'var(--text-secondary, rgba(255, 255, 255, 0.8))',
                       borderRadius: '12px',
                       padding: '8px',
                       display: 'flex',
@@ -5270,9 +5270,9 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
                     title="Show Less Settings"
                     className="settings-icon-toggle"
                     style={{
-                      background: 'rgba(255, 255, 255, 0.05)',
-                      border: '1px solid rgba(255, 255, 255, 0.1)',
-                      color: 'rgba(255, 255, 255, 0.8)',
+                      background: 'var(--border-subtle, rgba(255, 255, 255, 0.05))',
+                      border: '1px solid var(--dropdown-border, rgba(255, 255, 255, 0.1))',
+                      color: 'var(--text-secondary, rgba(255, 255, 255, 0.8))',
                       borderRadius: '12px',
                       padding: '8px',
                       display: 'flex',
@@ -5338,8 +5338,8 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
             position: 'absolute',
             bottom: controlsVisible ? '120px' : '45px',
             right: '1.5rem',
-            background: '#e50914',
-            color: '#ffffff',
+            background: 'var(--player-accent, #e50914)',
+            color: 'var(--text-primary, #ffffff)',
             border: 'none',
             borderRadius: '24px',
             padding: '10px 20px',
@@ -5487,7 +5487,7 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
-            color: '#fff',
+            color: 'var(--text-primary, #fff)',
             cursor: 'pointer',
             opacity: 0.3,
             transition: 'opacity 0.2s, background 0.2s, transform 0.1s'
@@ -5590,7 +5590,7 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
           bottom: 0;
           left: 0;
           height: 3px;
-          background: #e50914;
+          background: var(--player-accent, #e50914);
           animation: skipProgressPremium 7s linear forwards;
         }
 
@@ -5598,7 +5598,7 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
           position: fixed;
           inset: 0;
           z-index: 500;
-          background-color: #000000;
+          background-color: var(--player-bg, #000000);
           overflow: hidden;
           user-select: none;
         }
@@ -5625,7 +5625,7 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
         }
         .top-overlay-clean {
           top: 0;
-          background: linear-gradient(to bottom, rgba(0,0,0,0.85) 0%, rgba(0,0,0,0.4) 60%, transparent 100%);
+          background: var(--player-overlay-gradient-top, linear-gradient(to bottom, rgba(0,0,0,0.85) 0%, rgba(0,0,0,0.4) 60%, transparent 100%));
           padding: 2.5rem 3.5rem;
           display: flex;
           align-items: center;
@@ -5636,7 +5636,7 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
         .top-title-clean {
           font-size: 1.3rem;
           font-weight: 500;
-          color: white;
+          color: var(--text-primary, white);
           margin: 0;
           text-align: center;
           white-space: nowrap;
@@ -5665,7 +5665,7 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
           z-index: 30;
         }
         .timeline-bookmark-dot:not(.intro-dot):not(.outro-dot):hover {
-          background-color: #e50914 !important;
+          background-color: var(--player-accent, #e50914) !important;
         }
         .timeline-bookmark-dot.intro-dot {
           background-color: #3b82f6;
@@ -5699,7 +5699,7 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
           font-weight: 600;
         }
         .timeline-bookmark-tooltip .tooltip-time {
-          color: rgba(255, 255, 255, 0.6);
+          color: var(--text-secondary, rgba(255, 255, 255, 0.6));
         }
         .timeline-bookmark-dot:hover .timeline-bookmark-tooltip,
         .timeline-bookmark-range:hover .timeline-bookmark-tooltip {
@@ -5741,16 +5741,16 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
           justify-content: center;
           background: rgba(255, 255, 255, 0.05);
           border: 1px solid rgba(255, 255, 255, 0.08);
-          color: rgba(255, 255, 255, 0.6);
+          color: var(--text-secondary, rgba(255, 255, 255, 0.6));
           border-radius: 12px;
           cursor: pointer;
           transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
           outline: none;
         }
         .settings-icon-toggle:hover:not(:disabled):not(.disabled) {
-          background: rgba(255, 255, 255, 0.12);
-          color: #ffffff;
-          border-color: rgba(255, 255, 255, 0.2);
+          background: var(--surface-hover, rgba(255, 255, 255, 0.12));
+          color: var(--text-primary, #ffffff);
+          border-color: var(--border-color, rgba(255, 255, 255, 0.2));
           transform: translateY(-2px);
         }
         .settings-icon-toggle.active, .settings-icon-toggle.active-blue {
@@ -5822,7 +5822,7 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
           transform: translateX(18px);
         }
         .drawer-add-btn {
-          background: #e50914;
+          background: var(--player-accent, #e50914);
           border: none;
           color: #ffffff;
           padding: 4px 10px;
@@ -5836,7 +5836,7 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
           background: #b80710;
         }
         .no-bookmarks-text {
-          color: rgba(255, 255, 255, 0.4);
+          color: var(--text-muted, rgba(255, 255, 255, 0.4));
           font-size: 0.85rem;
           font-style: italic;
           margin: 0;
@@ -5881,7 +5881,7 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
           padding: 2px 7px;
           border-radius: 4px;
           background: rgba(255, 255, 255, 0.1);
-          color: rgba(255, 255, 255, 0.7);
+          color: var(--text-secondary, rgba(255, 255, 255, 0.7));
           text-transform: uppercase;
           letter-spacing: 0.03em;
           white-space: nowrap;
@@ -5906,7 +5906,7 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
           font-weight: 500;
         }
         .bookmark-item-time {
-          color: rgba(255, 255, 255, 0.45);
+          color: var(--text-muted, rgba(255, 255, 255, 0.45));
           font-size: 0.75rem;
           font-family: 'JetBrains Mono', 'Fira Code', monospace;
           font-variant-numeric: tabular-nums;
@@ -6094,7 +6094,7 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
         .cast-btn, .close-btn {
           background: none;
           border: none;
-          color: white;
+          color: var(--text-primary, white);
           cursor: pointer;
           padding: 6px;
           display: flex;
@@ -6136,7 +6136,7 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
         .rating-close {
           background: none;
           border: none;
-          color: rgba(255,255,255,0.4);
+          color: var(--text-muted, rgba(255, 255, 255, 0.4));
           cursor: pointer;
           padding: 2px;
           display: flex;
@@ -6197,7 +6197,7 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
 
         .bottom-overlay {
           bottom: 0;
-          background: linear-gradient(to top, rgba(0,0,0,0.85) 0%, rgba(0,0,0,0.4) 60%, transparent 100%);
+          background: var(--player-overlay-gradient-bottom, linear-gradient(to top, rgba(0,0,0,0.85) 0%, rgba(0,0,0,0.4) 60%, transparent 100%));
           padding: 2.5rem 3.5rem;
           display: flex;
           flex-direction: column;
@@ -6321,7 +6321,7 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
           position: absolute;
           left: 0;
           height: 4px;
-          background: #e50914;
+          background: var(--player-accent, #e50914);
           border-radius: 2px 0 0 2px;
           z-index: 3;
         }
@@ -6343,7 +6343,7 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
           width: 22px;
           height: 22px;
           border-radius: 50%;
-          background: #e50914;
+          background: var(--player-accent, #e50914);
           cursor: pointer;
           transform: scale(0);
           opacity: 0;
@@ -6361,7 +6361,7 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
           height: 22px;
           border: none;
           border-radius: 50%;
-          background: #e50914;
+          background: var(--player-accent, #e50914);
           cursor: pointer;
           transform: scale(0);
           opacity: 0;
@@ -6488,7 +6488,7 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
           transition: color 0.2s, transform 0.2s;
         }
         .control-btn-pip:hover, .control-btn-fullscreen:hover, .control-btn-bookmark-list:hover {
-          color: white;
+          color: var(--text-primary, white);
           transform: scale(1.15);
         }
 
@@ -6604,7 +6604,7 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
         }
         .style-label {
           font-size: 0.7rem;
-          color: rgba(255, 255, 255, 0.45);
+          color: var(--text-muted, rgba(255, 255, 255, 0.45));
           text-transform: uppercase;
           letter-spacing: 0.05em;
           font-weight: 600;
@@ -6614,8 +6614,8 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
         .size-btn-group {
           display: flex;
           align-items: center;
-          background: rgba(0, 0, 0, 0.25);
-          border: 1px solid rgba(255, 255, 255, 0.15);
+          background: var(--input-bg, rgba(0, 0, 0, 0.25));
+          border: 1px solid var(--border-color, rgba(255, 255, 255, 0.15));
           border-radius: 6px;
           overflow: hidden;
           padding: 2px;
@@ -6624,7 +6624,7 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
         .size-action-btn {
           background: transparent;
           border: none;
-          color: #ffffff;
+          color: var(--text-primary, #ffffff);
           width: 28px;
           height: 24px;
           font-size: 0.95rem;
@@ -6637,15 +6637,15 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
           border-radius: 4px;
         }
         .size-action-btn:hover {
-          background: rgba(255, 255, 255, 0.08);
+          background: var(--surface-hover, rgba(255, 255, 255, 0.08));
         }
         .size-action-btn:active {
-          background: rgba(255, 255, 255, 0.15);
+          background: var(--border-subtle, rgba(255, 255, 255, 0.15));
         }
         .size-value-display {
           font-size: 0.8rem;
           font-weight: 600;
-          color: #ffffff;
+          color: var(--text-primary, #ffffff);
           padding: 0 0.6rem;
           min-width: 38px;
           text-align: center;
@@ -6655,7 +6655,7 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
         .popover-style-col .custom-select-trigger {
           font-size: 0.95rem;
           padding: 0.55rem 0.9rem;
-          background: rgba(0, 0, 0, 0.35);
+          background: var(--dropdown-bg, rgba(0, 0, 0, 0.35));
         }
         .style-row .custom-select-container {
           width: 100% !important;
@@ -6692,7 +6692,7 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
         }
         .color-picker-input-premium:hover {
           transform: scale(1.15);
-          border-color: rgba(255,255,255,0.45);
+          border-color: var(--text-muted, rgba(255, 255, 255, 0.45));
           box-shadow: 0 0 12px rgba(59, 130, 246, 0.5), 0 4px 15px rgba(0,0,0,0.6);
         }
         .color-picker-input-premium:disabled {
@@ -6710,10 +6710,10 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
         }
         .bg-clear-btn {
           flex: 1;
-          background: rgba(255, 255, 255, 0.04);
-          border: 1px solid rgba(255, 255, 255, 0.12);
+          background: var(--border-subtle, rgba(255, 255, 255, 0.04));
+          border: 1px solid var(--border-color, rgba(255, 255, 255, 0.12));
           border-radius: 6px;
-          color: rgba(255, 255, 255, 0.55);
+          color: var(--text-secondary, rgba(255, 255, 255, 0.55));
           padding: 0 0.75rem;
           height: 30px;
           font-size: 0.8rem;
@@ -6765,7 +6765,7 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
           background: transparent;
           border: 1px solid rgba(255, 255, 255, 0.15);
           border-radius: 6px;
-          color: rgba(255, 255, 255, 0.4);
+          color: var(--text-muted, rgba(255, 255, 255, 0.4));
           padding: 0.45rem 0.75rem;
           font-size: 0.8rem;
           cursor: pointer;
@@ -6781,18 +6781,18 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
         }
         .transcript-search-input {
           width: 100%;
-          background: rgba(255, 255, 255, 0.06);
-          border: 1px solid rgba(255, 255, 255, 0.12);
+          background: var(--input-bg, rgba(255, 255, 255, 0.06));
+          border: 1px solid var(--dropdown-border, rgba(255, 255, 255, 0.12));
           border-radius: 6px;
           padding: 0.35rem 0.6rem;
-          color: white;
+          color: var(--text-primary, white);
           font-size: 0.8rem;
           outline: none;
           transition: border-color 0.2s;
           box-sizing: border-box;
         }
         .transcript-search-input:focus {
-          border-color: #e50914;
+          border-color: var(--player-accent, #e50914);
         }
         .transcript-cues-list {
           flex: 1;
@@ -6829,12 +6829,12 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
         }
         .transcript-cue-item.active {
           background: rgba(229, 9, 20, 0.12);
-          border-left: 2px solid #e50914;
+          border-left: 2px solid var(--player-accent, #e50914);
           color: white;
           font-weight: 500;
         }
         .cue-time {
-          color: #e50914;
+          color: var(--player-accent, #e50914);
           font-size: 0.75rem;
           font-family: monospace;
           font-weight: 600;
@@ -6878,7 +6878,7 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
           border-radius: 6px;
           cursor: pointer;
           font-size: 0.95rem;
-          color: rgba(255, 255, 255, 0.7);
+          color: var(--text-secondary, rgba(255, 255, 255, 0.7));
           transition: all 0.15s ease;
           border: 1px solid transparent;
         }
@@ -6896,10 +6896,10 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
           display: none;
         }
         .check-icon {
-          color: #e50914;
+          color: var(--player-accent, #e50914);
         }
         .add-custom-btn {
-          color: #e50914 !important;
+          color: var(--player-accent, #e50914) !important;
           font-weight: 600 !important;
           border-top: 1px solid rgba(255, 255, 255, 0.08);
           margin-top: 0.35rem;
@@ -7014,7 +7014,7 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
           box-shadow: 0 4px 15px rgba(0,0,0,0.5);
         }
         .fly-loader-spin {
-          color: #e50914;
+          color: var(--player-accent, #e50914);
           animation: spin 1s linear infinite;
         }
         
@@ -7288,19 +7288,19 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
           justify-content: center;
           cursor: pointer;
           transition: background 0.25s ease, border-color 0.25s ease;
-          color: rgba(255, 255, 255, 0.8) !important;
+          color: var(--text-secondary, rgba(255, 255, 255, 0.8)) !important;
           outline: none;
           padding: 0 !important;
           flex-shrink: 0;
         }
         .volume-control-group-premium:hover .control-btn-volume {
-          background: rgba(255, 255, 255, 0.12) !important;
-          border: 1px solid rgba(255, 255, 255, 0.15) !important;
+          background: var(--border-subtle, rgba(255, 255, 255, 0.12)) !important;
+          border: 1px solid var(--border-color, rgba(255, 255, 255, 0.15)) !important;
         }
         .volume-control-group-premium:hover .control-btn-volume:hover {
-          background: rgba(255, 255, 255, 0.18) !important;
-          color: #ffffff !important;
-          border-color: rgba(255, 255, 255, 0.25) !important;
+          background: var(--surface-hover, rgba(255, 255, 255, 0.18)) !important;
+          color: var(--text-primary, #ffffff) !important;
+          border-color: var(--border-color, rgba(255, 255, 255, 0.25)) !important;
         }
         .volume-slider-container-premium {
           width: 0;
@@ -7430,7 +7430,7 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
           box-shadow: 0 10px 30px rgba(0, 0, 0, 0.8);
         }
         .playback-error-box .error-icon {
-          color: #e50914;
+          color: var(--player-accent, #e50914);
         }
         .playback-error-box h3 {
           margin: 0;

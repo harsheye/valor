@@ -225,7 +225,7 @@ export const CustomSelect: React.FC<CustomSelectProps> = ({
         }
         .custom-select-option.selected {
           background: var(--accent-color);
-          color: #ffffff;
+          color: var(--btn-text-color, #ffffff);
           font-weight: 700;
         }
         .option-check-icon {

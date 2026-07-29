@@ -61,7 +61,7 @@ export const HistoryPage: React.FC<HistoryPageProps> = ({
                   onClick={() => handlePlayVideo(primaryContinue)}
                   style={{ 
                     width: '100%', 
-                    background: 'linear-gradient(135deg, #e50914 0%, #9b040c 100%)', 
+                    background: 'var(--banner-bg, linear-gradient(135deg, #e50914 0%, #9b040c 100%))', 
                     borderRadius: '12px', 
                     padding: '0.85rem 1.1rem', 
                     marginBottom: '1rem',
@@ -69,7 +69,7 @@ export const HistoryPage: React.FC<HistoryPageProps> = ({
                     justifyContent: 'space-between',
                     alignItems: 'center',
                     cursor: 'pointer',
-                    boxShadow: '0 8px 24px rgba(229, 9, 20, 0.25)',
+                    boxShadow: 'var(--banner-shadow, 0 8px 24px rgba(229, 9, 20, 0.25))',
                     border: '1px solid rgba(255, 255, 255, 0.1)',
                     transition: 'transform 0.2s, box-shadow 0.2s',
                     boxSizing: 'border-box'
@@ -114,13 +114,13 @@ export const HistoryPage: React.FC<HistoryPageProps> = ({
                   <button 
                     className="btn btn-primary" 
                     style={{ 
-                      background: '#ffffff', 
-                      color: '#e50914', 
+                      background: 'var(--play-btn-bg, #ffffff)', 
+                      color: 'var(--play-btn-text, #e50914)', 
                       border: 'none',
                       padding: '0.65rem 1.5rem',
                       fontSize: '0.88rem',
                       fontWeight: 700,
-                      borderRadius: '8px',
+                      borderRadius: 'var(--btn-border-radius, 8px)',
                       display: 'flex',
                       alignItems: 'center',
                       gap: '8px',
@@ -131,12 +131,12 @@ export const HistoryPage: React.FC<HistoryPageProps> = ({
                   >
                     {isInstantlyPlayable(primaryContinue) ? (
                       <>
-                        <Play size={14} fill="#e50914" stroke="#e50914" />
+                        <Play size={14} fill="currentColor" stroke="currentColor" />
                         <span>Resume Playback</span>
                       </>
                     ) : (
                       <>
-                        <UploadCloud size={14} stroke="#e50914" />
+                        <UploadCloud size={14} stroke="currentColor" />
                         <span>Select Media</span>
                       </>
                     )}
@@ -212,9 +212,9 @@ export const HistoryPage: React.FC<HistoryPageProps> = ({
                                 display: 'flex', 
                                 alignItems: 'center', 
                                 gap: '4px',
-                                background: video.hasScrobbledTrakt ? 'rgba(255,255,255,0.05)' : 'rgba(229, 9, 20, 0.1)',
-                                color: video.hasScrobbledTrakt ? '#888' : '#e50914',
-                                border: video.hasScrobbledTrakt ? '1px solid rgba(255,255,255,0.1)' : '1px solid #e50914',
+                                background: video.hasScrobbledTrakt ? 'rgba(255,255,255,0.05)' : 'var(--accent-glow, rgba(229, 9, 20, 0.1))',
+                                color: video.hasScrobbledTrakt ? '#888' : 'var(--accent-color, #e50914)',
+                                border: video.hasScrobbledTrakt ? '1px solid rgba(255,255,255,0.1)' : '1px solid var(--accent-color, #e50914)',
                                 padding: '0.4rem 0.8rem',
                                 borderRadius: '6px',
                                 fontSize: '0.75rem',

@@ -36,40 +36,40 @@ export const BookmarkPanel: React.FC<BookmarkPanelProps> = ({ bookmarks, onJump,
         zIndex: 150,
         width: '380px',
         maxHeight: '400px',
-        background: 'rgba(18, 18, 18, 0.88)',
+        background: 'var(--dropdown-bg, rgba(18, 18, 18, 0.88))',
         backdropFilter: 'blur(25px)',
         WebkitBackdropFilter: 'blur(25px)',
-        border: '1px solid rgba(255, 255, 255, 0.12)',
+        border: '1px solid var(--dropdown-border, rgba(255, 255, 255, 0.12))',
         borderRadius: '12px',
         boxShadow: '0 15px 40px rgba(0,0,0,0.7)',
         display: 'flex',
         flexDirection: 'column',
-        color: 'white',
+        color: 'var(--dropdown-text, white)',
         padding: '0',
         overflow: 'hidden'
       }}
     >
       {/* Hover bridge spacer to keep popover open when cursor moves from button to popover */}
       <div style={{ position: 'absolute', bottom: '-25px', left: 0, right: 0, height: '25px', background: 'transparent', pointerEvents: 'auto' }} />
-      <div style={{ padding: '32px 24px 24px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
+      <div style={{ padding: '32px 24px 24px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid var(--border-subtle, rgba(255,255,255,0.05))' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-          <BookmarkIcon size={22} color="#e50914" />
+          <BookmarkIcon size={22} color="var(--accent-color, #e50914)" />
           <h2 style={{ margin: 0, fontSize: '20px', fontWeight: 600 }}>Bookmarks</h2>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
           <button 
             onClick={onAdd}
-            style={{ background: 'rgba(229, 9, 20, 0.1)', color: '#e50914', border: 'none', padding: '6px 14px', borderRadius: '20px', fontSize: '13px', fontWeight: 600, cursor: 'pointer', transition: 'all 0.2s' }}
-            onMouseEnter={e => e.currentTarget.style.background = 'rgba(229, 9, 20, 0.2)'}
-            onMouseLeave={e => e.currentTarget.style.background = 'rgba(229, 9, 20, 0.1)'}
+            style={{ background: 'var(--accent-glow, rgba(229, 9, 20, 0.1))', color: 'var(--accent-color, #e50914)', border: 'none', padding: '6px 14px', borderRadius: '20px', fontSize: '13px', fontWeight: 600, cursor: 'pointer', transition: 'all 0.2s' }}
+            onMouseEnter={e => e.currentTarget.style.background = 'var(--accent-glow)'}
+            onMouseLeave={e => e.currentTarget.style.background = 'var(--accent-glow)'}
           >
             + New
           </button>
           <button 
             onClick={onClose}
-            style={{ background: 'none', border: 'none', color: 'rgba(255,255,255,0.6)', cursor: 'pointer', padding: '4px', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'color 0.2s' }}
-            onMouseEnter={e => e.currentTarget.style.color = 'white'}
-            onMouseLeave={e => e.currentTarget.style.color = 'rgba(255,255,255,0.6)'}
+            style={{ background: 'none', border: 'none', color: 'var(--text-secondary, rgba(255,255,255,0.6))', cursor: 'pointer', padding: '4px', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'color 0.2s' }}
+            onMouseEnter={e => e.currentTarget.style.color = 'var(--text-primary)'}
+            onMouseLeave={e => e.currentTarget.style.color = 'var(--text-secondary)'}
             title="Close Panel"
           >
             <X size={20} />
@@ -79,17 +79,17 @@ export const BookmarkPanel: React.FC<BookmarkPanelProps> = ({ bookmarks, onJump,
 
       <div style={{ flex: 1, overflowY: 'auto', padding: '16px 24px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
         {sortedBookmarks.length === 0 ? (
-          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', color: 'rgba(255,255,255,0.4)', textAlign: 'center', gap: '12px' }}>
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', color: 'var(--text-muted, rgba(255,255,255,0.4))', textAlign: 'center', gap: '12px' }}>
             <BookmarkIcon size={48} strokeWidth={1} />
             <div>
-              <p style={{ margin: '0 0 8px', fontSize: '16px', color: 'rgba(255,255,255,0.8)', fontWeight: 500 }}>No bookmarks yet</p>
+              <p style={{ margin: '0 0 8px', fontSize: '16px', color: 'var(--text-secondary, rgba(255,255,255,0.8))', fontWeight: 500 }}>No bookmarks yet</p>
               <span style={{ fontSize: '13px' }}>Save memorable moments while watching.</span>
             </div>
             <button 
               onClick={onAdd}
-              style={{ marginTop: '16px', background: '#e50914', color: 'white', border: 'none', padding: '10px 20px', borderRadius: '12px', fontSize: '14px', fontWeight: 600, cursor: 'pointer', transition: 'background 0.2s', boxShadow: '0 4px 12px rgba(229, 9, 20, 0.3)' }}
-              onMouseEnter={e => e.currentTarget.style.background = '#f40b17'}
-              onMouseLeave={e => e.currentTarget.style.background = '#e50914'}
+              style={{ marginTop: '16px', background: 'var(--accent-color, #e50914)', color: 'var(--btn-text-color, white)', border: 'none', padding: '10px 20px', borderRadius: '12px', fontSize: '14px', fontWeight: 600, cursor: 'pointer', transition: 'background 0.2s', boxShadow: '0 4px 12px rgba(229, 9, 20, 0.3)' }}
+              onMouseEnter={e => e.currentTarget.style.background = 'var(--accent-hover, #f40b17)'}
+              onMouseLeave={e => e.currentTarget.style.background = 'var(--accent-color, #e50914)'}
             >
               Create First Bookmark
             </button>
@@ -99,8 +99,8 @@ export const BookmarkPanel: React.FC<BookmarkPanelProps> = ({ bookmarks, onJump,
             <div 
               key={bm.id}
               style={{ 
-                background: 'rgba(255,255,255,0.03)', 
-                border: '1px solid rgba(255,255,255,0.05)', 
+                background: 'var(--border-subtle, rgba(255,255,255,0.03))', 
+                border: '1px solid var(--border-subtle, rgba(255,255,255,0.05))', 
                 borderRadius: '16px', 
                 padding: '16px',
                 transition: 'all 0.2s',
@@ -109,18 +109,18 @@ export const BookmarkPanel: React.FC<BookmarkPanelProps> = ({ bookmarks, onJump,
                 gap: '12px'
               }}
               onMouseEnter={e => {
-                e.currentTarget.style.background = 'rgba(255,255,255,0.08)';
-                e.currentTarget.style.borderColor = 'rgba(255,255,255,0.12)';
+                e.currentTarget.style.background = 'var(--surface-hover)';
+                e.currentTarget.style.borderColor = 'var(--border-color)';
               }}
               onMouseLeave={e => {
-                e.currentTarget.style.background = 'rgba(255,255,255,0.03)';
-                e.currentTarget.style.borderColor = 'rgba(255,255,255,0.05)';
+                e.currentTarget.style.background = 'var(--border-subtle)';
+                e.currentTarget.style.borderColor = 'var(--border-subtle)';
               }}
             >
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '12px' }}>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', overflow: 'hidden' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                    <span style={{ fontSize: '15px', fontWeight: 600, color: 'white', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                    <span style={{ fontSize: '15px', fontWeight: 600, color: 'var(--text-primary, white)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                       {bm.category === 'Movie Scene' && '🎬 '}
                       {bm.category === 'Action' && '💥 '}
                       {bm.category === 'Funny' && '😂 '}
@@ -128,7 +128,7 @@ export const BookmarkPanel: React.FC<BookmarkPanelProps> = ({ bookmarks, onJump,
                       {bm.category === 'Outro' && '🏁 '}
                       {bm.title || bm.label || 'Untitled Bookmark'}
                     </span>
-                    {bm.favorite && <Heart size={14} fill="#e50914" color="#e50914" style={{ flexShrink: 0 }} />}
+                    {bm.favorite && <Heart size={14} fill="var(--accent-color, #e50914)" color="var(--accent-color, #e50914)" style={{ flexShrink: 0 }} />}
                     {(() => {
                       const createdBy = bm.createdBy;
                       let label = 'Manual';
@@ -168,13 +168,13 @@ export const BookmarkPanel: React.FC<BookmarkPanelProps> = ({ bookmarks, onJump,
                       );
                     })()}
                   </div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px', color: '#e50914', fontSize: '13px', fontWeight: 600 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px', color: 'var(--accent-color, #e50914)', fontSize: '13px', fontWeight: 600 }}>
                     <Clock size={12} />
                     {formatTime(bm.time)}
                     {bm.endTime ? ` → ${formatTime(bm.endTime)}` : ''}
                   </div>
                   {(bm.userName || bm.userTime) && (
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: 'rgba(255,255,255,0.45)', fontSize: '11px', marginTop: '2px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--text-muted, rgba(255,255,255,0.45))', fontSize: '11px', marginTop: '2px' }}>
                       {bm.userName && <span style={{ textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap', maxWidth: '120px' }}>👤 {bm.userName}</span>}
                       {bm.userTime && <span>• 📅 {new Date(bm.userTime).toLocaleDateString()}</span>}
                     </div>
@@ -183,17 +183,17 @@ export const BookmarkPanel: React.FC<BookmarkPanelProps> = ({ bookmarks, onJump,
                 
                 <button 
                   onClick={() => onJump(bm.time)}
-                  style={{ background: 'white', color: 'black', border: 'none', width: '32px', height: '32px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', flexShrink: 0, transition: 'transform 0.2s' }}
+                  style={{ background: 'var(--text-primary, white)', color: 'var(--bg-primary, black)', border: 'none', width: '32px', height: '32px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', flexShrink: 0, transition: 'transform 0.2s' }}
                   onMouseEnter={e => e.currentTarget.style.transform = 'scale(1.1)'}
                   onMouseLeave={e => e.currentTarget.style.transform = 'scale(1)'}
                   title="Jump to time"
                 >
-                  <Play size={14} fill="black" style={{ marginLeft: '2px' }} />
+                  <Play size={14} fill="var(--bg-primary, black)" style={{ marginLeft: '2px' }} />
                 </button>
               </div>
 
               {bm.description && (
-                <div style={{ fontSize: '13px', color: 'rgba(255,255,255,0.6)', lineHeight: '1.4', background: 'rgba(0,0,0,0.2)', padding: '8px 12px', borderRadius: '8px', borderLeft: '2px solid rgba(255,255,255,0.1)' }}>
+                <div style={{ fontSize: '13px', color: 'var(--text-secondary, rgba(255,255,255,0.6))', lineHeight: '1.4', background: 'var(--border-subtle, rgba(0,0,0,0.2))', padding: '8px 12px', borderRadius: '8px', borderLeft: '2px solid var(--border-color, rgba(255,255,255,0.1))' }}>
                   {bm.description}
                 </div>
               )}
@@ -201,17 +201,17 @@ export const BookmarkPanel: React.FC<BookmarkPanelProps> = ({ bookmarks, onJump,
               <div style={{ display: 'flex', gap: '8px', marginTop: '4px' }}>
                 <button 
                   onClick={() => onEdit(bm)}
-                  style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', background: 'rgba(255,255,255,0.05)', border: 'none', color: 'white', padding: '8px', borderRadius: '8px', fontSize: '12px', fontWeight: 500, cursor: 'pointer', transition: 'background 0.2s' }}
-                  onMouseEnter={e => e.currentTarget.style.background = 'rgba(255,255,255,0.1)'}
-                  onMouseLeave={e => e.currentTarget.style.background = 'rgba(255,255,255,0.05)'}
+                  style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', background: 'var(--border-subtle, rgba(255,255,255,0.05))', border: 'none', color: 'var(--text-primary, white)', padding: '8px', borderRadius: '8px', fontSize: '12px', fontWeight: 500, cursor: 'pointer', transition: 'background 0.2s' }}
+                  onMouseEnter={e => e.currentTarget.style.background = 'var(--surface-hover)'}
+                  onMouseLeave={e => e.currentTarget.style.background = 'var(--border-subtle)'}
                 >
                   <Pencil size={12} /> Edit
                 </button>
                 <button 
                   onClick={() => onDelete(bm.id)}
-                  style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', background: 'rgba(239, 68, 68, 0.1)', border: 'none', color: '#ef4444', padding: '8px', borderRadius: '8px', fontSize: '12px', fontWeight: 500, cursor: 'pointer', transition: 'background 0.2s' }}
-                  onMouseEnter={e => { e.currentTarget.style.background = '#ef4444'; e.currentTarget.style.color = 'white'; }}
-                  onMouseLeave={e => { e.currentTarget.style.background = 'rgba(239, 68, 68, 0.1)'; e.currentTarget.style.color = '#ef4444'; }}
+                  style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', background: 'var(--danger-glow, rgba(239, 68, 68, 0.1))', border: 'none', color: 'var(--danger, #ef4444)', padding: '8px', borderRadius: '8px', fontSize: '12px', fontWeight: 500, cursor: 'pointer', transition: 'background 0.2s' }}
+                  onMouseEnter={e => { e.currentTarget.style.background = 'var(--danger)'; e.currentTarget.style.color = 'white'; }}
+                  onMouseLeave={e => { e.currentTarget.style.background = 'var(--danger-glow, rgba(239, 68, 68, 0.1))'; e.currentTarget.style.color = 'var(--danger)'; }}
                 >
                   <Trash size={12} /> Delete
                 </button>

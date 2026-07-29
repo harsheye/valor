@@ -406,7 +406,7 @@ export const BookmarkModal: React.FC<BookmarkModalProps> = ({
                 background: 'var(--accent-color)',
                 border: 'none',
                 borderRadius: '8px',
-                color: '#fff',
+                color: 'var(--btn-text-color, #ffffff)',
                 padding: '0.7rem 1.5rem',
                 fontSize: '0.9rem',
                 fontWeight: 600,
