@@ -303,6 +303,7 @@ const backendServer = http.createServer((req, res) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', '*');
+  res.setHeader('Access-Control-Expose-Headers', 'Content-Range, Content-Length, Accept-Ranges, Content-Type');
 
   if (req.method === 'OPTIONS') {
     res.statusCode = 204;
@@ -1792,7 +1793,20 @@ const backendServer = http.createServer((req, res) => {
 
   // Video streaming endpoint with range request support
   if (pathname === '/local-video-stream') {
-    const videoPath = parsedUrl.searchParams.get('path');
+    let videoPath = parsedUrl.searchParams.get('path');
+    const videoId = parsedUrl.searchParams.get('id');
+
+    if (!videoPath && videoId) {
+      try {
+        const row = db.prepare('SELECT localFilePath FROM history WHERE videoId = ? LIMIT 1').get(videoId);
+        if (row && row.localFilePath) {
+          videoPath = row.localFilePath;
+        }
+      } catch (err) {
+        console.error(`[Server] Error resolving id: ${videoId}`, err.message);
+      }
+    }
+
     if (!videoPath || !fs.existsSync(videoPath)) {
       res.statusCode = 404;
       res.end('File not found');
@@ -1914,6 +1928,22 @@ async function start() {
           host: '127.0.0.1',
           open: false
         },
+      });
+      viteServer.middlewares.use((req, res, next) => {
+        if (req.url && req.url.startsWith('/api/play')) {
+          try {
+            const parsedUrl = new URL(req.url, `http://localhost:${PORT_SERVICE}`);
+            const file = parsedUrl.searchParams.get('file');
+            if (file) {
+              console.log(`[Server] Active tab detected (via Service Server). Queueing file for playback: ${file}`);
+              pendingPlayFile = file;
+            }
+          } catch (e) {}
+          res.statusCode = 200;
+          res.end('OK');
+          return;
+        }
+        next();
       });
       await viteServer.listen();
       success = true;

@@ -32,8 +32,20 @@ export const HistoryPage: React.FC<HistoryPageProps> = ({
   parseDurationToSeconds,
   formatTime,
 }) => {
-  const continueWatchingList = videos.filter(v => v.currentTime && v.currentTime > 2 && (typeof v.duration !== 'number' || v.currentTime < v.duration - 5));
-  const primaryContinue = continueWatchingList.length > 0 ? continueWatchingList[0] : (videos.length > 0 ? videos[0] : null);
+  const sortedVideos = React.useMemo(() => {
+    return [...videos].sort((a, b) => {
+      const dateA = a.lastPlayedDate ? new Date(a.lastPlayedDate).getTime() : 0;
+      const dateB = b.lastPlayedDate ? new Date(b.lastPlayedDate).getTime() : 0;
+      return dateB - dateA; // Newest first
+    });
+  }, [videos]);
+
+  const continueWatchingList = sortedVideos.filter(v => {
+    if (!v.currentTime || v.currentTime <= 2) return false;
+    const durSecs = typeof v.duration === 'number' ? v.duration : parseDurationToSeconds(v.duration);
+    return durSecs <= 0 || v.currentTime < durSecs - 5;
+  });
+  const primaryContinue = continueWatchingList.length > 0 ? continueWatchingList[0] : (sortedVideos.length > 0 ? sortedVideos[0] : null);
 
   return (
     <>
@@ -42,16 +54,16 @@ export const HistoryPage: React.FC<HistoryPageProps> = ({
           {historyViewMode === 'calendar' ? (
             <div style={{ display: 'flex', flexDirection: 'column', width: '100%' }}>
               {settings.calendarStyle === 'list' && (
-                <Calendar02 videos={videos} onPlayVideo={handlePlayVideo} isInstantlyPlayable={isInstantlyPlayable} />
+                <Calendar02 videos={sortedVideos} onPlayVideo={handlePlayVideo} isInstantlyPlayable={isInstantlyPlayable} />
               )}
               {settings.calendarStyle === 'grid' && (
-                <CalendarView videos={videos} onPlayVideo={handlePlayVideo} />
+                <CalendarView videos={sortedVideos} onPlayVideo={handlePlayVideo} />
               )}
               {settings.calendarStyle === 'booking' && (
                 <BookingCalendar />
               )}
               {settings.calendarStyle === 'appointment' && (
-                <AppointmentCalendar videos={videos} onPlayVideo={handlePlayVideo} />
+                <AppointmentCalendar videos={sortedVideos} onPlayVideo={handlePlayVideo} />
               )}
             </div>
           ) : (
@@ -144,14 +156,14 @@ export const HistoryPage: React.FC<HistoryPageProps> = ({
                 </div>
               )}
 
-              {videos.length === 0 ? (
+              {sortedVideos.length === 0 ? (
                 <div className="empty-catalog-box glass-panel">
                   <Film size={44} className="text-muted pulsing" />
                   <p>No playback history yet. Load a stream or select a file to begin.</p>
                 </div>
               ) : (
                 <div className="history-list">
-                  {videos.map((video) => (
+                  {sortedVideos.map((video) => (
                     <div key={video.id} className="history-item glass-panel" onClick={() => handlePlayVideo(video)}>
                       <div className="history-item-header">
                         {video.posterPath && (
@@ -164,14 +176,20 @@ export const HistoryPage: React.FC<HistoryPageProps> = ({
                           />
                         )}
                         <div className="history-info">
-                          <span className="history-title" title={video.title}>{video.title}</span>
+                          <span className="history-title" title={video.title}>{classifyVideoTitle(video.title).displayTitle}</span>
                           <div className="history-stats">
-                            {video.duration && (
+                            {video.duration ? (
                               <span className="stat-badge">Length: {typeof video.duration === 'number' ? formatTime(video.duration) : video.duration}</span>
+                            ) : (
+                              <span className="stat-badge" style={{ opacity: 0.5 }}>Length: Unknown</span>
                             )}
-                            {(video as any).totalTimeWatched > 0 && (
+                            {(video.currentTime && video.currentTime > 0) ? (
+                              <span className="stat-badge">Watched: {formatTime(video.currentTime)}</span>
+                            ) : ((video as any).totalTimeWatched > 0 ? (
                               <span className="stat-badge">Watched: {formatTime((video as any).totalTimeWatched)}</span>
-                            )}
+                            ) : (
+                              <span className="stat-badge" style={{ opacity: 0.5 }}>Watched: 0:00</span>
+                            ))}
                             {(video as any).rating && (
                               <span className="stat-badge rating-badge">Rating: {'★'.repeat((video as any).rating)}{'☆'.repeat(5 - (video as any).rating)}</span>
                             )}

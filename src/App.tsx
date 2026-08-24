@@ -204,8 +204,8 @@ export const BACKEND_ORIGIN = 'http://127.0.0.1:50001';
 
 export const sanitizeVideoItem = (v: VideoItem, useIdStream: boolean): VideoItem => {
   if (v && v.type === 'local' && v.localFilePath) {
-    const streamUrl = useIdStream
-      ? `${BACKEND_ORIGIN}/local-video-stream?id=${encodeURIComponent(v.id)}`
+    const streamUrl = (useIdStream && !v.id.startsWith('url-'))
+      ? `${BACKEND_ORIGIN}/local-video-stream?id=${encodeURIComponent(v.id)}&path=${encodeURIComponent(v.localFilePath)}`
       : `${BACKEND_ORIGIN}/local-video-stream?path=${encodeURIComponent(v.localFilePath)}`;
     if (v.url !== streamUrl) {
       return { ...v, url: streamUrl };
@@ -365,6 +365,7 @@ const defaultSettings = {
 function App() {
   const [settings, setSettings] = useState<typeof defaultSettings>(() => {
     try {
+
       const activeUserId = localStorage.getItem('valor_active_user_id') || 'local';
       const settingsKey = activeUserId === 'local' ? 'valor_settings' : `valor_settings_${activeUserId}`;
       const saved = localStorage.getItem(settingsKey);
@@ -446,8 +447,60 @@ function App() {
       return [];
     }
   });
+
+  // Cross-tab sync for settings, active profile, and history
+  useEffect(() => {
+    const handleStorage = (e: StorageEvent) => {
+      if (e.key === 'valor_active_user_id') {
+        if (e.newValue) {
+          localStorage.setItem('valor_active_user_id', e.newValue);
+          const newKey = e.newValue === 'local' ? 'valor_settings' : `valor_settings_${e.newValue}`;
+          const newSaved = localStorage.getItem(newKey);
+          if (newSaved) {
+            try { setSettings({ ...defaultSettings, ...JSON.parse(newSaved), userId: e.newValue }); } catch {}
+          } else {
+            setSettings({ ...defaultSettings, userId: e.newValue });
+          }
+          
+          const newVideosKey = e.newValue === 'local' ? 'valor_videos' : `valor_videos_${e.newValue}`;
+          const newSavedVideos = localStorage.getItem(newVideosKey);
+          if (newSavedVideos) {
+            try { 
+              const parsed = JSON.parse(newSavedVideos);
+              if (Array.isArray(parsed)) {
+                rawSetVideos(sanitizeVideoList(parsed.map((v: any) => ({...v, audioTracks: [], subtitleTracks: []})), getUseIdStreamFromStorage()));
+              }
+            } catch {}
+          } else {
+            rawSetVideos([]);
+          }
+        }
+      } else if (e.key === (settings.userId === 'local' ? 'valor_settings' : `valor_settings_${settings.userId}`)) {
+        if (e.newValue) {
+          try {
+            const newSettings = JSON.parse(e.newValue);
+            setSettings(prev => ({ ...prev, ...newSettings }));
+          } catch {}
+        }
+      } else if (e.key === (settings.userId === 'local' ? 'valor_videos' : `valor_videos_${settings.userId}`)) {
+        if (e.newValue) {
+          try {
+            const parsed = JSON.parse(e.newValue);
+            if (Array.isArray(parsed)) {
+              rawSetVideos(sanitizeVideoList(parsed.map((v: any) => ({...v, audioTracks: [], subtitleTracks: []})), getUseIdStreamFromStorage()));
+            }
+          } catch {}
+        }
+      }
+    };
+    window.addEventListener('storage', handleStorage);
+    return () => window.removeEventListener('storage', handleStorage);
+  }, [settings.userId]);
   const [playingVideoState, rawSetPlayingVideo] = useState<VideoItem | null>(() => {
     try {
+      const params = new URLSearchParams(window.location.search);
+      if (params.get('file')) return null;
+
       const saved = localStorage.getItem('valor_currently_playing');
       const useIdStreamInit = getUseIdStreamFromStorage();
       return saved ? sanitizeVideoItem(JSON.parse(saved), useIdStreamInit) : null;
@@ -2294,8 +2347,8 @@ function App() {
       } else if (video.type === 'local') {
         if (video.localFilePath) {
           const useIdStream = settings.storageMode === 'file' && settings.userId && settings.userId !== 'local' && !settings.userId.startsWith('local_');
-          const streamUrl = useIdStream
-            ? `${BACKEND_ORIGIN}/local-video-stream?id=${encodeURIComponent(video.id)}`
+          const streamUrl = (useIdStream && !video.id.startsWith('url-'))
+            ? `${BACKEND_ORIGIN}/local-video-stream?id=${encodeURIComponent(video.id)}&path=${encodeURIComponent(video.localFilePath)}`
             : `${BACKEND_ORIGIN}/local-video-stream?path=${encodeURIComponent(video.localFilePath)}`;
           const updated = {
             ...video,
@@ -2630,12 +2683,19 @@ function App() {
       
       if (!parserAvailable) {
         console.log('[App] Remote byte access blocked or failed. Engaging Native Playback Mode.');
-        const title = localPathVal ? (localPathVal.split(/[/\\]/).pop() || localPathVal) : (url.substring(url.lastIndexOf('/') + 1) || 'Remote Stream');
+        let rawTitle = localPathVal ? (localPathVal.split(/[/\\]/).pop() || localPathVal) : (url.substring(url.lastIndexOf('/') + 1) || 'Remote Stream');
+        let title = rawTitle.replace(/\.[^/.]+$/, '');
+        const parsedInfo = classifyVideoTitle(title);
+        if (parsedInfo.type !== 'unknown') {
+          title = parsedInfo.displayTitle;
+        }
         
         // Match history by normalized identity
         let match: VideoItem | undefined = undefined;
         try {
-          const savedHistory = localStorage.getItem('valor_videos');
+          const activeUserId = localStorage.getItem('valor_active_user_id') || 'local';
+          const videosKey = activeUserId === 'local' ? 'valor_videos' : `valor_videos_${activeUserId}`;
+          const savedHistory = localStorage.getItem(videosKey);
           if (savedHistory) {
             const parsedHistory = JSON.parse(savedHistory) as VideoItem[];
             const targetIden = getVideoIdentity(title);
@@ -2743,12 +2803,19 @@ function App() {
       const audioTracks: CustomAudioTrack[] = [];
       const subtitleTracks: CustomSubtitleTrack[] = [];
 
-      let title = localPathVal ? (localPathVal.split(/[/\\]/).pop() || localPathVal) : (url.substring(url.lastIndexOf('/') + 1) || 'Remote Stream');
+      let rawTitle = localPathVal ? (localPathVal.split(/[/\\]/).pop() || localPathVal) : (url.substring(url.lastIndexOf('/') + 1) || 'Remote Stream');
+      let title = rawTitle.replace(/\.[^/.]+$/, '');
+      const parsedInfo = classifyVideoTitle(title);
+      if (parsedInfo.type !== 'unknown') {
+        title = parsedInfo.displayTitle;
+      }
       
       // Match history by normalized identity
       let match: VideoItem | undefined = undefined;
       try {
-        const savedHistory = localStorage.getItem('valor_videos');
+        const activeUserId = localStorage.getItem('valor_active_user_id') || 'local';
+        const videosKey = activeUserId === 'local' ? 'valor_videos' : `valor_videos_${activeUserId}`;
+        const savedHistory = localStorage.getItem(videosKey);
         if (savedHistory) {
           const parsedHistory = JSON.parse(savedHistory) as VideoItem[];
           const targetIden = getVideoIdentity(title);
@@ -2802,12 +2869,19 @@ function App() {
         probingError = err?.message || errStr;
       }
 
-      const title = url.substring(url.lastIndexOf('/') + 1) || 'Remote Stream';
+      let rawTitle = localPathVal ? (localPathVal.split(/[/\\]/).pop() || localPathVal) : (url.substring(url.lastIndexOf('/') + 1) || 'Remote Stream');
+      let title = rawTitle.replace(/\.[^/.]+$/, '');
+      const parsedInfo = classifyVideoTitle(title);
+      if (parsedInfo.type !== 'unknown') {
+        title = parsedInfo.displayTitle;
+      }
       
       // Match history by normalized identity
       let match: VideoItem | undefined = undefined;
       try {
-        const savedHistory = localStorage.getItem('valor_videos');
+        const activeUserId = localStorage.getItem('valor_active_user_id') || 'local';
+        const videosKey = activeUserId === 'local' ? 'valor_videos' : `valor_videos_${activeUserId}`;
+        const savedHistory = localStorage.getItem(videosKey);
         if (savedHistory) {
           const parsedHistory = JSON.parse(savedHistory) as VideoItem[];
           const targetIden = getVideoIdentity(title);

@@ -40,14 +40,30 @@ export class AudioScheduler {
     source.playbackRate.value = playbackRate;
     source.connect(this.gainNode);
 
-    // Clean, natural projection calculation without accumulating offsets
-    const delay = (packet.startTime - currentTime) / playbackRate;
     const playOffset = Math.max(0, currentTime - packet.startTime);
+    let audioStartTime: number;
 
-    // Give a tiny 15ms scheduling safety margin for immediate chunks
-    const isCurrentChunk = delay <= 0;
-    const LOOKAHEAD = isCurrentChunk ? 0.015 : 0;
-    const audioStartTime = this.audioCtx.currentTime + Math.max(0, delay) + LOOKAHEAD;
+    // Find the immediately preceding chunk to chain onto perfectly
+    let prevNode = null;
+    for (const node of this.activeNodes) {
+      if (node.startTime < packet.startTime) {
+        if (!prevNode || node.startTime > prevNode.startTime) {
+          prevNode = node;
+        }
+      }
+    }
+
+    // If we have a preceding chunk and it's consecutive (e.g. within 15s), chain perfectly to its end time
+    if (prevNode && (packet.startTime - prevNode.startTime) <= 15) {
+      audioStartTime = prevNode.audioEndTime;
+    } else {
+      // Natural projection for the first chunk in a new sequence
+      const delay = (packet.startTime - currentTime) / playbackRate;
+      const isCurrentChunk = delay <= 0;
+      const LOOKAHEAD = isCurrentChunk ? 0.015 : 0;
+      audioStartTime = this.audioCtx.currentTime + Math.max(0, delay) + LOOKAHEAD;
+    }
+
     const durationPlayed = (packet.buffer.duration - playOffset) / playbackRate;
     const audioEndTime = audioStartTime + durationPlayed;
 

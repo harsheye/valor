@@ -245,10 +245,10 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
     
     setVideoLayout({ left, top, width, height });
   }, []);
+  const isDirectHls = video.url.includes('.m3u8') && !video.hlsPlaylist;
 
   useEffect(() => {
     // Only use hls.js for raw .m3u8 URLs when no custom hlsPlaylist is provided by the backend
-    const isDirectHls = video.url.includes('.m3u8') && !video.hlsPlaylist;
 
     if (isDirectHls && videoRef.current) {
       if (Hls.isSupported()) {
@@ -2067,10 +2067,10 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
       clearTimeout(controlsTimeoutRef.current);
     }
     controlsTimeoutRef.current = setTimeout(() => {
-      if (isPlaying && !showAudioSubMenu && !showSettingsPanel && !showBookmarksPopover && !showAddDialog) {
+      if (!showAudioSubMenu && !showSettingsPanel && !showBookmarksPopover && !showAddDialog) {
         setShowControls(false);
       }
-    }, uiHideTimeout * 1000);
+    }, isPlaying ? uiHideTimeout * 1000 : 5000);
   };
 
   const lastMousePosRef = useRef({ x: 0, y: 0 });
@@ -3516,6 +3516,7 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
         }
       } else if (document.visibilityState === 'visible') {
         handleFocusGain();
+        window.dispatchEvent(new Event('resize'));
       }
     };
 
@@ -4031,11 +4032,6 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
       onMouseLeave={() => {
         if (!isScrubbing) setShowControls(false);
       }}
-      onClick={(e) => {
-        if (!isLocked && !hideUIOverlays) {
-          handleContainerClick(e);
-        }
-      }}
       onWheel={handleWheel}
       onDoubleClick={(e) => {
         // Removed toggleFullscreen() on double click to prevent accidental fullscreen exits
@@ -4044,7 +4040,11 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
       onContextMenu={(e) => {
         e.preventDefault();
         if (!isLocked && !hideUIOverlays) {
-          setRadialMenuState({ visible: true, x: e.clientX, y: e.clientY });
+          if (radialMenuState.visible) {
+            setRadialMenuState({ visible: false, x: 0, y: 0 });
+          } else {
+            setRadialMenuState({ visible: true, x: e.clientX, y: e.clientY });
+          }
         }
       }}
     >
@@ -4063,7 +4063,11 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
         onContextMenu={(e) => {
           e.preventDefault();
           e.stopPropagation();
-          setRadialMenuState({ visible: true, x: e.clientX, y: e.clientY });
+          if (radialMenuState.visible) {
+            setRadialMenuState({ visible: false, x: 0, y: 0 });
+          } else {
+            setRadialMenuState({ visible: true, x: e.clientX, y: e.clientY });
+          }
         }}
       >
         <video
@@ -4196,13 +4200,11 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
               width: '100%',
               height: '100%',
               background: (() => {
-                const hGrad = overlayPosition.includes('left')
-                  ? 'linear-gradient(to right, rgba(0,0,0,0.82) 0%, rgba(0,0,0,0.55) 25%, rgba(0,0,0,0.2) 50%, transparent 70%)'
-                  : 'linear-gradient(to left, rgba(0,0,0,0.82) 0%, rgba(0,0,0,0.55) 25%, rgba(0,0,0,0.2) 50%, transparent 70%)';
-                const vGrad = overlayPosition.includes('top')
-                  ? 'linear-gradient(to bottom, rgba(0,0,0,0.75) 0%, rgba(0,0,0,0.35) 40%, transparent 70%)'
-                  : 'linear-gradient(to top, rgba(0,0,0,0.75) 0%, rgba(0,0,0,0.35) 40%, transparent 70%)';
-                return `${hGrad}, ${vGrad}`;
+                if (overlayPosition === 'bottom-left') return 'linear-gradient(to top right, rgba(0,0,0,0.9) 0%, rgba(0,0,0,0.5) 40%, transparent 80%)';
+                if (overlayPosition === 'bottom-right') return 'linear-gradient(to top left, rgba(0,0,0,0.9) 0%, rgba(0,0,0,0.5) 40%, transparent 80%)';
+                if (overlayPosition === 'top-left') return 'linear-gradient(to bottom right, rgba(0,0,0,0.9) 0%, rgba(0,0,0,0.5) 40%, transparent 80%)';
+                if (overlayPosition === 'top-right') return 'linear-gradient(to bottom left, rgba(0,0,0,0.9) 0%, rgba(0,0,0,0.5) 40%, transparent 80%)';
+                return 'rgba(0,0,0,0.5)';
               })(),
               zIndex: 45,
               pointerEvents: 'none',
@@ -4216,19 +4218,19 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
               position: 'absolute',
               ...(overlayPosition === 'bottom-left' && {
                 bottom: '140px',
-                left: videoLayout.left > 0 ? `${videoLayout.left + 24}px` : '2.5%',
+                left: '3.5rem',
               }),
               ...(overlayPosition === 'bottom-right' && {
                 bottom: '140px',
-                right: videoLayout.left > 0 ? `${videoLayout.left + 24}px` : '2.5%',
+                right: '3.5rem',
               }),
               ...(overlayPosition === 'top-left' && {
-                top: videoLayout.top > 0 ? `${videoLayout.top + 60}px` : '5%',
-                left: videoLayout.left > 0 ? `${videoLayout.left + 24}px` : '2.5%',
+                top: '5%',
+                left: '3.5rem',
               }),
               ...(overlayPosition === 'top-right' && {
-                top: videoLayout.top > 0 ? `${videoLayout.top + 60}px` : '5%',
-                right: videoLayout.left > 0 ? `${videoLayout.left + 24}px` : '2.5%',
+                top: '5%',
+                right: '3.5rem',
               }),
               zIndex: 50,
               display: 'flex',
@@ -4371,7 +4373,11 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
           onContextMenu={(e) => {
             e.preventDefault();
             e.stopPropagation();
-            setRadialMenuState({ visible: true, x: e.clientX, y: e.clientY });
+            if (radialMenuState.visible) {
+              setRadialMenuState({ visible: false, x: 0, y: 0 });
+            } else {
+              setRadialMenuState({ visible: true, x: e.clientX, y: e.clientY });
+            }
           }}
           style={{
             position: 'absolute',
@@ -4633,7 +4639,7 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
         <Button
           key={activeSkipBookmark.id}
           variant='destructive'
-          className="skip-btn-premium animate-heartbeat bg-destructive! dark:bg-destructive! text-white"
+          className="skip-btn-premium animate-fade-in-pure"
           onClick={(e: React.MouseEvent) => {
             e.stopPropagation();
             const targetTime = (activeSkipBookmark.isOutro || activeSkipBookmark.category === 'Outro') 
@@ -5542,20 +5548,6 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
           90% { opacity: 1; transform: translateY(0) scale(1); }
           100% { opacity: 0; transform: translateY(0) scale(1); pointer-events: none; }
         }
-        @keyframes heartbeat {
-          0% {
-            box-shadow: 0 0 0 0 var(--heartbeat-color, var(--destructive));
-            transform: scale(1);
-          }
-          50% {
-            box-shadow: 0 0 0 6px transparent;
-            transform: scale(1.03);
-          }
-          100% {
-            box-shadow: 0 0 0 0 transparent;
-            transform: scale(1);
-          }
-        }
         .skip-btn-premium {
           position: absolute;
           right: 40px;
@@ -5566,21 +5558,21 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
           font-size: 16px;
           font-weight: 500;
           cursor: pointer;
+          background: rgba(0, 0, 0, 0.6);
+          color: white;
+          border: 1px solid rgba(255, 255, 255, 0.2);
           backdrop-filter: blur(10px);
           -webkit-backdrop-filter: blur(10px);
           display: flex;
           align-items: center;
           gap: 12px;
           overflow: hidden;
-          transition: background 0.2s, color 0.2s;
-        }
-        .animate-heartbeat {
-          animation: skipFadePremium 7s cubic-bezier(0.4, 0, 0.2, 1) forwards, heartbeat 2s infinite ease-in-out;
+          transition: all 0.2s;
         }
         .skip-btn-premium:hover {
           background: white;
           color: black;
-          animation-play-state: paused, paused;
+          border-color: white;
         }
         .skip-btn-premium:hover .skip-progress-bar {
           animation-play-state: paused;
@@ -5620,7 +5612,7 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
           left: 0;
           right: 0;
           z-index: 20;
-          transition: opacity 0.15s ease, transform 0.15s ease;
+          transition: opacity 0.25s ease, transform 0.25s ease;
           pointer-events: auto;
         }
         .top-overlay-clean {
@@ -5686,7 +5678,7 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
           white-space: nowrap;
           pointer-events: none;
           opacity: 0;
-          transition: opacity 0.15s ease, transform 0.15s ease;
+          transition: opacity 0.25s ease, transform 0.25s ease;
           border: 1px solid rgba(255, 255, 255, 0.1);
           display: flex;
           flex-direction: column;
@@ -6228,7 +6220,7 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
           justify-content: center;
           gap: clamp(4rem, 15vw, 12rem);
           pointer-events: none;
-          transition: opacity 0.15s ease;
+          transition: opacity 0.25s ease;
         }
         .center-controls-hud.hidden {
           opacity: 0;
@@ -6393,7 +6385,7 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
           pointer-events: none;
           z-index: 50;
           opacity: 0;
-          transition: opacity 0.15s ease;
+          transition: opacity 0.25s ease;
         }
         .scrub-hover-tooltip.visible {
           opacity: 1;
@@ -6920,11 +6912,11 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
         @keyframes fadeInSlideUp {
           from {
             opacity: 0;
-            transform: translate(-50%, 12px);
+            transform: translateY(12px);
           }
           to {
             opacity: 1;
-            transform: translate(-50%, 0);
+            transform: translateY(0);
           }
         }
         .animate-metadata-slide-in {
@@ -7485,7 +7477,7 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
         }
         if (config.bookmark && !isUndetectedLocalMedia) {
           rItems.push({
-            id: 'bookmark', label: 'Bookmark', icon: <BookmarkIcon size={24} />, onClick: () => handleBookmarkAdd(), disabled: isLocked
+            id: 'bookmark', label: 'Bookmark', icon: <BookmarkIcon size={24} />, onClick: () => setShowAddDialog(true), disabled: isLocked
           });
         }
         if (config.mute) {

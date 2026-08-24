@@ -256,6 +256,8 @@ export const EmbedPlayerPage: React.FC = () => {
     );
   }
 
+  if (!video) return <div style={{ color: 'white', padding: 20 }}>Loading media...</div>;
+
   return (
     <div style={{ width: '100vw', height: '100vh', overflow: 'hidden', background: 'var(--bg-color)' }}>
       {theme.logoUrl && !theme.hideLogo && (

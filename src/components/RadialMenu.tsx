@@ -163,7 +163,7 @@ export const RadialMenu: React.FC<RadialMenuProps> = ({ x, y, items, centerItem,
                   onMouseUp={(e) => e.stopPropagation()}
                   onMouseDown={(e) => { 
                     e.stopPropagation(); 
-                    if (!item.disabled) {
+                    if (e.button === 0 && !item.disabled) {
                       item.onClick(); 
                       onClose(); 
                     }
@@ -171,10 +171,7 @@ export const RadialMenu: React.FC<RadialMenuProps> = ({ x, y, items, centerItem,
                   onContextMenu={(e) => { 
                     e.preventDefault(); 
                     e.stopPropagation(); 
-                    if (!item.disabled) {
-                      item.onClick(); 
-                      onClose(); 
-                    }
+                    if (!inline) onClose();
                   }}
                   style={{ 
                     cursor: item.disabled ? 'not-allowed' : 'pointer', 
@@ -246,18 +243,15 @@ export const RadialMenu: React.FC<RadialMenuProps> = ({ x, y, items, centerItem,
                 onMouseUp={(e) => e.stopPropagation()}
                 onMouseDown={(e) => { 
                   e.stopPropagation(); 
-                  if (!centerItem.disabled) {
+                  if (e.button === 0 && !centerItem.disabled) {
                     centerItem.onClick(); 
-                    onClose();
-                  } 
+                    if (!inline) onClose();
+                  }
                 }}
                 onContextMenu={(e) => { 
                   e.preventDefault(); 
                   e.stopPropagation(); 
-                  if (!centerItem.disabled) {
-                    centerItem.onClick(); 
-                    onClose(); 
-                  }
+                  if (!inline) onClose();
                 }}
                 style={{ 
                   cursor: centerItem.disabled ? 'not-allowed' : 'pointer', 

@@ -414,7 +414,7 @@ export const EsportsLiveOverlay: React.FC = () => {
             const rScoreA = match.currentMapRoundScore?.teamA ?? activeMap.scoreA;
             const rScoreB = match.currentMapRoundScore?.teamB ?? activeMap.scoreB;
             const curMapName = getActiveMapName(match);
-            const isInBreak = match.status === 'in_progress' && match.currentMapRoundScore === null;
+            const isInBreak = match.status === 'ongoing' && match.currentMapRoundScore === null;
 
             return isCompactOnly ? (
               /* SCORE ONLY COMPACT MODE: NO TEAM NAMES, NO MAP NAMES, ONLY LIVE ROUND SCORE */

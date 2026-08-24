@@ -63,6 +63,10 @@ export default defineConfig({
   server: {
     allowedHosts: true,
     proxy: {
+      '/api': {
+        target: process.env.PORT_BACKEND ? `http://127.0.0.1:${process.env.PORT_BACKEND}` : 'http://127.0.0.1:50001',
+        changeOrigin: true,
+      },
       '/twitch-usher': {
         target: 'https://usher.ttvnw.net',
         changeOrigin: true,

@@ -42,8 +42,20 @@ export const HomePage: React.FC<HomePageProps> = ({
   formatTime,
   theme,
 }) => {
-  const continueWatchingList = videos.filter(v => v.currentTime && v.currentTime > 2 && (typeof v.duration !== 'number' || v.currentTime < v.duration - 5));
-  const primaryContinue = continueWatchingList.length > 0 ? continueWatchingList[0] : (videos.length > 0 ? videos[0] : null);
+  const sortedVideos = React.useMemo(() => {
+    return [...videos].sort((a, b) => {
+      const dateA = a.lastPlayedDate ? new Date(a.lastPlayedDate).getTime() : 0;
+      const dateB = b.lastPlayedDate ? new Date(b.lastPlayedDate).getTime() : 0;
+      return dateB - dateA; // Newest first
+    });
+  }, [videos]);
+
+  const continueWatchingList = sortedVideos.filter(v => {
+    if (!v.currentTime || v.currentTime <= 2) return false;
+    const durSecs = typeof v.duration === 'number' ? v.duration : parseDurationToSeconds(v.duration);
+    return durSecs <= 0 || v.currentTime < durSecs - 5;
+  });
+  const primaryContinue = continueWatchingList.length > 0 ? continueWatchingList[0] : (sortedVideos.length > 0 ? sortedVideos[0] : null);
 
   return (
     <div style={{ padding: '2rem', display: 'flex', flexDirection: 'column', gap: '2rem', boxSizing: 'border-box', width: '100%' }}>
