@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { X, Play, Star, Calendar, Clock, Film, ChevronLeft, ChevronRight, User, LayoutGrid, List, AlignLeft, ListFilter, Info } from 'lucide-react';
+import { X, Play, Star, Calendar, Clock, Film, Tv, ChevronLeft, ChevronRight, User, LayoutGrid, List, AlignLeft, ListFilter, Info } from 'lucide-react';
 import type { VideoItem } from '../types/media';
 import { ActorDetailsPage } from './ActorDetailsPage';
 import { CustomSelect } from './CustomSelect';
@@ -53,6 +53,7 @@ export const OnlineDetailsPage: React.FC<OnlineDetailsPageProps> = ({
   const [error, setError] = useState<string | null>(null);
 
   const castScrollRef = useRef<HTMLDivElement>(null);
+  const recScrollRef = useRef<HTMLDivElement>(null);
 
   const isAnime = video.type === 'online_anime';
 
@@ -323,6 +324,37 @@ export const OnlineDetailsPage: React.FC<OnlineDetailsPageProps> = ({
       behavior: 'smooth'
     });
   };
+
+  const handleScrollRec = (dir: 'left' | 'right') => {
+    if (!recScrollRef.current) return;
+    const scrollAmount = recScrollRef.current.clientWidth * 0.75;
+    recScrollRef.current.scrollBy({
+      left: dir === 'left' ? -scrollAmount : scrollAmount,
+      behavior: 'smooth'
+    });
+  };
+
+  // Convert vertical mousewheel scroll to horizontal scrolling when cursor is over or reaching More Like This
+  useEffect(() => {
+    const el = recScrollRef.current;
+    if (!el) return;
+
+    const onWheel = (e: WheelEvent) => {
+      if (Math.abs(e.deltaY) > Math.abs(e.deltaX)) {
+        const maxScrollLeft = el.scrollWidth - el.clientWidth;
+        const canScrollRight = el.scrollLeft < maxScrollLeft - 2;
+        const canScrollLeft = el.scrollLeft > 2;
+
+        if ((e.deltaY > 0 && canScrollRight) || (e.deltaY < 0 && canScrollLeft)) {
+          e.preventDefault();
+          el.scrollBy({ left: e.deltaY * 1.25, behavior: 'auto' });
+        }
+      }
+    };
+
+    el.addEventListener('wheel', onWheel, { passive: false });
+    return () => el.removeEventListener('wheel', onWheel);
+  }, [recommendations]);
 
   if (loading) {
     return <MediaPageSkeleton />;
@@ -675,76 +707,137 @@ export const OnlineDetailsPage: React.FC<OnlineDetailsPageProps> = ({
         {/* Recommendations / More Like This */}
         {recommendations.length > 0 && (
           <div className="netflix-section">
-            <h2 className="netflix-section-title">More Like This</h2>
+            <div className="netflix-section-header">
+              <h2 className="netflix-section-title">More Like This</h2>
+              <div className="scroll-arrow-controls">
+                <button className="arrow-scroll-btn" onClick={() => handleScrollRec('left')} title="Scroll Left">
+                  <ChevronLeft size={18} />
+                </button>
+                <button className="arrow-scroll-btn" onClick={() => handleScrollRec('right')} title="Scroll Right">
+                  <ChevronRight size={18} />
+                </button>
+              </div>
+            </div>
+
             {loadingRecommendations ? (
               <CarouselSkeleton count={7} />
             ) : (
               <div 
-                style={{
-                  display: 'grid',
-                  gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))',
-                  gap: '1.25rem',
-                  marginTop: '1.25rem'
-                }}
+                className="netflix-rec-slider"
+                ref={recScrollRef}
               >
-                {recommendations.map((rec) => (
-                  <div 
-                    key={rec.id} 
-                    onClick={() => {
-                      if (onSelectMedia) {
-                        onSelectMedia({
-                          id: `${rec.type === 'movie' ? 'movie' : (rec.type === 'tv' ? 'tv' : 'anime')}-${rec.id}`,
-                          title: rec.title,
-                          url: '',
-                          type: rec.type === 'movie' ? 'online_movie' : (rec.type === 'tv' ? 'online_tv' : 'online_anime'),
-                          isRemote: true,
-                          posterPath: rec.posterPath,
-                          tmdbId: rec.type !== 'anime' ? Number(rec.id) : undefined,
-                          anilistId: rec.type === 'anime' ? Number(rec.id) : undefined,
-                          audioTracks: [],
-                          subtitleTracks: []
-                        });
-                      }
-                    }}
-                    className="os2-card netflix-card"
-                    style={{ cursor: 'pointer' }}
-                  >
-                    <div className="os2-card-poster-wrap">
-                      {rec.posterPath ? (
-                        <img src={rec.posterPath} alt={rec.title} className="os2-card-poster" loading="lazy" />
-                      ) : (
-                        <div className="os2-card-poster-placeholder">
-                          <span>{rec.title}</span>
+                {recommendations.map((rec) => {
+                  const mediaYear = rec.year || (rec.release_date ? rec.release_date.split('-')[0] : '');
+                  const mediaTypeLabel = rec.type === 'movie' ? 'Movie' : (rec.type === 'tv' ? 'TV' : 'Anime');
+
+                  return (
+                    <div 
+                      key={rec.id} 
+                      onClick={() => {
+                        if (onSelectMedia) {
+                          onSelectMedia({
+                            id: `${rec.type === 'movie' ? 'movie' : (rec.type === 'tv' ? 'tv' : 'anime')}-${rec.id}`,
+                            title: rec.title,
+                            url: '',
+                            type: rec.type === 'movie' ? 'online_movie' : (rec.type === 'tv' ? 'online_tv' : 'online_anime'),
+                            isRemote: true,
+                            posterPath: rec.posterPath,
+                            tmdbId: rec.type !== 'anime' ? Number(rec.id) : undefined,
+                            anilistId: rec.type === 'anime' ? Number(rec.id) : undefined,
+                            audioTracks: [],
+                            subtitleTracks: []
+                          });
+                        }
+                      }}
+                      className="os2-card netflix-card"
+                      title={rec.title}
+                    >
+                      <div className="os2-poster">
+                        {rec.posterPath ? (
+                          <img src={rec.posterPath} alt={rec.title} className="os2-image" loading="lazy" />
+                        ) : (
+                          <div className="os2-fallback">
+                            {rec.type === 'movie' ? <Film size={32} /> : <Tv size={32} />}
+                            <span>{rec.title}</span>
+                          </div>
+                        )}
+
+                        {/* Netflix Gradient Shade */}
+                        <div className="netflix-card-gradient" />
+
+                        {/* Top Badges: Netflix 'N' Logo */}
+                        <div className="netflix-card-top-badges">
+                          <span className="netflix-n-badge">N</span>
                         </div>
-                      )}
-                      <div className="netflix-card-badge-top">
-                        <span className="netflix-n-badge">N</span>
-                      </div>
-                      <div className="os2-card-hover-overlay">
-                        <div className="netflix-card-actions">
-                          <button className="netflix-quick-play-btn" title="Play">
-                            <Play size={16} fill="#000" />
+
+                        {/* Hover Quick Actions */}
+                        <div className="netflix-card-hover-actions">
+                          <button 
+                            className="netflix-card-play-btn"
+                            title="Play Now"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              onPlay({
+                                id: `${rec.type === 'movie' ? 'movie' : (rec.type === 'tv' ? 'tv' : 'anime')}-${rec.id}`,
+                                title: rec.title,
+                                url: '',
+                                type: rec.type === 'movie' ? 'online_movie' : (rec.type === 'tv' ? 'online_tv' : 'online_anime'),
+                                isRemote: true,
+                                posterPath: rec.posterPath,
+                                tmdbId: rec.type !== 'anime' ? Number(rec.id) : undefined,
+                                anilistId: rec.type === 'anime' ? Number(rec.id) : undefined,
+                                audioTracks: [],
+                                subtitleTracks: []
+                              });
+                            }}
+                          >
+                            <Play size={16} fill="currentColor" />
                           </button>
-                          <button className="netflix-quick-icon-btn" title="More Info">
+
+                          <button 
+                            className="netflix-card-info-btn"
+                            title="Details"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              if (onSelectMedia) {
+                                onSelectMedia({
+                                  id: `${rec.type === 'movie' ? 'movie' : (rec.type === 'tv' ? 'tv' : 'anime')}-${rec.id}`,
+                                  title: rec.title,
+                                  url: '',
+                                  type: rec.type === 'movie' ? 'online_movie' : (rec.type === 'tv' ? 'online_tv' : 'online_anime'),
+                                  isRemote: true,
+                                  posterPath: rec.posterPath,
+                                  tmdbId: rec.type !== 'anime' ? Number(rec.id) : undefined,
+                                  anilistId: rec.type === 'anime' ? Number(rec.id) : undefined,
+                                  audioTracks: [],
+                                  subtitleTracks: []
+                                });
+                              }
+                            }}
+                          >
                             <Info size={16} />
                           </button>
                         </div>
-                        <div className="netflix-card-meta-line">
-                          <span className="netflix-match-pill">96% Match</span>
-                          <span className="netflix-card-tag">16+</span>
-                          <span className="netflix-card-tag">HD</span>
+                      </div>
+
+                      {/* Card Details / Info */}
+                      <div className="os2-details">
+                        <div className="netflix-card-meta-row">
+                          <span className="netflix-card-match">96% Match</span>
+                          <span className="netflix-card-badge">16+</span>
+                          <span className="netflix-card-badge">HD</span>
+                        </div>
+
+                        <h3 className="os2-title" title={rec.title}>{rec.title}</h3>
+
+                        <div className="os2-meta">
+                          <span className="os2-year">{mediaYear || '2024'}</span>
+                          <span className="os2-type">{mediaTypeLabel}</span>
                         </div>
                       </div>
                     </div>
-                    <div className="os2-card-body">
-                      <h4 className="os2-card-title">{rec.title}</h4>
-                      <div className="os2-card-meta">
-                        <span>{rec.year || 'Movie'}</span>
-                        <span className="os2-type-pill">{rec.type ? rec.type.toUpperCase() : 'HD'}</span>
-                      </div>
-                    </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </div>

@@ -18,11 +18,13 @@
     </div>
 
     <div class="setting-row vertical">
-      <label for="valorUrl">Valor Embed URL:</label>
-      <input type="text" id="valorUrl" placeholder="http://localhost:5173/embed" />
-      <div style="display: flex; gap: 6px; margin-top: 4px; width: 100%;">
-        <button type="button" id="btnDevPort" style="flex: 1; font-size: 11px; padding: 4px; background: #333;">Port 5173</button>
-        <button type="button" id="btnAppPort" style="flex: 1; font-size: 11px; padding: 4px; background: #333;">Port 50001</button>
+      <label for="valorUrl">Valor Embed URL / Host:</label>
+      <input type="text" id="valorUrl" placeholder="https://remote-site.com/embed or http://localhost:5173/embed" />
+      <div class="hint">Use any remote site or local server:</div>
+      <div class="btn-group">
+        <button type="button" id="btnDevPort" class="btn-preset" title="Local Dev (Port 5173)">Dev 5173</button>
+        <button type="button" id="btnAppPort" class="btn-preset" title="Local App (Port 50001)">App 50001</button>
+        <button type="button" id="btnCustomPreset" class="btn-preset" title="Focus custom / remote URL input">Custom/Remote</button>
       </div>
     </div>
 

@@ -689,3 +689,269 @@
   align-items: center;
   gap: 10px;
 }
+
+/* ==========================================================================
+   NETFLIX RECOMMENDATIONS HORIZONTAL SLIDER
+   ========================================================================== */
+.netflix-rec-slider {
+  display: flex !important;
+  gap: 1.25rem !important;
+  overflow-x: auto !important;
+  overflow-y: hidden !important;
+  padding: 0.75rem 0.25rem 1.75rem !important;
+  scroll-behavior: smooth !important;
+  -webkit-overflow-scrolling: touch !important;
+  scrollbar-width: thin !important;
+  scrollbar-color: rgba(229, 9, 20, 0.6) transparent !important;
+  width: 100% !important;
+  box-sizing: border-box !important;
+}
+
+.netflix-rec-slider::-webkit-scrollbar {
+  height: 6px !important;
+}
+
+.netflix-rec-slider::-webkit-scrollbar-track {
+  background: rgba(255, 255, 255, 0.04) !important;
+  border-radius: 9999px !important;
+}
+
+.netflix-rec-slider::-webkit-scrollbar-thumb {
+  background: #e50914 !important;
+  border-radius: 9999px !important;
+}
+
+.netflix-rec-slider .os2-card {
+  width: 175px !important;
+  min-width: 175px !important;
+  max-width: 175px !important;
+  flex-shrink: 0 !important;
+}
+
+/* ==========================================================================
+   AUTHENTIC NETFLIX POSTER CARDS (FOR PAGES AND MODALS)
+   ========================================================================== */
+.os2-card {
+  background: #181818 !important;
+  border: 1px solid rgba(255, 255, 255, 0.08) !important;
+  border-radius: 6px !important;
+  overflow: hidden !important;
+  cursor: pointer !important;
+  transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.3s cubic-bezier(0.16, 1, 0.3, 1), border-color 0.25s ease !important;
+  display: flex !important;
+  flex-direction: column !important;
+  box-shadow: 0 4px 15px rgba(0, 0, 0, 0.5) !important;
+  position: relative !important;
+  box-sizing: border-box !important;
+}
+
+.os2-card:hover {
+  transform: translateY(-8px) scale(1.04) !important;
+  border-color: rgba(229, 9, 20, 0.6) !important;
+  box-shadow: 0 16px 36px rgba(0, 0, 0, 0.9), 0 0 0 1px rgba(229, 9, 20, 0.4) !important;
+  z-index: 10 !important;
+  background: #1f1f1f !important;
+}
+
+.os2-poster {
+  position: relative !important;
+  aspect-ratio: 2/3 !important;
+  width: 100% !important;
+  overflow: hidden !important;
+  background: #121212 !important;
+}
+
+.os2-image {
+  width: 100% !important;
+  height: 100% !important;
+  object-fit: cover !important;
+  display: block !important;
+  transition: transform 0.45s cubic-bezier(0.16, 1, 0.3, 1) !important;
+}
+
+.os2-card:hover .os2-image {
+  transform: scale(1.06) !important;
+}
+
+.os2-fallback {
+  position: absolute !important;
+  inset: 0 !important;
+  display: flex !important;
+  flex-direction: column !important;
+  align-items: center !important;
+  justify-content: center !important;
+  padding: 1rem !important;
+  text-align: center !important;
+  color: rgba(255, 255, 255, 0.4) !important;
+  background: #181818 !important;
+  font-size: 0.82rem !important;
+}
+
+.netflix-card-gradient {
+  position: absolute !important;
+  inset: 0 !important;
+  background: linear-gradient(to top, rgba(20, 20, 20, 0.92) 0%, rgba(20, 20, 20, 0.2) 35%, transparent 60%) !important;
+  pointer-events: none !important;
+  z-index: 2 !important;
+  transition: background 0.3s ease !important;
+}
+
+.os2-card:hover .netflix-card-gradient {
+  background: linear-gradient(to top, rgba(20, 20, 20, 0.98) 0%, rgba(20, 20, 20, 0.4) 45%, transparent 75%) !important;
+}
+
+.netflix-card-top-badges {
+  position: absolute !important;
+  top: 8px !important;
+  left: 8px !important;
+  right: 8px !important;
+  display: flex !important;
+  justify-content: space-between !important;
+  align-items: center !important;
+  pointer-events: none !important;
+  z-index: 5 !important;
+}
+
+.netflix-n-badge {
+  background: #e50914 !important;
+  color: #ffffff !important;
+  font-weight: 900 !important;
+  font-size: 13px !important;
+  width: 22px !important;
+  height: 22px !important;
+  border-radius: 3px !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.6) !important;
+  line-height: 1 !important;
+  letter-spacing: -0.5px !important;
+}
+
+.netflix-card-hover-actions {
+  position: absolute !important;
+  bottom: 10px !important;
+  left: 10px !important;
+  right: 10px !important;
+  display: flex !important;
+  align-items: center !important;
+  gap: 8px !important;
+  z-index: 6 !important;
+  opacity: 0 !important;
+  transform: translateY(6px) !important;
+  transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1) !important;
+}
+
+.os2-card:hover .netflix-card-hover-actions {
+  opacity: 1 !important;
+  transform: translateY(0) !important;
+}
+
+.netflix-card-play-btn {
+  width: 34px !important;
+  height: 34px !important;
+  border-radius: 50% !important;
+  background: #e50914 !important;
+  border: none !important;
+  color: #ffffff !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  cursor: pointer !important;
+  box-shadow: 0 4px 12px rgba(229, 9, 20, 0.5) !important;
+  transition: transform 0.2s cubic-bezier(0.16, 1, 0.3, 1), background-color 0.2s !important;
+  flex-shrink: 0 !important;
+  padding: 0 !important;
+}
+
+.netflix-card-play-btn:hover {
+  transform: scale(1.12) !important;
+  background: #f40612 !important;
+}
+
+.netflix-card-info-btn {
+  width: 34px !important;
+  height: 34px !important;
+  border-radius: 50% !important;
+  background: rgba(42, 42, 42, 0.85) !important;
+  backdrop-filter: blur(8px) !important;
+  border: 1px solid rgba(255, 255, 255, 0.25) !important;
+  color: #ffffff !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  cursor: pointer !important;
+  transition: transform 0.2s, background-color 0.2s, border-color 0.2s !important;
+  flex-shrink: 0 !important;
+  padding: 0 !important;
+}
+
+.netflix-card-info-btn:hover {
+  transform: scale(1.12) !important;
+  background: rgba(255, 255, 255, 0.25) !important;
+  border-color: #ffffff !important;
+}
+
+.os2-details {
+  padding: 0.75rem 0.85rem !important;
+  display: flex !important;
+  flex-direction: column !important;
+  flex-grow: 1 !important;
+  background: #181818 !important;
+  box-sizing: border-box !important;
+}
+
+.netflix-card-meta-row {
+  display: flex !important;
+  align-items: center !important;
+  gap: 6px !important;
+  margin-bottom: 5px !important;
+}
+
+.netflix-card-match {
+  color: #46d369 !important;
+  font-weight: 800 !important;
+  font-size: 0.78rem !important;
+  letter-spacing: -0.2px !important;
+}
+
+.netflix-card-badge {
+  border: 1px solid rgba(255, 255, 255, 0.3) !important;
+  color: rgba(255, 255, 255, 0.75) !important;
+  font-size: 0.62rem !important;
+  font-weight: 700 !important;
+  padding: 1px 4px !important;
+  border-radius: 2px !important;
+  line-height: 1.1 !important;
+}
+
+.os2-title {
+  font-size: 0.9rem !important;
+  font-weight: 700 !important;
+  color: #ffffff !important;
+  margin: 0 0 0.35rem 0 !important;
+  white-space: nowrap !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+  letter-spacing: -0.2px !important;
+  line-height: 1.25 !important;
+}
+
+.os2-meta {
+  display: flex !important;
+  justify-content: space-between !important;
+  align-items: center !important;
+  margin-top: auto !important;
+}
+
+.os2-year {
+  font-size: 0.75rem !important;
+  color: rgba(255, 255, 255, 0.5) !important;
+}
+
+.os2-type {
+  font-size: 0.72rem !important;
+  color: #e50914 !important;
+  font-weight: 700 !important;
+  text-transform: uppercase !important;
+}

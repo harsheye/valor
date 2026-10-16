@@ -676,10 +676,10 @@ export const ActorDetailsPage: React.FC<ActorDetailsPageProps> = ({
               {/* Credits Grid */}
               {filteredCredits.length > 0 ? (
                 <>
-                  <div className="actor-credits-grid">
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(175px, 1fr))', gap: '1.25rem', marginTop: '1.5rem' }}>
                     {paginatedCredits.map(c => {
                       const posterUrl = c.poster_path
-                        ? `https://images.weserv.nl/?url=https://image.tmdb.org/t/p/w185${c.poster_path}`
+                        ? `https://images.weserv.nl/?url=https://image.tmdb.org/t/p/w500${c.poster_path}`
                         : '';
                       const titleStr = c.title || c.name || 'Untitled';
                       const dateStr = c.release_date || c.first_air_date || '';
@@ -688,76 +688,113 @@ export const ActorDetailsPage: React.FC<ActorDetailsPageProps> = ({
                       return (
                         <div 
                           key={`${c.media_type}-${c.id}`} 
-                          className="actor-credit-card"
+                          className="os2-card netflix-card"
                           onClick={() => {
                             onSelectMedia({
                               id: `online-${c.media_type}-${c.id}`,
-                              tmdbId: String(c.id),
+                              tmdbId: c.id,
                               type: c.media_type === 'movie' ? 'online_movie' : 'online_tv',
                               title: titleStr,
+                              url: '',
+                              isRemote: true,
                               backdrop_path: '',
-                              poster_path: c.poster_path ? `https://image.tmdb.org/t/p/w500${c.poster_path}` : ''
+                              poster_path: c.poster_path ? `https://image.tmdb.org/t/p/w500${c.poster_path}` : '',
+                              posterPath: c.poster_path ? `https://image.tmdb.org/t/p/w500${c.poster_path}` : '',
+                              audioTracks: [],
+                              subtitleTracks: []
                             } as any);
                           }}
+                          style={{ cursor: 'pointer' }}
                         >
-                          <div className="credit-card-poster">
+                          <div className="os2-poster">
                             {posterUrl ? (
-                              <img src={posterUrl} alt={titleStr} loading="lazy" />
+                              <img src={posterUrl} alt={titleStr} className="os2-image" loading="lazy" />
                             ) : (
-                              <div className="credit-card-poster-fallback">
-                                {c.media_type === 'movie' ? <Film size={28} /> : <Tv size={28} />}
-                              </div>
-                            )}
-                            
-                            {/* Overlay Rating Badge (Top Left) */}
-                            {c.vote_average > 0 && (
-                              <div className="card-rating-badge" style={{ position: 'absolute', top: '8px', left: '8px', zIndex: 5 }}>
-                                <Star size={10} fill="#f59e0b" stroke="#f59e0b" />
-                                <span>{c.vote_average.toFixed(1)}</span>
+                              <div className="os2-fallback">
+                                {c.media_type === 'movie' ? <Film size={32} /> : <Tv size={32} />}
+                                <span>{titleStr}</span>
                               </div>
                             )}
 
-                            {/* Overlay Year Badge (Top Right) */}
-                            {yearStr && yearStr !== 'N/A' && (
-                              <div className="card-year-badge" style={{
-                                position: 'absolute',
-                                top: '8px',
-                                right: '8px',
-                                background: 'rgba(0, 0, 0, 0.85)',
-                                border: '1px solid rgba(255, 255, 255, 0.15)',
-                                padding: '2px 6px',
-                                borderRadius: '4px',
-                                fontSize: '0.68rem',
-                                fontWeight: '800',
-                                color: '#fff',
-                                textTransform: 'uppercase',
-                                zIndex: 5
-                              }}>
-                                {yearStr}
-                              </div>
-                            )}
+                            {/* Netflix Gradient Shade */}
+                            <div className="netflix-card-gradient" />
+
+                            {/* Top Badges: Netflix 'N' Logo */}
+                            <div className="netflix-card-top-badges">
+                              <span className="netflix-n-badge">N</span>
+                            </div>
+
+                            {/* Hover Quick Actions */}
+                            <div className="netflix-card-hover-actions">
+                              <button 
+                                className="netflix-card-play-btn"
+                                title="View Details"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  onSelectMedia({
+                                    id: `online-${c.media_type}-${c.id}`,
+                                    tmdbId: c.id,
+                                    type: c.media_type === 'movie' ? 'online_movie' : 'online_tv',
+                                    title: titleStr,
+                                    url: '',
+                                    isRemote: true,
+                                    backdrop_path: '',
+                                    poster_path: c.poster_path ? `https://image.tmdb.org/t/p/w500${c.poster_path}` : '',
+                                    posterPath: c.poster_path ? `https://image.tmdb.org/t/p/w500${c.poster_path}` : '',
+                                    audioTracks: [],
+                                    subtitleTracks: []
+                                  } as any);
+                                }}
+                              >
+                                <Play size={16} fill="currentColor" />
+                              </button>
+
+                              <button 
+                                className="netflix-card-info-btn"
+                                title="Details"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  onSelectMedia({
+                                    id: `online-${c.media_type}-${c.id}`,
+                                    tmdbId: c.id,
+                                    type: c.media_type === 'movie' ? 'online_movie' : 'online_tv',
+                                    title: titleStr,
+                                    url: '',
+                                    isRemote: true,
+                                    backdrop_path: '',
+                                    poster_path: c.poster_path ? `https://image.tmdb.org/t/p/w500${c.poster_path}` : '',
+                                    posterPath: c.poster_path ? `https://image.tmdb.org/t/p/w500${c.poster_path}` : '',
+                                    audioTracks: [],
+                                    subtitleTracks: []
+                                  } as any);
+                                }}
+                              >
+                                <Info size={16} />
+                              </button>
+                            </div>
                           </div>
 
-                          <div className="credit-card-info" style={{ padding: '0.5rem 0.6rem', display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                            <h4 className="credit-card-title" style={{ fontSize: '0.85rem', fontWeight: 700, margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={titleStr}>
-                              {titleStr}
-                            </h4>
-                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '2px' }}>
-                              <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)', fontWeight: 500 }}>
-                                {yearStr !== 'N/A' ? yearStr : ''}
+                          {/* Card Details / Info */}
+                          <div className="os2-details">
+                            <div className="netflix-card-meta-row">
+                              <span className="netflix-card-match">
+                                {c.vote_average > 0 ? `${Math.min(99, Math.max(78, Math.round(c.vote_average * 10)))}% Match` : '96% Match'}
                               </span>
-                              <span style={{ 
-                                fontSize: '0.62rem', 
-                                fontWeight: 800, 
-                                textTransform: 'uppercase', 
-                                padding: '1px 5px', 
-                                borderRadius: '3px', 
-                                background: c.media_type === 'movie' ? 'rgba(34, 197, 94, 0.15)' : 'rgba(59, 130, 246, 0.15)', 
-                                color: c.media_type === 'movie' ? '#22c55e' : '#3b82f6',
-                                border: c.media_type === 'movie' ? '1px solid rgba(34, 197, 94, 0.3)' : '1px solid rgba(59, 130, 246, 0.3)'
-                              }}>
-                                {c.media_type === 'movie' ? 'MOVIE' : 'TV'}
-                              </span>
+                              <span className="netflix-card-badge">{c.media_type === 'movie' ? '16+' : 'TV'}</span>
+                              <span className="netflix-card-badge">HD</span>
+                            </div>
+
+                            <h3 className="os2-title" title={titleStr}>{titleStr}</h3>
+
+                            <div className="os2-meta">
+                              <span className="os2-year">{yearStr !== 'N/A' ? yearStr : ''}</span>
+                              {c.character ? (
+                                <span style={{ fontSize: '0.72rem', color: 'rgba(255,255,255,0.6)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '110px' }} title={`as ${c.character}`}>
+                                  as {c.character}
+                                </span>
+                              ) : (
+                                <span className="os2-type">{c.media_type === 'movie' ? 'Movie' : 'TV'}</span>
+                              )}
                             </div>
                           </div>
                         </div>

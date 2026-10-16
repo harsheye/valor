@@ -1,7 +1,7 @@
 // Background service worker for Valor Extension
 
 chrome.runtime.onInstalled.addListener(() => {
-  // Set default settings
+  // Set default settings if not already set
   chrome.storage.sync.get(['valorUrl', 'extensionEnabled'], (result) => {
     if (!result.valorUrl) {
       chrome.storage.sync.set({ valorUrl: 'http://localhost:5173/embed' });
@@ -24,14 +24,18 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     fetch(request.url, request.options)
       .then(async (res) => {
         const headers = {};
-        res.headers.forEach((v, k) => headers[k.toLowerCase()] = v);
+        res.headers.forEach((v, k) => {
+          headers[k.toLowerCase()] = v;
+        });
+
         if (request.blob) {
           const buffer = await res.arrayBuffer();
-          // send as base64 to avoid serialization issues
+          // Convert arrayBuffer to base64 efficiently in chunks to avoid call stack limits
           let binary = '';
           const bytes = new Uint8Array(buffer);
-          for (let i = 0; i < bytes.byteLength; i++) {
-              binary += String.fromCharCode(bytes[i]);
+          const chunkSize = 32768;
+          for (let i = 0; i < bytes.length; i += chunkSize) {
+            binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunkSize));
           }
           const base64 = btoa(binary);
           sendResponse({ ok: res.ok, status: res.status, headers, base64 });
@@ -40,7 +44,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
           sendResponse({ ok: res.ok, status: res.status, headers, text });
         }
       })
-      .catch(err => {
+      .catch((err) => {
         sendResponse({ ok: false, error: err.toString() });
       });
     return true;
