@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { X, Terminal, Trash2, Copy, ExternalLink, Check } from 'lucide-react';
+import { X, Terminal, Trash2, Copy, ExternalLink, Check, Mail } from 'lucide-react';
 
 interface ConsoleLog {
   id: string;
@@ -28,8 +28,21 @@ export const ConsoleOverlay: React.FC<ConsoleOverlayProps> = ({ onClose }) => {
     const originalError = console.error;
     const originalInfo = console.info;
 
+    const minimizeMessage = (msg: string): string => {
+      if (typeof msg !== 'string') return msg;
+      if (msg.includes('[FFmpeg Command] ffmpeg')) {
+        const match = msg.match(/-ss\s+([^\s]+)\s+-i\s+([^\s]+)\s+-t\s+([^\s]+)\s+-map\s+([^\s]+).*\s+([^\s]+)$/);
+        if (match) {
+          const [_, ss, input, t, map, output] = match;
+          const getBasename = (p: string) => p.split(/[/\\]/).pop() || p;
+          return `[FFmpeg Command] ffmpeg -ss ${ss} -i ${getBasename(input)} -t ${t} -map ${map} -> ${getBasename(output)} (minimized)`;
+        }
+      }
+      return msg;
+    };
+
     const addLog = (type: 'log' | 'warn' | 'error' | 'info', args: any[]) => {
-      const message = args.map(arg => {
+      const rawMessage = args.map(arg => {
         if (typeof arg === 'object') {
           try {
             return JSON.stringify(arg, null, 2);
@@ -39,6 +52,8 @@ export const ConsoleOverlay: React.FC<ConsoleOverlayProps> = ({ onClose }) => {
         }
         return String(arg);
       }).join(' ');
+
+      const message = minimizeMessage(rawMessage);
 
       const newLog = {
         id: Math.random().toString(36).substr(2, 9),
@@ -92,6 +107,19 @@ export const ConsoleOverlay: React.FC<ConsoleOverlayProps> = ({ onClose }) => {
     navigator.clipboard.writeText(text);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
+  };
+
+  const handleReportError = () => {
+    const errorLogs = logs.filter(l => l.type === 'error' || l.type === 'warn');
+    const logsToReport = errorLogs.length > 0 ? errorLogs : logs;
+    const formattedLogs = logsToReport
+      .map(l => `[${l.timestamp.toLocaleTimeString()}] [${l.type.toUpperCase()}] ${l.message}`)
+      .join('\n');
+
+    const emailSubject = 'Valor Player Error Report';
+    const emailBody = `Hi Developer,\n\nI encountered an issue with Valor. Here are the log details:\n\n${formattedLogs}\n\n---\nSystem Information:\nUser Agent: ${navigator.userAgent}\nPlatform: ${navigator.platform}\nTime: ${new Date().toString()}`;
+
+    window.location.href = `mailto:leetwhitesnake0@proton.me?subject=${encodeURIComponent(emailSubject)}&body=${encodeURIComponent(emailBody)}`;
   };
 
   const handleDetach = () => {
@@ -230,6 +258,27 @@ export const ConsoleOverlay: React.FC<ConsoleOverlayProps> = ({ onClose }) => {
           Developer Console
         </div>
         <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
+          <button 
+            onClick={handleReportError}
+            style={{ 
+              background: 'rgba(239, 68, 68, 0.1)', 
+              border: '1px solid rgba(239, 68, 68, 0.2)', 
+              color: '#ef4444', 
+              padding: '4px 8px',
+              borderRadius: '6px',
+              cursor: 'pointer', 
+              display: 'flex', 
+              alignItems: 'center', 
+              gap: '4px',
+              fontSize: '11px',
+              fontWeight: 500,
+              transition: 'all 0.2s'
+            }}
+            title="Report errors to developer via email"
+          >
+            <Mail size={12} />
+            <span>Report Error</span>
+          </button>
           <button 
             onClick={handleCopy}
             style={{ background: 'transparent', border: 'none', color: copied ? '#4ade80' : 'rgba(255,255,255,0.6)', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}

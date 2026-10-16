@@ -1,5 +1,5 @@
 import React from 'react';
-import { Home, History, Play, Settings, Film, X } from 'lucide-react';
+import { Home, History, Play, Settings, Film, X, Activity } from 'lucide-react';
 import type { VideoItem } from '../types/media';
 
 interface SidebarProps {

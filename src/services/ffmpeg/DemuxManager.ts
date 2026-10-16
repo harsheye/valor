@@ -214,10 +214,13 @@ export class DemuxManager {
       const runSlice = async (seekSeconds: number): Promise<Uint8Array> => {
         const args = [
           '-ss', seekSeconds.toString(),
+          '-accurate_seek',
           '-i', inputPath,
+          '-ss', '0',
           '-t', duration.toString(),
           '-map', `0:${streamIndex}`,
           '-vn',
+          '-avoid_negative_ts', 'make_zero',
           '-acodec', 'pcm_s16le',
           '-ac', '2',
           '-ar', '44100',

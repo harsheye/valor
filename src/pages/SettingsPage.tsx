@@ -3,8 +3,10 @@ import { CustomSelect } from '../components/CustomSelect';
 import { ToggleSwitch } from '../components/ToggleSwitch';
 import { ApiSettingsView } from '../components/ApiSettingsView';
 import { SpinnerSettingsView } from '../components/SpinnerSettingsView';
+import { RadialMenu } from '../components/RadialMenu';
 import { 
-  RotateCcw, UserPlus, LogOut, Trash2, Volume2, X, ChevronRight, ChevronLeft 
+  RotateCcw, UserPlus, LogOut, Trash2, Volume2, X, ChevronRight, ChevronLeft,
+  Terminal, MessageSquare, Maximize, Bookmark, FastForward, Unlock, Play, LogIn
 } from 'lucide-react';
 import { 
   audioOptions, subOptions, calendarStyleOptions, limitOptions, 
@@ -13,8 +15,8 @@ import {
 } from '../utils/constants';
 
 interface SettingsPageProps {
-  settingsTab: 'general' | 'hotkeys' | 'subtitle' | 'bookmarks' | 'storage' | 'api' | 'loader' | 'gridOverlay';
-  setSettingsTab: (tab: 'general' | 'hotkeys' | 'subtitle' | 'bookmarks' | 'storage' | 'api' | 'loader' | 'gridOverlay') => void;
+  settingsTab: 'general' | 'hotkeys' | 'subtitle' | 'bookmarks' | 'storage' | 'api' | 'loader' | 'gridOverlay' | 'radialMenu';
+  setSettingsTab: (tab: 'general' | 'hotkeys' | 'subtitle' | 'bookmarks' | 'storage' | 'api' | 'loader' | 'gridOverlay' | 'radialMenu') => void;
   uiOverlaySection: 'gridOverlay' | 'pauseOverlay';
   setUiOverlaySection: (section: 'gridOverlay' | 'pauseOverlay') => void;
   settings: any;
@@ -73,6 +75,8 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
   renderMockPreviewButton,
   setShowResetConfirm,
 }) => {
+  const isMonochrome = settings.theme === 'black-and-white' || settings.theme === 'oled';
+
   return (
     <div className="workspace-panel-wrapper">
       <div className="glass-panel workspace-panel settings-panel" style={{ display: 'flex', flexDirection: 'column', height: '100%', position: 'relative' }}>
@@ -134,6 +138,12 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
           >
             Spinner
           </button>
+          <button 
+            className={`settings-nav-btn ${settingsTab === 'radialMenu' ? 'active' : ''}`}
+            onClick={() => setSettingsTab('radialMenu')}
+          >
+            Radial Menu
+          </button>
         </div>
 
         <div className="settings-page-content-wrapper">
@@ -153,9 +163,16 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                         value={settings.theme || 'dark'} 
                         onChange={(val) => handleDefaultLangChange('theme' as any, val)}
                         options={[
-                          { value: 'dark', label: '🌙 Dark Mode (Default)' },
-                          { value: 'black-and-white', label: '🏁 Black & White (Monochrome Noir)' },
-                          { value: 'light', label: '☀️ Light Mode' }
+                          { value: 'dark', label: '🍿 Cinematic Dark (Default)' },
+                          { value: 'black-and-white', label: '🏁 Monochrome Noir' },
+                          { value: 'light', label: '🧪 Custom Teal' },
+                          { value: 'garden', label: '🏡 Cozy Garden' },
+                          { value: 'black', label: '🖤 OLED Black' },
+                          { value: 'luxury', label: '👑 Luxury Gold' },
+                          { value: 'dim', label: '🌑 Dim Slate' },
+                          { value: 'abyss', label: '🌌 Deep Abyss' },
+                          { value: 'aqua', label: '🌊 Aqua Ocean' },
+                          { value: 'valentine', label: '💖 Sweet Valentine' }
                         ]}
                       />
                     </div>
@@ -213,6 +230,48 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                         onChange={(val) => handleDefaultLangChange('historySaveInterval', val)}
                         options={intervalOptions}
                       />
+                    </div>
+                    <div className="pref-row">
+                      <span className="pref-label" style={{ opacity: 0.8 }}>Watch History Backup</span>
+                      <button 
+                        className="btn-primary" 
+                        style={{ 
+                          padding: '8px 16px', 
+                          fontSize: '0.85rem', 
+                          background: isMonochrome ? '#ffffff' : '#e50914', 
+                          color: isMonochrome ? '#000000' : '#fff', 
+                          border: 'none', 
+                          borderRadius: '4px', 
+                          cursor: 'pointer',
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '6px',
+                          fontWeight: 500
+                        }}
+                        onClick={async () => {
+                          try {
+                            const res = await fetch(`http://127.0.0.1:50001/api/history`);
+                            if (!res.ok) throw new Error('Failed to fetch history backup');
+                            const fileHistory = await res.json();
+                            if (Array.isArray(fileHistory)) {
+                              const restored = fileHistory.map((v: any) => ({
+                                ...v,
+                                audioTracks: v.audioTracks || [],
+                                subtitleTracks: v.subtitleTracks || []
+                              }));
+                              setVideos(restored);
+                              addToast("History restored successfully from server backup", "success");
+                            } else {
+                              addToast("No valid history backup found on server", "warning");
+                            }
+                          } catch (e: any) {
+                            addToast(`Failed to restore history: ${e.message}`, "error");
+                          }
+                        }}
+                      >
+                        <RotateCcw size={14} />
+                        <span>Restore Watch History from Server</span>
+                      </button>
                     </div>
                     <div className="pref-row">
                       <span className="pref-label">Toast Duration (Seconds)</span>
@@ -997,31 +1056,62 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                         }}>
                           <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap', flex: 1, minWidth: '280px' }}>
                             {(!settings.userId || settings.userId === 'local' || settings.userId.startsWith('local_')) ? (
-                              <button
-                                type="button"
-                                onClick={() => openAuthModal('signup')}
-                                className="btn btn-primary"
-                                style={{
-                                  display: 'flex',
-                                  alignItems: 'center',
-                                  gap: '6px',
-                                  padding: '8px 20px',
-                                  fontSize: '0.8rem',
-                                  fontWeight: 600,
-                                  borderRadius: '6px',
-                                  cursor: 'pointer',
-                                  background: '#e50914',
-                                  color: '#fff',
-                                  border: 'none',
-                                  transition: 'background 0.2s',
-                                  fontFamily: 'Outfit, sans-serif'
-                                }}
-                                onMouseEnter={e => e.currentTarget.style.background = '#ff0914'}
-                                onMouseLeave={e => e.currentTarget.style.background = '#e50914'}
-                              >
-                                <UserPlus size={14} />
-                                <span>Create Server Profile & Sync</span>
-                              </button>
+                              <>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setNewProfileName('');
+                                    setNewProfilePassword('');
+                                    setCreateProfileError('');
+                                    setIsCreateProfileModalOpen(true);
+                                  }}
+                                  className="btn btn-primary"
+                                  style={{
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    gap: '6px',
+                                    padding: '8px 20px',
+                                    fontSize: '0.8rem',
+                                    fontWeight: 600,
+                                    borderRadius: '6px',
+                                    cursor: 'pointer',
+                                    background: isMonochrome ? '#ffffff' : 'var(--accent-color, #e50914)',
+                                    color: isMonochrome ? '#000000' : '#fff',
+                                    border: 'none',
+                                    transition: 'all 0.2s',
+                                    fontFamily: 'Outfit, sans-serif'
+                                  }}
+                                  onMouseEnter={e => e.currentTarget.style.opacity = '0.9'}
+                                  onMouseLeave={e => e.currentTarget.style.opacity = '1'}
+                                >
+                                  <UserPlus size={14} />
+                                  <span>Create Account</span>
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => openAuthModal('login')}
+                                  style={{
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    gap: '6px',
+                                    padding: '8px 16px',
+                                    fontSize: '0.8rem',
+                                    fontWeight: 600,
+                                    borderRadius: '6px',
+                                    cursor: 'pointer',
+                                    background: 'var(--surface-hover, rgba(255, 255, 255, 0.08))',
+                                    color: 'var(--text-primary, #ffffff)',
+                                    border: '1px solid var(--border-color, rgba(255, 255, 255, 0.15))',
+                                    transition: 'all 0.2s',
+                                    fontFamily: 'Outfit, sans-serif'
+                                  }}
+                                  onMouseEnter={e => e.currentTarget.style.background = 'rgba(255, 255, 255, 0.14)'}
+                                  onMouseLeave={e => e.currentTarget.style.background = 'var(--surface-hover, rgba(255, 255, 255, 0.08))'}
+                                >
+                                  <LogIn size={14} />
+                                  <span>Log In to Cloud</span>
+                                </button>
+                              </>
                             ) : (
                               <button
                                 type="button"
@@ -1316,6 +1406,82 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
             </div>
           )}
 
+          {/* Radial Menu Config Tab */}
+          {settingsTab === 'radialMenu' && (() => {
+            const config = settings.radialMenuConfig || {};
+            const rItems = [];
+            if (config.console) rItems.push({ id: 'stats', label: 'Console', icon: <Terminal size={24} />, onClick: () => {} });
+            if (config.audioSubs) rItems.push({ id: 'audio', label: 'Audio/Subs', icon: <MessageSquare size={24} />, onClick: () => {} });
+            if (config.fullscreen) rItems.push({ id: 'fullscreen', label: 'Fullscreen', icon: <Maximize size={24} />, onClick: () => {} });
+            if (config.bookmark) rItems.push({ id: 'bookmark', label: 'Bookmark', icon: <Bookmark size={24} />, onClick: () => {} });
+            if (config.mute) rItems.push({ id: 'mute', label: 'Mute', icon: <Volume2 size={24} />, onClick: () => {} });
+            if (config.speed) rItems.push({ id: 'speed', label: '1.0x Speed', icon: <FastForward size={24} />, onClick: () => {} });
+            if (config.pip) rItems.push({ id: 'pip', label: 'PiP', icon: <Maximize size={24} />, onClick: () => {} });
+            if (config.loop) rItems.push({ id: 'loop', label: 'Loop', icon: <RotateCcw size={24} />, onClick: () => {} });
+            if (config.unlock) rItems.push({ id: 'unlock', label: 'Unlock UI', icon: <Unlock size={24} />, onClick: () => {} });
+
+            return (
+              <div className="settings-tab-content animate-fade-in" style={{ padding: '0 24px', display: 'flex', gap: '32px', height: '100%' }}>
+                
+                {/* Left side: Interactive Preview */}
+                <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(0,0,0,0.2)', borderRadius: '12px', border: '1px solid rgba(255,255,255,0.05)', position: 'relative', overflow: 'hidden' }}>
+                  <h3 style={{ position: 'absolute', top: 16, left: 16, margin: 0, color: 'rgba(255,255,255,0.5)', fontSize: '0.9rem', textTransform: 'uppercase', letterSpacing: '1px' }}>Live Preview</h3>
+                  {rItems.length > 0 ? (
+                    <div style={{ width: 320, height: 320 }}>
+                      <RadialMenu 
+                        x={0} y={0} 
+                        items={rItems} 
+                        centerItem={{ icon: <Play size={24} fill="white" />, onClick: () => {} }} 
+                        onClose={() => {}} 
+                        inline 
+                      />
+                    </div>
+                  ) : (
+                    <div style={{ color: 'rgba(255,255,255,0.3)' }}>Enable items to see preview</div>
+                  )}
+                </div>
+
+                {/* Right side: Toggles */}
+                <div style={{ flex: 1, overflowY: 'auto', paddingRight: '8px' }}>
+                  <div className="settings-section" style={{ margin: 0 }}>
+                    <h3>Radial Menu Features</h3>
+                    <p className="settings-section-desc">Toggle features inside the right-click menu. Changes will reflect in the live preview.</p>
+                    
+                    <div className="settings-section-content" style={{ marginTop: '24px' }}>
+                      {[
+                        { key: 'console', title: 'Developer Console' },
+                        { key: 'audioSubs', title: 'Audio & Subtitles' },
+                        { key: 'fullscreen', title: 'Fullscreen Toggle' },
+                        { key: 'unlock', title: 'Unlock UI Feature' },
+                        { key: 'bookmark', title: 'Quick Bookmark' },
+                        { key: 'mute', title: 'Mute/Unmute' },
+                        { key: 'speed', title: 'Playback Speed' },
+                        { key: 'pip', title: 'Picture-in-Picture' },
+                        { key: 'loop', title: 'Loop Video' },
+                      ].map(({ key, title }) => {
+                        const value = config[key] ?? false;
+                        return (
+                          <div className="pref-row" key={key}>
+                            <span className="pref-label">{title}</span>
+                            <ToggleSwitch 
+                              checked={Boolean(value)}
+                              onChange={() => {
+                                const newConfig = { ...config, [key]: !value };
+                                handleDefaultLangChange('radialMenuConfig', newConfig);
+                                saveSettingsToStorage({ ...settings, radialMenuConfig: newConfig });
+                              }}
+                            />
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </div>
+
+              </div>
+            );
+          })()}
+
           {/* Settings Grid Overlay Section */}
           {settingsTab === 'gridOverlay' && (
             <div className="settings-tab-content animate-fade-in">
@@ -1417,8 +1583,8 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                           style={{
                             padding: '0.4rem 1rem',
                             fontSize: '0.8rem',
-                            background: !previewExpanded ? '#e50914' : 'rgba(255,255,255,0.08)',
-                            color: '#fff',
+                            background: !previewExpanded ? (isMonochrome ? '#ffffff' : '#e50914') : 'rgba(255,255,255,0.08)',
+                            color: !previewExpanded ? (isMonochrome ? '#000000' : '#fff') : '#fff',
                             border: 'none',
                             borderRadius: '4px',
                             cursor: 'pointer',
@@ -1433,8 +1599,8 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                           style={{
                             padding: '0.4rem 1rem',
                             fontSize: '0.8rem',
-                            background: previewExpanded ? '#e50914' : 'rgba(255,255,255,0.08)',
-                            color: '#fff',
+                            background: previewExpanded ? (isMonochrome ? '#ffffff' : '#e50914') : 'rgba(255,255,255,0.08)',
+                            color: previewExpanded ? (isMonochrome ? '#000000' : '#fff') : '#fff',
                             border: 'none',
                             borderRadius: '4px',
                             cursor: 'pointer',
@@ -1672,11 +1838,11 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                                   width: '16px',
                                   height: '16px',
                                   borderRadius: '50%',
-                                  border: isSel ? '2px solid #e50914' : '2px dashed rgba(255,255,255,0.3)',
-                                  background: isSel ? 'rgba(229, 9, 20, 0.4)' : 'transparent',
+                                  border: isSel ? (isMonochrome ? '2px solid #ffffff' : '2px solid #e50914') : '2px dashed rgba(255,255,255,0.3)',
+                                  background: isSel ? (isMonochrome ? 'rgba(255, 255, 255, 0.4)' : 'rgba(229, 9, 20, 0.4)') : 'transparent',
                                   zIndex: 20,
                                   transition: 'all 0.2s ease',
-                                  boxShadow: isSel ? '0 0 10px rgba(229, 9, 20, 0.6)' : 'none'
+                                  boxShadow: isSel ? (isMonochrome ? '0 0 10px rgba(255, 255, 255, 0.6)' : '0 0 10px rgba(229, 9, 20, 0.6)') : 'none'
                                 }}
                               />
                             );

@@ -1,10 +1,12 @@
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
+import Hls from 'hls.js';
 import { 
   Play, Pause, RotateCcw, RotateCw, Cast, X, 
   MessageSquare, Maximize, Minimize, MonitorPlay,
-  Volume2, Volume1, VolumeX, AlertCircle, Lock,
+  Volume2, Volume1, VolumeX, AlertCircle, Lock, Unlock,
   Layers, Type, Clock, Sliders, SkipForward, Ban, FastForward, Zap, Coffee, ChevronRight, ChevronLeft, Eye, Settings, Bookmark as BookmarkIcon, Activity, Terminal
 } from 'lucide-react';
+import { Button } from './ui/button';
 import type { VideoItem, CustomAudioTrack, CustomSubtitleTrack, Bookmark } from '../types/media';
 import { SubtitleOverlay } from './SubtitleOverlay';
 import type { SubtitleSettings } from './SubtitleOverlay';
@@ -38,6 +40,8 @@ import { classifyVideoTitle } from '../utils/libraryClassifier';
 import { LoadingSpinner, BufferingOverlay } from './LoadingSpinner';
 import { RadialMenu } from './RadialMenu';
 import { ConsoleOverlay } from './ConsoleOverlay';
+import { SpeedPopover } from './SpeedPopover';
+import { EsportsLiveOverlay } from './EsportsLiveOverlay';
 
 interface VideoPlayerProps {
   video: VideoItem;
@@ -77,8 +81,10 @@ interface VideoPlayerProps {
   autoSkipSexScenes?: boolean;
   lockModeActive?: boolean;
   settingsOrder?: string[];
+  radialMenuConfig?: any;
   uiHideTimeout?: number;
   onReassociate?: (videoId: string) => Promise<void>;
+  isEmbed?: boolean;
 }
 
 const OdometerDigit: React.FC<{ val: string }> = ({ val }) => {
@@ -117,17 +123,17 @@ const OdometerClock: React.FC<{ date: Date }> = ({ date }) => {
 
   return (
     <div className="odo-clock-container">
-      <span className="odo-hours-group" style={{ color: '#e50914', display: 'inline-flex' }}>
+      <span className="odo-hours-group" style={{ color: 'var(--player-accent, #e50914)', display: 'inline-flex' }}>
         <OdometerDigit val={hh[0]} />
         <OdometerDigit val={hh[1]} />
       </span>
-      <span className="odo-separator" style={{ color: 'rgba(255, 255, 255, 0.6)' }}>:</span>
-      <span className="odo-minutes-group" style={{ color: '#ffffff', display: 'inline-flex' }}>
+      <span className="odo-separator" style={{ color: 'var(--text-secondary, rgba(255, 255, 255, 0.6))' }}>:</span>
+      <span className="odo-minutes-group" style={{ color: 'var(--text-primary, #ffffff)', display: 'inline-flex' }}>
         <OdometerDigit val={mm[0]} />
         <OdometerDigit val={mm[1]} />
       </span>
-      <span className="odo-separator" style={{ color: 'rgba(255, 255, 255, 0.6)' }}>:</span>
-      <span className="odo-seconds-group" style={{ color: '#ffffff', display: 'inline-flex' }}>
+      <span className="odo-separator" style={{ color: 'var(--text-secondary, rgba(255, 255, 255, 0.6))' }}>:</span>
+      <span className="odo-seconds-group" style={{ color: 'var(--text-primary, #ffffff)', display: 'inline-flex' }}>
         <OdometerDigit val={ss[0]} />
         <OdometerDigit val={ss[1]} />
       </span>
@@ -146,6 +152,7 @@ export interface MediaDetails {
   imageUrl?: string;
   logoUrl?: string;
   rating?: number;
+  hasTmdbData?: boolean;
 }
 
 export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({ 
@@ -158,6 +165,7 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
   spinnerPreset = 'fire-circle',
   userId = 'local',
   profileName = 'Local Profile',
+  isEmbed = false,
   hideUIOverlays: propHideUIOverlays = false,
   hideVideoName: propHideVideoName = false,
   toastDuration = 0.5,
@@ -186,6 +194,7 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
   autoSkipSexScenes = true,
   lockModeActive: propLockModeActive = false,
   settingsOrder,
+  radialMenuConfig,
   uiHideTimeout = 1.5,
   onReassociate
 }) => {
@@ -195,8 +204,52 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
     file: isFile(rawVideo.file) ? rawVideo.file : undefined
   }), [rawVideo]);
 
+  const isUndetectedLocalMedia = useMemo(() => {
+    if (video.type === 'online_movie' || video.type === 'online_tv' || video.type === 'online_anime') {
+      return false;
+    }
+    return classifyVideoTitle(video.title).type === 'unknown';
+  }, [video.title, video.type]);
+
   const [isPlaying, setIsPlaying] = useState(false);
-  const [mediaDetails, setMediaDetails] = useState<MediaDetails | null>(null);
+  const [mediaDetails, setMediaDetails] = useState<MediaDetails | null>(() => {
+    const rawTitle = video.title || (video as any).fileName || '';
+    const seriesInfo = classifyVideoTitle(rawTitle);
+    const isTV = seriesInfo.type === 'series';
+    const initialTitle = (isTV && seriesInfo.seriesTitle) 
+      ? seriesInfo.seriesTitle 
+      : (seriesInfo.displayTitle || rawTitle || 'Unknown Title');
+    return {
+      title: initialTitle,
+      overview: '',
+      imageUrl: '',
+      episodeTitle: isTV ? seriesInfo.episodeTitle : undefined,
+      season: isTV ? seriesInfo.season : undefined,
+      episode: isTV ? seriesInfo.episode : undefined,
+    };
+  });
+
+  useEffect(() => {
+    const rawTitle = video.title || (video as any).fileName || '';
+    const seriesInfo = classifyVideoTitle(rawTitle);
+    const isTV = seriesInfo.type === 'series';
+    const initialTitle = (isTV && seriesInfo.seriesTitle) 
+      ? seriesInfo.seriesTitle 
+      : (seriesInfo.displayTitle || rawTitle || 'Unknown Title');
+    
+    setMediaDetails(prev => ({
+      title: initialTitle,
+      overview: prev?.overview || '',
+      imageUrl: prev?.imageUrl || '',
+      logoUrl: prev?.logoUrl,
+      rating: prev?.rating,
+      releaseDate: prev?.releaseDate,
+      episodeTitle: isTV ? (prev?.episodeTitle || seriesInfo.episodeTitle) : undefined,
+      season: isTV ? (prev?.season ?? seriesInfo.season) : undefined,
+      episode: isTV ? (prev?.episode ?? seriesInfo.episode) : undefined,
+    }));
+  }, [video.id, video.title, (video as any).fileName]);
+
   const [videoLayout, setVideoLayout] = useState({ left: 0, top: 0, width: 0, height: 0 });
   const [openSubtitles, setOpenSubtitles] = useState<any[]>([]);
   const [isOpenSubLoading, setIsOpenSubLoading] = useState(false);
@@ -232,6 +285,85 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
     
     setVideoLayout({ left, top, width, height });
   }, []);
+  const isDirectHls = video.url.includes('.m3u8') && !video.hlsPlaylist;
+
+  useEffect(() => {
+    // Only use hls.js for raw .m3u8 URLs when no custom hlsPlaylist is provided by the backend
+
+    if (isDirectHls && videoRef.current) {
+      if (Hls.isSupported()) {
+        class CustomLoader extends Hls.DefaultConfig.loader {
+          constructor(config: any) {
+            super(config);
+          }
+          load(context: any, config: any, callbacks: any) {
+            if (context.url && (context.url.includes('ttvnw.net') || context.url.includes('doppiocdn')) && !context.url.startsWith('/twitch-usher') && !context.url.startsWith('/twitch-proxy')) {
+              context.url = '/twitch-proxy/' + encodeURIComponent(context.url);
+            }
+            super.load(context, config, callbacks);
+          }
+        }
+
+        const hls = new Hls({ 
+          autoStartLoad: true,
+          loader: CustomLoader as any,
+          liveSyncDurationCount: 3,
+          liveMaxLatencyDurationCount: 10,
+          lowLatencyMode: true,
+          backBufferLength: 60,
+          enableWorker: true
+        });
+        hlsInstanceRef.current = hls;
+        
+        hls.on(Hls.Events.MANIFEST_PARSED, (event, data) => {
+          const newStreams: any[] = [];
+          if (hls.audioTracks && hls.audioTracks.length > 0) {
+            hls.audioTracks.forEach((t: any, index: number) => {
+              newStreams.push({ type: 'audio', index, codec: t.audioCodec || 'aac', language: t.lang || t.name });
+            });
+          }
+          if (hls.subtitleTracks && hls.subtitleTracks.length > 0) {
+            hls.subtitleTracks.forEach((t: any, index: number) => {
+              newStreams.push({ type: 'subtitle', index, codec: 'webvtt', language: t.lang || t.name });
+            });
+          }
+          if (newStreams.length > 0 && (!video.streams || video.streams.length === 0)) {
+            // Push streams to the video object if it lacks them
+            onUpdateVideoRef.current?.({
+              ...video,
+              streams: newStreams
+            });
+          }
+        });
+
+        hls.loadSource(video.url);
+        hls.attachMedia(videoRef.current);
+        
+        hls.on(Hls.Events.ERROR, (event, data) => {
+          if (data.fatal) {
+            switch(data.type) {
+              case Hls.ErrorTypes.NETWORK_ERROR:
+                hls.startLoad();
+                break;
+              case Hls.ErrorTypes.MEDIA_ERROR:
+                hls.recoverMediaError();
+                break;
+              default:
+                hls.destroy();
+                break;
+            }
+          }
+        });
+
+        return () => {
+          hls.destroy();
+        };
+      } else if (videoRef.current.canPlayType('application/vnd.apple.mpegurl')) {
+        // Fallback for native Safari support
+        videoRef.current.src = video.url;
+      }
+    }
+  }, [video.url, video.hlsPlaylist]);
 
   useEffect(() => {
     const handleResize = () => {
@@ -456,6 +588,13 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
     disableAnimations: !!disableAnimations,
     pauseOnFocusChange: !!pauseOnFocusChange
   });
+
+  const [vctOverlayEnabled, setVctOverlayEnabled] = useState(() => localStorage.getItem('vct_overlay_enabled') === 'true');
+  useEffect(() => {
+    const handleStorage = () => setVctOverlayEnabled(localStorage.getItem('vct_overlay_enabled') === 'true');
+    window.addEventListener('storage', handleStorage);
+    return () => window.removeEventListener('storage', handleStorage);
+  }, []);
 
   useEffect(() => {
     // If settings already exist in state, don't overwrite with raw boolean props
@@ -696,6 +835,7 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
 
   // Sync bookmarks to server via GraphQL (for all profiles)
   const syncBookmarksToServer = async (updatedBookmarks: any[]) => {
+    if (isEmbed) return;
     try {
       const activeUserId = userId || 'local';
       
@@ -941,6 +1081,7 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
   const hasScrobbledTraktRef = useRef<boolean>(!!(video as any).hasScrobbledTrakt);
 
   const scrobbleToTrakt = async () => {
+    if (isEmbed) return;
     const savedSettings = localStorage.getItem('valor_settings');
     if (!savedSettings) return;
     try {
@@ -1093,7 +1234,7 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
 
   // TheIntroDB Bookmarks Fetching
   useEffect(() => {
-    if (duration <= 0) return;
+    if (duration <= 0 || isEmbed) return;
 
     const fetchAllBookmarks = async () => {
       let resolvedTmdbId = video.tmdbId || tmdbIdRef.current;
@@ -1129,60 +1270,72 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
                 ...prev,
                 tmdbId: resolvedTmdbId
               }));
-
-              // Resolve full metadata details for paused overlay card
-              if (getOverlayDataFromTmdb) {
-                const mediaImg = matchedItem.poster_path ? `https://image.tmdb.org/t/p/w500${matchedItem.poster_path}` : (matchedItem.backdrop_path ? `https://image.tmdb.org/t/p/w500${matchedItem.backdrop_path}` : '');
-                const details: MediaDetails = {
-                  title: matchedItem.name || matchedItem.title || seriesInfo.seriesTitle || 'Unknown Title',
-                  overview: matchedItem.overview || '',
-                  imageUrl: mediaImg,
-                  releaseDate: matchedItem.release_date ? matchedItem.release_date.split('-')[0] : (matchedItem.first_air_date ? matchedItem.first_air_date.split('-')[0] : ''),
-                  rating: matchedItem.vote_average || undefined
-                };
-
-                // Fetch show/movie logos from TMDB images endpoint
-                try {
-                  const imagesUrl = `https://api.themoviedb.org/3/${isTV ? 'tv' : 'movie'}/${resolvedTmdbId}/images`;
-                  const imagesRes = await fetch(imagesUrl, {
-                    headers: { 'Authorization': `Bearer ${tmdbToken}`, 'accept': 'application/json' }
-                  });
-                  if (imagesRes.ok) {
-                    const imagesData = await imagesRes.ok ? await imagesRes.json() : null;
-                    if (imagesData) {
-                      const logos = imagesData.logos || [];
-                      let selectedLogo = logos.find((l: any) => l.iso_639_1 === 'en') || logos.find((l: any) => !l.iso_639_1) || logos[0];
-                      if (selectedLogo) {
-                        details.logoUrl = `https://image.tmdb.org/t/p/w500${selectedLogo.file_path}`;
-                      }
-                    }
-                  }
-                } catch {}
-
-                if (isTV) {
-                  try {
-                    const epUrl = `https://api.themoviedb.org/3/tv/${resolvedTmdbId}/season/${season}/episode/${episode}`;
-                    const epRes = await fetch(epUrl, {
-                      headers: { 'Authorization': `Bearer ${tmdbToken}`, 'accept': 'application/json' }
-                    });
-                    if (epRes.ok) {
-                      const epData = await epRes.json();
-                      details.episodeTitle = epData.name;
-                      details.season = epData.season_number;
-                      details.episode = epData.episode_number;
-                      if (epData.overview) details.overview = epData.overview;
-                      if (epData.still_path) {
-                        details.imageUrl = `https://image.tmdb.org/t/p/w500${epData.still_path}`;
-                      }
-                    }
-                  } catch {}
-                }
-                setMediaDetails(details);
-              }
             }
           }
         } catch (err) {
           logger.player(`[Bookmarks Sync] TMDB search error: ${err}`);
+        }
+      }
+
+      // Resolve full metadata details for paused overlay card
+      if (resolvedTmdbId && getOverlayDataFromTmdb) {
+        try {
+          const tmdbToken = "eyJhbGciOiJIUzI1NiJ9.eyJhdWQiOiJlMzQwMGRhZWZjODJjNTJlZDEyYzk1MWU1ZWFmYmVhYyIsIm5iZiI6MTc4MzU0MTI2OS44NzUsInN1YiI6IjZhNGVhZTE1MzFhOWUyYmNhZjBmY2RlMiIsInNjb3BlcyI6WyJhcGlfcmVhZCJdLCJ2ZXJzaW9uIjoxfQ.GT6_b6NSJwjYCXlbaCi_djq09ug0rKDxY9iouqVrYWY";
+          const detailsUrl = `https://api.themoviedb.org/3/${isTV ? 'tv' : 'movie'}/${resolvedTmdbId}`;
+          const detailsRes = await fetch(detailsUrl, {
+            headers: { 'Authorization': `Bearer ${tmdbToken}`, 'accept': 'application/json' }
+          });
+          const itemData = detailsRes.ok ? await detailsRes.json() : null;
+
+          const mediaImg = itemData?.poster_path ? `https://image.tmdb.org/t/p/w500${itemData.poster_path}` : (itemData?.backdrop_path ? `https://image.tmdb.org/t/p/w500${itemData.backdrop_path}` : '');
+          const details: MediaDetails = {
+            title: itemData?.name || itemData?.title || seriesInfo.seriesTitle || seriesInfo.displayTitle || 'Unknown Title',
+            overview: itemData?.overview || '',
+            imageUrl: mediaImg,
+            releaseDate: itemData?.release_date ? itemData.release_date.split('-')[0] : (itemData?.first_air_date ? itemData.first_air_date.split('-')[0] : ''),
+            rating: itemData?.vote_average || undefined,
+            hasTmdbData: true
+          };
+
+          // Fetch show/movie logos from TMDB images endpoint
+          try {
+            const imagesUrl = `https://api.themoviedb.org/3/${isTV ? 'tv' : 'movie'}/${resolvedTmdbId}/images`;
+            const imagesRes = await fetch(imagesUrl, {
+              headers: { 'Authorization': `Bearer ${tmdbToken}`, 'accept': 'application/json' }
+            });
+            if (imagesRes.ok) {
+              const imagesData = await imagesRes.json();
+              if (imagesData) {
+                const logos = imagesData.logos || [];
+                let selectedLogo = logos.find((l: any) => l.iso_639_1 === 'en') || logos.find((l: any) => !l.iso_639_1) || logos[0];
+                if (selectedLogo) {
+                  details.logoUrl = `https://image.tmdb.org/t/p/w500${selectedLogo.file_path}`;
+                }
+              }
+            }
+          } catch {}
+
+          if (isTV) {
+            try {
+              const epUrl = `https://api.themoviedb.org/3/tv/${resolvedTmdbId}/season/${season}/episode/${episode}`;
+              const epRes = await fetch(epUrl, {
+                headers: { 'Authorization': `Bearer ${tmdbToken}`, 'accept': 'application/json' }
+              });
+              if (epRes.ok) {
+                const epData = await epRes.json();
+                details.episodeTitle = epData.name;
+                details.season = epData.season_number;
+                details.episode = epData.episode_number;
+                if (epData.overview) details.overview = epData.overview;
+                if (epData.still_path) {
+                  details.imageUrl = `https://image.tmdb.org/t/p/w500${epData.still_path}`;
+                }
+              }
+            } catch {}
+          }
+          setMediaDetails(details);
+        } catch (err) {
+          logger.player(`[Bookmarks Sync] TMDB metadata fetch error: ${err}`);
         }
       }
 
@@ -1386,7 +1539,8 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
   };
   const [showControls, setShowControls] = useState(true);
   const [showConsoleOverlay, setShowConsoleOverlay] = useState(false);
-  const [isLocked, setIsLocked] = useState(propLockModeActive);
+  const [isLocked, setIsLocked] = useState(false);
+  const [playbackRate, setPlaybackRate] = useState(1.0);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [radialMenuState, setRadialMenuState] = useState<{ visible: boolean; x: number; y: number }>({ visible: false, x: 0, y: 0 });
   const [hoverTime, setHoverTime] = useState<string | null>(null);
@@ -1413,6 +1567,10 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
 
     const handleScrubEnd = () => {
       setIsScrubbing(false);
+      // Blur any focused range input so keyboard shortcuts resume working
+      if (document.activeElement?.tagName === 'INPUT' && (document.activeElement as HTMLInputElement).type === 'range') {
+        (document.activeElement as HTMLElement).blur();
+      }
       if (debouncedSeekTimeoutRef.current) {
         clearTimeout(debouncedSeekTimeoutRef.current);
       }
@@ -1451,6 +1609,7 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
   const [selectedSubTrack, setSelectedSubTrack] = useState<CustomSubtitleTrack | null>(null);
   const [extractingStreamIndex, setExtractingStreamIndex] = useState<number | null>(null);
   const [showAudioSubMenu, setShowAudioSubMenu] = useState(false);
+  const [showSpeedMenu, setShowSpeedMenu] = useState(false);
   const [isKeyInitiated, setIsKeyInitiated] = useState(false);
   if (false as boolean) {
     console.log(extractingStreamIndex, isKeyInitiated);
@@ -1577,10 +1736,12 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
   const [bufferedPercent, setBufferedPercent] = useState(0);
 
   const videoRef = useRef<HTMLVideoElement>(null);
+  const hlsInstanceRef = useRef<any>(null);
   const hasSeekedRef = useRef(false);
   const wasPausedByFocusLossRef = useRef(false);
   const previewVideoRef = useRef<HTMLVideoElement>(null);
   const [flashHud, setFlashHud] = useState<'play' | 'pause' | 'rewind' | 'forward' | null>(null);
+  const [skipRipple, setSkipRipple] = useState<{ x: number; y: number; id: number; direction: 'forward' | 'rewind' | 'playpause' } | null>(null);
   const hudTimeoutRef = useRef<any>(null);
 
   const triggerHudFlash = (action: 'play' | 'pause' | 'rewind' | 'forward') => {
@@ -1626,6 +1787,34 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
   const activeSubtitleStartOffsetRef = useRef(0);
   const remoteSeekGenerationRef = useRef(0);
   const remoteHardSeekActiveRef = useRef(false);
+  const seekedDebounceTimeoutRef = useRef<any>(null);
+  const [cumulativeSkipDelta, setCumulativeSkipDelta] = useState<number | null>(null);
+  const cumulativeSkipTimeoutRef = useRef<any>(null);
+  const targetSeekTimeRef = useRef<number | null>(null);
+  const targetSeekTimeoutRef = useRef<any>(null);
+
+  const executeRelativeSeek = (delta: number) => {
+    if (!videoRef.current) return;
+    const baseTime = targetSeekTimeRef.current !== null ? targetSeekTimeRef.current : videoRef.current.currentTime;
+    const newTarget = Math.max(0, Math.min(videoRef.current.duration || 0, baseTime + delta));
+    
+    targetSeekTimeRef.current = newTarget;
+    
+    setCumulativeSkipDelta(prev => (prev || 0) + delta);
+    if (cumulativeSkipTimeoutRef.current) clearTimeout(cumulativeSkipTimeoutRef.current);
+    cumulativeSkipTimeoutRef.current = setTimeout(() => {
+      setCumulativeSkipDelta(null);
+    }, 800);
+    
+    setCurrentTime(newTarget);
+    videoRef.current.currentTime = newTarget;
+    
+    if (targetSeekTimeoutRef.current) clearTimeout(targetSeekTimeoutRef.current);
+    targetSeekTimeoutRef.current = setTimeout(() => {
+       targetSeekTimeRef.current = null;
+    }, 800);
+    resetControlsTimeout();
+  };
 
   useEffect(() => {
     hasAutoSelectedRef.current = false;
@@ -1831,49 +2020,77 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
     };
   }, []);
 
-  // Auto-probe local file streams on startup if not already scanned
+  // Auto-probe local and remote file streams on startup if not already scanned
   useEffect(() => {
     const autoProbe = async () => {
-      if (video.type === 'local' && video.file && !video.streams && probingVideoIdRef.current !== video.id) {
+      // Skip probing if streams already exist, or if it's direct HLS/Stripchat/Twitch
+      if (video.streams || probingVideoIdRef.current === video.id) return;
+      if (video.url && (video.url.includes('.m3u8') || video.url.includes('twitch') || video.url.includes('stripchat'))) return;
+
+      if ((video.type === 'local' && video.file) || ((video.type === 'url' || video.isRemote) && video.url)) {
         probingVideoIdRef.current = video.id;
-
-        // Verify that the file is actually readable
-        try {
-          await video.file.slice(0, 1).arrayBuffer();
-        } catch (readErr) {
-          logger.error('Local file is not readable on auto-probe:', readErr);
-          probingVideoIdRef.current = null;
-          return;
-        }
-
         setIsAutoProbing(true);
+
         try {
           if (!ffmpegService.isReady()) {
             await ffmpegService.load(video.id);
           }
-          const result = await ffmpegService.probeFile(video.file, video.id);
 
+          let result;
           let seekMap: any[] = [];
           let timecodeScale: number | undefined = undefined;
-          try {
-            const fileSource = new FileByteSource(video.file);
-            const cachedFileSource = new CachedByteSource(fileSource);
-            const containerType = (result.format || '').toLowerCase();
-            if (containerType.includes('mkv') || containerType.includes('matroska')) {
-              const mkvInfo = await parseMkv(cachedFileSource);
-              seekMap = mkvInfo.seekMap || [];
-              timecodeScale = mkvInfo.timecodeScale;
-            } else if (containerType.includes('mp4')) {
-              const mp4Info = await parseMp4(cachedFileSource);
-              seekMap = mp4Info.tracks[0]?.seekMap?.timeToOffset || [];
+
+          if (video.type === 'local' && video.file) {
+            // Verify that the file is actually readable
+            try {
+              await video.file.slice(0, 1).arrayBuffer();
+            } catch (readErr) {
+              logger.error('Local file is not readable on auto-probe:', readErr);
+              probingVideoIdRef.current = null;
+              return;
             }
-          } catch (parseErr) {
-            logger.warn('Failed parsing local container for seekMap:', parseErr);
+            result = await ffmpegService.probeFile(video.file, video.id);
+
+            try {
+              const fileSource = new FileByteSource(video.file);
+              const cachedFileSource = new CachedByteSource(fileSource);
+              const containerType = (result.format || '').toLowerCase();
+              if (containerType.includes('mkv') || containerType.includes('matroska')) {
+                const mkvInfo = await parseMkv(cachedFileSource);
+                seekMap = mkvInfo.seekMap || [];
+                timecodeScale = mkvInfo.timecodeScale;
+              } else if (containerType.includes('mp4')) {
+                const mp4Info = await parseMp4(cachedFileSource);
+                seekMap = mp4Info.tracks[0]?.seekMap?.timeToOffset || [];
+              }
+            } catch (parseErr) {
+              logger.warn('Failed parsing local container for seekMap:', parseErr);
+            }
+          } else {
+            // Remote probe
+            const source = new HttpByteSource(video.url);
+            const cachedSource = new CachedByteSource(source, 2 * 1024 * 1024, 16);
+            const ext = video.url.split('.').pop()?.split('?')[0] || 'mp4';
+            result = await ffmpegService.probeRemoteHeader(video.url, `.${ext}`, cachedSource);
+            
+            try {
+              const containerType = (result.format || ext).toLowerCase();
+              if (containerType.includes('mkv') || containerType.includes('matroska')) {
+                const mkvInfo = await parseMkv(cachedSource);
+                seekMap = mkvInfo.seekMap || [];
+                timecodeScale = mkvInfo.timecodeScale;
+              } else if (containerType.includes('mp4')) {
+                const mp4Info = await parseMp4(cachedSource);
+                seekMap = mp4Info.tracks[0]?.seekMap?.timeToOffset || [];
+              }
+            } catch (parseErr) {
+              logger.warn('Failed parsing remote container for seekMap:', parseErr);
+            }
           }
 
           const updatedVideo = {
             ...video,
-            duration: result.duration,
+            duration: (result.duration && Number(result.duration) > 0) ? result.duration : video.duration,
             format: result.format,
             streams: result.streams,
             seekMap: seekMap.length > 0 ? seekMap : undefined,
@@ -1889,7 +2106,7 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
       }
     };
     autoProbe();
-  }, [video.id, video.type, video.file]);
+  }, [video.id, video.type, video.file, video.url, video.isRemote, video.streams]);
 
   // Synchronize Audio Volume / Muted State to video element and PlaybackController
   useEffect(() => {
@@ -1901,7 +2118,8 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
       localStorage.removeItem('valor_muted');
     }
 
-    const hasAlternateAudio = audioStreams.length > 0 || audioTracks.length > 0;
+    const isDirectHls = video.url.includes('.m3u8') && !video.hlsPlaylist;
+    const hasAlternateAudio = !isDirectHls && (activeAudioStreamIndex !== null || selectedAudioTrack !== null);
 
     if (videoRef.current) {
       videoRef.current.volume = hasAlternateAudio ? 0 : volume;
@@ -1961,17 +2179,79 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
     return () => cancelAnimationFrame(frameId);
   }, [duration]);
 
+  // Live stream detection and sync tracking
+  const isLiveStream = Boolean(
+    isDirectHls ||
+    duration === Infinity ||
+    !isFinite(duration) ||
+    (video.id && String(video.id).startsWith('twitch-')) ||
+    (hlsInstanceRef.current && (hlsInstanceRef.current as any).levels?.[0]?.details?.live)
+  );
+
+  const getLiveEdge = () => {
+    if (hlsInstanceRef.current && typeof hlsInstanceRef.current.liveSyncPosition === 'number' && hlsInstanceRef.current.liveSyncPosition > 0) {
+      return hlsInstanceRef.current.liveSyncPosition;
+    }
+    if (videoRef.current && videoRef.current.seekable && videoRef.current.seekable.length > 0) {
+      return videoRef.current.seekable.end(videoRef.current.seekable.length - 1);
+    }
+    return currentTime;
+  };
+
+  const liveEdge = getLiveEdge();
+  const secondsBehindLive = Math.max(0, liveEdge - currentTime);
+  const isAtLiveEdge = !isLiveStream || secondsBehindLive <= 4;
+
+  const jumpToLive = (e?: React.MouseEvent) => {
+    if (e) {
+      e.stopPropagation();
+    }
+    const target = getLiveEdge();
+    if (videoRef.current) {
+      videoRef.current.currentTime = target;
+      setCurrentTime(target);
+      if (videoRef.current.paused) {
+        videoRef.current.play().catch(() => {});
+        setIsPlaying(true);
+      }
+    }
+  };
+
+  // Auto-shift back to 1.0x speed when catching up to live edge
+  const speedResetHandledRef = useRef(false);
+  useEffect(() => {
+    if (!isLiveStream) return;
+    if (playbackRate !== 1.0) {
+      if (isAtLiveEdge && !speedResetHandledRef.current) {
+        speedResetHandledRef.current = true;
+        if (videoRef.current) {
+          videoRef.current.playbackRate = 1.0;
+        }
+        if (playbackControllerRef.current) {
+          playbackControllerRef.current.setPlaybackRate(1.0);
+        }
+        setPlaybackRate(1.0);
+        triggerSwitchToast("Caught up to Live — Speed auto-reset to 1.0x");
+      } else if (!isAtLiveEdge) {
+        speedResetHandledRef.current = false;
+      }
+    } else {
+      speedResetHandledRef.current = false;
+    }
+  }, [isLiveStream, isAtLiveEdge, playbackRate]);
+
   // Controls Auto-Hide
   const resetControlsTimeout = () => {
     setShowControls(true);
     if (controlsTimeoutRef.current) {
       clearTimeout(controlsTimeoutRef.current);
     }
+    const hideDelay = (uiHideTimeout || 1.5) * 1000;
     controlsTimeoutRef.current = setTimeout(() => {
-      if (isPlaying && !showAudioSubMenu && !showSettingsPanel && !showBookmarksPopover && !showAddDialog) {
+      if (!showAudioSubMenu && !showSettingsPanel && !showBookmarksPopover && !showAddDialog) {
         setShowControls(false);
       }
-    }, uiHideTimeout * 1000);
+    }, hideDelay);
   };
 
   const lastMousePosRef = useRef({ x: 0, y: 0 });
@@ -1990,7 +2270,7 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
     return () => {
       if (controlsTimeoutRef.current) clearTimeout(controlsTimeoutRef.current);
     };
-  }, [isPlaying, showAudioSubMenu, showSettingsPanel, showBookmarksPopover, showAddDialog]);
+  }, [isPlaying, uiHideTimeout, showAudioSubMenu, showSettingsPanel, showBookmarksPopover, showAddDialog]);
 
   const parseDurationToSeconds = (dur: any): number => {
     if (!dur) return 0;
@@ -2049,10 +2329,12 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
 
   // Audio/subtitle segment chunk loading on demand
   const loadAudioChunk = async (time: number, streamIndex: number, codec: string, isSeek = false) => {
+    if (isDirectHls) return;
     // Legacy Blob-based audio loading is disabled. Audio playback is handled entirely by PlaybackController via Web Audio API.
   };
 
   const loadSubtitleChunk = async (time: number, streamIndex: number) => {
+    if (isDirectHls) return;
     // Seek optimization: abort any active remote fetches
     if (subAbortControllerRef.current) {
       subAbortControllerRef.current.abort();
@@ -2320,7 +2602,7 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
     setPlaybackError(message);
   };
 
-  const handleVideoSeeked = async () => {
+  const handleVideoSeeked = () => {
     if (!videoRef.current) return;
     const newTime = videoRef.current.currentTime;
 
@@ -2338,45 +2620,67 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
 
     setIsBuffering(false);
 
-    // Sync PlaybackController playhead on seek
-    if (playbackControllerRef.current) {
-      const ctrlTime = playbackControllerRef.current.getCurrentTime();
-      if (Math.abs(ctrlTime - newTime) > 0.2) {
-        logger.player(`Seek detected to ${newTime}s in player. Updating playback controller...`);
-        activeAudioStartOffsetRef.current = Math.floor(newTime / 10) * 10;
-        playbackControllerRef.current.seek(newTime).catch(console.error);
-      }
+    if (seekedDebounceTimeoutRef.current) {
+      clearTimeout(seekedDebounceTimeoutRef.current);
     }
 
-    const containerType = (video.containerType || '').toLowerCase();
-    const isMkv = containerType.includes('mkv') || containerType.includes('matroska') || (video.format || '').toLowerCase().includes('mkv') || (video.format || '').toLowerCase().includes('matroska');
-
-    if (activeSubStreamIndex !== null && !subDebounceTimeoutRef.current) {
-      let needLoad = false;
-      if (video.containerType === 'hls' && video.hlsPlaylist) {
-        const segments = video.hlsPlaylist.segments || [];
-        const oldSegIdx = segments.findIndex((s: any) => s.startTime <= activeSubtitleStartOffsetRef.current && activeSubtitleStartOffsetRef.current < s.startTime + s.duration);
-        const newSegIdx = segments.findIndex((s: any) => s.startTime <= newTime && newTime < s.startTime + s.duration);
-        if (oldSegIdx !== newSegIdx) {
-          needLoad = true;
-        }
-      } else {
-        const isRemote = video.isRemote;
-        const subDuration = isRemote ? (isMkv ? 300 : 60) : 300;
-        if (newTime < activeSubtitleStartOffsetRef.current || newTime > activeSubtitleStartOffsetRef.current + subDuration - 5) {
-          needLoad = true;
+    seekedDebounceTimeoutRef.current = setTimeout(async () => {
+      // Sync PlaybackController playhead on seek
+      if (playbackControllerRef.current) {
+        const ctrlTime = playbackControllerRef.current.getCurrentTime();
+        if (Math.abs(ctrlTime - newTime) > 0.2) {
+          logger.player(`Seek detected to ${newTime}s in player. Updating playback controller...`);
+          activeAudioStartOffsetRef.current = Math.floor(newTime / 10) * 10;
+          playbackControllerRef.current.seek(newTime).catch(console.error);
         }
       }
 
-      if (needLoad) {
-        logger.player(`Seek detected to ${newTime}s outside current subtitle range. Fetching new subtitles.`);
-        await loadSubtitleChunk(newTime, activeSubStreamIndex);
+      const containerType = (video.containerType || '').toLowerCase();
+      const isMkv = containerType.includes('mkv') || containerType.includes('matroska') || (video.format || '').toLowerCase().includes('mkv') || (video.format || '').toLowerCase().includes('matroska');
+
+      if (activeSubStreamIndex !== null && !subDebounceTimeoutRef.current) {
+        let needLoad = false;
+        if (video.containerType === 'hls' && video.hlsPlaylist) {
+          const segments = video.hlsPlaylist.segments || [];
+          const oldSegIdx = segments.findIndex((s: any) => s.startTime <= activeSubtitleStartOffsetRef.current && activeSubtitleStartOffsetRef.current < s.startTime + s.duration);
+          const newSegIdx = segments.findIndex((s: any) => s.startTime <= newTime && newTime < s.startTime + s.duration);
+          if (oldSegIdx !== newSegIdx) {
+            needLoad = true;
+          }
+        } else {
+          const isRemote = video.isRemote;
+          const subDuration = isRemote ? (isMkv ? 300 : 60) : 300;
+          if (newTime < activeSubtitleStartOffsetRef.current || newTime > activeSubtitleStartOffsetRef.current + subDuration - 5) {
+            needLoad = true;
+          }
+        }
+
+        if (needLoad) {
+          logger.player(`Seek detected to ${newTime}s outside current subtitle range. Fetching new subtitles.`);
+          await loadSubtitleChunk(newTime, activeSubStreamIndex);
+        }
       }
-    }
+    }, 250);
   };
 
   // On-the-fly selection handlers for embedded streams selected in-player using container-direct chunk reading
   const handleSelectEmbeddedAudio = async (streamIndex: number, codec: string, language?: string, skipLoad = false) => {
+    if (isDirectHls) {
+      if (hlsInstanceRef.current) {
+        hlsInstanceRef.current.audioTrack = streamIndex;
+        setActiveAudioStreamIndex(streamIndex);
+        const label = getLangLabel(language, `Track #${streamIndex}`);
+        setSelectedAudioTrack({
+          id: `remote-aud-${streamIndex}`,
+          name: `Audio (${label})`,
+          url: '',
+          isExtracted: true,
+          language: language,
+          streamIndex
+        });
+      }
+      return;
+    }
     // Guard: if this stream is already active, don't restart the engine
     if (activeAudioStreamIndex === streamIndex && selectedAudioTrack?.streamIndex === streamIndex && selectedAudioTrack?.url) {
       return;
@@ -2402,6 +2706,23 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
   };
 
   const handleSelectEmbeddedSubtitle = async (streamIndex: number, codec: string, language?: string, skipLoad = false) => {
+    if (isDirectHls) {
+      if (hlsInstanceRef.current) {
+        hlsInstanceRef.current.subtitleTrack = streamIndex;
+        setActiveSubStreamIndex(streamIndex);
+        const label = getLangLabel(language, `Track #${streamIndex}`);
+        setSelectedSubTrack({
+          id: `remote-sub-${streamIndex}`,
+          name: `Subtitles (${label})`,
+          url: '',
+          isExtracted: true,
+          language: language,
+          streamIndex,
+          cues: []
+        });
+      }
+      return;
+    }
     if (subDebounceTimeoutRef.current) {
       clearTimeout(subDebounceTimeoutRef.current);
       subDebounceTimeoutRef.current = null;
@@ -2453,7 +2774,7 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
   };
 
   const prepareRemoteSubtitleForSeek = async (targetTime: number) => {
-    if (activeSubStreamIndex === null) return;
+    if (activeSubStreamIndex === null || isDirectHls) return;
 
     const containerType = (video.containerType || '').toLowerCase();
     const isMkv = containerType.includes('mkv') || containerType.includes('matroska') || (video.format || '').toLowerCase().includes('mkv') || (video.format || '').toLowerCase().includes('matroska');
@@ -2903,7 +3224,15 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
     }
 
     // Ignore key events if the user is typing in a text field
-    if (document.activeElement?.tagName === 'INPUT' || document.activeElement?.tagName === 'TEXTAREA') {
+    if (
+      (document.activeElement?.tagName === 'INPUT' && (document.activeElement as HTMLInputElement).type !== 'range') ||
+      document.activeElement?.tagName === 'TEXTAREA'
+    ) {
+      return;
+    }
+
+    // Ignore browser/system shortcuts
+    if (e.ctrlKey || e.metaKey || e.altKey) {
       return;
     }
 
@@ -2957,6 +3286,9 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
 
     if (pressedKey === addBookmarkKey) {
       e.preventDefault();
+      if (isUndetectedLocalMedia) {
+        return;
+      }
       if (isLocked) {
         triggerSwitchToast("Controls are Locked");
         return;
@@ -3017,7 +3349,8 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
       const isVolumeKey = pressedKey === 'arrowup' || pressedKey === 'arrowdown';
       const isBoostKey = pressedKey === audioBoostKey;
       const isScreenshotKey = pressedKey === screenshotKey;
-      if (!isVolumeKey && !isBoostKey && !isScreenshotKey) {
+      const isSkipKey = pressedKey === 'c';
+      if (!isVolumeKey && !isBoostKey && !isScreenshotKey && !isSkipKey) {
         e.preventDefault();
         e.stopPropagation();
         triggerSwitchToast("Controls are Locked");
@@ -3079,10 +3412,7 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
         triggerSwitchToast('Seeking is blocked');
         return;
       }
-      if (videoRef.current) {
-        videoRef.current.currentTime = Math.max(0, videoRef.current.currentTime - 10);
-        triggerHudFlash('rewind');
-      }
+      executeRelativeSeek(-10);
     } else if (pressedKey === forwardKey) {
       e.preventDefault();
       if (showPlayBarMode === 'disable') {
@@ -3093,10 +3423,7 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
         triggerSwitchToast('Seeking is blocked');
         return;
       }
-      if (videoRef.current) {
-        videoRef.current.currentTime = Math.min(videoRef.current.duration || 0, videoRef.current.currentTime + 10);
-        triggerHudFlash('forward');
-      }
+      executeRelativeSeek(10);
     } else if (pressedKey === 'c') {
       e.preventDefault();
       if (activeSkipBookmarkRef.current) {
@@ -3276,6 +3603,15 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
 
   // PlaybackController lifecycle hook
   useEffect(() => {
+    if (isDirectHls) {
+      if (videoRef.current) {
+        videoRef.current.play()
+          .then(() => setIsPlaying(true))
+          .catch(err => logger.player('Autoplay blocked:', err));
+      }
+      return;
+    }
+
     let active = true;
     let controller: PlaybackController | null = null;
 
@@ -3404,6 +3740,7 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
         }
       } else if (document.visibilityState === 'visible') {
         handleFocusGain();
+        window.dispatchEvent(new Event('resize'));
       }
     };
 
@@ -3448,7 +3785,7 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
           totalTimeWatchedRef.current += delta;
 
           // Check if remaining time is below rating threshold (minutes) to show rating prompt
-          if (videoRef.current && duration > 0 && !ratingPromptedRef.current) {
+          if (videoRef.current && duration > 0 && !ratingPromptedRef.current && !isUndetectedLocalMedia) {
             const remaining = duration - videoRef.current.currentTime;
             if (remaining <= (ratingThreshold || 3) * 60 && remaining > 5) {
               setShowRatingPrompt(true);
@@ -3853,8 +4190,7 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
           <button
             key="lockModeActive"
             onClick={() => {
-              const nextVal = !playerSettings.lockModeActive;
-              updatePlayerSetting('lockModeActive', nextVal);
+              const nextVal = !isLocked;
               setIsLocked(nextVal);
               if (nextVal) {
                 setShowSettingsPanel(false);
@@ -3867,8 +4203,8 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
             }}
             onMouseEnter={() => setHoveredSetting('lockModeActive')}
             onMouseLeave={() => setHoveredSetting(null)}
-            title="Lock Mode Active (Lock Controls on Startup)"
-            className={`settings-icon-toggle ${playerSettings.lockModeActive ? 'active-blue' : ''}`}
+            title="Lock Controls"
+            className={`settings-icon-toggle ${isLocked ? 'active-blue' : ''}`}
           >
             <Lock size={22} />
           </button>
@@ -3896,6 +4232,19 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
 
   const controlsVisible = showControls && !isLocked;
   const effectiveDuration = duration || parseDurationToSeconds(video.duration) || 0;
+  
+  const handleWheel = (e: React.WheelEvent) => {
+    if (showSettingsPanel || showAddDialog || showBookmarksPopover || showAudioSubMenu || showConsoleOverlay) return;
+    
+    const target = e.target as HTMLElement;
+    if (target.closest('.player-settings-panel') || target.closest('.bookmarks-popover') || target.closest('.audio-sub-popover') || target.closest('.speed-popover-container')) return;
+
+    if (e.deltaY < 0) {
+      handleKeyDownRef.current?.(new KeyboardEvent('keydown', { key: 'ArrowUp' }));
+    } else if (e.deltaY > 0) {
+      handleKeyDownRef.current?.(new KeyboardEvent('keydown', { key: 'ArrowDown' }));
+    }
+  };
 
   return (
     <div 
@@ -3904,17 +4253,74 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
       onMouseMove={(e) => {
         if (!isLocked) handleMouseMove(e);
       }}
+      onMouseLeave={() => {
+        if (!isScrubbing) setShowControls(false);
+      }}
+      onWheel={handleWheel}
       onDoubleClick={(e) => {
-        // Removed toggleFullscreen() on double click to prevent accidental fullscreen exits
-        // when the user clicks multiple times rapidly to pause/play.
+        if (isLocked || showPlayBarMode === 'disable' || uiConfig.blockSeekingCompletely) return;
+        const rect = e.currentTarget.getBoundingClientRect();
+        const clickX = e.clientX - rect.left;
+        const clickY = e.clientY - rect.top;
+        const width = rect.width;
+        const height = rect.height;
+        
+        // Ignore double clicks in the bottom 20% to avoid interfering with controls
+        if (clickY > height * 0.8) return;
+
+        if (clickX < width * 0.24) {
+          handleRewind();
+          triggerHudFlash('rewind');
+          setSkipRipple({ x: clickX, y: clickY, id: Date.now(), direction: 'rewind' });
+          setTimeout(() => setSkipRipple(null), 2000);
+        } else if (clickX > width * 0.76) {
+          handleForward();
+          triggerHudFlash('forward');
+          setSkipRipple({ x: clickX, y: clickY, id: Date.now(), direction: 'forward' });
+          setTimeout(() => setSkipRipple(null), 2000);
+        }
       }}
       onContextMenu={(e) => {
+        e.preventDefault();
         if (!isLocked && !hideUIOverlays) {
-          e.preventDefault();
-          setRadialMenuState({ visible: true, x: e.clientX, y: e.clientY });
+          if (radialMenuState.visible) {
+            setRadialMenuState({ visible: false, x: 0, y: 0 });
+          } else {
+            setRadialMenuState({ visible: true, x: e.clientX, y: e.clientY });
+          }
         }
       }}
     >
+      <svg width="0" height="0" style={{ position: 'absolute', pointerEvents: 'none' }}>
+        <defs>
+          <clipPath id="left-clip" clipPathUnits="objectBoundingBox">
+            <path d="M 0,0 L 0.10,0 Q 0.38,0.5 0.10,1 L 0,1 Z" />
+          </clipPath>
+          <clipPath id="right-clip" clipPathUnits="objectBoundingBox">
+            <path d="M 1,0 L 0.90,0 Q 0.62,0.5 0.90,1 L 1,1 Z" />
+          </clipPath>
+          <clipPath id="middle-clip" clipPathUnits="objectBoundingBox">
+            <path d="M 0.10,0 L 0.90,0 Q 0.62,0.5 0.90,1 L 0.10,1 Q 0.38,0.5 0.10,0 Z" />
+          </clipPath>
+        </defs>
+      </svg>
+
+      {/* Double Click Skip Ripple */}
+      {skipRipple && skipRipple.direction === 'rewind' && (
+        <div className="ripple-region-wrapper" style={{ clipPath: 'url(#left-clip)', WebkitClipPath: 'url(#left-clip)' }}>
+          <div key={`ripple-${skipRipple.id}`} className="skip-ripple-effect" style={{ left: skipRipple.x, top: skipRipple.y }} />
+        </div>
+      )}
+      {skipRipple && skipRipple.direction === 'forward' && (
+        <div className="ripple-region-wrapper" style={{ clipPath: 'url(#right-clip)', WebkitClipPath: 'url(#right-clip)' }}>
+          <div key={`ripple-${skipRipple.id}`} className="skip-ripple-effect" style={{ left: skipRipple.x, top: skipRipple.y }} />
+        </div>
+      )}
+      {skipRipple && skipRipple.direction === 'playpause' && (
+        <div className="ripple-region-wrapper" style={{ clipPath: 'url(#middle-clip)', WebkitClipPath: 'url(#middle-clip)' }}>
+          <div key={`ripple-${skipRipple.id}`} className="skip-ripple-effect" style={{ left: skipRipple.x, top: skipRipple.y }} />
+        </div>
+      )}
 
 
       <div 
@@ -3925,18 +4331,33 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
         }}
         onClick={(e) => {
           e.stopPropagation();
-          togglePlay();
+          const rect = e.currentTarget.getBoundingClientRect();
+          const clickX = e.clientX - rect.left;
+          const clickY = e.clientY - rect.top;
+          const width = rect.width;
+
+          // Only toggle play/pause if the click is in the middle 52% area
+          // Left (24%) and right (24%) are reserved for double-click seeking
+          if (clickX > width * 0.24 && clickX < width * 0.76) {
+            togglePlay();
+            setSkipRipple({ x: clickX, y: clickY, id: Date.now(), direction: 'playpause' });
+            setTimeout(() => setSkipRipple(null), 2000);
+          }
         }}
         onContextMenu={(e) => {
           e.preventDefault();
           e.stopPropagation();
-          setRadialMenuState({ visible: true, x: e.clientX, y: e.clientY });
+          if (radialMenuState.visible) {
+            setRadialMenuState({ visible: false, x: 0, y: 0 });
+          } else {
+            setRadialMenuState({ visible: true, x: e.clientX, y: e.clientY });
+          }
         }}
       >
         <video
           ref={videoRef}
           onContextMenu={(e) => e.preventDefault()}
-          src={video.url}
+          src={(video.url.includes('.m3u8') && !video.hlsPlaylist && Hls.isSupported()) ? undefined : video.url}
           controls={false}
           crossOrigin={video.playbackMode === 'advanced' ? 'anonymous' : undefined}
           className="main-video-element"
@@ -3998,7 +4419,7 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
           onError={handleVideoError}
           onEnded={() => {
             scrobbleToTrakt();
-            if (!ratingPromptedRef.current) {
+            if (!ratingPromptedRef.current && !isUndetectedLocalMedia) {
               setShowRatingPrompt(true);
               ratingPromptedRef.current = true;
             }
@@ -4047,34 +4468,35 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
           currentTime={currentTime} 
           settings={subSettings} 
           controlsVisible={controlsVisible}
+          menuVisible={showAudioSubMenu}
         />
       )}
 
       {/* Paused Metadata Overlay Card */}
-      {!isPlaying && mediaDetails && getOverlayDataFromTmdb && !hideUIOverlays && !isLocked && !showAudioSubMenu && (
+      {!isPlaying && mediaDetails?.hasTmdbData && getOverlayDataFromTmdb && !hideUIOverlays && !isLocked && !showAudioSubMenu && (
         <>
           {/* Dark gradient scrim — adapts direction based on overlay corner position */}
           {overlayShowBackground && (
-          <div 
-            style={{
-              position: 'absolute',
-              inset: 0,
-              width: '100%',
-              height: '100%',
-              background: (() => {
-                const hGrad = overlayPosition.includes('left')
-                  ? 'linear-gradient(to right, rgba(0,0,0,0.82) 0%, rgba(0,0,0,0.55) 25%, rgba(0,0,0,0.2) 50%, transparent 70%)'
-                  : 'linear-gradient(to left, rgba(0,0,0,0.82) 0%, rgba(0,0,0,0.55) 25%, rgba(0,0,0,0.2) 50%, transparent 70%)';
-                const vGrad = overlayPosition.includes('top')
-                  ? 'linear-gradient(to bottom, rgba(0,0,0,0.75) 0%, rgba(0,0,0,0.35) 40%, transparent 70%)'
-                  : 'linear-gradient(to top, rgba(0,0,0,0.75) 0%, rgba(0,0,0,0.35) 40%, transparent 70%)';
-                return `${hGrad}, ${vGrad}`;
-              })(),
-              zIndex: 45,
-              pointerEvents: 'none',
-              animation: 'overlayScrimFadeIn 0.8s ease forwards'
-            }}
-          />
+            <div 
+              style={{
+                position: 'absolute',
+                inset: 0,
+                width: '100%',
+                height: '100%',
+                background: (() => {
+                  const hGrad = overlayPosition.includes('left')
+                    ? 'linear-gradient(to right, rgba(0,0,0,0.82) 0%, rgba(0,0,0,0.55) 25%, rgba(0,0,0,0.2) 50%, transparent 70%)'
+                    : 'linear-gradient(to left, rgba(0,0,0,0.82) 0%, rgba(0,0,0,0.55) 25%, rgba(0,0,0,0.2) 50%, transparent 70%)';
+                  const vGrad = overlayPosition.includes('top')
+                    ? 'linear-gradient(to bottom, rgba(0,0,0,0.75) 0%, rgba(0,0,0,0.35) 40%, transparent 70%)'
+                    : 'linear-gradient(to top, rgba(0,0,0,0.75) 0%, rgba(0,0,0,0.35) 40%, transparent 70%)';
+                  return `${hGrad}, ${vGrad}`;
+                })(),
+                zIndex: 45,
+                pointerEvents: 'none',
+                animation: 'overlayScrimFadeIn 0.8s ease forwards'
+              }}
+            />
           )}
           <div 
             className="paused-metadata-overlay animate-metadata-slide-in"
@@ -4132,7 +4554,7 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
               margin: 0, 
               fontSize: '2.8rem', 
               fontWeight: 800, 
-              color: '#fff',
+              color: 'var(--text-primary, #fff)',
               fontFamily: "'Outfit', 'Inter', sans-serif",
               letterSpacing: '-0.02em',
               lineHeight: '1.1'
@@ -4169,7 +4591,7 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
               margin: '2px 0 0 0', 
               fontSize: '1.2rem', 
               fontWeight: 700, 
-              color: '#fff',
+              color: 'var(--text-primary, #fff)',
               fontFamily: "'Inter', sans-serif"
             }}>
               {mediaDetails.episodeTitle}
@@ -4237,7 +4659,11 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
           onContextMenu={(e) => {
             e.preventDefault();
             e.stopPropagation();
-            setRadialMenuState({ visible: true, x: e.clientX, y: e.clientY });
+            if (radialMenuState.visible) {
+              setRadialMenuState({ visible: false, x: 0, y: 0 });
+            } else {
+              setRadialMenuState({ visible: true, x: e.clientX, y: e.clientY });
+            }
           }}
           style={{
             position: 'absolute',
@@ -4366,17 +4792,19 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
             if (showPlayButtonMode === 'enable') togglePlay();
           }}
           style={{
-            pointerEvents: (controlsVisible || hoveredSetting === 'showPlayButton' || hoveredSetting === 'allowUiSkipping') ? 'auto' : 'none'
+            opacity: (controlsVisible || hoveredSetting === 'showPlayButton' || hoveredSetting === 'allowUiSkipping') ? 1 : 0,
+            pointerEvents: (controlsVisible || hoveredSetting === 'showPlayButton' || hoveredSetting === 'allowUiSkipping') ? 'auto' : 'none',
+            transition: 'opacity 0.25s ease'
           }}
         >
           {(uiConfig.allowUiSkipping || hoveredSetting === 'allowUiSkipping') && (
             <button 
               className={`hud-btn-clean ${getHighlightClass('allowUiSkipping')}`} 
-              onClick={(e) => { e.stopPropagation(); if (uiConfig.blockSeekingCompletely) return; handleRewind(); }} 
+              onClick={(e) => { e.stopPropagation(); if (uiConfig.blockSeekingCompletely) return; handleRewind(); resetControlsTimeout(); }}
               title="Rewind 10s"
               style={{
                 opacity: uiConfig.allowUiSkipping ? 1 : 0.5,
-                pointerEvents: uiConfig.allowUiSkipping ? 'auto' : 'none'
+                pointerEvents: (controlsVisible && uiConfig.allowUiSkipping) ? 'auto' : 'none'
               }}
             >
               <div className="seek-hud-container">
@@ -4392,7 +4820,7 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
             title={isPlaying ? "Pause" : "Play"}
             style={{
               opacity: showPlayButtonMode === 'enable' ? 1 : 0.5,
-              pointerEvents: showPlayButtonMode === 'enable' ? 'auto' : 'none'
+              pointerEvents: (controlsVisible && showPlayButtonMode === 'enable') ? 'auto' : 'none'
             }}
           >
             {isPlaying ? <Pause size={72} strokeWidth={1.2} /> : <Play size={72} strokeWidth={1.2} style={{ marginLeft: '6px' }} />}
@@ -4401,11 +4829,11 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
           {(uiConfig.allowUiSkipping || hoveredSetting === 'allowUiSkipping') && (
             <button 
               className={`hud-btn-clean ${getHighlightClass('allowUiSkipping')}`} 
-              onClick={(e) => { e.stopPropagation(); if (uiConfig.blockSeekingCompletely) return; handleForward(); }} 
+              onClick={(e) => { e.stopPropagation(); if (uiConfig.blockSeekingCompletely) return; handleForward(); resetControlsTimeout(); }}
               title="Forward 10s"
               style={{
                 opacity: uiConfig.allowUiSkipping ? 1 : 0.5,
-                pointerEvents: uiConfig.allowUiSkipping ? 'auto' : 'none'
+                pointerEvents: (controlsVisible && uiConfig.allowUiSkipping) ? 'auto' : 'none'
               }}
             >
               <div className="seek-hud-container">
@@ -4496,29 +4924,11 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
 
       {/* Skip Button */}
       {activeSkipBookmark && (
-        <button
-          className="skip-btn"
-          style={{
-            position: 'absolute',
-            bottom: controlsVisible ? '160px' : '40px',
-            right: '40px',
-            zIndex: 90,
-            background: 'rgba(0,0,0,0.7)',
-            color: 'white',
-            border: '1px solid rgba(255,255,255,0.2)',
-            padding: '12px 24px',
-            borderRadius: '8px',
-            fontSize: '16px',
-            fontWeight: '600',
-            cursor: 'pointer',
-            transition: 'all 0.2s',
-            backdropFilter: 'blur(8px)',
-            boxShadow: '0 4px 12px rgba(0,0,0,0.5)',
-            display: 'flex',
-            alignItems: 'center',
-            gap: '8px'
-          }}
-          onClick={(e) => {
+        <Button
+          key={activeSkipBookmark.id}
+          variant='destructive'
+          className="skip-btn-premium animate-fade-in-pure"
+          onClick={(e: React.MouseEvent) => {
             e.stopPropagation();
             const targetTime = (activeSkipBookmark.isOutro || activeSkipBookmark.category === 'Outro') 
               ? duration 
@@ -4530,12 +4940,14 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
             }
           }}
         >
-          Skip {
+          <span>Skip {
             activeSkipBookmark.category === 'Intro' || activeSkipBookmark.isIntro ? 'Intro' 
             : activeSkipBookmark.category === 'Outro' || activeSkipBookmark.isOutro ? 'Outro' 
             : activeSkipBookmark.label || activeSkipBookmark.category || 'Scene'
-          } (C)
-        </button>
+          } (C)</span>
+          <FastForward size={18} />
+          <div className="skip-progress-bar" />
+        </Button>
       )}
 
       {/* Bottom Controls Overlay */}
@@ -4673,8 +5085,8 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
  
                    <input
                      type="range"
-                     min={0}
-                     max={effectiveDuration || 100}
+                     min={isLiveStream && videoRef.current?.seekable?.length ? videoRef.current.seekable.start(0) : 0}
+                     max={isLiveStream ? (liveEdge || 100) : (effectiveDuration || 100)}
                      step={0.1}
                      value={isScrubbing && scrubTime !== null ? scrubTime : currentTime}
                     onChange={handleSeek}
@@ -4702,10 +5114,27 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
                 <div 
                   className={`time-display-clean ${getHighlightClass('showTimeDisplay')}`}
                   style={{
-                    opacity: showTimeDisplayMode === 'enable' ? 1 : 0.5
+                    opacity: showTimeDisplayMode === 'enable' ? 1 : 0.5,
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '8px'
                   }}
                 >
-                  {formatTime(duration - currentTime)}
+                  {isLiveStream ? (
+                    <button
+                      className={`live-badge-button ${isAtLiveEdge ? 'is-live' : 'is-behind'}`}
+                      onClick={jumpToLive}
+                      title={isAtLiveEdge ? "Playing Live" : `Behind live by ${formatTime(secondsBehindLive)}. Click to jump to live.`}
+                    >
+                      <span className="live-dot" />
+                      <span className="live-text">LIVE</span>
+                      {!isAtLiveEdge && (
+                        <span className="live-behind-text">-{formatTime(secondsBehindLive)}</span>
+                      )}
+                    </button>
+                  ) : (
+                    formatTime(duration - currentTime)
+                  )}
                 </div>
               )}
             </div>
@@ -4773,107 +5202,111 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
               </div>
 
               <div className="bottom-controls-center-group">
-                <div 
-                  className="popover-wrapper"
-                  onMouseEnter={() => {
-                    if (audioSubTimeoutRef.current) clearTimeout(audioSubTimeoutRef.current);
-                    setShowAudioSubMenu(true);
-                  }}
-                  onMouseLeave={() => {
-                    audioSubTimeoutRef.current = setTimeout(() => {
-                      setShowAudioSubMenu(false);
-                    }, 150);
-                  }}
-                >
-                  <button className="audio-sub-trigger-btn">
-                    <MessageSquare size={18} />
-                    <span>Audio & Subtitles</span>
-                  </button>
-                  
-                  {showAudioSubMenu && (
-                    <AudioSubPopover
-                      audioStreams={audioStreams}
-                      audioTracks={audioTracks}
-                      selectedAudioTrack={selectedAudioTrack}
-                      setSelectedAudioTrack={handleSelectAudioTrack}
-                      setActiveAudioStreamIndex={setActiveAudioStreamIndex}
-                      handleSelectEmbeddedAudio={handleSelectEmbeddedAudio}
-                      customAudioInputRef={customAudioInputRef}
-                      subtitleStreams={subtitleStreams}
-                      subtitleTracks={subtitleTracks}
-                      selectedSubTrack={selectedSubTrack}
-                      setSelectedSubTrack={handleSelectSubTrack}
-                      setActiveSubStreamIndex={setActiveSubStreamIndex}
-                      handleSelectEmbeddedSubtitle={handleSelectEmbeddedSubtitle}
-                      customSubInputRef={customSubInputRef}
-                      currentTime={currentTime}
-                      videoRef={videoRef}
-                      setCurrentTime={setCurrentTime}
-                      setShowAudioSubMenu={setShowAudioSubMenu}
-                      audioSubTimeoutRef={audioSubTimeoutRef}
-                      getLangLabel={getLangLabel}
-                      formatTime={formatTime}
-                      cleanSubtitleText={cleanSubtitleText}
-                      subSettings={subSettings}
-                      onUpdateSubSettings={onUpdateSubSettings}
-                      audioBoost={audioBoost}
-                      setAudioBoost={handleSetAudioBoost}
-                      openSubtitles={openSubtitles}
-                      isOpenSubLoading={isOpenSubLoading}
-                      onDownloadOpenSubtitle={downloadOpenSubtitle}
-                      hasFetchedOpenSubtitles={hasFetchedOpenSubtitles}
-                      onFetchOpenSubtitles={fetchOpenSubtitles}
-                    />
-                  )}
-                </div>
-
-                <div 
-                  className="popover-wrapper"
-                  style={{ marginLeft: '50px' }}
-                  onMouseEnter={() => {
-                    if (bookmarksTimeoutRef.current) clearTimeout(bookmarksTimeoutRef.current);
-                    setShowBookmarksPopover(true);
-                  }}
-                  onMouseLeave={() => {
-                    bookmarksTimeoutRef.current = setTimeout(() => {
-                      setShowBookmarksPopover(false);
-                    }, 150);
-                  }}
-                >
-                  <button 
-                    className="control-btn-bookmark-list" 
-                    onClick={() => setShowBookmarksPopover(prev => !prev)} 
-                    title="Bookmarks"
+                {!isUndetectedLocalMedia && (
+                  <div 
+                    className="popover-wrapper"
+                    onMouseEnter={() => {
+                      if (audioSubTimeoutRef.current) clearTimeout(audioSubTimeoutRef.current);
+                      setShowAudioSubMenu(true);
+                    }}
+                    onMouseLeave={() => {
+                      audioSubTimeoutRef.current = setTimeout(() => {
+                        setShowAudioSubMenu(false);
+                      }, 150);
+                    }}
                   >
-                    <BookmarkIcon size={20} />
-                  </button>
+                    <button className="audio-sub-trigger-btn">
+                      <MessageSquare size={18} />
+                      <span>Audio & Subtitles</span>
+                    </button>
+                    
+                    {showAudioSubMenu && (
+                      <AudioSubPopover
+                        audioStreams={audioStreams}
+                        audioTracks={audioTracks}
+                        selectedAudioTrack={selectedAudioTrack}
+                        setSelectedAudioTrack={handleSelectAudioTrack}
+                        setActiveAudioStreamIndex={setActiveAudioStreamIndex}
+                        handleSelectEmbeddedAudio={handleSelectEmbeddedAudio}
+                        customAudioInputRef={customAudioInputRef}
+                        subtitleStreams={subtitleStreams}
+                        subtitleTracks={subtitleTracks}
+                        selectedSubTrack={selectedSubTrack}
+                        setSelectedSubTrack={handleSelectSubTrack}
+                        setActiveSubStreamIndex={setActiveSubStreamIndex}
+                        handleSelectEmbeddedSubtitle={handleSelectEmbeddedSubtitle}
+                        customSubInputRef={customSubInputRef}
+                        currentTime={currentTime}
+                        videoRef={videoRef}
+                        setCurrentTime={setCurrentTime}
+                        setShowAudioSubMenu={setShowAudioSubMenu}
+                        audioSubTimeoutRef={audioSubTimeoutRef}
+                        getLangLabel={getLangLabel}
+                        formatTime={formatTime}
+                        cleanSubtitleText={cleanSubtitleText}
+                        subSettings={subSettings}
+                        onUpdateSubSettings={onUpdateSubSettings}
+                        audioBoost={audioBoost}
+                        setAudioBoost={handleSetAudioBoost}
+                        openSubtitles={openSubtitles}
+                        isOpenSubLoading={isOpenSubLoading}
+                        onDownloadOpenSubtitle={downloadOpenSubtitle}
+                        hasFetchedOpenSubtitles={hasFetchedOpenSubtitles}
+                        onFetchOpenSubtitles={fetchOpenSubtitles}
+                      />
+                    )}
+                  </div>
+                )}
 
-                  {showBookmarksPopover && (
-                    <BookmarkPanel
-                      bookmarks={bookmarks}
-                      onJump={(time) => {
-                        if (videoRef.current) {
-                          videoRef.current.currentTime = time;
-                          setCurrentTime(time);
-                        }
-                      }}
-                      onEdit={(bm) => {
-                        setEditingBookmark(bm);
-                        setShowAddDialog(true);
+                {!isUndetectedLocalMedia && (
+                  <div 
+                    className="popover-wrapper"
+                    style={{ marginLeft: '50px' }}
+                    onMouseEnter={() => {
+                      if (bookmarksTimeoutRef.current) clearTimeout(bookmarksTimeoutRef.current);
+                      setShowBookmarksPopover(true);
+                    }}
+                    onMouseLeave={() => {
+                      bookmarksTimeoutRef.current = setTimeout(() => {
                         setShowBookmarksPopover(false);
-                      }}
-                      onDelete={handleDeleteBookmark}
-                      onAdd={() => {
-                        if (videoRef.current) {
-                          setEditingBookmark(undefined);
-                          setMarkingStartTime(Math.round(videoRef.current.currentTime));
+                      }, 150);
+                    }}
+                  >
+                    <button 
+                      className="control-btn-bookmark-list" 
+                      onClick={() => setShowBookmarksPopover(prev => !prev)} 
+                      title="Bookmarks"
+                    >
+                      <BookmarkIcon size={20} />
+                    </button>
+
+                    {showBookmarksPopover && (
+                      <BookmarkPanel
+                        bookmarks={bookmarks}
+                        onJump={(time) => {
+                          if (videoRef.current) {
+                            videoRef.current.currentTime = time;
+                            setCurrentTime(time);
+                          }
+                        }}
+                        onEdit={(bm) => {
+                          setEditingBookmark(bm);
+                          setShowAddDialog(true);
                           setShowBookmarksPopover(false);
-                        }
-                      }}
-                      onClose={() => setShowBookmarksPopover(false)}
-                    />
-                  )}
-                </div>
+                        }}
+                        onDelete={handleDeleteBookmark}
+                        onAdd={() => {
+                          if (videoRef.current) {
+                            setEditingBookmark(undefined);
+                            setMarkingStartTime(Math.round(videoRef.current.currentTime));
+                            setShowBookmarksPopover(false);
+                          }
+                        }}
+                        onClose={() => setShowBookmarksPopover(false)}
+                      />
+                    )}
+                  </div>
+                )}
 
               </div>
 
@@ -4901,8 +5334,8 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
                     }}
                     className="marking-hud-button-controls marking-hud-button-desktop"
                     style={{
-                      background: '#e50914',
-                      color: '#ffffff',
+                      background: 'var(--player-accent, #e50914)',
+                      color: 'var(--text-primary, #ffffff)',
                       border: 'none',
                       borderRadius: '20px',
                       padding: '6px 14px',
@@ -4930,6 +5363,47 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
                     <span>Marking... tap to end ({formatTime(markingStartTime)} - {formatTime(currentTime)})</span>
                   </button>
                 )}
+                
+                {/* Speed Button & Popover */}
+                <div 
+                  style={{ position: 'relative', marginRight: '50px' }}
+                  onMouseEnter={() => setShowSpeedMenu(true)}
+                  onMouseLeave={() => setShowSpeedMenu(false)}
+                >
+                  <button 
+                    className="control-btn-speed" 
+                    onClick={() => setShowSpeedMenu(prev => !prev)} 
+                    title="Playback Speed"
+                    style={{
+                      background: 'none',
+                      border: 'none',
+                      color: 'var(--text-primary, #fff)',
+                      cursor: 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      padding: '8px',
+                      opacity: 0.8,
+                      transition: 'opacity 0.2s',
+                      outline: 'none',
+                      fontSize: '1rem',
+                      fontWeight: '600'
+                    }}
+                    onMouseEnter={(e) => e.currentTarget.style.opacity = '1'}
+                    onMouseLeave={(e) => e.currentTarget.style.opacity = '0.8'}
+                  >
+                    {playbackRate}x
+                  </button>
+                  {showSpeedMenu && (
+                    <SpeedPopover
+                      playbackRate={playbackRate}
+                      setPlaybackRate={setPlaybackRate}
+                      videoRef={videoRef}
+                      onClose={() => setShowSpeedMenu(false)}
+                    />
+                  )}
+                </div>
+
                 <button 
                   className="control-btn-settings" 
                   onClick={() => setShowSettingsPanel(prev => !prev)} 
@@ -4937,7 +5411,7 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
                   style={{
                     background: 'none',
                     border: 'none',
-                    color: '#fff',
+                    color: 'var(--text-primary, #fff)',
                     cursor: 'pointer',
                     display: 'flex',
                     alignItems: 'center',
@@ -5000,8 +5474,8 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
             className="settings-modal-card animate-slide-in-right" 
             onClick={(e) => e.stopPropagation()}
             style={{
-              background: 'rgba(18, 18, 18, 0.96)',
-              border: '1px solid rgba(255, 255, 255, 0.1)',
+              background: 'var(--dropdown-bg, rgba(18, 18, 18, 0.96))',
+              border: '1px solid var(--dropdown-border, rgba(255, 255, 255, 0.1))',
               borderRight: 'none',
               borderRadius: '16px 0 0 16px',
               padding: '1.25rem 1rem',
@@ -5015,15 +5489,15 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
             }}
           >
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <h3 style={{ margin: 0, fontSize: '1rem', fontWeight: 600, color: '#ffffff' }}>UI Settings</h3>
+              <h3 style={{ margin: 0, fontSize: '1rem', fontWeight: 600, color: 'var(--text-primary, #ffffff)' }}>UI Settings</h3>
               <button 
                 onClick={() => {
                   setShowSettingsPanel(false);
                   setIsSettingsExpanded(false);
                 }}
-                style={{ background: 'none', border: 'none', color: 'rgba(255, 255, 255, 0.6)', cursor: 'pointer', padding: '4px', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'color 0.15s ease' }}
-                onMouseEnter={(e) => e.currentTarget.style.color = '#fff'}
-                onMouseLeave={(e) => e.currentTarget.style.color = 'rgba(255, 255, 255, 0.6)'}
+                style={{ background: 'none', border: 'none', color: 'var(--text-secondary, rgba(255, 255, 255, 0.6))', cursor: 'pointer', padding: '4px', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'color 0.15s ease' }}
+                onMouseEnter={(e) => e.currentTarget.style.color = 'var(--text-primary)'}
+                onMouseLeave={(e) => e.currentTarget.style.color = 'var(--text-secondary)'}
               >
                 <X size={18} />
               </button>
@@ -5045,15 +5519,41 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
                     'showFullscreen', 'disableAnimations', 'pauseOnFocusChange', 'allowUiSkipping', 'blockSeekingCompletely', 'autoSkipIntroOutro', 'lockModeActive'
                   ]).slice(0, 5).map((key) => renderSettingsButton(key))}
                   
-                  {/* 6th item is the uncollapse button */}
+                  {/* Esports Overlay Toggle */}
+                  <button
+                    onClick={() => {
+                      const nextVal = !vctOverlayEnabled;
+                      setVctOverlayEnabled(nextVal);
+                      localStorage.setItem('vct_overlay_enabled', nextVal ? 'true' : 'false');
+                      window.dispatchEvent(new Event('storage'));
+                    }}
+                    title="Toggle Esports Live Overlay"
+                    className="settings-icon-toggle"
+                    style={{
+                      background: vctOverlayEnabled ? 'rgba(46, 204, 113, 0.2)' : 'var(--border-subtle, rgba(255, 255, 255, 0.05))',
+                      border: `1px solid ${vctOverlayEnabled ? 'rgba(46, 204, 113, 0.5)' : 'var(--border-color, rgba(255, 255, 255, 0.1))'}`,
+                      color: vctOverlayEnabled ? '#2ecc71' : 'var(--text-secondary, rgba(255, 255, 255, 0.8))',
+                      borderRadius: '12px',
+                      padding: '8px',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      cursor: 'pointer',
+                      transition: 'all 0.2s ease'
+                    }}
+                  >
+                    <Activity size={22} />
+                  </button>
+
+                  {/* 7th item is the uncollapse button */}
                   <button
                     onClick={() => setIsSettingsExpanded(true)}
                     title="Show More Settings"
                     className="settings-icon-toggle"
                     style={{
-                      background: 'rgba(255, 255, 255, 0.05)',
-                      border: '1px solid rgba(255, 255, 255, 0.1)',
-                      color: 'rgba(255, 255, 255, 0.8)',
+                      background: 'var(--border-subtle, rgba(255, 255, 255, 0.05))',
+                      border: '1px solid var(--dropdown-border, rgba(255, 255, 255, 0.1))',
+                      color: 'var(--text-secondary, rgba(255, 255, 255, 0.8))',
                       borderRadius: '12px',
                       padding: '8px',
                       display: 'flex',
@@ -5081,9 +5581,9 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
                     title="Show Less Settings"
                     className="settings-icon-toggle"
                     style={{
-                      background: 'rgba(255, 255, 255, 0.05)',
-                      border: '1px solid rgba(255, 255, 255, 0.1)',
-                      color: 'rgba(255, 255, 255, 0.8)',
+                      background: 'var(--border-subtle, rgba(255, 255, 255, 0.05))',
+                      border: '1px solid var(--dropdown-border, rgba(255, 255, 255, 0.1))',
+                      color: 'var(--text-secondary, rgba(255, 255, 255, 0.8))',
                       borderRadius: '12px',
                       padding: '8px',
                       display: 'flex',
@@ -5149,8 +5649,8 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
             position: 'absolute',
             bottom: controlsVisible ? '120px' : '45px',
             right: '1.5rem',
-            background: '#e50914',
-            color: '#ffffff',
+            background: 'var(--player-accent, #e50914)',
+            color: 'var(--text-primary, #ffffff)',
             border: 'none',
             borderRadius: '24px',
             padding: '10px 20px',
@@ -5216,6 +5716,32 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
         </div>
       )}
 
+      {/* Cumulative Skip HUD */}
+      {cumulativeSkipDelta !== null && (
+        <div className="flash-hud-overlay">
+          <div style={{ 
+            padding: '20px 30px', 
+            fontSize: '32px', 
+            fontWeight: 'bold', 
+            gap: '10px',
+            backgroundColor: 'rgba(0, 0, 0, 0.6)',
+            borderRadius: '8px',
+            display: 'flex',
+            alignItems: 'center',
+            color: 'white',
+            boxShadow: '0 4px 12px rgba(0,0,0,0.5)',
+            transform: 'scale(1.1)',
+            transition: 'opacity 0.2s ease-in-out'
+          }}>
+            {cumulativeSkipDelta < 0 ? (
+              <><RotateCcw size={40} strokeWidth={2} /> {cumulativeSkipDelta}s</>
+            ) : (
+              <><RotateCw size={40} strokeWidth={2} /> +{cumulativeSkipDelta}s</>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* Track Selection Switch Toast Overlay */}
       {switchToast.visible && (
         <div 
@@ -5272,7 +5798,7 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
-            color: '#fff',
+            color: 'var(--text-primary, #fff)',
             cursor: 'pointer',
             opacity: 0.3,
             transition: 'opacity 0.2s, background 0.2s, transform 0.1s'
@@ -5316,11 +5842,60 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
           }
         }
 
+        /* Skip Button Premium */
+        @keyframes skipProgressPremium {
+          from { width: 100%; }
+          to { width: 0%; }
+        }
+        @keyframes skipFadePremium {
+          0% { opacity: 0; transform: translateY(10px) scale(0.95); }
+          5% { opacity: 1; transform: translateY(0) scale(1); }
+          90% { opacity: 1; transform: translateY(0) scale(1); }
+          100% { opacity: 0; transform: translateY(0) scale(1); pointer-events: none; }
+        }
+        .skip-btn-premium {
+          position: absolute;
+          right: 40px;
+          bottom: 140px;
+          z-index: 90;
+          padding: 14px 28px;
+          border-radius: 4px;
+          font-size: 16px;
+          font-weight: 500;
+          cursor: pointer;
+          background: rgba(0, 0, 0, 0.6);
+          color: white;
+          border: 1px solid rgba(255, 255, 255, 0.2);
+          backdrop-filter: blur(10px);
+          -webkit-backdrop-filter: blur(10px);
+          display: flex;
+          align-items: center;
+          gap: 12px;
+          overflow: hidden;
+          transition: all 0.2s;
+        }
+        .skip-btn-premium:hover {
+          background: white;
+          color: black;
+          border-color: white;
+        }
+        .skip-btn-premium:hover .skip-progress-bar {
+          animation-play-state: paused;
+        }
+        .skip-progress-bar {
+          position: absolute;
+          bottom: 0;
+          left: 0;
+          height: 3px;
+          background: var(--player-accent, #e50914);
+          animation: skipProgressPremium 7s linear forwards;
+        }
+
         .player-container {
           position: fixed;
           inset: 0;
           z-index: 500;
-          background-color: #000000;
+          background-color: var(--player-bg, #000000);
           overflow: hidden;
           user-select: none;
         }
@@ -5337,17 +5912,73 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
         }
 
         /* Overlays */
+        .live-badge-button {
+          display: inline-flex;
+          align-items: center;
+          gap: 6px;
+          padding: 3px 8px;
+          border-radius: 4px;
+          font-size: 0.8rem;
+          font-weight: 700;
+          letter-spacing: 0.5px;
+          cursor: pointer;
+          border: none;
+          transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+          font-family: inherit;
+          user-select: none;
+        }
+        .live-badge-button.is-live {
+          background: rgba(229, 9, 20, 0.22);
+          color: #ff3b30;
+          border: 1px solid rgba(255, 59, 48, 0.5);
+          text-shadow: 0 0 6px rgba(255, 59, 48, 0.4);
+        }
+        .live-badge-button.is-live .live-dot {
+          width: 7px;
+          height: 7px;
+          border-radius: 50%;
+          background-color: #ff3b30;
+          box-shadow: 0 0 8px #ff3b30;
+          animation: liveDotPulse 1.5s infinite ease-in-out;
+        }
+        .live-badge-button.is-behind {
+          background: rgba(255, 255, 255, 0.12);
+          color: rgba(255, 255, 255, 0.7);
+          border: 1px solid rgba(255, 255, 255, 0.2);
+        }
+        .live-badge-button.is-behind:hover {
+          background: rgba(229, 9, 20, 0.35);
+          color: #ffffff;
+          border-color: #ff3b30;
+        }
+        .live-badge-button.is-behind .live-dot {
+          width: 7px;
+          height: 7px;
+          border-radius: 50%;
+          background-color: rgba(255, 255, 255, 0.45);
+        }
+        .live-behind-text {
+          font-size: 0.75rem;
+          opacity: 0.85;
+          margin-left: 2px;
+        }
+        @keyframes liveDotPulse {
+          0% { transform: scale(1); opacity: 1; }
+          50% { transform: scale(1.3); opacity: 0.5; }
+          100% { transform: scale(1); opacity: 1; }
+        }
+
         .player-overlay {
           position: absolute;
           left: 0;
           right: 0;
           z-index: 20;
-          transition: opacity 0.15s ease, transform 0.15s ease;
+          transition: opacity 0.25s ease, transform 0.25s ease;
           pointer-events: auto;
         }
         .top-overlay-clean {
           top: 0;
-          background: linear-gradient(to bottom, rgba(0,0,0,0.85) 0%, rgba(0,0,0,0.4) 60%, transparent 100%);
+          background: var(--player-overlay-gradient-top, linear-gradient(to bottom, rgba(0,0,0,0.85) 0%, rgba(0,0,0,0.4) 60%, transparent 100%));
           padding: 2.5rem 3.5rem;
           display: flex;
           align-items: center;
@@ -5358,7 +5989,7 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
         .top-title-clean {
           font-size: 1.3rem;
           font-weight: 500;
-          color: white;
+          color: var(--text-primary, white);
           margin: 0;
           text-align: center;
           white-space: nowrap;
@@ -5387,7 +6018,7 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
           z-index: 30;
         }
         .timeline-bookmark-dot:not(.intro-dot):not(.outro-dot):hover {
-          background-color: #e50914 !important;
+          background-color: var(--player-accent, #e50914) !important;
         }
         .timeline-bookmark-dot.intro-dot {
           background-color: #3b82f6;
@@ -5408,7 +6039,7 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
           white-space: nowrap;
           pointer-events: none;
           opacity: 0;
-          transition: opacity 0.15s ease, transform 0.15s ease;
+          transition: opacity 0.25s ease, transform 0.25s ease;
           border: 1px solid rgba(255, 255, 255, 0.1);
           display: flex;
           flex-direction: column;
@@ -5421,7 +6052,7 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
           font-weight: 600;
         }
         .timeline-bookmark-tooltip .tooltip-time {
-          color: rgba(255, 255, 255, 0.6);
+          color: var(--text-secondary, rgba(255, 255, 255, 0.6));
         }
         .timeline-bookmark-dot:hover .timeline-bookmark-tooltip,
         .timeline-bookmark-range:hover .timeline-bookmark-tooltip {
@@ -5463,16 +6094,16 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
           justify-content: center;
           background: rgba(255, 255, 255, 0.05);
           border: 1px solid rgba(255, 255, 255, 0.08);
-          color: rgba(255, 255, 255, 0.6);
+          color: var(--text-secondary, rgba(255, 255, 255, 0.6));
           border-radius: 12px;
           cursor: pointer;
           transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
           outline: none;
         }
         .settings-icon-toggle:hover:not(:disabled):not(.disabled) {
-          background: rgba(255, 255, 255, 0.12);
-          color: #ffffff;
-          border-color: rgba(255, 255, 255, 0.2);
+          background: var(--surface-hover, rgba(255, 255, 255, 0.12));
+          color: var(--text-primary, #ffffff);
+          border-color: var(--border-color, rgba(255, 255, 255, 0.2));
           transform: translateY(-2px);
         }
         .settings-icon-toggle.active, .settings-icon-toggle.active-blue {
@@ -5544,7 +6175,7 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
           transform: translateX(18px);
         }
         .drawer-add-btn {
-          background: #e50914;
+          background: var(--player-accent, #e50914);
           border: none;
           color: #ffffff;
           padding: 4px 10px;
@@ -5558,7 +6189,7 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
           background: #b80710;
         }
         .no-bookmarks-text {
-          color: rgba(255, 255, 255, 0.4);
+          color: var(--text-muted, rgba(255, 255, 255, 0.4));
           font-size: 0.85rem;
           font-style: italic;
           margin: 0;
@@ -5603,7 +6234,7 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
           padding: 2px 7px;
           border-radius: 4px;
           background: rgba(255, 255, 255, 0.1);
-          color: rgba(255, 255, 255, 0.7);
+          color: var(--text-secondary, rgba(255, 255, 255, 0.7));
           text-transform: uppercase;
           letter-spacing: 0.03em;
           white-space: nowrap;
@@ -5628,7 +6259,7 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
           font-weight: 500;
         }
         .bookmark-item-time {
-          color: rgba(255, 255, 255, 0.45);
+          color: var(--text-muted, rgba(255, 255, 255, 0.45));
           font-size: 0.75rem;
           font-family: 'JetBrains Mono', 'Fira Code', monospace;
           font-variant-numeric: tabular-nums;
@@ -5816,7 +6447,7 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
         .cast-btn, .close-btn {
           background: none;
           border: none;
-          color: white;
+          color: var(--text-primary, white);
           cursor: pointer;
           padding: 6px;
           display: flex;
@@ -5858,7 +6489,7 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
         .rating-close {
           background: none;
           border: none;
-          color: rgba(255,255,255,0.4);
+          color: var(--text-muted, rgba(255, 255, 255, 0.4));
           cursor: pointer;
           padding: 2px;
           display: flex;
@@ -5919,7 +6550,7 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
 
         .bottom-overlay {
           bottom: 0;
-          background: linear-gradient(to top, rgba(0,0,0,0.85) 0%, rgba(0,0,0,0.4) 60%, transparent 100%);
+          background: var(--player-overlay-gradient-bottom, linear-gradient(to top, rgba(0,0,0,0.85) 0%, rgba(0,0,0,0.4) 60%, transparent 100%));
           padding: 2.5rem 3.5rem;
           display: flex;
           flex-direction: column;
@@ -5950,10 +6581,14 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
           justify-content: center;
           gap: clamp(4rem, 15vw, 12rem);
           pointer-events: none;
-          transition: opacity 0.15s ease;
+          transition: opacity 0.25s ease;
         }
         .center-controls-hud.hidden {
           opacity: 0;
+          pointer-events: none !important;
+        }
+        .center-controls-hud.hidden * {
+          pointer-events: none !important;
         }
         .center-controls-hud.visible {
           opacity: 1;
@@ -6043,7 +6678,7 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
           position: absolute;
           left: 0;
           height: 4px;
-          background: #e50914;
+          background: var(--player-accent, #e50914);
           border-radius: 2px 0 0 2px;
           z-index: 3;
         }
@@ -6065,7 +6700,7 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
           width: 22px;
           height: 22px;
           border-radius: 50%;
-          background: #e50914;
+          background: var(--player-accent, #e50914);
           cursor: pointer;
           transform: scale(0);
           opacity: 0;
@@ -6083,7 +6718,7 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
           height: 22px;
           border: none;
           border-radius: 50%;
-          background: #e50914;
+          background: var(--player-accent, #e50914);
           cursor: pointer;
           transform: scale(0);
           opacity: 0;
@@ -6115,7 +6750,7 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
           pointer-events: none;
           z-index: 50;
           opacity: 0;
-          transition: opacity 0.15s ease;
+          transition: opacity 0.25s ease;
         }
         .scrub-hover-tooltip.visible {
           opacity: 1;
@@ -6210,7 +6845,7 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
           transition: color 0.2s, transform 0.2s;
         }
         .control-btn-pip:hover, .control-btn-fullscreen:hover, .control-btn-bookmark-list:hover {
-          color: white;
+          color: var(--text-primary, white);
           transform: scale(1.15);
         }
 
@@ -6222,7 +6857,7 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
           position: absolute;
           bottom: 50px;
           left: 50%;
-          transform: translateX(-50%);
+          translate: -50% 0;
           max-width: 95vw;
           background: var(--card-bg);
           backdrop-filter: blur(25px);
@@ -6326,7 +6961,7 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
         }
         .style-label {
           font-size: 0.7rem;
-          color: rgba(255, 255, 255, 0.45);
+          color: var(--text-muted, rgba(255, 255, 255, 0.45));
           text-transform: uppercase;
           letter-spacing: 0.05em;
           font-weight: 600;
@@ -6336,8 +6971,8 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
         .size-btn-group {
           display: flex;
           align-items: center;
-          background: rgba(0, 0, 0, 0.25);
-          border: 1px solid rgba(255, 255, 255, 0.15);
+          background: var(--input-bg, rgba(0, 0, 0, 0.25));
+          border: 1px solid var(--border-color, rgba(255, 255, 255, 0.15));
           border-radius: 6px;
           overflow: hidden;
           padding: 2px;
@@ -6346,7 +6981,7 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
         .size-action-btn {
           background: transparent;
           border: none;
-          color: #ffffff;
+          color: var(--text-primary, #ffffff);
           width: 28px;
           height: 24px;
           font-size: 0.95rem;
@@ -6359,15 +6994,15 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
           border-radius: 4px;
         }
         .size-action-btn:hover {
-          background: rgba(255, 255, 255, 0.08);
+          background: var(--surface-hover, rgba(255, 255, 255, 0.08));
         }
         .size-action-btn:active {
-          background: rgba(255, 255, 255, 0.15);
+          background: var(--border-subtle, rgba(255, 255, 255, 0.15));
         }
         .size-value-display {
           font-size: 0.8rem;
           font-weight: 600;
-          color: #ffffff;
+          color: var(--text-primary, #ffffff);
           padding: 0 0.6rem;
           min-width: 38px;
           text-align: center;
@@ -6377,7 +7012,7 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
         .popover-style-col .custom-select-trigger {
           font-size: 0.95rem;
           padding: 0.55rem 0.9rem;
-          background: rgba(0, 0, 0, 0.35);
+          background: var(--dropdown-bg, rgba(0, 0, 0, 0.35));
         }
         .style-row .custom-select-container {
           width: 100% !important;
@@ -6414,7 +7049,7 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
         }
         .color-picker-input-premium:hover {
           transform: scale(1.15);
-          border-color: rgba(255,255,255,0.45);
+          border-color: var(--text-muted, rgba(255, 255, 255, 0.45));
           box-shadow: 0 0 12px rgba(59, 130, 246, 0.5), 0 4px 15px rgba(0,0,0,0.6);
         }
         .color-picker-input-premium:disabled {
@@ -6432,10 +7067,10 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
         }
         .bg-clear-btn {
           flex: 1;
-          background: rgba(255, 255, 255, 0.04);
-          border: 1px solid rgba(255, 255, 255, 0.12);
+          background: var(--border-subtle, rgba(255, 255, 255, 0.04));
+          border: 1px solid var(--border-color, rgba(255, 255, 255, 0.12));
           border-radius: 6px;
-          color: rgba(255, 255, 255, 0.55);
+          color: var(--text-secondary, rgba(255, 255, 255, 0.55));
           padding: 0 0.75rem;
           height: 30px;
           font-size: 0.8rem;
@@ -6487,7 +7122,7 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
           background: transparent;
           border: 1px solid rgba(255, 255, 255, 0.15);
           border-radius: 6px;
-          color: rgba(255, 255, 255, 0.4);
+          color: var(--text-muted, rgba(255, 255, 255, 0.4));
           padding: 0.45rem 0.75rem;
           font-size: 0.8rem;
           cursor: pointer;
@@ -6503,18 +7138,18 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
         }
         .transcript-search-input {
           width: 100%;
-          background: rgba(255, 255, 255, 0.06);
-          border: 1px solid rgba(255, 255, 255, 0.12);
+          background: var(--input-bg, rgba(255, 255, 255, 0.06));
+          border: 1px solid var(--dropdown-border, rgba(255, 255, 255, 0.12));
           border-radius: 6px;
           padding: 0.35rem 0.6rem;
-          color: white;
+          color: var(--text-primary, white);
           font-size: 0.8rem;
           outline: none;
           transition: border-color 0.2s;
           box-sizing: border-box;
         }
         .transcript-search-input:focus {
-          border-color: #e50914;
+          border-color: var(--player-accent, #e50914);
         }
         .transcript-cues-list {
           flex: 1;
@@ -6551,12 +7186,12 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
         }
         .transcript-cue-item.active {
           background: rgba(229, 9, 20, 0.12);
-          border-left: 2px solid #e50914;
+          border-left: 2px solid var(--player-accent, #e50914);
           color: white;
           font-weight: 500;
         }
         .cue-time {
-          color: #e50914;
+          color: var(--player-accent, #e50914);
           font-size: 0.75rem;
           font-family: monospace;
           font-weight: 600;
@@ -6600,7 +7235,7 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
           border-radius: 6px;
           cursor: pointer;
           font-size: 0.95rem;
-          color: rgba(255, 255, 255, 0.7);
+          color: var(--text-secondary, rgba(255, 255, 255, 0.7));
           transition: all 0.15s ease;
           border: 1px solid transparent;
         }
@@ -6618,10 +7253,10 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
           display: none;
         }
         .check-icon {
-          color: #e50914;
+          color: var(--player-accent, #e50914);
         }
         .add-custom-btn {
-          color: #e50914 !important;
+          color: var(--player-accent, #e50914) !important;
           font-weight: 600 !important;
           border-top: 1px solid rgba(255, 255, 255, 0.08);
           margin-top: 0.35rem;
@@ -6642,11 +7277,11 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
         @keyframes fadeInSlideUp {
           from {
             opacity: 0;
-            transform: translate(-50%, 12px);
+            transform: translateY(12px);
           }
           to {
             opacity: 1;
-            transform: translate(-50%, 0);
+            transform: translateY(0);
           }
         }
         .animate-metadata-slide-in {
@@ -6736,7 +7371,7 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
           box-shadow: 0 4px 15px rgba(0,0,0,0.5);
         }
         .fly-loader-spin {
-          color: #e50914;
+          color: var(--player-accent, #e50914);
           animation: spin 1s linear infinite;
         }
         
@@ -6786,6 +7421,40 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
         .animate-flash-hud {
           animation: flashHudAnim 0.6s cubic-bezier(0.16, 1, 0.3, 1) forwards;
         }
+        
+        .ripple-region-wrapper {
+          position: absolute;
+          inset: 0;
+          pointer-events: none;
+          z-index: 50;
+        }
+
+        .skip-ripple-effect {
+          position: absolute;
+          width: 80px;
+          height: 80px;
+          background: radial-gradient(circle, rgba(255,255,255,0.4) 0%, rgba(200,230,255,0.15) 40%, rgba(255,255,255,0) 70%);
+          box-shadow: 0 0 25px rgba(255, 255, 255, 0.4), inset 0 0 15px rgba(255, 255, 255, 0.6);
+          backdrop-filter: blur(12px) contrast(1.1);
+          -webkit-backdrop-filter: blur(12px) contrast(1.1);
+          border-radius: 50%;
+          transform: translate(-50%, -50%) scale(0.2);
+          animation: skipRippleExpand 2s cubic-bezier(0.1, 0.9, 0.2, 1) forwards;
+          pointer-events: none;
+          z-index: 50;
+        }
+
+        @keyframes skipRippleExpand {
+          0% {
+            transform: translate(-50%, -50%) scale(0.2);
+            opacity: 1;
+          }
+          100% {
+            transform: translate(-50%, -50%) scale(15);
+            opacity: 0;
+          }
+        }
+
         @keyframes flashHudAnim {
           0% {
             opacity: 0;
@@ -7010,19 +7679,19 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
           justify-content: center;
           cursor: pointer;
           transition: background 0.25s ease, border-color 0.25s ease;
-          color: rgba(255, 255, 255, 0.8) !important;
+          color: var(--text-secondary, rgba(255, 255, 255, 0.8)) !important;
           outline: none;
           padding: 0 !important;
           flex-shrink: 0;
         }
         .volume-control-group-premium:hover .control-btn-volume {
-          background: rgba(255, 255, 255, 0.12) !important;
-          border: 1px solid rgba(255, 255, 255, 0.15) !important;
+          background: var(--border-subtle, rgba(255, 255, 255, 0.12)) !important;
+          border: 1px solid var(--border-color, rgba(255, 255, 255, 0.15)) !important;
         }
         .volume-control-group-premium:hover .control-btn-volume:hover {
-          background: rgba(255, 255, 255, 0.18) !important;
-          color: #ffffff !important;
-          border-color: rgba(255, 255, 255, 0.25) !important;
+          background: var(--surface-hover, rgba(255, 255, 255, 0.18)) !important;
+          color: var(--text-primary, #ffffff) !important;
+          border-color: var(--border-color, rgba(255, 255, 255, 0.25)) !important;
         }
         .volume-slider-container-premium {
           width: 0;
@@ -7152,7 +7821,7 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
           box-shadow: 0 10px 30px rgba(0, 0, 0, 0.8);
         }
         .playback-error-box .error-icon {
-          color: #e50914;
+          color: var(--player-accent, #e50914);
         }
         .playback-error-box h3 {
           margin: 0;
@@ -7180,41 +7849,89 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
         }
       `}</style>
 
-      {radialMenuState.visible && (
-        <RadialMenu
-          x={radialMenuState.x}
-          y={radialMenuState.y}
-          onClose={() => setRadialMenuState({ visible: false, x: 0, y: 0 })}
-          items={[
-            {
-              id: 'stats',
-              label: 'Console',
-              icon: <Terminal size={24} />,
-              onClick: () => setShowConsoleOverlay(prev => !prev),
-              disabled: false
-            },
-            {
-              id: 'fullscreen',
-              label: isFullscreen ? 'Exit Fullscreen' : 'Fullscreen',
-              icon: isFullscreen ? <Minimize size={24} /> : <Maximize size={24} />,
-              onClick: toggleFullscreen,
+      {/* Render EsportsLiveOverlay here so it shows in Fullscreen */}
+      <EsportsLiveOverlay />
+
+      {radialMenuState.visible && (() => {
+        // Build items dynamically based on settings
+        const config = radialMenuConfig || {
+          console: true, audioSubs: true, fullscreen: true, unlock: true, bookmark: true, mute: true, speed: true, pip: false, loop: false
+        };
+
+        const rItems = [];
+        if (config.console) {
+          rItems.push({
+            id: 'stats', label: 'Console', icon: <Terminal size={24} />, onClick: () => setShowConsoleOverlay(prev => !prev), disabled: false
+          });
+        }
+        if (config.audioSubs && !isUndetectedLocalMedia) {
+          rItems.push({
+            id: 'audio', label: 'Audio/Subs', icon: <MessageSquare size={24} />, onClick: () => setShowAudioSubMenu(true), disabled: isLocked
+          });
+        }
+        if (config.fullscreen) {
+          rItems.push({
+            id: 'fullscreen', label: isFullscreen ? 'Exit Fullscreen' : 'Fullscreen', icon: isFullscreen ? <Minimize size={24} /> : <Maximize size={24} />, onClick: toggleFullscreen, disabled: isLocked
+          });
+        }
+        if (config.bookmark && !isUndetectedLocalMedia) {
+          rItems.push({
+            id: 'bookmark', label: 'Bookmark', icon: <BookmarkIcon size={24} />, onClick: () => setShowAddDialog(true), disabled: isLocked
+          });
+        }
+        if (config.mute) {
+          rItems.push({
+            id: 'mute', label: isMuted ? 'Unmute' : 'Mute', icon: isMuted ? <VolumeX size={24} /> : <Volume2 size={24} />, onClick: () => setIsMuted(prev => !prev), disabled: isLocked
+          });
+        }
+        if (config.speed) {
+          rItems.push({
+            id: 'speed', label: `${playbackRate}x Speed`, icon: <FastForward size={24} />, onClick: () => {
+              const speeds = [1.0, 1.25, 1.5, 1.75, 2.0];
+              const currentIdx = speeds.indexOf(playbackRate);
+              const nextSpeed = speeds[(currentIdx + 1) % speeds.length];
+              if (videoRef.current) {
+                videoRef.current.playbackRate = nextSpeed;
+                setPlaybackRate(nextSpeed);
+              }
+            }, disabled: isLocked
+          });
+        }
+        if (config.pip && document.pictureInPictureEnabled) {
+          rItems.push({
+            id: 'pip', label: 'PiP', icon: <Maximize size={24} />, onClick: () => {
+              if (document.pictureInPictureElement) document.exitPictureInPicture();
+              else if (videoRef.current) videoRef.current.requestPictureInPicture();
+            }, disabled: isLocked
+          });
+        }
+        if (config.loop) {
+          rItems.push({
+            id: 'loop', label: (videoRef.current && videoRef.current.loop) ? 'Unloop' : 'Loop', icon: <RotateCcw size={24} />, onClick: () => {
+              if (videoRef.current) videoRef.current.loop = !videoRef.current.loop;
+            }, disabled: isLocked
+          });
+        }
+        if (config.unlock && isLocked) {
+          rItems.push({
+            id: 'unlock', label: 'Unlock UI', icon: <Unlock size={24} />, onClick: () => setIsLocked(false), disabled: false
+          });
+        }
+
+        return (
+          <RadialMenu
+            x={radialMenuState.x}
+            y={radialMenuState.y}
+            onClose={() => setRadialMenuState({ visible: false, x: 0, y: 0 })}
+            items={rItems}
+            centerItem={{
+              icon: isPlaying ? <Pause size={24} fill="white" /> : <Play size={24} fill="white" />,
+              onClick: togglePlay,
               disabled: isLocked
-            },
-            {
-              id: 'audio',
-              label: 'Audio/Subs',
-              icon: <MessageSquare size={24} />,
-              onClick: () => setShowAudioSubMenu(true),
-              disabled: isLocked
-            }
-          ]}
-          centerItem={{
-            icon: isPlaying ? <Pause size={24} fill="white" /> : <Play size={24} fill="white" />,
-            onClick: togglePlay,
-            disabled: isLocked
-          }}
-        />
-      )}
+            }}
+          />
+        );
+      })()}
 
       {showConsoleOverlay && (
         <ConsoleOverlay onClose={() => setShowConsoleOverlay(false)} />

@@ -23,12 +23,24 @@ class ErrorBoundary extends Component<{ children: ReactNode }, { hasError: boole
           <p style={{ color: 'var(--text-secondary)', maxWidth: '500px', margin: '1rem 0 1.5rem 0' }}>
             {this.state.error?.message || 'An unexpected error occurred in the application.'}
           </p>
-          <button 
-            onClick={() => { this.setState({ hasError: false, error: null }); window.location.reload(); }}
-            style={{ background: 'var(--accent-color)', color: '#fff', border: 'none', padding: '0.65rem 1.5rem', borderRadius: '8px', cursor: 'pointer', fontWeight: 600 }}
-          >
-            Reload Application
-          </button>
+          <div style={{ display: 'flex', gap: '12px' }}>
+            <button 
+              onClick={() => { this.setState({ hasError: false, error: null }); window.location.reload(); }}
+              style={{ background: 'var(--accent-color)', color: '#fff', border: 'none', padding: '0.65rem 1.5rem', borderRadius: '8px', cursor: 'pointer', fontWeight: 600 }}
+            >
+              Reload Application
+            </button>
+            <button 
+              onClick={() => {
+                const emailSubject = 'Valor Player Crash Report';
+                const emailBody = `Hi Developer,\n\nValor crashed with the following error:\n\n${this.state.error?.stack || this.state.error?.message || this.state.error}\n\n---\nSystem Information:\nUser Agent: ${navigator.userAgent}\nPlatform: ${navigator.platform}\nTime: ${new Date().toString()}`;
+                window.location.href = `mailto:leetwhitesnake0@proton.me?subject=${encodeURIComponent(emailSubject)}&body=${encodeURIComponent(emailBody)}`;
+              }}
+              style={{ background: 'rgba(239, 68, 68, 0.1)', color: '#ef4444', border: '1px solid rgba(239, 68, 68, 0.2)', padding: '0.65rem 1.5rem', borderRadius: '8px', cursor: 'pointer', fontWeight: 600 }}
+            >
+              Report Error to Dev
+            </button>
+          </div>
         </div>
       );
     }
@@ -43,12 +55,12 @@ import { RemoteVideoPlayer } from './components/RemoteVideoPlayer';
 import { OnlineSearchTab } from './components/OnlineSearchTab';
 import { OnlineEmbedPlayer } from './components/OnlineEmbedPlayer';
 import { OnlineDetailsPage } from './components/OnlineDetailsPage';
+import { EmbedPlayerPage } from './pages/EmbedPlayerPage';
 import { GraphQLStorageProvider } from './services/storage/GraphQLStorageProvider';
 import { LocalIndexedDBProvider } from './services/storage/LocalIndexedDBProvider';
 import { ActorDetailsPage } from './components/ActorDetailsPage';
 import { OnlineVideoPlayer } from './components/OnlineVideoPlayer';
 import { CustomSelect } from './components/CustomSelect';
-import { Onboarding01 } from './components/Onboarding01';
 import { CalendarView } from './components/CalendarView';
 import { LibraryView } from './components/LibraryView';
 import { ApiSettingsView } from './components/ApiSettingsView';
@@ -60,7 +72,8 @@ import {
   Film, UploadCloud, Play, Settings, X, Calendar, List,
   History, Home, Layers, Type, Clock, Sliders, Volume2,
   Maximize, Zap, Coffee, SkipForward, Ban, FastForward, Lock, ChevronRight, ChevronLeft,
-  LogOut, Trash2, Plus, Download, UserPlus, Trophy, Radio, RotateCcw
+  LogOut, Trash2, Plus, Download, UserPlus, Trophy, Radio, RotateCcw,
+  HardDrive, Cloud, ShieldCheck, Check, Server, LogIn
 } from 'lucide-react';
 import { storeFileHandle, getFileHandle, removeFileHandle, verifyPermission, cleanupFileHandles } from './utils/indexedDB';
 import { HttpByteSource, CachedByteSource, detectUrlCapabilities } from './services/remote/remoteByteSource';
@@ -76,6 +89,7 @@ import { HistoryPage } from './pages/HistoryPage';
 import { LibraryPage } from './pages/LibraryPage';
 import { OnlineStreamPage } from './pages/OnlineStreamPage';
 import { SettingsPage } from './pages/SettingsPage';
+import { AdminDashboard } from './pages/AdminDashboard';
 import { 
   audioOptions, subOptions, calendarStyleOptions, limitOptions, 
   intervalOptions, toastOptions, uiHideTimeoutOptions, fontOptions, 
@@ -191,8 +205,8 @@ export const BACKEND_ORIGIN = 'http://127.0.0.1:50001';
 
 export const sanitizeVideoItem = (v: VideoItem, useIdStream: boolean): VideoItem => {
   if (v && v.type === 'local' && v.localFilePath) {
-    const streamUrl = useIdStream
-      ? `${BACKEND_ORIGIN}/local-video-stream?id=${encodeURIComponent(v.id)}`
+    const streamUrl = (useIdStream && !v.id.startsWith('url-'))
+      ? `${BACKEND_ORIGIN}/local-video-stream?id=${encodeURIComponent(v.id)}&path=${encodeURIComponent(v.localFilePath)}`
       : `${BACKEND_ORIGIN}/local-video-stream?path=${encodeURIComponent(v.localFilePath)}`;
     if (v.url !== streamUrl) {
       return { ...v, url: streamUrl };
@@ -209,10 +223,25 @@ export const sanitizeVideoList = (list: VideoItem[], useIdStream: boolean): Vide
 const originalConsoleLog = console.log;
 const originalConsoleWarn = console.warn;
 const originalConsoleError = console.error;
+const originalConsoleInfo = console.info;
+
+const minimizeMessage = (msg: string): string => {
+  if (typeof msg !== 'string') return msg;
+  if (msg.includes('[FFmpeg Command] ffmpeg')) {
+    const match = msg.match(/-ss\s+([^\s]+)\s+-i\s+([^\s]+)\s+-t\s+([^\s]+)\s+-map\s+([^\s]+).*\s+([^\s]+)$/);
+    if (match) {
+      const [_, ss, input, t, map, output] = match;
+      const getBasename = (p: string) => p.split(/[/\\]/).pop() || p;
+      return `[FFmpeg Command] ffmpeg -ss ${ss} -i ${getBasename(input)} -t ${t} -map ${map} -> ${getBasename(output)} (minimized)`;
+    }
+  }
+  return msg;
+};
 
 const sendLogToServer = (type: string, args: any[]) => {
   try {
-    const message = args.map(a => typeof a === 'object' ? JSON.stringify(a) : String(a)).join(' ');
+    const rawMessage = args.map(a => typeof a === 'object' ? JSON.stringify(a) : String(a)).join(' ');
+    const message = minimizeMessage(rawMessage);
     fetch(`${BACKEND_ORIGIN}/api/log`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -222,16 +251,24 @@ const sendLogToServer = (type: string, args: any[]) => {
 };
 
 console.log = (...args) => {
-  originalConsoleLog(...args);
+  const minimizedArgs = args.map(a => typeof a === 'string' ? minimizeMessage(a) : a);
+  originalConsoleLog(...minimizedArgs);
   sendLogToServer('INFO', args);
 };
 console.warn = (...args) => {
-  originalConsoleWarn(...args);
+  const minimizedArgs = args.map(a => typeof a === 'string' ? minimizeMessage(a) : a);
+  originalConsoleWarn(...minimizedArgs);
   sendLogToServer('WARN', args);
 };
 console.error = (...args) => {
-  originalConsoleError(...args);
+  const minimizedArgs = args.map(a => typeof a === 'string' ? minimizeMessage(a) : a);
+  originalConsoleError(...minimizedArgs);
   sendLogToServer('ERROR', args);
+};
+console.info = (...args) => {
+  const minimizedArgs = args.map(a => typeof a === 'string' ? minimizeMessage(a) : a);
+  originalConsoleInfo(...minimizedArgs);
+  sendLogToServer('INFO', args);
 };
 
 const defaultSettings = {
@@ -255,7 +292,7 @@ const defaultSettings = {
   defaultSub: 'ENG',
   historyLimit: 10 as number | 'Infinite',
   historySaveInterval: 5 as number,
-  theme: 'dark' as 'dark' | 'black-and-white' | 'light',
+  theme: 'dark' as 'dark' | 'black-and-white' | 'light' | 'garden' | 'black' | 'luxury' | 'dim' | 'abyss' | 'aqua' | 'valentine',
   hideUIOverlays: false,
   hideVideoName: false,
   uiHideTimeout: 1.5,
@@ -288,18 +325,18 @@ const defaultSettings = {
   theIntroDbMode: 'fetch' as 'fetch' | 'send_fetch',
   getOverlayDataFromTmdb: true as boolean,
   tmdbApiKey: '' as string,
-  experienceMode: 'cloud' as 'local' | 'cloud' | 'hybrid',
+  experienceMode: 'local' as 'local' | 'cloud' | 'hybrid',
   overlayPosition: 'bottom-left' as 'bottom-left' | 'bottom-right' | 'top-left' | 'top-right',
   overlayShowBackground: true as boolean,
   overlayShowRating: true as boolean,
   overlayShowOverview: true as boolean,
   openSubtitlesApiKey: '' as string,
   traktAccessToken: '' as string,
-  traktRedirectUri: 'http://localhost:50000' as string,
+  traktRedirectUri: 'http://localhost' as string,
   traktSyncHistory: true as boolean,
   traktSyncFavorites: true as boolean,
   calendarStyle: 'grid' as 'grid' | 'list',
-  isOnboarded: false as boolean,
+  isOnboarded: true as boolean,
   subSettings: {
     fontSize: 'medium' as 'small' | 'medium' | 'large' | 'extra-large',
     color: 'white' as 'white' | 'yellow' | 'cyan' | 'green',
@@ -312,12 +349,24 @@ const defaultSettings = {
   },
   customLoaderUrl: '' as string,
   customLoaderType: 'default' as 'default' | 'image' | 'video' | 'gif',
-  spinnerPreset: 'fire-circle' as string
+  spinnerPreset: 'fire-circle' as string,
+  radialMenuConfig: {
+    console: true,
+    audioSubs: true,
+    fullscreen: true,
+    unlock: true,
+    bookmark: true,
+    mute: true,
+    speed: true,
+    pip: false,
+    loop: false
+  }
 };
 
 function App() {
   const [settings, setSettings] = useState<typeof defaultSettings>(() => {
     try {
+
       const activeUserId = localStorage.getItem('valor_active_user_id') || 'local';
       const settingsKey = activeUserId === 'local' ? 'valor_settings' : `valor_settings_${activeUserId}`;
       const saved = localStorage.getItem(settingsKey);
@@ -399,8 +448,60 @@ function App() {
       return [];
     }
   });
+
+  // Cross-tab sync for settings, active profile, and history
+  useEffect(() => {
+    const handleStorage = (e: StorageEvent) => {
+      if (e.key === 'valor_active_user_id') {
+        if (e.newValue) {
+          localStorage.setItem('valor_active_user_id', e.newValue);
+          const newKey = e.newValue === 'local' ? 'valor_settings' : `valor_settings_${e.newValue}`;
+          const newSaved = localStorage.getItem(newKey);
+          if (newSaved) {
+            try { setSettings({ ...defaultSettings, ...JSON.parse(newSaved), userId: e.newValue }); } catch {}
+          } else {
+            setSettings({ ...defaultSettings, userId: e.newValue });
+          }
+          
+          const newVideosKey = e.newValue === 'local' ? 'valor_videos' : `valor_videos_${e.newValue}`;
+          const newSavedVideos = localStorage.getItem(newVideosKey);
+          if (newSavedVideos) {
+            try { 
+              const parsed = JSON.parse(newSavedVideos);
+              if (Array.isArray(parsed)) {
+                rawSetVideos(sanitizeVideoList(parsed.map((v: any) => ({...v, audioTracks: [], subtitleTracks: []})), getUseIdStreamFromStorage()));
+              }
+            } catch {}
+          } else {
+            rawSetVideos([]);
+          }
+        }
+      } else if (e.key === (settings.userId === 'local' ? 'valor_settings' : `valor_settings_${settings.userId}`)) {
+        if (e.newValue) {
+          try {
+            const newSettings = JSON.parse(e.newValue);
+            setSettings(prev => ({ ...prev, ...newSettings }));
+          } catch {}
+        }
+      } else if (e.key === (settings.userId === 'local' ? 'valor_videos' : `valor_videos_${settings.userId}`)) {
+        if (e.newValue) {
+          try {
+            const parsed = JSON.parse(e.newValue);
+            if (Array.isArray(parsed)) {
+              rawSetVideos(sanitizeVideoList(parsed.map((v: any) => ({...v, audioTracks: [], subtitleTracks: []})), getUseIdStreamFromStorage()));
+            }
+          } catch {}
+        }
+      }
+    };
+    window.addEventListener('storage', handleStorage);
+    return () => window.removeEventListener('storage', handleStorage);
+  }, [settings.userId]);
   const [playingVideoState, rawSetPlayingVideo] = useState<VideoItem | null>(() => {
     try {
+      const params = new URLSearchParams(window.location.search);
+      if (params.get('file')) return null;
+
       const saved = localStorage.getItem('valor_currently_playing');
       const useIdStreamInit = getUseIdStreamFromStorage();
       return saved ? sanitizeVideoItem(JSON.parse(saved), useIdStreamInit) : null;
@@ -446,7 +547,10 @@ function App() {
   const [historyViewMode, setHistoryViewMode] = useState<'list' | 'calendar'>('list');
   const [activeTab, setActiveTab] = useState<'home' | 'history' | 'calendar' | 'library' | 'settings' | 'online' | 'vlr'>(() => {
     const saved = localStorage.getItem('valor_active_tab');
-    return (saved as any) || 'home';
+    if (saved && ['home', 'history', 'calendar', 'library', 'settings', 'online', 'vlr'].includes(saved)) {
+      return saved as any;
+    }
+    return 'home';
   });
 
   useEffect(() => {
@@ -462,7 +566,7 @@ function App() {
     }
   }, [playingVideo, isPlaybackRestoring]);
 
-  const [settingsTab, setSettingsTab] = useState<'general' | 'hotkeys' | 'subtitle' | 'storage' | 'gridOverlay' | 'api' | 'bookmarks' | 'loader'>('general');
+  const [settingsTab, setSettingsTab] = useState<'general' | 'hotkeys' | 'subtitle' | 'storage' | 'gridOverlay' | 'api' | 'bookmarks' | 'loader' | 'radialMenu'>('general');
   const [uiOverlaySection, setUiOverlaySection] = useState<'gridOverlay' | 'pauseOverlay'>('gridOverlay');
   const [previewExpanded, setPreviewExpanded] = useState(false);
   const [showResetConfirm, setShowResetConfirm] = useState(false);
@@ -1064,7 +1168,9 @@ function App() {
         lastPlayedDate: nowIso,
         playedDates: [nowIso]
       };
-      const filtered = prev.filter(v => v.url !== newItem.url);
+      const filtered = (newItem.url && newItem.url.trim() !== '')
+        ? prev.filter(v => v.url !== newItem.url)
+        : prev;
       return [initItem, ...filtered];
     }
   };
@@ -1112,6 +1218,40 @@ function App() {
       isPaused: false 
     }]);
   }, []);
+
+  // Real-time Telemetry Heartbeat (Active User Presence Tracking in Redis & PostgreSQL)
+  useEffect(() => {
+    let sessionId = localStorage.getItem('valor_session_id');
+    if (!sessionId) {
+      sessionId = `sess_${Math.random().toString(36).substring(2, 10)}_${Date.now().toString(36)}`;
+      localStorage.setItem('valor_session_id', sessionId);
+    }
+
+    const sendTelemetryHeartbeat = () => {
+      const activeProfileName = availableProfiles.find(p => p.userId === settings.userId)?.name || settings.profileName || 'Default Profile';
+      fetch('/api/telemetry/heartbeat', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Valor-Session': sessionId || '',
+          'X-Valor-User-Id': settings.userId || 'local',
+          'X-Valor-Profile-Name': encodeURIComponent(activeProfileName)
+        },
+        body: JSON.stringify({
+          sessionId,
+          userId: settings.userId || 'local',
+          profileName: activeProfileName,
+          currentPath: `/${activeTab}`,
+          pageTitle: `Valor - ${activeTab.toUpperCase()}`,
+          isIdle: document.hidden
+        })
+      }).catch(() => {});
+    };
+
+    sendTelemetryHeartbeat();
+    const heartbeatInterval = setInterval(sendTelemetryHeartbeat, 15000);
+    return () => clearInterval(heartbeatInterval);
+  }, [activeTab, settings.userId, settings.profileName, availableProfiles]);
 
   useEffect(() => {
     (window as any)._onShowMediaDetails = (video: VideoItem) => {
@@ -1192,7 +1332,9 @@ function App() {
 
   // Direct Profile Creation Modal (directly in settings, bypassing onboarding)
   const [isCreateProfileModalOpen, setIsCreateProfileModalOpen] = useState(false);
+  const [createProfileType, setCreateProfileType] = useState<'local' | 'cloud'>('local');
   const [newProfileName, setNewProfileName] = useState('');
+  const [newProfileUsername, setNewProfileUsername] = useState('');
   const [newProfilePassword, setNewProfilePassword] = useState('');
   const [createProfileError, setCreateProfileError] = useState('');
   const [deleteConfirmText, setDeleteConfirmText] = useState('');
@@ -2242,8 +2384,8 @@ function App() {
       } else if (video.type === 'local') {
         if (video.localFilePath) {
           const useIdStream = settings.storageMode === 'file' && settings.userId && settings.userId !== 'local' && !settings.userId.startsWith('local_');
-          const streamUrl = useIdStream
-            ? `${BACKEND_ORIGIN}/local-video-stream?id=${encodeURIComponent(video.id)}`
+          const streamUrl = (useIdStream && !video.id.startsWith('url-'))
+            ? `${BACKEND_ORIGIN}/local-video-stream?id=${encodeURIComponent(video.id)}&path=${encodeURIComponent(video.localFilePath)}`
             : `${BACKEND_ORIGIN}/local-video-stream?path=${encodeURIComponent(video.localFilePath)}`;
           const updated = {
             ...video,
@@ -2440,7 +2582,6 @@ function App() {
         }
       }
 
-      addToast("Syncing watch history to Trakt.tv...", "success");
       const res = await fetch('https://api.trakt.tv/sync/history', {
         method: 'POST',
         headers: {
@@ -2454,7 +2595,7 @@ function App() {
 
       if (res.ok) {
         const resData = await res.json();
-        addToast(`Trakt Sync: Added ${resData.added?.movies || resData.added?.episodes || 1} item to history`, "success");
+        let syncMessage = `Trakt Sync: Added ${resData.added?.movies || resData.added?.episodes || 1} item to history`;
         handleUpdateVideo((prev) => ({ ...prev, hasScrobbledTrakt: true }), false, video.id, true);
 
         // Sync rating to Trakt if present
@@ -2505,7 +2646,7 @@ function App() {
 
             if (ratingRes.ok) {
               console.log('[Trakt Rating Sync] Successfully synced rating to Trakt.tv!');
-              addToast(`Trakt Rating Sync: Rated ${userRating * 2}/10 successfully`, "success");
+              syncMessage += ` & Rated ${userRating * 2}/10`;
             } else {
               console.warn(`[Trakt Rating Sync] Trakt.tv rating sync failed with status: ${ratingRes.status}`);
             }
@@ -2513,6 +2654,8 @@ function App() {
             console.error('[Trakt Rating Sync] Error syncing rating:', ratingErr);
           }
         }
+        
+        addToast(syncMessage, "success");
       } else {
         const errText = await res.text();
         addToast(`Trakt Sync Failed: ${res.status} - ${errText.substring(0, 40)}`, "error");
@@ -2577,12 +2720,19 @@ function App() {
       
       if (!parserAvailable) {
         console.log('[App] Remote byte access blocked or failed. Engaging Native Playback Mode.');
-        const title = localPathVal ? (localPathVal.split(/[/\\]/).pop() || localPathVal) : (url.substring(url.lastIndexOf('/') + 1) || 'Remote Stream');
+        let rawTitle = localPathVal ? (localPathVal.split(/[/\\]/).pop() || localPathVal) : (url.substring(url.lastIndexOf('/') + 1) || 'Remote Stream');
+        let title = rawTitle.replace(/\.[^/.]+$/, '');
+        const parsedInfo = classifyVideoTitle(title);
+        if (parsedInfo.type !== 'unknown') {
+          title = parsedInfo.displayTitle;
+        }
         
         // Match history by normalized identity
         let match: VideoItem | undefined = undefined;
         try {
-          const savedHistory = localStorage.getItem('valor_videos');
+          const activeUserId = localStorage.getItem('valor_active_user_id') || 'local';
+          const videosKey = activeUserId === 'local' ? 'valor_videos' : `valor_videos_${activeUserId}`;
+          const savedHistory = localStorage.getItem(videosKey);
           if (savedHistory) {
             const parsedHistory = JSON.parse(savedHistory) as VideoItem[];
             const targetIden = getVideoIdentity(title);
@@ -2690,12 +2840,19 @@ function App() {
       const audioTracks: CustomAudioTrack[] = [];
       const subtitleTracks: CustomSubtitleTrack[] = [];
 
-      let title = localPathVal ? (localPathVal.split(/[/\\]/).pop() || localPathVal) : (url.substring(url.lastIndexOf('/') + 1) || 'Remote Stream');
+      let rawTitle = localPathVal ? (localPathVal.split(/[/\\]/).pop() || localPathVal) : (url.substring(url.lastIndexOf('/') + 1) || 'Remote Stream');
+      let title = rawTitle.replace(/\.[^/.]+$/, '');
+      const parsedInfo = classifyVideoTitle(title);
+      if (parsedInfo.type !== 'unknown') {
+        title = parsedInfo.displayTitle;
+      }
       
       // Match history by normalized identity
       let match: VideoItem | undefined = undefined;
       try {
-        const savedHistory = localStorage.getItem('valor_videos');
+        const activeUserId = localStorage.getItem('valor_active_user_id') || 'local';
+        const videosKey = activeUserId === 'local' ? 'valor_videos' : `valor_videos_${activeUserId}`;
+        const savedHistory = localStorage.getItem(videosKey);
         if (savedHistory) {
           const parsedHistory = JSON.parse(savedHistory) as VideoItem[];
           const targetIden = getVideoIdentity(title);
@@ -2749,12 +2906,19 @@ function App() {
         probingError = err?.message || errStr;
       }
 
-      const title = url.substring(url.lastIndexOf('/') + 1) || 'Remote Stream';
+      let rawTitle = localPathVal ? (localPathVal.split(/[/\\]/).pop() || localPathVal) : (url.substring(url.lastIndexOf('/') + 1) || 'Remote Stream');
+      let title = rawTitle.replace(/\.[^/.]+$/, '');
+      const parsedInfo = classifyVideoTitle(title);
+      if (parsedInfo.type !== 'unknown') {
+        title = parsedInfo.displayTitle;
+      }
       
       // Match history by normalized identity
       let match: VideoItem | undefined = undefined;
       try {
-        const savedHistory = localStorage.getItem('valor_videos');
+        const activeUserId = localStorage.getItem('valor_active_user_id') || 'local';
+        const videosKey = activeUserId === 'local' ? 'valor_videos' : `valor_videos_${activeUserId}`;
+        const savedHistory = localStorage.getItem(videosKey);
         if (savedHistory) {
           const parsedHistory = JSON.parse(savedHistory) as VideoItem[];
           const targetIden = getVideoIdentity(title);
@@ -2897,6 +3061,7 @@ function App() {
       autoSkipSexScenes: settings.autoSkipSexScenes,
       lockModeActive: settings.lockModeActive,
       settingsOrder: settings.settingsOrder,
+      radialMenuConfig: settings.radialMenuConfig,
       onUpdateSubSettings: (newSubSettings: any) => {
         const updated = {
           ...settings,
@@ -2986,83 +3151,7 @@ function App() {
     }
   }
 
-  if (!settings.isOnboarded) {
-    return (
-      <Onboarding01 
-        settings={settings}
-        handleDefaultLangChange={handleDefaultLangChange as any}
-        audioOptions={audioOptions}
-        subOptions={subOptions}
-        onComplete={() => {
-          const updated = { ...settings, isOnboarded: true };
-          setSettings(updated);
-          saveSettingsToStorage(updated);
-        }}
-        onSelectProfile={async (userId, _storageMode) => {
-          localStorage.setItem('valor_active_user_id', userId);
-          
-          if (userId !== 'local' && !userId.startsWith('local_')) {
-            try {
-              const pData = await gqlFetch(`
-                query GetProfileData($userId: String!) {
-                  profile(userId: $userId) {
-                    settings
-                    history
-                  }
-                }
-              `, { userId });
-              const profileData = pData.profile || {};
-              const loaded = {
-                ...defaultSettings,
-                ...(profileData.settings || {}),
-                userId: userId,
-                storageMode: 'file'
-              };
-              setSettings(loaded);
-              saveSettingsToStorage(loaded);
-              if (profileData && Array.isArray(profileData.history)) {
-                setVideos(profileData.history.map((v: any) => ({
-                  ...v,
-                  audioTracks: v.audioTracks || [],
-                  subtitleTracks: v.subtitleTracks || []
-                })));
-              }
-            } catch (e) {
-              console.warn('Failed to load profile data from server');
-            }
-          } else {
-            const settingsKey = userId === 'local' ? 'valor_settings' : `valor_settings_${userId}`;
-            const videosKey = userId === 'local' ? 'valor_videos' : `valor_videos_${userId}`;
-            
-            const saved = localStorage.getItem(settingsKey);
-            let loaded;
-            if (saved) {
-              try {
-                loaded = { ...defaultSettings, ...JSON.parse(saved), userId: userId, storageMode: 'localstorage' };
-              } catch {
-                loaded = { ...defaultSettings, userId: userId, storageMode: 'localstorage' };
-              }
-            } else {
-              loaded = { ...defaultSettings, userId: userId, storageMode: 'localstorage' };
-            }
-            setSettings(loaded);
-            saveSettingsToStorage(loaded);
-            const savedVideos = localStorage.getItem(videosKey);
-            if (savedVideos) {
-              try {
-                setVideos(JSON.parse(savedVideos));
-              } catch {}
-            } else {
-              setVideos([]);
-            }
-          }
-        }}
-        videos={videos}
-        openAuthModal={(tab, targetProfile, onSuccess) => openAuthModal(tab, targetProfile, onSuccess)}
-        availableProfiles={availableProfiles}
-      />
-    );
-  }
+
 
   const isSidebarCollapsed = !!selectedActor || !!selectedDetailsMedia;
 
@@ -3143,6 +3232,15 @@ function App() {
                   isInstantlyPlayable={isInstantlyPlayable}
                   parseDurationToSeconds={parseDurationToSeconds}
                   formatTime={formatTime}
+                  theme={settings.theme}
+                  storageMode={settings.storageMode}
+                  onToggleStorageMode={(mode) => {
+                    const newMode: 'file' | 'localstorage' = mode === 'server' ? 'file' : 'localstorage';
+                    const updated = { ...settings, storageMode: newMode };
+                    setSettings(updated);
+                    saveSettingsToStorage(updated);
+                  }}
+                  userId={settings.userId}
                 />
               )}
 
@@ -3943,117 +4041,294 @@ function App() {
         </div>
       )}
 
-      {/* Direct Profile Creation Modal (Bypasses onboarding) */}
-      {isCreateProfileModalOpen && (() => {
-        const isServerMode = settings.userId && settings.userId !== 'local' && !settings.userId.startsWith('local_');
-        const activeServerProfile = (availableProfiles || []).find(p => p.userId === settings.userId);
-        const loggedInUsername = activeServerProfile?.username || localStorage.getItem('valor_logged_in_username') || '';
-        
-        const themeColor = isServerMode ? '#ef4444' : '#2ecc71';
-        const themeBorder = isServerMode ? 'rgba(239, 68, 68, 0.25)' : 'rgba(46, 204, 113, 0.25)';
-        const themeTitle = isServerMode ? 'Create Server Profile' : 'Create Local Profile';
-        const themeButtonBg = isServerMode ? 'linear-gradient(135deg, #ef4444, #f97316)' : 'linear-gradient(135deg, #2ecc71, #27ae60)';
-        
-        return (
+      {/* Universal Theme Account Creation Modal (Local vs Cloud Account) */}
+      {isCreateProfileModalOpen && (
+        <div style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          background: 'rgba(0, 0, 0, 0.78)',
+          backdropFilter: 'blur(10px)',
+          zIndex: 9990,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          padding: '16px',
+          animation: 'fadeIn 0.2s ease-out'
+        }}>
           <div style={{
-            position: 'fixed',
-            top: 0,
-            left: 0,
-            right: 0,
-            bottom: 0,
-            background: 'rgba(0,0,0,0.7)',
-            backdropFilter: 'blur(8px)',
-            zIndex: 9990,
+            width: '540px',
+            maxWidth: '100%',
+            maxHeight: '92vh',
+            overflowY: 'auto',
+            background: 'var(--surface, #12121a)',
+            borderRadius: '16px',
+            border: '1px solid var(--border-color, rgba(255, 255, 255, 0.12))',
+            boxShadow: '0 20px 50px rgba(0, 0, 0, 0.7)',
+            padding: '28px 24px',
             display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            animation: 'fadeIn 0.2s ease-out'
+            flexDirection: 'column',
+            gap: '18px',
+            animation: 'scaleIn 0.3s cubic-bezier(0.34, 1.56, 0.64, 1)',
+            position: 'relative'
           }}>
+            {/* Close Button */}
+            <button
+              type="button"
+              onClick={() => {
+                setIsCreateProfileModalOpen(false);
+                setCreateProfileError('');
+              }}
+              style={{
+                position: 'absolute',
+                top: '16px',
+                right: '16px',
+                background: 'rgba(255, 255, 255, 0.05)',
+                border: '1px solid rgba(255, 255, 255, 0.1)',
+                color: 'var(--text-muted, rgba(255, 255, 255, 0.6))',
+                cursor: 'pointer',
+                fontSize: '1.2rem',
+                lineHeight: 1,
+                width: '32px',
+                height: '32px',
+                borderRadius: '50%',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                transition: 'all 0.2s ease'
+              }}
+              onMouseEnter={e => {
+                e.currentTarget.style.background = 'rgba(255, 255, 255, 0.12)';
+                e.currentTarget.style.color = '#fff';
+              }}
+              onMouseLeave={e => {
+                e.currentTarget.style.background = 'rgba(255, 255, 255, 0.05)';
+                e.currentTarget.style.color = 'var(--text-muted, rgba(255, 255, 255, 0.6))';
+              }}
+            >
+              ×
+            </button>
+
+            {/* Header */}
+            <div style={{ textAlign: 'center', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+              <div style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto', width: '42px', height: '42px', borderRadius: '12px', background: 'rgba(255, 255, 255, 0.06)', border: '1px solid var(--border-color, rgba(255, 255, 255, 0.1))' }}>
+                <UserPlus size={20} color={createProfileType === 'cloud' ? 'var(--accent-color, #e50914)' : '#10b981'} />
+              </div>
+              <h3 style={{ margin: 0, fontSize: '1.35rem', fontWeight: 700, color: 'var(--text-primary, #ffffff)', fontFamily: 'Outfit, sans-serif' }}>
+                Create Account
+              </h3>
+              <p style={{ margin: 0, fontSize: '0.82rem', color: 'var(--text-muted, #9ca3af)', fontFamily: 'Outfit, sans-serif', lineHeight: 1.4 }}>
+                Choose where your watch history, settings, and media library are stored.
+              </p>
+            </div>
+
+            {/* Account Type Selection Blocks */}
             <div style={{
-              width: '380px',
-              background: '#141414',
-              borderRadius: '16px',
-              border: `1px solid ${themeBorder}`,
-              boxShadow: isServerMode ? '0 0 30px rgba(239,68,68,0.15)' : '0 0 30px rgba(46,204,113,0.15)',
-              padding: '28px 24px',
-              display: 'flex',
-              flexDirection: 'column',
-              gap: '18px',
-              animation: 'scaleIn 0.3s cubic-bezier(0.34, 1.56, 0.64, 1)',
-              position: 'relative'
+              display: 'grid',
+              gridTemplateColumns: '1fr 1fr',
+              gap: '12px',
+              marginTop: '4px'
             }}>
-              {/* Close Button */}
-              <button
-                type="button"
-                onClick={() => setIsCreateProfileModalOpen(false)}
+              {/* Local Account Card */}
+              <div
+                onClick={() => { setCreateProfileType('local'); setCreateProfileError(''); }}
                 style={{
-                  position: 'absolute',
-                  top: '16px',
-                  right: '16px',
-                  background: 'none',
-                  border: 'none',
-                  color: 'rgba(255, 255, 255, 0.4)',
+                  background: createProfileType === 'local' ? 'rgba(16, 185, 129, 0.08)' : 'var(--card-bg, #161622)',
+                  border: createProfileType === 'local' ? '1.5px solid #10b981' : '1px solid var(--border-color, rgba(255, 255, 255, 0.1))',
+                  boxShadow: createProfileType === 'local' ? '0 0 16px rgba(16, 185, 129, 0.15)' : 'none',
+                  borderRadius: '12px',
+                  padding: '14px',
                   cursor: 'pointer',
-                  fontSize: '1.25rem',
-                  fontWeight: 'bold',
-                  padding: 0
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: '8px',
+                  transition: 'all 0.2s cubic-bezier(0.4, 0, 0.2, 1)',
+                  position: 'relative'
                 }}
               >
-                ×
-              </button>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <div style={{
+                    fontSize: '0.65rem',
+                    fontWeight: 700,
+                    padding: '2px 8px',
+                    borderRadius: '4px',
+                    background: 'rgba(16, 185, 129, 0.18)',
+                    color: '#10b981',
+                    letterSpacing: '0.5px',
+                    textTransform: 'uppercase'
+                  }}>
+                    OFFLINE
+                  </div>
+                  <div style={{
+                    width: '18px',
+                    height: '18px',
+                    borderRadius: '50%',
+                    border: createProfileType === 'local' ? 'none' : '1.5px solid var(--border-color, rgba(255, 255, 255, 0.3))',
+                    background: createProfileType === 'local' ? '#10b981' : 'transparent',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center'
+                  }}>
+                    {createProfileType === 'local' && <Check size={12} color="#fff" strokeWidth={3} />}
+                  </div>
+                </div>
 
-              <div style={{ textAlign: 'center', display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                <h3 style={{ margin: 0, fontSize: '1.3rem', fontWeight: 700, color: themeColor, fontFamily: 'Outfit, sans-serif' }}>
-                  {themeTitle}
-                </h3>
-                <p style={{ margin: 0, fontSize: '0.78rem', color: 'rgba(255,255,255,0.5)', fontFamily: 'Outfit, sans-serif', lineHeight: 1.4 }}>
-                  {isServerMode 
-                    ? `Create a new syncing profile under your account: ${loggedInUsername}`
-                    : 'Create a new local storage profile inside your browser.'}
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '2px' }}>
+                  <HardDrive size={18} color="#10b981" />
+                  <span style={{ fontSize: '0.95rem', fontWeight: 700, color: 'var(--text-primary, #fff)', fontFamily: 'Outfit, sans-serif' }}>
+                    Local Account
+                  </span>
+                </div>
+
+                <p style={{ margin: 0, fontSize: '0.72rem', color: 'var(--text-muted, #9ca3af)', lineHeight: 1.35, fontFamily: 'Outfit, sans-serif' }}>
+                  Private browser sandbox (IndexedDB). Zero cloud latency, works completely offline.
                 </p>
+
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', marginTop: '4px', paddingTop: '6px', borderTop: '1px solid rgba(255,255,255,0.06)', fontSize: '0.7rem', color: 'var(--text-secondary, #d1d5db)' }}>
+                  <span>✓ 100% In-Browser Private</span>
+                  <span>✓ No Password Required</span>
+                </div>
               </div>
 
-              {createProfileError && (
-                <div style={{
-                  background: 'rgba(239, 68, 68, 0.1)',
-                  border: '1px solid rgba(239, 68, 68, 0.2)',
-                  color: '#ef4444',
-                  fontSize: '0.75rem',
-                  padding: '8px 10px',
-                  borderRadius: '6px',
-                  fontFamily: 'Outfit, sans-serif'
-                }}>
-                  ⚠️ {createProfileError}
+              {/* Cloud Account Card */}
+              <div
+                onClick={() => { setCreateProfileType('cloud'); setCreateProfileError(''); }}
+                style={{
+                  background: createProfileType === 'cloud' ? 'rgba(229, 9, 20, 0.08)' : 'var(--card-bg, #161622)',
+                  border: createProfileType === 'cloud' ? '1.5px solid var(--accent-color, #e50914)' : '1px solid var(--border-color, rgba(255, 255, 255, 0.1))',
+                  boxShadow: createProfileType === 'cloud' ? '0 0 16px rgba(229, 9, 20, 0.15)' : 'none',
+                  borderRadius: '12px',
+                  padding: '14px',
+                  cursor: 'pointer',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: '8px',
+                  transition: 'all 0.2s cubic-bezier(0.4, 0, 0.2, 1)',
+                  position: 'relative'
+                }}
+              >
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <div style={{
+                    fontSize: '0.65rem',
+                    fontWeight: 700,
+                    padding: '2px 8px',
+                    borderRadius: '4px',
+                    background: 'rgba(229, 9, 20, 0.18)',
+                    color: 'var(--accent-color, #ef4444)',
+                    letterSpacing: '0.5px',
+                    textTransform: 'uppercase'
+                  }}>
+                    CLOUD SYNC
+                  </div>
+                  <div style={{
+                    width: '18px',
+                    height: '18px',
+                    borderRadius: '50%',
+                    border: createProfileType === 'cloud' ? 'none' : '1.5px solid var(--border-color, rgba(255, 255, 255, 0.3))',
+                    background: createProfileType === 'cloud' ? 'var(--accent-color, #e50914)' : 'transparent',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center'
+                  }}>
+                    {createProfileType === 'cloud' && <Check size={12} color="#fff" strokeWidth={3} />}
+                  </div>
                 </div>
-              )}
 
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                  <label style={{ fontSize: '0.8rem', color: 'rgba(255,255,255,0.7)', fontWeight: 600, fontFamily: 'Outfit, sans-serif' }}>
-                    Profile Name
-                  </label>
-                  <input
-                    type="text"
-                    placeholder="Enter profile name..."
-                    value={newProfileName}
-                    onChange={e => setNewProfileName(e.target.value)}
-                    style={{
-                      background: 'rgba(0, 0, 0, 0.3)',
-                      border: '1px solid rgba(255, 255, 255, 0.12)',
-                      borderRadius: '8px',
-                      padding: '10px 12px',
-                      fontSize: '0.88rem',
-                      color: '#ffffff',
-                      outline: 'none',
-                      fontFamily: 'Outfit, sans-serif'
-                    }}
-                  />
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '2px' }}>
+                  <Cloud size={18} color="var(--accent-color, #ef4444)" />
+                  <span style={{ fontSize: '0.95rem', fontWeight: 700, color: 'var(--text-primary, #fff)', fontFamily: 'Outfit, sans-serif' }}>
+                    Cloud Account
+                  </span>
                 </div>
 
-                 {isServerMode && (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                    <label style={{ fontSize: '0.8rem', color: 'rgba(255,255,255,0.7)', fontWeight: 600, fontFamily: 'Outfit, sans-serif' }}>
-                      Profile Password (Optional)
+                <p style={{ margin: 0, fontSize: '0.72rem', color: 'var(--text-muted, #9ca3af)', lineHeight: 1.35, fontFamily: 'Outfit, sans-serif' }}>
+                  Docker PostgreSQL database with Redis lazy-loading cache. Multi-device sync & login.
+                </p>
+
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', marginTop: '4px', paddingTop: '6px', borderTop: '1px solid rgba(255,255,255,0.06)', fontSize: '0.7rem', color: 'var(--text-secondary, #d1d5db)' }}>
+                  <span>✓ PostgreSQL 16 Persistence</span>
+                  <span>✓ Redis Cache-Aside Speed</span>
+                </div>
+              </div>
+            </div>
+
+            {/* Error Message */}
+            {createProfileError && (
+              <div style={{
+                background: 'rgba(239, 68, 68, 0.12)',
+                border: '1px solid rgba(239, 68, 68, 0.25)',
+                color: '#ef4444',
+                fontSize: '0.78rem',
+                padding: '10px 12px',
+                borderRadius: '8px',
+                fontFamily: 'Outfit, sans-serif',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px'
+              }}>
+                <span>⚠️</span>
+                <span>{createProfileError}</span>
+              </div>
+            )}
+
+            {/* Form Fields */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '5px' }}>
+                <label style={{ fontSize: '0.8rem', color: 'var(--text-secondary, rgba(255,255,255,0.8))', fontWeight: 600, fontFamily: 'Outfit, sans-serif' }}>
+                  Profile Name <span style={{ color: 'var(--accent-color, #ef4444)' }}>*</span>
+                </label>
+                <input
+                  type="text"
+                  placeholder="e.g. Living Room, John, Personal..."
+                  value={newProfileName}
+                  onChange={e => setNewProfileName(e.target.value)}
+                  style={{
+                    background: 'var(--card-bg, #161622)',
+                    border: '1px solid var(--border-color, rgba(255, 255, 255, 0.12))',
+                    borderRadius: '8px',
+                    padding: '11px 13px',
+                    fontSize: '0.88rem',
+                    color: 'var(--text-primary, #ffffff)',
+                    outline: 'none',
+                    fontFamily: 'Outfit, sans-serif'
+                  }}
+                  onKeyDown={e => {
+                    if (e.key === 'Enter' && createProfileType === 'local') {
+                      document.getElementById('create-profile-submit-btn')?.click();
+                    }
+                  }}
+                />
+              </div>
+
+              {createProfileType === 'cloud' && (
+                <>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '5px' }}>
+                    <label style={{ fontSize: '0.8rem', color: 'var(--text-secondary, rgba(255,255,255,0.8))', fontWeight: 600, fontFamily: 'Outfit, sans-serif' }}>
+                      Username <span style={{ color: 'var(--accent-color, #ef4444)' }}>*</span>
+                    </label>
+                    <input
+                      type="text"
+                      placeholder="Enter account username..."
+                      value={newProfileUsername}
+                      onChange={e => setNewProfileUsername(e.target.value)}
+                      style={{
+                        background: 'var(--card-bg, #161622)',
+                        border: '1px solid var(--border-color, rgba(255, 255, 255, 0.12))',
+                        borderRadius: '8px',
+                        padding: '11px 13px',
+                        fontSize: '0.88rem',
+                        color: 'var(--text-primary, #ffffff)',
+                        outline: 'none',
+                        fontFamily: 'Outfit, sans-serif'
+                      }}
+                    />
+                  </div>
+
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '5px' }}>
+                    <label style={{ fontSize: '0.8rem', color: 'var(--text-secondary, rgba(255,255,255,0.8))', fontWeight: 600, fontFamily: 'Outfit, sans-serif' }}>
+                      Password <span style={{ color: 'var(--accent-color, #ef4444)' }}>*</span>
                     </label>
                     <input
                       type="password"
@@ -4061,21 +4336,55 @@ function App() {
                       value={newProfilePassword}
                       onChange={e => setNewProfilePassword(e.target.value)}
                       style={{
-                        background: 'rgba(0, 0, 0, 0.3)',
-                        border: '1px solid rgba(255, 255, 255, 0.12)',
+                        background: 'var(--card-bg, #161622)',
+                        border: '1px solid var(--border-color, rgba(255, 255, 255, 0.12))',
                         borderRadius: '8px',
-                        padding: '10px 12px',
+                        padding: '11px 13px',
                         fontSize: '0.88rem',
-                        color: '#ffffff',
+                        color: 'var(--text-primary, #ffffff)',
                         outline: 'none',
                         fontFamily: 'Outfit, sans-serif'
                       }}
+                      onKeyDown={e => {
+                        if (e.key === 'Enter') {
+                          document.getElementById('create-profile-submit-btn')?.click();
+                        }
+                      }}
                     />
                   </div>
-                )}
-              </div>
+                </>
+              )}
+            </div>
+
+            {/* Action Buttons */}
+            <div style={{ display: 'flex', gap: '10px', marginTop: '6px' }}>
+              <button
+                type="button"
+                onClick={() => {
+                  setIsCreateProfileModalOpen(false);
+                  setCreateProfileError('');
+                }}
+                style={{
+                  flex: 1,
+                  background: 'var(--surface-hover, rgba(255, 255, 255, 0.06))',
+                  border: '1px solid var(--border-color, rgba(255, 255, 255, 0.1))',
+                  color: 'var(--text-secondary, #d1d5db)',
+                  padding: '12px',
+                  fontSize: '0.88rem',
+                  borderRadius: '10px',
+                  cursor: 'pointer',
+                  fontWeight: 600,
+                  fontFamily: 'Outfit, sans-serif',
+                  transition: 'background 0.2s'
+                }}
+                onMouseEnter={e => e.currentTarget.style.background = 'rgba(255, 255, 255, 0.1)'}
+                onMouseLeave={e => e.currentTarget.style.background = 'var(--surface-hover, rgba(255, 255, 255, 0.06))'}
+              >
+                Cancel
+              </button>
 
               <button
+                id="create-profile-submit-btn"
                 type="button"
                 onClick={async () => {
                   setCreateProfileError('');
@@ -4084,41 +4393,61 @@ function App() {
                     return;
                   }
 
-                  if (isServerMode) {
+                  if (createProfileType === 'cloud') {
+                    if (!newProfileUsername.trim()) {
+                      setCreateProfileError('Username is required for Cloud Account');
+                      return;
+                    }
+                    if (!newProfilePassword) {
+                      setCreateProfileError('Password is required for Cloud Account');
+                      return;
+                    }
+
                     try {
                       const res = await secureFetch(`${BACKEND_ORIGIN}/api/profile/migrate`, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({ 
                           name: newProfileName.trim(), 
-                          username: loggedInUsername,
+                          username: newProfileUsername.trim(),
                           password: newProfilePassword,
+                          isSignUp: true,
                           isLoggedIn: true,
-                          settings: { ...settings, isOnboarded: true },
+                          settings: { 
+                            ...settings, 
+                            profileName: newProfileName.trim(),
+                            storageMode: 'file',
+                            experienceMode: 'cloud',
+                            isOnboarded: true 
+                          },
                           history: [] 
                         })
                       });
                       const resData = await res.json();
                       if (resData.success) {
                         localStorage.setItem('valor_active_user_id', resData.userId);
-                        setSettings({
+                        localStorage.setItem('valor_logged_in_username', newProfileUsername.trim());
+                        const newSettings = {
                           ...defaultSettings,
                           userId: resData.userId,
                           profileName: newProfileName.trim(),
-                          storageMode: 'file',
+                          storageMode: 'file' as const,
+                          experienceMode: 'cloud' as const,
                           isOnboarded: true
-                        });
+                        };
+                        setSettings(newSettings);
                         setVideos([]);
-                        addToast(`Successfully created Server Profile: ${newProfileName.trim()}`, 'success');
+                        addToast(`Successfully created Cloud Account: ${newProfileName.trim()}`, 'success');
                         setIsCreateProfileModalOpen(false);
                         await fetchProfiles();
                       } else {
-                        setCreateProfileError(resData.error || 'Failed to create profile');
+                        setCreateProfileError(resData.error || 'Failed to create cloud account');
                       }
                     } catch (err: any) {
                       setCreateProfileError(err.message || 'Creation failed.');
                     }
                   } else {
+                    // Local Account Creation
                     const newUserId = 'local_' + Math.random().toString(36).substring(2, 11);
                     localStorage.setItem('valor_active_user_id', newUserId);
                     
@@ -4137,55 +4466,53 @@ function App() {
                     localProfiles.push(newProfile);
                     localStorage.setItem('valor_local_profiles', JSON.stringify(localProfiles));
                     
-                    try {
-                      const settingsKey = `valor_settings_${newUserId}`;
-                      localStorage.setItem(settingsKey, JSON.stringify({
-                        ...defaultSettings,
-                        profileName: newProfileName.trim(),
-                        userId: newUserId,
-                        storageMode: 'localstorage',
-                        isOnboarded: true
-                      }));
-                    } catch {}
-                    
-                    // Switch profile
-                    setSettings({
+                    const newSettings = {
                       ...defaultSettings,
                       profileName: newProfileName.trim(),
                       userId: newUserId,
-                      storageMode: 'localstorage',
+                      storageMode: 'localstorage' as const,
+                      experienceMode: 'local' as const,
                       isOnboarded: true
-                    });
-                    setVideos([]);
+                    };
+                    try {
+                      const settingsKey = `valor_settings_${newUserId}`;
+                      localStorage.setItem(settingsKey, JSON.stringify(newSettings));
+                    } catch {}
                     
+                    setSettings(newSettings);
+                    setVideos([]);
                     addToast(`Successfully created Local Profile: ${newProfileName.trim()}`, 'success');
                     setIsCreateProfileModalOpen(false);
                     await fetchProfiles();
                   }
                 }}
                 style={{
-                  width: '100%',
-                  background: themeButtonBg,
+                  flex: 2,
+                  background: createProfileType === 'cloud' 
+                    ? 'linear-gradient(135deg, var(--accent-color, #e50914), #9b040c)' 
+                    : 'linear-gradient(135deg, #10b981, #059669)',
                   border: 'none',
                   color: '#ffffff',
                   padding: '12px',
                   fontSize: '0.88rem',
-                  borderRadius: '999px',
+                  borderRadius: '10px',
                   cursor: 'pointer',
                   fontWeight: 600,
-                  marginTop: '6px',
                   transition: 'opacity 0.2s',
-                  fontFamily: 'Outfit, sans-serif'
+                  fontFamily: 'Outfit, sans-serif',
+                  boxShadow: createProfileType === 'cloud' 
+                    ? '0 4px 16px rgba(229, 9, 20, 0.3)' 
+                    : '0 4px 16px rgba(16, 185, 129, 0.3)'
                 }}
                 onMouseEnter={e => e.currentTarget.style.opacity = '0.9'}
                 onMouseLeave={e => e.currentTarget.style.opacity = '1'}
               >
-                Create Profile
+                {createProfileType === 'cloud' ? 'Create Cloud Account & Sync' : 'Create Local Account'}
               </button>
             </div>
           </div>
-        );
-      })()}
+        </div>
+      )}
 
       {/* Delete Confirmation Modal */}
       {isDeleteModalOpen && (
@@ -4746,6 +5073,44 @@ function App() {
 }
 
 export default function AppWithErrorBoundary() {
+  const [currentPath, setCurrentPath] = useState(() => window.location.pathname + window.location.hash);
+
+  useEffect(() => {
+    const handleRoute = () => {
+      setCurrentPath(window.location.pathname + window.location.hash);
+    };
+    window.addEventListener('popstate', handleRoute);
+    window.addEventListener('hashchange', handleRoute);
+    return () => {
+      window.removeEventListener('popstate', handleRoute);
+      window.removeEventListener('hashchange', handleRoute);
+    };
+  }, []);
+
+  if (currentPath.startsWith('/embed')) {
+    return (
+      <ErrorBoundary>
+        <EmbedPlayerPage />
+      </ErrorBoundary>
+    );
+  }
+
+  // Hidden Admin Route - strictly accessed via /users/admin/usure
+  const isHiddenAdminPoint = 
+    window.location.pathname === '/users/admin/usure' ||
+    window.location.pathname.startsWith('/users/admin/usure') ||
+    window.location.hash.startsWith('#/users/admin/usure');
+
+  if (isHiddenAdminPoint) {
+    return (
+      <ErrorBoundary>
+        <div style={{ minHeight: '100vh', backgroundColor: 'var(--bg-color, #0b0f19)' }}>
+          <AdminDashboard />
+        </div>
+      </ErrorBoundary>
+    );
+  }
+
   return (
     <ErrorBoundary>
       <App />

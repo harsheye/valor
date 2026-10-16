@@ -2,9 +2,40 @@ import type { ByteSource } from '../local/localByteSource';
 
 type DownloadPriority = 'current' | 'prefetch';
 
+// Add a helper for proxying fetch through the extension background if in a frame
+const proxyFetch = (url: string, options: any, blob: boolean): Promise<any> => {
+  return new Promise((resolve, reject) => {
+    if (window === window.parent) {
+      return reject(new Error('Not in iframe, cannot proxy'));
+    }
+    const id = Math.random().toString(36).substring(2);
+    
+    const listener = (event: MessageEvent) => {
+      if (event.data && event.data.type === 'PROXY_FETCH_RESPONSE' && event.data.id === id) {
+        window.removeEventListener('message', listener);
+        if (event.data.response.ok) {
+          resolve(event.data.response);
+        } else {
+          reject(new Error(event.data.response.error || `Proxy fetch failed: ${event.data.response.status}`));
+        }
+      }
+    };
+    window.addEventListener('message', listener);
+    
+    // Timeout
+    setTimeout(() => {
+      window.removeEventListener('message', listener);
+      reject(new Error('Proxy fetch timeout'));
+    }, 15000);
+
+    window.parent.postMessage({ type: 'PROXY_FETCH', id, url, options, blob }, '*');
+  });
+};
+
 export class HttpByteSource implements ByteSource {
   private url: string;
   private size: number | null = null;
+  private useProxy = false;
 
   constructor(url: string) {
     this.url = url;
@@ -51,7 +82,27 @@ export class HttpByteSource implements ByteSource {
         return this.size;
       }
     } catch (err) {
-      console.error('Failed to resolve file size from Range fallback:', err);
+      console.warn('Direct fetch failed. Trying proxy fallback...', err);
+      try {
+        const proxyRes = await proxyFetch(this.url, { headers: { Range: 'bytes=0-0' } }, false);
+        this.useProxy = true; // remember to use proxy for reads
+        const range = proxyRes.headers['content-range'];
+        if (range) {
+          const parts = range.split('/');
+          if (parts.length > 1) {
+            this.size = parseInt(parts[1], 10);
+            return this.size;
+          }
+        }
+        const length = proxyRes.headers['content-length'];
+        if (length) {
+          this.size = parseInt(length, 10);
+          return this.size;
+        }
+      } catch (proxyErr) {
+        console.error('Proxy fallback failed as well:', proxyErr);
+        throw proxyErr;
+      }
       throw err || lastError;
     }
     
@@ -59,6 +110,16 @@ export class HttpByteSource implements ByteSource {
   }
 
   async read(start: number, end: number, signal?: AbortSignal): Promise<Uint8Array> {
+    if (this.useProxy) {
+      const proxyRes = await proxyFetch(this.url, { headers: { Range: `bytes=${start}-${end}` } }, true);
+      const binaryString = atob(proxyRes.base64);
+      const bytes = new Uint8Array(binaryString.length);
+      for (let i = 0; i < binaryString.length; i++) {
+          bytes[i] = binaryString.charCodeAt(i);
+      }
+      return bytes;
+    }
+
     const response = await fetch(this.url, {
       headers: { Range: `bytes=${start}-${end}` },
       signal

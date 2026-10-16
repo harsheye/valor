@@ -22,7 +22,7 @@ export const LibraryView: React.FC<LibraryViewProps> = ({ videos, onPlayVideo, i
     };
   });
 
-  const movies = classifiedItems.filter(item => item.type === 'movie');
+  const movies = classifiedItems.filter(item => item.type === 'movie' || item.type === 'unknown');
   const seriesItems = classifiedItems.filter(item => item.type === 'series');
 
   // Group series items by series title

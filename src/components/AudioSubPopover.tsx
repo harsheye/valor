@@ -163,8 +163,8 @@ export const AudioSubPopover: React.FC<AudioSubPopoverProps> = ({
             </label>
 
             {/* Audio Boost (Sound Boost) Options */}
-            <div style={{ marginTop: '1rem', borderTop: '1px solid rgba(255, 255, 255, 0.1)', paddingTop: '0.75rem' }}>
-              <h4 style={{ marginBottom: '0.4rem', fontSize: '0.8rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'rgba(255, 255, 255, 0.5)' }}>Sound Boost</h4>
+            <div style={{ marginTop: '1rem', borderTop: '1px solid var(--border-subtle, rgba(255, 255, 255, 0.1))', paddingTop: '0.75rem' }}>
+              <h4 style={{ marginBottom: '0.4rem', fontSize: '0.8rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-secondary, rgba(255, 255, 255, 0.5))' }}>Sound Boost</h4>
               <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
                 <label className={`popover-option ${audioBoost === 100 ? 'active' : ''}`} onClick={() => { setAudioBoost(100); setShowAudioSubMenu(false); }}>
                   <input type="radio" name="audio-boost" checked={audioBoost === 100} readOnly />
@@ -188,7 +188,7 @@ export const AudioSubPopover: React.FC<AudioSubPopoverProps> = ({
 
         {/* Subtitles Column */}
         <div className="popover-col">
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid rgba(255, 255, 255, 0.08)', paddingBottom: '0.35rem', marginBottom: '0.6rem' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid var(--border-subtle, rgba(255, 255, 255, 0.08))', paddingBottom: '0.35rem', marginBottom: '0.6rem' }}>
             <h4 style={{ margin: 0, borderBottom: 'none', paddingBottom: 0 }}>Sub</h4>
             {selectedSubTrack && (
               <div style={{ display: 'flex', gap: '6px' }}>
@@ -198,9 +198,9 @@ export const AudioSubPopover: React.FC<AudioSubPopoverProps> = ({
                     onUpdateSubSettings({ ...subSettings, showViewColumn: !showViewColumn }); 
                   }}
                   style={{
-                    background: showViewColumn ? 'rgba(59, 130, 246, 0.15)' : 'rgba(255, 255, 255, 0.08)',
-                    border: `1px solid ${showViewColumn ? 'rgba(59, 130, 246, 0.3)' : 'rgba(255, 255, 255, 0.12)'}`,
-                    color: showViewColumn ? '#3b82f6' : 'rgba(255, 255, 255, 0.7)',
+                    background: showViewColumn ? 'var(--accent-glow, rgba(59, 130, 246, 0.15))' : 'var(--border-subtle, rgba(255, 255, 255, 0.08))',
+                    border: `1px solid ${showViewColumn ? 'var(--accent-color, rgba(59, 130, 246, 0.3))' : 'var(--border-color, rgba(255, 255, 255, 0.12))'}`,
+                    color: showViewColumn ? 'var(--accent-color, #3b82f6)' : 'var(--text-secondary, rgba(255, 255, 255, 0.7))',
                     borderRadius: '4px',
                     padding: '0.15rem 0.4rem',
                     fontSize: '0.7rem',
@@ -217,9 +217,9 @@ export const AudioSubPopover: React.FC<AudioSubPopoverProps> = ({
                     onUpdateSubSettings({ ...subSettings, showStyleColumn: !showStyleColumn }); 
                   }}
                   style={{
-                    background: showStyleColumn ? 'rgba(59, 130, 246, 0.15)' : 'rgba(255, 255, 255, 0.08)',
-                    border: `1px solid ${showStyleColumn ? 'rgba(59, 130, 246, 0.3)' : 'rgba(255, 255, 255, 0.12)'}`,
-                    color: showStyleColumn ? '#3b82f6' : 'rgba(255, 255, 255, 0.7)',
+                    background: showStyleColumn ? 'var(--accent-glow, rgba(59, 130, 246, 0.15))' : 'var(--border-subtle, rgba(255, 255, 255, 0.08))',
+                    border: `1px solid ${showStyleColumn ? 'var(--accent-color, rgba(59, 130, 246, 0.3))' : 'var(--border-color, rgba(255, 255, 255, 0.12))'}`,
+                    color: showStyleColumn ? 'var(--accent-color, #3b82f6)' : 'var(--text-secondary, rgba(255, 255, 255, 0.7))',
                     borderRadius: '4px',
                     padding: '0.15rem 0.4rem',
                     fontSize: '0.7rem',
@@ -267,15 +267,15 @@ export const AudioSubPopover: React.FC<AudioSubPopoverProps> = ({
             })}
 
             {/* OpenSubtitles section — inline inside popover-options */}
-            <div style={{ borderTop: '1px solid rgba(255, 255, 255, 0.08)', margin: '0.3rem 0', opacity: 0.6 }}></div>
-            <div style={{ fontSize: '0.65rem', textTransform: 'uppercase', color: 'rgba(255, 255, 255, 0.35)', letterSpacing: '0.05em', paddingLeft: '0.4rem', marginBottom: '0.2rem' }}>
+            <div style={{ borderTop: '1px solid var(--border-subtle, rgba(255, 255, 255, 0.08))', margin: '0.3rem 0', opacity: 0.6 }}></div>
+            <div style={{ fontSize: '0.65rem', textTransform: 'uppercase', color: 'var(--text-muted, rgba(255, 255, 255, 0.35))', letterSpacing: '0.05em', paddingLeft: '0.4rem', marginBottom: '0.2rem' }}>
               OpenSubtitles {isOpenSubLoading && '...'}
             </div>
             
             {!hasFetchedOpenSubtitles && !isOpenSubLoading ? (
               <label 
                 className="popover-option" 
-                style={{ color: '#38bdf8', cursor: 'pointer' }}
+                style={{ color: 'var(--accent-color, #38bdf8)', cursor: 'pointer' }}
                 onClick={(e) => {
                   e.preventDefault();
                   e.stopPropagation();
@@ -287,12 +287,12 @@ export const AudioSubPopover: React.FC<AudioSubPopoverProps> = ({
             ) : (
               <>
                 {isOpenSubLoading && (!openSubtitles || openSubtitles.length === 0) && (
-                  <div style={{ fontSize: '0.8rem', color: 'rgba(255, 255, 255, 0.4)', paddingLeft: '0.4rem' }}>
+                  <div style={{ fontSize: '0.8rem', color: 'var(--text-muted, rgba(255, 255, 255, 0.4))', paddingLeft: '0.4rem' }}>
                     Searching...
                   </div>
                 )}
                 {!isOpenSubLoading && (!openSubtitles || openSubtitles.length === 0) && (
-                  <div style={{ fontSize: '0.8rem', color: 'rgba(255, 255, 255, 0.4)', paddingLeft: '0.4rem' }}>
+                  <div style={{ fontSize: '0.8rem', color: 'var(--text-muted, rgba(255, 255, 255, 0.4))', paddingLeft: '0.4rem' }}>
                     No subtitles found
                   </div>
                 )}

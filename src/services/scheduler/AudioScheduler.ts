@@ -40,14 +40,29 @@ export class AudioScheduler {
     source.playbackRate.value = playbackRate;
     source.connect(this.gainNode);
 
-    // Clean, natural projection calculation without accumulating offsets
-    const delay = (packet.startTime - currentTime) / playbackRate;
     const playOffset = Math.max(0, currentTime - packet.startTime);
+    let audioStartTime: number;
 
-    // Give a tiny 15ms scheduling safety margin for immediate chunks
-    const isCurrentChunk = delay <= 0;
-    const LOOKAHEAD = isCurrentChunk ? 0.015 : 0;
-    const audioStartTime = this.audioCtx.currentTime + Math.max(0, delay) + LOOKAHEAD;
+    // Find the immediately preceding chunk to chain onto perfectly
+    let prevNode = null;
+    for (const node of this.activeNodes) {
+      if (node.startTime < packet.startTime) {
+        if (!prevNode || node.startTime > prevNode.startTime) {
+          prevNode = node;
+        }
+      }
+    }
+
+    const delay = (packet.startTime - currentTime) / playbackRate;
+
+    // If we have a preceding chunk and it's consecutive (e.g. within 15s), chain perfectly to its end time
+    if (prevNode && (packet.startTime - prevNode.startTime) <= 15) {
+      audioStartTime = prevNode.audioEndTime;
+    } else {
+      // Natural projection for the first chunk in a new sequence
+      audioStartTime = this.audioCtx.currentTime + Math.max(0, delay);
+    }
+
     const durationPlayed = (packet.buffer.duration - playOffset) / playbackRate;
     const audioEndTime = audioStartTime + durationPlayed;
 
@@ -112,8 +127,18 @@ export class AudioScheduler {
   updatePlaybackRate(rate: number): void {
     for (const active of this.activeNodes) {
       try {
+        active.playbackRate = rate;
         active.node.playbackRate.value = rate;
       } catch {}
     }
+  }
+
+  adjustRateForDrift(drift: number, baseRate: number): void {
+    // drift = videoTime - audioTime
+    // If drift > 0 (video ahead): speed audio up subtly (+1.5%) to close the gap
+    // If drift < 0 (audio ahead): slow audio down subtly (-1.5%) to let video catch up
+    const factor = drift > 0 ? 1.015 : 0.985;
+    const adjustedRate = baseRate * factor;
+    this.updatePlaybackRate(adjustedRate);
   }
 }

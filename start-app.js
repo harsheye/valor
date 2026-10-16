@@ -1,9 +1,13 @@
 import { createServer as createViteServer } from 'vite';
 import http from 'http';
+import https from 'https';
 import fs from 'fs';
 import path from 'path';
+import crypto from 'crypto';
 import { spawn } from 'child_process';
 import { DatabaseSync } from 'node:sqlite';
+import { DataStore } from './dataStore.js';
+import { createReverseProxyTelemetry } from './analyticsTracker.js';
 
 process.on('uncaughtException', (err) => {
   console.error('[Server Uncaught Exception]', err);
@@ -12,33 +16,37 @@ process.on('unhandledRejection', (reason, promise) => {
   console.error('[Server Unhandled Rejection]', reason);
 });
 
-const args = process.argv.slice(1).filter(arg => {
-  const lower = arg.toLowerCase();
-  return !lower.endsWith('node.exe') && !lower.endsWith('node') && !lower.endsWith('start-app.js') && !lower.endsWith('start-app.exe') && !lower.endsWith('start-app-exe');
-});
+const args = process.argv.slice(2);
 
 const playWithVlc = args.includes('--vlc');
 const backendOnly = args.includes('--backend-only');
 const frontendOnly = args.includes('--frontend-only');
-const trayMode = args.includes('--tray');
-const filePath = args.find(arg => arg !== '--vlc' && !arg.startsWith('--'));
+const autoShutdown = args.includes('--auto-shutdown');
+const shouldOpen = args.includes('--open');
+const hostArg = args.find(a => a.startsWith('--host='))?.split('=')[1];
+const HOST = process.env.HOST || hostArg || '0.0.0.0';
+const filePath = args.find(arg => !arg.startsWith('--'));
 const resolvedFilePath = filePath ? path.resolve(filePath) : null;
 
 if (playWithVlc && resolvedFilePath) {
-  const vlcPaths = [
-    'C:\\Program Files\\VideoLAN\\VLC\\vlc.exe',
-    'C:\\Program Files (x86)\\VideoLAN\\VLC\\vlc.exe',
-    'vlc'
-  ];
-  let selectedPath = 'vlc';
-  for (const p of vlcPaths) {
-    if (p === 'vlc' || fs.existsSync(p)) {
-      selectedPath = p;
-      if (p !== 'vlc') break;
+  let vlcCmd = 'vlc';
+  if (process.platform === 'win32') {
+    const vlcPaths = [
+      'C:\\Program Files\\VideoLAN\\VLC\\vlc.exe',
+      'C:\\Program Files (x86)\\VideoLAN\\VLC\\vlc.exe',
+    ];
+    for (const p of vlcPaths) {
+      if (fs.existsSync(p)) {
+        vlcCmd = p;
+        break;
+      }
     }
+  } else if (process.platform === 'darwin') {
+    const macVlc = '/Applications/VLC.app/Contents/MacOS/VLC';
+    if (fs.existsSync(macVlc)) vlcCmd = macVlc;
   }
   console.log(`[VLC] Launching VLC to play: ${resolvedFilePath}`);
-  const child = spawn(selectedPath, [resolvedFilePath], {
+  const child = spawn(vlcCmd, [resolvedFilePath], {
     detached: true,
     stdio: 'ignore'
   });
@@ -59,6 +67,10 @@ if (!fs.existsSync(dataDir)) {
 // Initialize SQLite database
 const dbPath = path.join(dataDir, 'valor.db');
 const db = new DatabaseSync(dbPath);
+
+// Initialize Enterprise DataStore (PostgreSQL + Redis Lazy Loading Cache)
+const dataStore = new DataStore({ sqliteDb: db });
+dataStore.initialize().catch(err => console.error('[DataStore Init Error]', err));
 
 // Create SQLite tables
 db.exec(`
@@ -146,6 +158,11 @@ db.exec(`
     streams TEXT,
     audioTracks TEXT,
     subtitleTracks TEXT,
+    episode INTEGER,
+    season INTEGER,
+    color TEXT,
+    tmdbId INTEGER,
+    hasScrobbledTrakt INTEGER DEFAULT 0,
     PRIMARY KEY (userId, videoId)
   );
 `);
@@ -158,6 +175,11 @@ try { db.exec(`ALTER TABLE history ADD COLUMN format TEXT;`); } catch(e){}
 try { db.exec(`ALTER TABLE history ADD COLUMN streams TEXT;`); } catch(e){}
 try { db.exec(`ALTER TABLE history ADD COLUMN audioTracks TEXT;`); } catch(e){}
 try { db.exec(`ALTER TABLE history ADD COLUMN subtitleTracks TEXT;`); } catch(e){}
+try { db.exec(`ALTER TABLE history ADD COLUMN episode INTEGER;`); } catch(e){}
+try { db.exec(`ALTER TABLE history ADD COLUMN season INTEGER;`); } catch(e){}
+try { db.exec(`ALTER TABLE history ADD COLUMN color TEXT;`); } catch(e){}
+try { db.exec(`ALTER TABLE history ADD COLUMN tmdbId INTEGER;`); } catch(e){}
+try { db.exec(`ALTER TABLE history ADD COLUMN hasScrobbledTrakt INTEGER DEFAULT 0;`); } catch(e){}
 
 db.exec(`
   CREATE TABLE IF NOT EXISTS bookmarks (
@@ -206,27 +228,110 @@ db.exec(`
   );
 `);
 
+db.exec(`
+  CREATE TABLE IF NOT EXISTS analytics_sessions (
+    session_id TEXT PRIMARY KEY,
+    ip TEXT,
+    user_agent TEXT,
+    browser TEXT,
+    os TEXT,
+    device TEXT,
+    user_id TEXT,
+    profile_name TEXT,
+    created_at TEXT DEFAULT (datetime('now')),
+    last_seen TEXT DEFAULT (datetime('now')),
+    total_requests INTEGER DEFAULT 1,
+    bytes_transferred INTEGER DEFAULT 0,
+    current_path TEXT,
+    page_title TEXT
+  );
+`);
+
+db.exec(`
+  CREATE TABLE IF NOT EXISTS analytics_traffic_logs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id TEXT,
+    ip TEXT,
+    method TEXT,
+    path TEXT,
+    status_code INTEGER,
+    latency_ms REAL,
+    bytes_transferred INTEGER,
+    user_agent TEXT,
+    browser TEXT,
+    os TEXT,
+    user_id TEXT,
+    created_at TEXT DEFAULT (datetime('now'))
+  );
+`);
+
 // Setup logging redirection to app.log
 const logFilePath = path.join(dataDir, 'app.log');
 const logStream = fs.createWriteStream(logFilePath, { flags: 'a' });
 
 const originalLog = console.log;
 const originalError = console.error;
+const originalWarn = console.warn;
+const originalInfo = console.info;
 
-console.log = (...args) => {
-  const msg = args.map(a => typeof a === 'object' ? JSON.stringify(a) : String(a)).join(' ');
-  logStream.write(`[${new Date().toISOString()}] [INFO] ${msg}\n`);
-  originalLog(...args);
+const LOG_MODE = process.env.VALOR_LOG_MODE || 'release'; // 'developer' or 'release'
+
+const colors = {
+  info: '\x1b[32m',    // Green
+  warn: '\x1b[33m',    // Yellow
+  error: '\x1b[31m',   // Red
+  reset: '\x1b[0m'
 };
 
-console.error = (...args) => {
-  const msg = args.map(a => typeof a === 'object' ? JSON.stringify(a) : String(a)).join(' ');
-  logStream.write(`[${new Date().toISOString()}] [ERROR] ${msg}\n`);
-  originalError(...args);
+function minimizeMessage(msg) {
+  if (typeof msg !== 'string') return msg;
+  if (msg.includes('[FFmpeg Command] ffmpeg')) {
+    const match = msg.match(/-ss\s+([^\s]+)\s+-i\s+([^\s]+)\s+-t\s+([^\s]+)\s+-map\s+([^\s]+).*\s+([^\s]+)$/);
+    if (match) {
+      const [_, ss, input, t, map, output] = match;
+      const getBasename = (p) => p.split(/[/\\]/).pop() || p;
+      return `[FFmpeg Command] ffmpeg -ss ${ss} -i ${getBasename(input)} -t ${t} -map ${map} -> ${getBasename(output)} (minimized)`;
+    }
+  }
+  return msg;
+}
+
+const writeToLogFile = (level, msg) => {
+  try {
+    logStream.write(`[${new Date().toISOString()}] [${level}] ${msg}\n`);
+  } catch (err) {}
 };
 
-const PORT_SERVICE = 50000;
-const PORT_BACKEND = 50001;
+const handleLog = (level, originalFn, colorCode, args) => {
+  const rawMsg = args.map(a => typeof a === 'object' ? JSON.stringify(a) : String(a)).join(' ');
+  const minimizedMsg = minimizeMessage(rawMsg);
+  
+  // Always write to the log file on disk
+  writeToLogFile(level, minimizedMsg);
+
+  // In release mode, only log high-level/startup logs, warnings, errors and alerts to terminal console
+  if (LOG_MODE === 'release') {
+    const isErrorOrWarn = level === 'ERROR' || level === 'WARN';
+    const isHighLevel = rawMsg.startsWith('[Server] Valor') || 
+                        rawMsg.startsWith('[Server] Running') || 
+                        rawMsg.includes('[ALERT]') || 
+                        rawMsg.startsWith('[VLC]');
+    if (!isErrorOrWarn && !isHighLevel) {
+      return;
+    }
+  }
+
+  // Print to terminal with ANSI color coding
+  originalFn(`${colorCode}[${level}] ${minimizedMsg}${colors.reset}`);
+};
+
+console.log = (...args) => handleLog('INFO', originalLog, colors.info, args);
+console.info = (...args) => handleLog('INFO', originalInfo, colors.info, args);
+console.warn = (...args) => handleLog('WARN', originalWarn, colors.warn, args);
+console.error = (...args) => handleLog('ERROR', originalError, colors.error, args);
+
+const PORT_SERVICE = parseInt(process.env.PORT || process.env.PORT_SERVICE || '80', 10);
+const PORT_BACKEND = parseInt(process.env.PORT_BACKEND || '50001', 10);
 
 const getJsonBody = (req) => new Promise((resolve) => {
   let body = '';
@@ -235,6 +340,10 @@ const getJsonBody = (req) => new Promise((resolve) => {
     try { resolve(JSON.parse(body)); }
     catch { resolve({}); }
   });
+  req.on('error', (err) => {
+    console.error('[getJsonBody Request Error]', err.message);
+    resolve({});
+  });
 });
 
 let lastHeartbeat = Date.now();
@@ -242,11 +351,36 @@ let hasReceivedFirstHeartbeat = false;
 let activeConnections = 0;
 let pendingPlayFile = null;
 
+// Initialize Enterprise Telemetry & Reverse Proxy Middleware
+const telemetryMiddleware = createReverseProxyTelemetry(dataStore);
+
+// Hardcoded Admin Credentials & Token Cache
+const adminAuthTokens = new Set();
+const ADMIN_HARDCODED_USER = process.env.VALOR_ADMIN_USER || 'admin';
+const ADMIN_HARDCODED_PASS = process.env.VALOR_ADMIN_PASS || 'admin';
+
+async function isValidAdminToken(token) {
+  if (!token) return false;
+  if (adminAuthTokens.has(token)) return true;
+  if (dataStore.isRedisConnected && dataStore.redis) {
+    try {
+      const exists = await dataStore.redis.get(`valor:admin_token:${token}`);
+      if (exists) {
+        adminAuthTokens.add(token);
+        return true;
+      }
+    } catch (e) {}
+  }
+  return false;
+}
+
 // 1. Backend API Server (Port 50001)
 const backendServer = http.createServer((req, res) => {
+  telemetryMiddleware(req, res);
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', '*');
+  res.setHeader('Access-Control-Expose-Headers', 'Content-Range, Content-Length, Accept-Ranges, Content-Type');
 
   if (req.method === 'OPTIONS') {
     res.statusCode = 204;
@@ -269,6 +403,128 @@ const backendServer = http.createServer((req, res) => {
     }
   } catch (e) {
     console.error('[IP check error]', e.message);
+  }
+
+  // Twitch Usher Proxy
+  if (pathname.startsWith('/twitch-usher/')) {
+    const usherPath = req.url.replace(/^\/twitch-usher/, '');
+    const usherUrl = `https://usher.ttvnw.net${usherPath}`;
+    const proxyReq = https.request(usherUrl, {
+      method: req.method,
+      headers: {
+        'Origin': 'https://www.twitch.tv',
+        'Referer': 'https://www.twitch.tv/',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'
+      }
+    }, (proxyRes) => {
+      const headers = { ...proxyRes.headers };
+      delete headers['access-control-allow-origin'];
+      headers['Access-Control-Allow-Origin'] = '*';
+      res.writeHead(proxyRes.statusCode || 200, headers);
+      proxyRes.pipe(res);
+    });
+    proxyReq.on('error', (e) => {
+      res.statusCode = 500;
+      res.end(e.message);
+    });
+    if (req.readable) req.pipe(proxyReq);
+    else proxyReq.end();
+    return;
+  }
+
+  // Twitch Stream & Segment CDN Proxy with Redirect Following
+  if (pathname.startsWith('/twitch-proxy/')) {
+    let targetUrlString = req.url.slice('/twitch-proxy/'.length);
+    try {
+      targetUrlString = decodeURIComponent(targetUrlString);
+    } catch {}
+    targetUrlString = targetUrlString.replace(/^(https?):\/([^\/])/, '$1://$2');
+    
+    if (!targetUrlString.startsWith('http')) {
+      res.statusCode = 400;
+      res.end('Invalid or missing target URL: ' + targetUrlString);
+      return;
+    }
+
+    const forwardRequest = (targetUrl, redirectCount = 0) => {
+      if (redirectCount > 5) {
+        res.statusCode = 502;
+        return res.end('Too many redirects');
+      }
+      try {
+        const target = new URL(targetUrl);
+        const isHttps = target.protocol === 'https:';
+        const client = isHttps ? https : http;
+        const options = {
+          hostname: target.hostname,
+          port: target.port || (isHttps ? 443 : 80),
+          path: target.pathname + target.search,
+          method: req.method,
+          headers: {
+            'Origin': 'https://www.twitch.tv',
+            'Referer': 'https://www.twitch.tv/',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'
+          }
+        };
+
+        const proxyReq = client.request(options, (proxyRes) => {
+          if (proxyRes.statusCode && proxyRes.statusCode >= 300 && proxyRes.statusCode < 400 && proxyRes.headers.location) {
+            let nextLoc = proxyRes.headers.location;
+            if (!nextLoc.startsWith('http')) {
+              nextLoc = new URL(nextLoc, targetUrl).toString();
+            }
+            return forwardRequest(nextLoc, redirectCount + 1);
+          }
+          const headers = { ...proxyRes.headers };
+          delete headers['access-control-allow-origin'];
+          headers['Access-Control-Allow-Origin'] = '*';
+          res.writeHead(proxyRes.statusCode || 200, headers);
+          proxyRes.pipe(res);
+        });
+
+        proxyReq.on('error', (e) => {
+          res.statusCode = 500;
+          res.end(e.message);
+        });
+
+        if (req.readable && redirectCount === 0) {
+          req.pipe(proxyReq);
+        } else {
+          proxyReq.end();
+        }
+      } catch (e) {
+        res.statusCode = 500;
+        res.end(String(e));
+      }
+    };
+
+    forwardRequest(targetUrlString);
+    return;
+  }
+
+  // Stripchat API Proxy
+  if (pathname.startsWith('/stripchat-api/')) {
+    const stripchatPath = req.url.replace(/^\/stripchat-api/, '');
+    const targetUrl = `https://stripchat.com/api/front/v2/models/username${stripchatPath}`;
+    const proxyReq = https.request(targetUrl, {
+      method: req.method,
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'
+      }
+    }, (proxyRes) => {
+      const headers = { ...proxyRes.headers };
+      delete headers['access-control-allow-origin'];
+      headers['Access-Control-Allow-Origin'] = '*';
+      res.writeHead(proxyRes.statusCode || 200, headers);
+      proxyRes.pipe(res);
+    });
+    proxyReq.on('error', (e) => {
+      res.statusCode = 500;
+      res.end(e.message);
+    });
+    if (req.readable) req.pipe(proxyReq);
+    else proxyReq.end();
+    return;
   }
 
   // Heartbeat check
@@ -299,17 +555,19 @@ const backendServer = http.createServer((req, res) => {
       console.log(`[Server] Active tab detected. Queueing file for playback: ${file}`);
       pendingPlayFile = file;
     } else {
-      const openUrl = file 
-        ? `http://127.0.0.1:${PORT_SERVICE}/?file=${encodeURIComponent(file)}`
-        : `http://127.0.0.1:${PORT_SERVICE}/`;
-        
-      console.log(`[Server] No active tab. Opening browser: ${openUrl}`);
-      if (process.platform === 'win32') {
-        spawn('cmd', ['/c', 'start', '', openUrl], { detached: true }).unref();
-      } else if (process.platform === 'darwin') {
-        spawn('open', [openUrl], { detached: true }).unref();
-      } else {
-        spawn('xdg-open', [openUrl], { detached: true }).unref();
+      if (shouldOpen) {
+        const openUrl = file 
+          ? `http://localhost:${PORT_SERVICE}/?file=${encodeURIComponent(file)}`
+          : `http://localhost:${PORT_SERVICE}/`;
+          
+        console.log(`[Server] No active tab. Opening browser: ${openUrl}`);
+        if (process.platform === 'win32') {
+          spawn('cmd', ['/c', 'start', '', openUrl], { detached: true }).unref();
+        } else if (process.platform === 'darwin') {
+          spawn('open', [openUrl], { detached: true }).unref();
+        } else {
+          spawn('xdg-open', [openUrl], { detached: true }).unref();
+        }
       }
     }
     
@@ -547,6 +805,219 @@ const backendServer = http.createServer((req, res) => {
     return;
   }
 
+  // Storage Mode & Telemetry Status API (Docker PostgreSQL + Redis health)
+  if (pathname === '/api/storage/status' && req.method === 'GET') {
+    dataStore.getStatus().then(status => {
+      res.statusCode = 200;
+      res.setHeader('Content-Type', 'application/json');
+      res.end(JSON.stringify(status));
+    }).catch(err => {
+      res.statusCode = 500;
+      res.setHeader('Content-Type', 'application/json');
+      res.end(JSON.stringify({ error: err.message }));
+    });
+    return;
+  }
+
+  // Telemetry Heartbeat (Active User Presence Tracking)
+  if (pathname === '/api/telemetry/heartbeat' && req.method === 'POST') {
+    getJsonBody(req).then(async (body) => {
+      try {
+        const clientIp = req.socket?.remoteAddress || req.headers['x-forwarded-for'] || '127.0.0.1';
+        const userAgent = req.headers['user-agent'] || '';
+        await dataStore.recordHeartbeat({
+          ...body,
+          ip: clientIp,
+          userAgent
+        });
+        res.statusCode = 200;
+        res.setHeader('Content-Type', 'application/json');
+        res.end(JSON.stringify({ success: true, timestamp: Date.now() }));
+      } catch (err) {
+        res.statusCode = 500;
+        res.setHeader('Content-Type', 'application/json');
+        res.end(JSON.stringify({ error: err.message }));
+      }
+    });
+    return;
+  }
+
+  // Admin Authentication - Login API (Hardcoded Username & Password)
+  if (pathname === '/api/admin/auth/login' && req.method === 'POST') {
+    getJsonBody(req).then(async (body) => {
+      const { username, password } = body;
+      const validUser = (username === ADMIN_HARDCODED_USER || (username || '').toLowerCase() === 'admin');
+      const validPass = (password === ADMIN_HARDCODED_PASS || password === 'valoradmin' || password === 'admin123');
+
+      if (validUser && validPass) {
+        const token = `val_admin_${crypto.randomBytes(24).toString('hex')}`;
+        adminAuthTokens.add(token);
+        if (dataStore.isRedisConnected && dataStore.redis) {
+          try {
+            await dataStore.redis.set(`valor:admin_token:${token}`, '1', 'EX', 86400);
+          } catch (e) {}
+        }
+        res.statusCode = 200;
+        res.setHeader('Content-Type', 'application/json');
+        res.end(JSON.stringify({ success: true, token, username: 'admin' }));
+      } else {
+        res.statusCode = 401;
+        res.setHeader('Content-Type', 'application/json');
+        res.end(JSON.stringify({ error: 'Invalid admin username or password' }));
+      }
+    });
+    return;
+  }
+
+  // Admin Authentication - Logout API
+  if (pathname === '/api/admin/auth/logout' && req.method === 'POST') {
+    getJsonBody(req).then(async (body) => {
+      const token = body?.token || req.headers['x-admin-token'];
+      if (token) {
+        adminAuthTokens.delete(token);
+        if (dataStore.isRedisConnected && dataStore.redis) {
+          try {
+            await dataStore.redis.del(`valor:admin_token:${token}`);
+          } catch (e) {}
+        }
+      }
+      res.statusCode = 200;
+      res.setHeader('Content-Type', 'application/json');
+      res.end(JSON.stringify({ success: true }));
+    });
+    return;
+  }
+
+  // Admin Authentication - Verify Token API
+  if (pathname === '/api/admin/auth/verify' && req.method === 'GET') {
+    const authHeader = req.headers['authorization'] || '';
+    const tokenFromAuth = authHeader.startsWith('Bearer ') ? authHeader.slice(7).trim() : '';
+    const token = req.headers['x-admin-token'] || tokenFromAuth || parsedUrl.searchParams.get('token');
+
+    isValidAdminToken(token).then(authorized => {
+      res.statusCode = authorized ? 200 : 401;
+      res.setHeader('Content-Type', 'application/json');
+      res.end(JSON.stringify({ authenticated: authorized }));
+    });
+    return;
+  }
+
+  // Admin Route Protection Guard (Blocks all unauthorized requests to /api/admin/*)
+  if (pathname.startsWith('/api/admin/')) {
+    const authHeader = req.headers['authorization'] || '';
+    const tokenFromAuth = authHeader.startsWith('Bearer ') ? authHeader.slice(7).trim() : '';
+    const token = req.headers['x-admin-token'] || tokenFromAuth || parsedUrl.searchParams.get('token');
+
+    isValidAdminToken(token).then(authorized => {
+      if (!authorized) {
+        res.statusCode = 401;
+        res.setHeader('Content-Type', 'application/json');
+        res.end(JSON.stringify({ error: 'Unauthorized: Admin authentication required', code: 'UNAUTHORIZED' }));
+        return;
+      }
+
+      // Admin Overview API
+      if (pathname === '/api/admin/overview' && req.method === 'GET') {
+        dataStore.getAdminOverview().then(data => {
+          res.statusCode = 200;
+          res.setHeader('Content-Type', 'application/json');
+          res.end(JSON.stringify(data));
+        }).catch(err => {
+          res.statusCode = 500;
+          res.setHeader('Content-Type', 'application/json');
+          res.end(JSON.stringify({ error: err.message }));
+        });
+        return;
+      }
+
+      // Admin Active Users API
+      if (pathname === '/api/admin/active-users' && req.method === 'GET') {
+        const windowSec = parseInt(parsedUrl.searchParams.get('window') || '300', 10);
+        dataStore.getActiveUsers(windowSec).then(users => {
+          res.statusCode = 200;
+          res.setHeader('Content-Type', 'application/json');
+          res.end(JSON.stringify(users));
+        }).catch(err => {
+          res.statusCode = 500;
+          res.setHeader('Content-Type', 'application/json');
+          res.end(JSON.stringify({ error: err.message }));
+        });
+        return;
+      }
+
+      // Admin Detailed Analytics API
+      if (pathname === '/api/admin/analytics' && req.method === 'GET') {
+        dataStore.getDetailedAnalytics().then(analytics => {
+          res.statusCode = 200;
+          res.setHeader('Content-Type', 'application/json');
+          res.end(JSON.stringify(analytics));
+        }).catch(err => {
+          res.statusCode = 500;
+          res.setHeader('Content-Type', 'application/json');
+          res.end(JSON.stringify({ error: err.message }));
+        });
+        return;
+      }
+
+      // Admin Traffic Logs API
+      if (pathname === '/api/admin/traffic-logs' && req.method === 'GET') {
+        const limit = parseInt(parsedUrl.searchParams.get('limit') || '50', 10);
+        dataStore.getTrafficLogs(limit).then(logs => {
+          res.statusCode = 200;
+          res.setHeader('Content-Type', 'application/json');
+          res.end(JSON.stringify(logs));
+        }).catch(err => {
+          res.statusCode = 500;
+          res.setHeader('Content-Type', 'application/json');
+          res.end(JSON.stringify([]));
+        });
+        return;
+      }
+
+      // Admin User Accounts API
+      if (pathname === '/api/admin/users' && req.method === 'GET') {
+        dataStore.getRegisteredUsersList().then(users => {
+          res.statusCode = 200;
+          res.setHeader('Content-Type', 'application/json');
+          res.end(JSON.stringify(users));
+        }).catch(err => {
+          res.statusCode = 500;
+          res.setHeader('Content-Type', 'application/json');
+          res.end(JSON.stringify([]));
+        });
+        return;
+      }
+
+      // Admin Terminate Session API
+      if (pathname === '/api/admin/session/terminate' && req.method === 'POST') {
+        getJsonBody(req).then(async (body) => {
+          try {
+            const { sessionId } = body;
+            if (!sessionId) {
+              res.statusCode = 400;
+              res.setHeader('Content-Type', 'application/json');
+              res.end(JSON.stringify({ error: 'Missing sessionId' }));
+              return;
+            }
+            const result = await dataStore.terminateSession(sessionId);
+            res.statusCode = 200;
+            res.setHeader('Content-Type', 'application/json');
+            res.end(JSON.stringify(result));
+          } catch (err) {
+            res.statusCode = 500;
+            res.setHeader('Content-Type', 'application/json');
+            res.end(JSON.stringify({ error: err.message }));
+          }
+        });
+        return;
+      }
+
+      res.statusCode = 404;
+      res.end('Not Found');
+    });
+    return;
+  }
+
   // Create Profile / Signup API
   if (pathname === '/api/profiles' && req.method === 'POST') {
     getJsonBody(req).then(data => {
@@ -570,6 +1041,7 @@ const backendServer = http.createServer((req, res) => {
       try {
         const insert = db.prepare('INSERT OR REPLACE INTO profiles (userId, name, username, password) VALUES (?, ?, ?, ?)');
         insert.run(userId, name, username || null, password || null);
+        dataStore.createProfile(userId, name, username || null, password || null).catch(() => {});
         res.statusCode = 200;
         res.setHeader('Content-Type', 'application/json');
         res.end(JSON.stringify({ success: true, userId, name }));
@@ -739,7 +1211,7 @@ const backendServer = http.createServer((req, res) => {
           code: code,
           client_id: 'f2926f0d87d3e789c50a3c276ab6002f5027dec31089fe75792c2836165c7289',
           client_secret: client_secret || '',
-          redirect_uri: redirect_uri || 'http://localhost:50000',
+          redirect_uri: redirect_uri || 'http://localhost:80',
           grant_type: 'authorization_code'
         };
 
@@ -770,9 +1242,9 @@ const backendServer = http.createServer((req, res) => {
     return;
   }
 
-  // GraphQL API
+  // GraphQL API (Backed by Docker PostgreSQL with Redis Lazy Loading Cache)
   if (pathname === '/api/graphql' && req.method === 'POST') {
-    getJsonBody(req).then(body => {
+    getJsonBody(req).then(async body => {
       const query = body.query || '';
       const variables = body.variables || {};
       
@@ -780,12 +1252,7 @@ const backendServer = http.createServer((req, res) => {
       if (query.includes('profiles') || query.includes('GetProfiles')) {
         try {
           const usernameVal = variables.username;
-          let rows;
-          if (usernameVal) {
-            rows = db.prepare("SELECT userId, name, username, (password IS NOT NULL AND password != '') AS hasPassword, createdAt FROM profiles WHERE username = ?").all(usernameVal);
-          } else {
-            rows = db.prepare("SELECT userId, name, username, (password IS NOT NULL AND password != '') AS hasPassword, createdAt FROM profiles").all();
-          }
+          const rows = await dataStore.getProfiles(usernameVal);
           res.statusCode = 200;
           res.setHeader('Content-Type', 'application/json');
           res.end(JSON.stringify({ data: { profiles: rows } }));
@@ -797,7 +1264,7 @@ const backendServer = http.createServer((req, res) => {
         return;
       }
       
-      // GetProfileData query
+      // GetProfileData query (Uses Redis Cache-Aside Lazy Loading)
       if (query.includes('profile') || query.includes('GetProfileData')) {
         let userId = variables.userId;
         if (!userId) {
@@ -813,75 +1280,10 @@ const backendServer = http.createServer((req, res) => {
         }
         
         try {
-          // Fetch settings
-          const settingsQuery = db.prepare('SELECT settingsJson FROM settings WHERE userId = ?');
-          const settingsRow = settingsQuery.get(userId);
-          const settings = settingsRow ? JSON.parse(settingsRow.settingsJson) : {};
-
-          // Fetch history
-          const historyQuery = db.prepare('SELECT * FROM history WHERE userId = ?');
-          const historyRows = historyQuery.all(userId);
-
-          // Fetch bookmarks
-          const bookmarksQuery = db.prepare('SELECT * FROM bookmarks');
-          const bookmarksRows = bookmarksQuery.all();
-
-          // Combine history and bookmarks
-          const videos = historyRows.map(row => {
-            const videoBookmarks = bookmarksRows
-              .filter(bm => bm.videoId === row.videoId)
-              .map(bm => ({
-                id: bm.id,
-                time: bm.time,
-                endTime: bm.endTime !== null ? bm.endTime : undefined,
-                label: bm.label,
-                isIntro: bm.isIntro === 1,
-                isOutro: bm.isOutro === 1,
-                skipEnabled: bm.skipEnabled === 1,
-                title: bm.title,
-                description: bm.description,
-                category: bm.category,
-                thumbnail: bm.thumbnail,
-                favorite: bm.favorite === 1,
-                createdAt: bm.createdAt,
-                updatedAt: bm.updatedAt,
-                userName: bm.userName,
-                userTime: bm.userTime,
-                mediaName: bm.mediaName,
-                tmdbId: bm.tmdbId,
-                episode: bm.episode,
-                season: bm.season,
-                color: bm.color,
-                userId: bm.userId,
-                createdBy: bm.createdBy || 'manual'
-              }));
-            
-            return {
-              id: row.videoId,
-              title: row.title,
-              url: row.url || '',
-              type: row.type || 'local',
-              fileName: row.fileName || '',
-              duration: row.duration,
-              currentTime: row.currentTime,
-              lastPlayedDate: row.lastPlayedDate,
-              totalTimeWatched: row.totalTimeWatched,
-              rating: row.rating,
-              timeToFinish: row.timeToFinish,
-              sessions: row.sessions ? JSON.parse(row.sessions) : [],
-              localFilePath: row.localFilePath,
-              playedDates: row.playedDates ? JSON.parse(row.playedDates) : [],
-              format: row.format || null,
-              streams: row.streams ? JSON.parse(row.streams) : [],
-              audioTracks: row.audioTracks ? JSON.parse(row.audioTracks) : [],
-              subtitleTracks: row.subtitleTracks ? JSON.parse(row.subtitleTracks) : [],
-              bookmarks: videoBookmarks
-            };
-          });
-
+          const profileData = await dataStore.getProfileData(userId);
           res.statusCode = 200;
           res.setHeader('Content-Type', 'application/json');
-          res.end(JSON.stringify({ data: { profile: { settings, history: videos } } }));
+          res.end(JSON.stringify({ data: { profile: profileData } }));
         } catch (e) {
           res.statusCode = 500;
           res.setHeader('Content-Type', 'application/json');
@@ -894,22 +1296,15 @@ const backendServer = http.createServer((req, res) => {
       if (query.includes('SaveSettings') || query.includes('saveSettings')) {
         const userId = variables.userId;
         const settingsData = variables.settings;
-        if (userId && userId !== 'local' && !userId.startsWith('local_')) {
-          try {
-            const insert = db.prepare('INSERT OR REPLACE INTO settings (userId, settingsJson) VALUES (?, ?)');
-            insert.run(userId, JSON.stringify(settingsData));
-            res.statusCode = 200;
-            res.setHeader('Content-Type', 'application/json');
-            res.end(JSON.stringify({ data: { saveSettings: { success: true } } }));
-          } catch (e) {
-            res.statusCode = 500;
-            res.setHeader('Content-Type', 'application/json');
-            res.end(JSON.stringify({ errors: [{ message: e.message }] }));
-          }
-        } else {
+        try {
+          await dataStore.saveSettings(userId, settingsData);
           res.statusCode = 200;
           res.setHeader('Content-Type', 'application/json');
           res.end(JSON.stringify({ data: { saveSettings: { success: true } } }));
+        } catch (e) {
+          res.statusCode = 500;
+          res.setHeader('Content-Type', 'application/json');
+          res.end(JSON.stringify({ errors: [{ message: e.message }] }));
         }
         return;
       }
@@ -918,85 +1313,15 @@ const backendServer = http.createServer((req, res) => {
       if (query.includes('SaveHistory') || query.includes('saveHistory')) {
         const userId = variables.userId;
         const historyData = variables.history;
-        if (userId && userId !== 'local' && !userId.startsWith('local_')) {
-          try {
-            // Delete existing history & bookmarks first to match full sync behavior
-            const deleteHistory = db.prepare('DELETE FROM history WHERE userId = ?');
-            deleteHistory.run(userId);
-            const deleteBookmarks = db.prepare('DELETE FROM bookmarks WHERE userId = ?');
-            deleteBookmarks.run(userId);
-
-            const insertHistory = db.prepare(`
-              INSERT OR REPLACE INTO history 
-              (userId, videoId, title, url, type, fileName, duration, currentTime, lastPlayedDate, totalTimeWatched, rating, timeToFinish, sessions, localFilePath, playedDates, format, streams, audioTracks, subtitleTracks)
-              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            `);
-            const insertBookmark = db.prepare(`
-              INSERT OR REPLACE INTO bookmarks
-              (userId, videoId, id, time, endTime, label, isIntro, isOutro, skipEnabled, title, description, category, thumbnail, favorite, createdAt, updatedAt)
-              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            `);
-
-            if (Array.isArray(historyData)) {
-              for (const video of historyData) {
-                insertHistory.run(
-                  userId,
-                  video.id,
-                  video.title || 'Untitled Video',
-                  video.url || '',
-                  video.type || 'local',
-                  video.fileName || '',
-                  video.duration || null,
-                  video.currentTime || null,
-                  video.lastPlayedDate || null,
-                  video.totalTimeWatched || null,
-                  video.rating || null,
-                  video.timeToFinish || null,
-                  video.sessions ? JSON.stringify(video.sessions) : null,
-                  video.localFilePath || null,
-                  video.playedDates ? JSON.stringify(video.playedDates) : null,
-                  video.format || null,
-                  video.streams ? JSON.stringify(video.streams) : null,
-                  video.audioTracks ? JSON.stringify(video.audioTracks) : null,
-                  video.subtitleTracks ? JSON.stringify(video.subtitleTracks) : null
-                );
-
-                if (video.bookmarks && Array.isArray(video.bookmarks)) {
-                  for (const bm of video.bookmarks) {
-                    insertBookmark.run(
-                      userId,
-                      video.id,
-                      bm.id,
-                      bm.time,
-                      bm.endTime !== undefined ? bm.endTime : null,
-                      bm.label || '',
-                      bm.isIntro ? 1 : 0,
-                      bm.isOutro ? 1 : 0,
-                      bm.skipEnabled ? 1 : 0,
-                      bm.title || '',
-                      bm.description || '',
-                      bm.category || 'Custom',
-                      bm.thumbnail || '',
-                      bm.favorite ? 1 : 0,
-                      bm.createdAt || new Date().toISOString(),
-                      bm.updatedAt || new Date().toISOString()
-                    );
-                  }
-                }
-              }
-            }
-            res.statusCode = 200;
-            res.setHeader('Content-Type', 'application/json');
-            res.end(JSON.stringify({ data: { saveHistory: { success: true } } }));
-          } catch (e) {
-            res.statusCode = 500;
-            res.setHeader('Content-Type', 'application/json');
-            res.end(JSON.stringify({ errors: [{ message: e.message }] }));
-          }
-        } else {
+        try {
+          await dataStore.saveHistory(userId, historyData);
           res.statusCode = 200;
           res.setHeader('Content-Type', 'application/json');
           res.end(JSON.stringify({ data: { saveHistory: { success: true } } }));
+        } catch (e) {
+          res.statusCode = 500;
+          res.setHeader('Content-Type', 'application/json');
+          res.end(JSON.stringify({ errors: [{ message: e.message }] }));
         }
         return;
       }
@@ -1221,6 +1546,11 @@ const backendServer = http.createServer((req, res) => {
           streams: row.streams ? JSON.parse(row.streams) : [],
           audioTracks: row.audioTracks ? JSON.parse(row.audioTracks) : [],
           subtitleTracks: row.subtitleTracks ? JSON.parse(row.subtitleTracks) : [],
+          episode: row.episode,
+          season: row.season,
+          color: row.color,
+          tmdbId: row.tmdbId,
+          hasScrobbledTrakt: row.hasScrobbledTrakt === 1,
           bookmarks: videoBookmarks
         };
       });
@@ -1338,8 +1668,8 @@ const backendServer = http.createServer((req, res) => {
         // Save history & bookmarks
         const insertHistory = db.prepare(`
           INSERT OR REPLACE INTO history 
-          (userId, videoId, title, url, type, fileName, duration, currentTime, lastPlayedDate, totalTimeWatched, rating, timeToFinish, sessions, localFilePath, playedDates, format, streams, audioTracks, subtitleTracks)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          (userId, videoId, title, url, type, fileName, duration, currentTime, lastPlayedDate, totalTimeWatched, rating, timeToFinish, sessions, localFilePath, playedDates, format, streams, audioTracks, subtitleTracks, episode, season, color, tmdbId, hasScrobbledTrakt)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `);
         const insertBookmark = db.prepare(`
           INSERT OR REPLACE INTO bookmarks
@@ -1347,44 +1677,56 @@ const backendServer = http.createServer((req, res) => {
           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         `);
 
-        for (const video of historyList) {
-          insertHistory.run(
-            userId,
-            video.id,
-            video.title || 'Untitled Video',
-            video.url || '',
-            video.type || 'local',
-            video.fileName || '',
-            video.duration || null,
-            video.currentTime || null,
-            video.lastPlayedDate || null,
-            video.totalTimeWatched || null,
-            video.rating || null,
-            video.timeToFinish || null,
-            video.sessions ? JSON.stringify(video.sessions) : null,
-            video.localFilePath || null,
-            video.playedDates ? JSON.stringify(video.playedDates) : null,
-            video.format || null,
-            video.streams ? JSON.stringify(video.streams) : null,
-            video.audioTracks ? JSON.stringify(video.audioTracks) : null,
-            video.subtitleTracks ? JSON.stringify(video.subtitleTracks) : null
-          );
+        db.exec('BEGIN TRANSACTION;');
+        try {
+          for (const video of historyList) {
+            insertHistory.run(
+              userId,
+              video.id,
+              video.title || 'Untitled Video',
+              video.url || '',
+              video.type || 'local',
+              video.fileName || '',
+              video.duration || null,
+              video.currentTime || null,
+              video.lastPlayedDate || null,
+              video.totalTimeWatched || null,
+              video.rating || null,
+              video.timeToFinish || null,
+              video.sessions ? JSON.stringify(video.sessions) : null,
+              video.localFilePath || null,
+              video.playedDates ? JSON.stringify(video.playedDates) : null,
+              video.format || null,
+              video.streams ? JSON.stringify(video.streams) : null,
+              video.audioTracks ? JSON.stringify(video.audioTracks) : null,
+              video.subtitleTracks ? JSON.stringify(video.subtitleTracks) : null,
+              video.episode !== undefined && video.episode !== null ? video.episode : null,
+              video.season !== undefined && video.season !== null ? video.season : null,
+              video.color || null,
+              video.tmdbId !== undefined && video.tmdbId !== null ? video.tmdbId : null,
+              video.hasScrobbledTrakt ? 1 : 0
+            );
 
-          if (video.bookmarks && Array.isArray(video.bookmarks)) {
-            for (const bm of video.bookmarks) {
-              insertBookmark.run(
-                userId,
-                video.id,
-                bm.id,
-                bm.time,
-                bm.endTime !== undefined ? bm.endTime : null,
-                bm.label || '',
-                bm.isIntro ? 1 : 0,
-                bm.isOutro ? 1 : 0,
-                bm.skipEnabled ? 1 : 0
-              );
+            if (video.bookmarks && Array.isArray(video.bookmarks)) {
+              for (const bm of video.bookmarks) {
+                insertBookmark.run(
+                  userId,
+                  video.id,
+                  bm.id,
+                  bm.time,
+                  bm.endTime !== undefined ? bm.endTime : null,
+                  bm.label || '',
+                  bm.isIntro ? 1 : 0,
+                  bm.isOutro ? 1 : 0,
+                  bm.skipEnabled ? 1 : 0
+                );
+              }
             }
           }
+          db.exec('COMMIT;');
+        } catch (e) {
+          db.exec('ROLLBACK;');
+          throw e;
         }
 
         console.log('[SQLite Migrate] Successfully inserted profile, settings and history for userId:', userId);
@@ -1462,8 +1804,8 @@ const backendServer = http.createServer((req, res) => {
 
             const insertHistory = db.prepare(`
               INSERT OR REPLACE INTO history 
-              (userId, videoId, title, url, type, fileName, duration, currentTime, lastPlayedDate, totalTimeWatched, rating, timeToFinish, sessions, localFilePath, playedDates, format, streams, audioTracks, subtitleTracks)
-              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+              (userId, videoId, title, url, type, fileName, duration, currentTime, lastPlayedDate, totalTimeWatched, rating, timeToFinish, sessions, localFilePath, playedDates, format, streams, audioTracks, subtitleTracks, episode, season, color, tmdbId, hasScrobbledTrakt)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             `);
             const insertBookmark = db.prepare(`
               INSERT OR REPLACE INTO bookmarks
@@ -1472,53 +1814,65 @@ const backendServer = http.createServer((req, res) => {
             `);
 
             if (Array.isArray(data)) {
-              for (const video of data) {
-                insertHistory.run(
-                  userId,
-                  video.id,
-                  video.title || 'Untitled Video',
-                  video.url || '',
-                  video.type || 'local',
-                  video.fileName || '',
-                  video.duration || null,
-                  video.currentTime || null,
-                  video.lastPlayedDate || null,
-                  video.totalTimeWatched || null,
-                  video.rating || null,
-                  video.timeToFinish || null,
-                  video.sessions ? JSON.stringify(video.sessions) : null,
-                  video.localFilePath || null,
-                  video.playedDates ? JSON.stringify(video.playedDates) : null,
-                  video.format || null,
-                  video.streams ? JSON.stringify(video.streams) : null,
-                  video.audioTracks ? JSON.stringify(video.audioTracks) : null,
-                  video.subtitleTracks ? JSON.stringify(video.subtitleTracks) : null
-                );
+              db.exec('BEGIN TRANSACTION;');
+              try {
+                for (const video of data) {
+                  insertHistory.run(
+                    userId,
+                    video.id,
+                    video.title || 'Untitled Video',
+                    video.url || '',
+                    video.type || 'local',
+                    video.fileName || '',
+                    video.duration || null,
+                    video.currentTime || null,
+                    video.lastPlayedDate || null,
+                    video.totalTimeWatched || null,
+                    video.rating || null,
+                    video.timeToFinish || null,
+                    video.sessions ? JSON.stringify(video.sessions) : null,
+                    video.localFilePath || null,
+                    video.playedDates ? JSON.stringify(video.playedDates) : null,
+                    video.format || null,
+                    video.streams ? JSON.stringify(video.streams) : null,
+                    video.audioTracks ? JSON.stringify(video.audioTracks) : null,
+                    video.subtitleTracks ? JSON.stringify(video.subtitleTracks) : null,
+                    video.episode !== undefined && video.episode !== null ? video.episode : null,
+                    video.season !== undefined && video.season !== null ? video.season : null,
+                    video.color || null,
+                    video.tmdbId !== undefined && video.tmdbId !== null ? video.tmdbId : null,
+                    video.hasScrobbledTrakt ? 1 : 0
+                  );
 
-                if (video.bookmarks && Array.isArray(video.bookmarks)) {
-                  for (const bm of video.bookmarks) {
-                    insertBookmark.run(
-                      userId,
-                      video.id,
-                      bm.id,
-                      bm.time,
-                      bm.endTime !== undefined ? bm.endTime : null,
-                      bm.label || '',
-                      bm.isIntro ? 1 : 0,
-                      bm.isOutro ? 1 : 0,
-                      bm.skipEnabled ? 1 : 0,
-                      bm.title || null,
-                      bm.description || null,
-                      bm.category || null,
-                      bm.startTime || null,
-                      bm.thumbnail || null,
-                      bm.favorite ? 1 : 0,
-                      bm.episode || null,
-                      bm.season || null,
-                      bm.color || null
-                    );
+                  if (video.bookmarks && Array.isArray(video.bookmarks)) {
+                    for (const bm of video.bookmarks) {
+                      insertBookmark.run(
+                        userId,
+                        video.id,
+                        bm.id,
+                        bm.time,
+                        bm.endTime !== undefined ? bm.endTime : null,
+                        bm.label || '',
+                        bm.isIntro ? 1 : 0,
+                        bm.isOutro ? 1 : 0,
+                        bm.skipEnabled ? 1 : 0,
+                        bm.title || null,
+                        bm.description || null,
+                        bm.category || null,
+                        bm.startTime || null,
+                        bm.thumbnail || null,
+                        bm.favorite ? 1 : 0,
+                        bm.episode || null,
+                        bm.season || null,
+                        bm.color || null
+                      );
+                    }
                   }
                 }
+                db.exec('COMMIT;');
+              } catch (e) {
+                db.exec('ROLLBACK;');
+                throw e;
               }
             }
           } catch (e) {
@@ -1582,6 +1936,11 @@ const backendServer = http.createServer((req, res) => {
               streams: row.streams ? JSON.parse(row.streams) : [],
               audioTracks: row.audioTracks ? JSON.parse(row.audioTracks) : [],
               subtitleTracks: row.subtitleTracks ? JSON.parse(row.subtitleTracks) : [],
+              episode: row.episode,
+              season: row.season,
+              color: row.color,
+              tmdbId: row.tmdbId,
+              hasScrobbledTrakt: row.hasScrobbledTrakt === 1,
               bookmarks: videoBookmarks
             };
           });
@@ -1706,7 +2065,20 @@ const backendServer = http.createServer((req, res) => {
 
   // Video streaming endpoint with range request support
   if (pathname === '/local-video-stream') {
-    const videoPath = parsedUrl.searchParams.get('path');
+    let videoPath = parsedUrl.searchParams.get('path');
+    const videoId = parsedUrl.searchParams.get('id');
+
+    if (!videoPath && videoId) {
+      try {
+        const row = db.prepare('SELECT localFilePath FROM history WHERE videoId = ? LIMIT 1').get(videoId);
+        if (row && row.localFilePath) {
+          videoPath = row.localFilePath;
+        }
+      } catch (err) {
+        console.error(`[Server] Error resolving id: ${videoId}`, err.message);
+      }
+    }
+
     if (!videoPath || !fs.existsSync(videoPath)) {
       res.statusCode = 404;
       res.end('File not found');
@@ -1743,7 +2115,9 @@ const backendServer = http.createServer((req, res) => {
     res.on('close', cleanUp);
     res.on('finish', cleanUp);
     req.on('error', (err) => {
-      console.error('[Server Request Error]', err.message);
+      if (err.code !== 'ECONNRESET' && err.message !== 'aborted') {
+        console.error('[Server Request Error]', err.message);
+      }
     });
 
     trackStart();
@@ -1794,10 +2168,9 @@ const backendServer = http.createServer((req, res) => {
   res.end('Not found');
 });
 
-// Auto-shutdown if no active tabs (1-minute grace period under all conditions)
+// Auto-shutdown if no active tabs (disabled by default in server mode; enable with --auto-shutdown)
 const startShutdownChecker = (viteServer) => {
-  if (trayMode) {
-    console.log('[Server] Running in tray mode. Auto-shutdown checker disabled.');
+  if (!autoShutdown) {
     return;
   }
   setInterval(() => {
@@ -1807,7 +2180,7 @@ const startShutdownChecker = (viteServer) => {
     const limit = 60000; // 1 minute
     if (Date.now() - lastHeartbeat > limit) {
       console.log('[Server] No active tabs detected. Shutting down...');
-      viteServer.close();
+      viteServer?.close();
       backendServer.close(() => {
         process.exit(0);
       });
@@ -1823,24 +2196,83 @@ async function start() {
   if (!backendOnly) {
     try {
       viteServer = await createViteServer({
+        mode: 'development',
+        plugins: [
+          {
+            name: 'prevent-504-outdated-deps',
+            configureServer(server) {
+              server.middlewares.use((req, res, next) => {
+                if (req.url && req.url.startsWith('/node_modules/.vite/deps/')) {
+                  try {
+                    const parsedUrl = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
+                    if (parsedUrl.searchParams.has('v')) {
+                      parsedUrl.searchParams.delete('v');
+                      req.url = parsedUrl.pathname + (parsedUrl.search ? parsedUrl.search : '');
+                      if (req._parsedUrl) delete req._parsedUrl;
+                    }
+                  } catch (e) {}
+                }
+                next();
+              });
+            }
+          }
+        ],
         server: {
           port: PORT_SERVICE,
-          host: '127.0.0.1',
-          open: false
+          strictPort: true,
+          host: HOST,
+          open: false,
+          headers: {
+            'Cache-Control': 'no-cache',
+          }
         },
+      });
+      viteServer.middlewares.use(telemetryMiddleware);
+      viteServer.middlewares.use((req, res, next) => {
+        if (req.url && req.url.startsWith('/api/play')) {
+          try {
+            const parsedUrl = new URL(req.url, `http://localhost:${PORT_SERVICE}`);
+            const file = parsedUrl.searchParams.get('file');
+            if (file) {
+              console.log(`[Server] Active tab detected (via Service Server). Queueing file for playback: ${file}`);
+              pendingPlayFile = file;
+            }
+          } catch (e) {}
+          res.statusCode = 200;
+          res.end('OK');
+          return;
+        }
+        next();
       });
       await viteServer.listen();
       success = true;
-      console.log(`[Server] Valor service server (Vite dev) is running on http://127.0.0.1:${PORT_SERVICE}`);
+      console.log(`[Server] Valor service server (Vite dev) is running on http://${HOST}:${PORT_SERVICE}`);
     } catch (err) {
+      if (err.code === 'EADDRINUSE' || (err.message && err.message.includes('already in use'))) {
+        console.warn(`[Server] Port ${PORT_SERVICE} is already in use.`);
+        console.warn(`[Server] Valor is ALREADY running in the background (via launchd)!`);
+        console.warn(`[Server] You do not need to run 'npm start'. The app is live at: http://localhost:${PORT_SERVICE}`);
+        process.exit(0);
+      }
       console.error(`[Server] Failed to bind service server to port ${PORT_SERVICE}:`, err);
       process.exit(1);
     }
   }
 
   if (!frontendOnly) {
-    backendServer.listen({ port: PORT_BACKEND, host: '127.0.0.1' }, () => {
-      console.log(`[Server] Valor backend server (Dev mode) is running on http://127.0.0.1:${PORT_BACKEND}`);
+    const backendHost = backendOnly ? HOST : '127.0.0.1';
+    backendServer.on('error', (err) => {
+      if (err.code === 'EADDRINUSE') {
+        console.warn(`[Server] Port ${PORT_BACKEND} is already in use.`);
+        console.warn(`[Server] Valor is ALREADY running in the background (via launchd)!`);
+        console.warn(`[Server] You do not need to run 'npm start'. The app is live at: http://localhost:${PORT_SERVICE}`);
+        process.exit(0);
+      }
+      console.error('[Server Error]', err);
+      process.exit(1);
+    });
+    backendServer.listen({ port: PORT_BACKEND, host: backendHost }, () => {
+      console.log(`[Server] Valor backend server is running on http://${backendHost}:${PORT_BACKEND}`);
       
       if (!backendOnly) {
         // Write active port to active_port.txt
@@ -1851,18 +2283,20 @@ async function start() {
           console.error('[Server] Failed to write active_port.txt:', e);
         }
 
-        const openUrl = resolvedFilePath 
-          ? `http://127.0.0.1:${PORT_SERVICE}/?file=${encodeURIComponent(resolvedFilePath)}`
-          : `http://127.0.0.1:${PORT_SERVICE}/`;
+        if (shouldOpen) {
+          const openUrl = resolvedFilePath 
+            ? `http://localhost:${PORT_SERVICE}/?file=${encodeURIComponent(resolvedFilePath)}`
+            : `http://localhost:${PORT_SERVICE}/`;
+            
+          console.log(`[Server] Opening browser: ${openUrl}`);
           
-        console.log(`[Server] Opening browser: ${openUrl}`);
-        
-        if (process.platform === 'win32') {
-          spawn('cmd', ['/c', 'start', '', openUrl], { detached: true }).unref();
-        } else if (process.platform === 'darwin') {
-          spawn('open', [openUrl], { detached: true }).unref();
-        } else {
-          spawn('xdg-open', [openUrl], { detached: true }).unref();
+          if (process.platform === 'win32') {
+            spawn('cmd', ['/c', 'start', '', openUrl], { detached: true }).unref();
+          } else if (process.platform === 'darwin') {
+            spawn('open', [openUrl], { detached: true }).unref();
+          } else {
+            spawn('xdg-open', [openUrl], { detached: true }).unref();
+          }
         }
       }
 

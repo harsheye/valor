@@ -362,7 +362,7 @@ export class PlaybackController {
 
     const now = Date.now();
     if (callerName === 'timeupdate') {
-      if (now - this.lastSchedulerRunTime < 1000) {
+      if (now - this.lastSchedulerRunTime < 200) {
         return;
       }
     }
@@ -386,13 +386,22 @@ export class PlaybackController {
 
     if (this.videoEl.paused) return;
 
-    // Drift detection & correction loop
+    // Drift detection & continuous micro-rate correction loop
     const audioPlayhead = this.audioScheduler.getCurrentPlayhead();
-    if (this.timeline.checkDrift(currentTime, audioPlayhead)) {
-      console.warn(`[PlaybackController-${this.instanceId}] Audio-Video sync drift detected: Video=${currentTime.toFixed(3)}s, Audio=${audioPlayhead?.toFixed(3)}s. Re-syncing scheduler...`);
-      this.audioScheduler.stopAll();
-      this.playbackQueue.clear();
-      this.hydrateManifestFromCache();
+    const drift = this.timeline.getDrift(currentTime, audioPlayhead);
+    if (drift !== null) {
+      if (this.timeline.checkDrift(currentTime, audioPlayhead)) {
+        console.warn(`[PlaybackController-${this.instanceId}] Audio-Video sync drift detected: Video=${currentTime.toFixed(3)}s, Audio=${audioPlayhead?.toFixed(3)}s (drift: ${(drift * 1000).toFixed(1)}ms). Re-syncing scheduler...`);
+        this.audioScheduler.stopAll();
+        this.playbackQueue.clear();
+        this.hydrateManifestFromCache();
+      } else if (Math.abs(drift) > 0.015) {
+        // Smoothly adjust audio playback rate to converge drift to 0 without audible gaps
+        this.audioScheduler.adjustRateForDrift(drift, this.state.playbackRate);
+      } else {
+        // Within 15ms lip-sync tolerance: restore normal rate
+        this.audioScheduler.updatePlaybackRate(this.state.playbackRate);
+      }
     }
 
     // Update queue to schedule cached chunks and prune completed
