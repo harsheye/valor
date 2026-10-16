@@ -8,11 +8,11 @@
     <key>ProgramArguments</key>
     <array>
         <string>/opt/homebrew/bin/node</string>
-        <string>/Users/leetwhitesnake/Downloads/valor/start-app.js</string>
+        <string>/Users/leetwhitesnake/Valor/valor/start-app.js</string>
     </array>
 
     <key>WorkingDirectory</key>
-    <string>/Users/leetwhitesnake/Downloads/valor</string>
+    <string>/Users/leetwhitesnake/Valor/valor</string>
 
     <key>EnvironmentVariables</key>
     <dict>
@@ -35,9 +35,9 @@
     <true/>
 
     <key>StandardOutPath</key>
-    <string>/Users/leetwhitesnake/Downloads/valor/.valor_data/service.log</string>
+    <string>/Users/leetwhitesnake/Valor/valor/.valor_data/service.log</string>
 
     <key>StandardErrorPath</key>
-    <string>/Users/leetwhitesnake/Downloads/valor/.valor_data/service_error.log</string>
+    <string>/Users/leetwhitesnake/Valor/valor/.valor_data/service_error.log</string>
 </dict>
 </plist>
