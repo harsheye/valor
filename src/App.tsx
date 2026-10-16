@@ -542,8 +542,51 @@ function App() {
       rawSetPlayingVideo(val ? sanitizeVideoItem(val, useIdStream) : null);
     }
   }, [settings.storageMode, settings.userId]);
+  type DetailsHistoryItem = 
+    | { type: 'media'; video: VideoItem }
+    | { type: 'actor'; actor: { id: number; name: string; profilePath?: string } };
+
+  const [detailsHistory, setDetailsHistory] = useState<DetailsHistoryItem[]>([]);
   const [selectedDetailsMedia, setSelectedDetailsMedia] = useState<VideoItem | null>(null);
   const [selectedActor, setSelectedActor] = useState<{ id: number; name: string; profilePath?: string } | null>(null);
+
+  const handleOpenMediaDetails = (video: VideoItem) => {
+    setDetailsHistory(prev => [...prev, { type: 'media', video }]);
+    setSelectedDetailsMedia(video);
+    setSelectedActor(null);
+  };
+
+  const handleOpenActorDetails = (actor: { id: number; name: string; profilePath?: string }) => {
+    setDetailsHistory(prev => [...prev, { type: 'actor', actor }]);
+    setSelectedActor(actor);
+    setSelectedDetailsMedia(null);
+  };
+
+  const handleCloseDetails = () => {
+    setDetailsHistory(prev => {
+      if (prev.length <= 1) {
+        setSelectedActor(null);
+        setSelectedDetailsMedia(null);
+        return [];
+      }
+      const nextHistory = prev.slice(0, -1);
+      const top = nextHistory[nextHistory.length - 1];
+      if (top.type === 'actor') {
+        setSelectedActor(top.actor);
+        setSelectedDetailsMedia(null);
+      } else {
+        setSelectedDetailsMedia(top.video);
+        setSelectedActor(null);
+      }
+      return nextHistory;
+    });
+  };
+
+  useEffect(() => {
+    if (!selectedDetailsMedia && !selectedActor) {
+      setDetailsHistory([]);
+    }
+  }, [selectedDetailsMedia, selectedActor]);
   const [historyViewMode, setHistoryViewMode] = useState<'list' | 'calendar'>('list');
   const [activeTab, setActiveTab] = useState<'home' | 'history' | 'calendar' | 'library' | 'settings' | 'online' | 'vlr'>(() => {
     const saved = localStorage.getItem('valor_active_tab');
@@ -1255,8 +1298,7 @@ function App() {
 
   useEffect(() => {
     (window as any)._onShowMediaDetails = (video: VideoItem) => {
-      setSelectedActor(null);
-      setSelectedDetailsMedia(video);
+      handleOpenMediaDetails(video);
     };
     (window as any)._onRateCalendarVideo = (video: VideoItem, rating: number) => {
       handleUpdateVideo((prev) => ({ ...prev, rating }), false, video.id, true);
@@ -3180,10 +3222,9 @@ function App() {
             <ActorDetailsPage
               actorId={selectedActor.id}
               actorName={selectedActor.name}
-              onClose={() => setSelectedActor(null)}
+              onClose={handleCloseDetails}
               onSelectMedia={(clickedMedia) => {
-                setSelectedActor(null);
-                setSelectedDetailsMedia(clickedMedia);
+                handleOpenMediaDetails(clickedMedia);
               }}
               tmdbApiKey={settings.tmdbApiKey}
               profilePath={selectedActor.profilePath}
@@ -3191,7 +3232,7 @@ function App() {
           ) : selectedDetailsMedia ? (
             <OnlineDetailsPage
               video={selectedDetailsMedia}
-              onClose={() => setSelectedDetailsMedia(null)}
+              onClose={handleCloseDetails}
               onPlay={(selectedVideo, season, episode) => {
                 const match = videos.find(v => {
                   if (selectedVideo.type === 'online_movie') {
@@ -3208,8 +3249,8 @@ function App() {
                 };
                 handlePlayVideo(toPlay);
               }}
-              onSelectMedia={setSelectedDetailsMedia}
-              onSelectActor={(actor) => setSelectedActor(actor)}
+              onSelectMedia={handleOpenMediaDetails}
+              onSelectActor={handleOpenActorDetails}
               tmdbApiKey={settings.tmdbApiKey}
             />
           ) : (
@@ -3269,7 +3310,7 @@ function App() {
 
               {activeTab === 'online' && (
                 <OnlineStreamPage
-                  onSelectMedia={setSelectedDetailsMedia}
+                  onSelectMedia={handleOpenMediaDetails}
                   tmdbApiKey={settings.tmdbApiKey}
                   traktAccessToken={settings.traktAccessToken}
                 />
