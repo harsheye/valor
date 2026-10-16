@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { CustomSelect } from './CustomSelect';
-import { Search, Play, History, Clock, X, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Search, Play, History, Clock, X, ChevronLeft, ChevronRight, Info, Check, Star, Film } from 'lucide-react';
 import type { VideoItem } from '../types/media';
 import { Input } from './ui/input';
 import {
@@ -497,10 +497,12 @@ export const OnlineSearchTab: React.FC<OnlineSearchTabProps> = ({
                 const hasError = imageErrors[res.id] || !res.posterPath;
                 const isWatchedOnTrakt = res.type !== 'anime' && watchedTmdbIds.has(Number(res.id));
 
+                const matchScore = res.rating ? Math.min(99, Math.max(82, Math.round(res.rating * 10))) : 95;
+
                 return (
                   <div
                     key={`${res.type}-${res.id}`}
-                    className="os2-card"
+                    className="os2-card netflix-card"
                     onClick={() => handleCardClick(res)}
                   >
                     <div className="os2-poster">
@@ -515,35 +517,52 @@ export const OnlineSearchTab: React.FC<OnlineSearchTabProps> = ({
                         />
                       ) : (
                         <div className="os2-fallback">
+                          <Film size={32} style={{ opacity: 0.35, marginBottom: '6px' }} />
                           <span className="os2-title">{res.title}</span>
                         </div>
                       )}
 
-                      <div className="os2-overlay">
-                        <button className="os2-play">
-                          <Play fill="currentColor" size={20} />
-                        </button>
+                      {/* Netflix Gradient Shade */}
+                      <div className="netflix-card-gradient" />
+
+                      {/* Top Badges */}
+                      <div className="netflix-card-top-badges">
+                        {isWatchedOnTrakt ? (
+                          <span className="os2-watched">
+                            <Check size={11} strokeWidth={3} /> Watched
+                          </span>
+                        ) : <span />}
+                        <span className={`os2-tag ${res.type}`}>
+                          {res.type === 'movie' ? 'Movie' : (res.type === 'tv' ? 'Series' : 'Anime')}
+                        </span>
                       </div>
 
-                      {res.rating && (
-                        <div className="os2-rating">
-                          ⭐ {res.rating.toFixed(1)}
-                        </div>
-                      )}
-
-                      {isWatchedOnTrakt && (
-                        <div className="os2-watched">
-                          ✓ Watched
-                        </div>
-                      )}
+                      {/* Hover Action Bar */}
+                      <div className="netflix-card-hover-actions">
+                        <button className="netflix-card-play-btn" title="Watch Now" onClick={(e) => { e.stopPropagation(); handleCardClick(res); }}>
+                          <Play fill="currentColor" size={15} />
+                        </button>
+                        <button className="netflix-card-info-btn" title="Details" onClick={(e) => { e.stopPropagation(); handleCardClick(res); }}>
+                          <Info size={15} />
+                        </button>
+                      </div>
                     </div>
+
                     <div className="os2-details">
+                      <div className="netflix-card-meta-row">
+                        <span className="netflix-card-match">{matchScore}% Match</span>
+                        <span className="netflix-card-badge">16+</span>
+                        <span className="netflix-card-badge">HD</span>
+                      </div>
                       <h3 className="os2-title" title={res.title}>{res.title}</h3>
                       <div className="os2-meta">
-                        <span className="os2-year">{res.year}</span>
-                        <span className={`os2-tag ${res.type}`}>
-                          {res.type === 'movie' ? 'Movie' : (res.type === 'tv' ? 'TV' : 'Anime')}
-                        </span>
+                        <span className="os2-year">{res.year || '2024'}</span>
+                        {res.rating ? (
+                          <span className="netflix-card-rating">
+                            <Star size={11} fill="#fbbf24" color="#fbbf24" style={{ marginRight: '3px' }} />
+                            {res.rating.toFixed(1)}
+                          </span>
+                        ) : null}
                       </div>
                     </div>
                   </div>

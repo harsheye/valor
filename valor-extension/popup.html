@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Valor Auto-Embed</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="container">
+    <h2>Valor Embed</h2>
+    
+    <div class="setting-row">
+      <label for="enableToggle">Enable Auto-Replace:</label>
+      <label class="switch">
+        <input type="checkbox" id="enableToggle">
+        <span class="slider"></span>
+      </label>
+    </div>
+
+    <div class="setting-row vertical">
+      <label for="valorUrl">Valor Embed URL:</label>
+      <input type="text" id="valorUrl" placeholder="http://localhost:5173/embed" />
+      <div style="display: flex; gap: 6px; margin-top: 4px; width: 100%;">
+        <button type="button" id="btnDevPort" style="flex: 1; font-size: 11px; padding: 4px; background: #333;">Port 5173</button>
+        <button type="button" id="btnAppPort" style="flex: 1; font-size: 11px; padding: 4px; background: #333;">Port 50001</button>
+      </div>
+    </div>
+
+    <button id="saveBtn">Save Settings</button>
+    <div id="status"></div>
+  </div>
+  <script src="popup.js"></script>
+</body>
+</html>

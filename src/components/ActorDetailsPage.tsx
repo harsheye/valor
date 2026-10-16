@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { 
-   X, Link as LinkIcon, Calendar, MapPin, Star, Film, Tv, Sparkles, Filter, Search, ArrowUpDown, ChevronLeft, ChevronRight
+   X, Link as LinkIcon, Calendar, MapPin, Star, Film, Tv, Sparkles, Filter, Search, ArrowUpDown, ChevronLeft, ChevronRight, Play, Info
 } from 'lucide-react';
 import type { VideoItem } from '../types/media';
 import { CustomSelect } from './CustomSelect';

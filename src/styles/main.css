@@ -17,6 +17,7 @@
 
 /* 4. Independent UI Components */
 @import './04-components/_c-card.css';
+@import './04-components/_c-netflix-pages.css';
 
 /* 5. Utility Helpers */
 @import './05-utilities/_u-helpers.css';

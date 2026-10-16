@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { X, Play, Star, Calendar, Clock, Film, ChevronLeft, ChevronRight, User, LayoutGrid, List, AlignLeft, ListFilter } from 'lucide-react';
+import { X, Play, Star, Calendar, Clock, Film, ChevronLeft, ChevronRight, User, LayoutGrid, List, AlignLeft, ListFilter, Info } from 'lucide-react';
 import type { VideoItem } from '../types/media';
 import { ActorDetailsPage } from './ActorDetailsPage';
 import { CustomSelect } from './CustomSelect';
@@ -45,7 +45,7 @@ export const OnlineDetailsPage: React.FC<OnlineDetailsPageProps> = ({
   const [episodes, setEpisodes] = useState<EpisodeItem[]>([]);
   const [selectedActor, setSelectedActor] = useState<{ id: number; name: string; profilePath?: string } | null>(null);
   const [recommendations, setRecommendations] = useState<any[]>([]);
-  const [episodeViewMode, setEpisodeViewMode] = useState<'list' | 'grid' | 'detailed' | 'compact'>('grid');
+  const [episodeViewMode, setEpisodeViewMode] = useState<'list' | 'grid'>('list');
   
   const [loading, setLoading] = useState(true);
   const [loadingEpisodes, setLoadingEpisodes] = useState(false);
@@ -349,163 +349,138 @@ export const OnlineDetailsPage: React.FC<OnlineDetailsPageProps> = ({
   const releaseYear = details.release_date ? details.release_date.split('-')[0] : '';
   const voteAverage = details.vote_average ? details.vote_average.toFixed(1) : 'N/A';
 
+  const matchScore = details.vote_average ? Math.min(99, Math.max(82, Math.round(details.vote_average * 10))) : 96;
+  const formattedRuntime = details.runtime ? `${Math.floor(details.runtime / 60)}h ${details.runtime % 60}m` : null;
+
   return (
-    <div className="media-details-page-container animate-fade-in">
-      {/* Blurred Backdrop Cover */}
-      {backdropUrl && (
-        <div 
-          className="media-details-backdrop"
-          style={{ backgroundImage: `url(${backdropUrl})` }}
-        />
-      )}
-      <div className="media-details-backdrop-overlay" />
-
-      <button 
-        className="details-close-btn" 
-        onClick={onClose} 
-        title="Back to search"
-        style={{ 
-          position: 'absolute', 
-          top: '1.5rem', 
-          right: '1.5rem', 
-          zIndex: 100 
-        }}
-      >
-        <X size={24} />
-      </button>
-
-      <div className="media-details-content-wrapper">
-        {/* Main Banner / Meta section */}
-        <div className="media-details-hero-section">
-          {/* Poster Box */}
-          <div className="media-details-poster-wrapper">
-            {posterUrl ? (
-              <img src={posterUrl} alt={details.title || details.name} className="media-details-poster" />
-            ) : (
-              <div className="media-details-poster-fallback">
-                <Film size={48} />
-                <span>{details.title || details.name}</span>
-              </div>
-            )}
-          </div>
-
-          {/* Metadata Block */}
-          <div className="media-details-meta-block">
-            <h1 className="media-details-title">{details.title || details.name}</h1>
-            
-            <div className="media-details-badges">
-              {releaseYear && (
-                <span className="meta-badge">
-                  <Calendar size={13} style={{ marginRight: '4px' }} />
-                  {releaseYear}
-                </span>
-              )}
-              {voteAverage !== 'N/A' && (
-                <span className="meta-badge rating">
-                  <Star size={13} fill="#fbbf24" color="#fbbf24" style={{ marginRight: '4px' }} />
-                  {voteAverage}
-                </span>
-              )}
-              {details.runtime && (
-                <span className="meta-badge">
-                  <Clock size={13} style={{ marginRight: '4px' }} />
-                  {details.runtime} min
-                </span>
-              )}
-              <span className="meta-badge type-label">
-                {isMovie ? 'Movie' : (video.type === 'online_tv' ? 'TV Show' : 'Anime')}
-              </span>
-            </div>
-
-            {genresText && (
-              <div className="media-details-genres">
-                <strong>Genres:</strong> {genresText}
-              </div>
-            )}
-
-            <p className="media-details-overview">{details.overview || 'No description available for this catalog entry.'}</p>
-
-            {/* Facts bar */}
-            <div style={{
-              display: 'flex',
-              flexWrap: 'wrap',
-              gap: '24px',
-              margin: '1.5rem 0',
-              padding: '12px 16px',
-              background: 'var(--surface, rgba(255, 255, 255, 0.02))',
-              border: '1px solid var(--border-color, rgba(255, 255, 255, 0.05))',
-              borderRadius: '8px'
-            }}>
-              {details.status && (
-                <div>
-                  <span style={{ display: 'block', fontSize: '0.7rem', color: 'var(--text-muted, rgba(255,255,255,0.4))', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '2px' }}>Status</span>
-                  <span style={{ fontSize: '0.85rem', color: 'var(--text-primary, white)', fontWeight: 600 }}>{details.status}</span>
-                </div>
-              )}
-              {details.original_language && (
-                <div>
-                  <span style={{ display: 'block', fontSize: '0.7rem', color: 'var(--text-muted, rgba(255,255,255,0.4))', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '2px' }}>Language</span>
-                  <span style={{ fontSize: '0.85rem', color: 'var(--text-primary, white)', fontWeight: 600 }}>{details.original_language.toUpperCase()}</span>
-                </div>
-              )}
-              {isMovie && details.budget > 0 && (
-                <div>
-                  <span style={{ display: 'block', fontSize: '0.7rem', color: 'var(--text-muted, rgba(255,255,255,0.4))', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '2px' }}>Budget</span>
-                  <span style={{ fontSize: '0.85rem', color: 'var(--text-primary, white)', fontWeight: 600 }}>${(details.budget / 1000000).toFixed(1)}M</span>
-                </div>
-              )}
-              {isMovie && details.revenue > 0 && (
-                <div>
-                  <span style={{ display: 'block', fontSize: '0.7rem', color: 'var(--text-muted, rgba(255,255,255,0.4))', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '2px' }}>Revenue</span>
-                  <span style={{ fontSize: '0.85rem', color: 'var(--text-primary, white)', fontWeight: 600 }}>${(details.revenue / 1000000).toFixed(1)}M</span>
-                </div>
-              )}
-              {!isMovie && details.number_of_seasons && (
-                <div>
-                  <span style={{ display: 'block', fontSize: '0.7rem', color: 'var(--text-muted, rgba(255,255,255,0.4))', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '2px' }}>Seasons</span>
-                  <span style={{ fontSize: '0.85rem', color: 'var(--text-primary, white)', fontWeight: 600 }}>{details.number_of_seasons}</span>
-                </div>
-              )}
-              {!isMovie && details.number_of_episodes && (
-                <div>
-                  <span style={{ display: 'block', fontSize: '0.7rem', color: 'var(--text-muted, rgba(255,255,255,0.4))', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '2px' }}>Total Episodes</span>
-                  <span style={{ fontSize: '0.85rem', color: 'var(--text-primary, white)', fontWeight: 600 }}>{details.number_of_episodes}</span>
-                </div>
-              )}
-            </div>
-
-            {/* Play Button for Movie */}
-            {isMovie && (
-              <button 
-                className="media-details-play-btn"
-                onClick={() => onPlay(video)}
-              >
-                <Play size={20} fill="currentColor" />
-                <span>Play Movie</span>
-              </button>
-            )}
+    <div className="netflix-page-container animate-fade-in">
+      {/* Sticky Top Navigation Bar (Real Page Navigation) */}
+      <div className="netflix-page-top-bar">
+        <div className="netflix-top-bar-left">
+          <button onClick={onClose} className="netflix-back-nav-btn" title="Back to Browse">
+            <ChevronLeft size={18} />
+            <span>Back</span>
+          </button>
+          <div className="netflix-breadcrumbs">
+            <span className="netflix-breadcrumb-link" onClick={onClose}>Online Stream</span>
+            <span className="netflix-breadcrumb-sep">/</span>
+            <span className="netflix-breadcrumb-current">{details.title || details.name}</span>
           </div>
         </div>
 
+        <div className="netflix-top-bar-right">
+          <span className="netflix-badge-box netflix-pill">
+            {isMovie ? 'Movie' : (video.type === 'online_tv' ? 'TV Series' : 'Anime')}
+          </span>
+        </div>
+      </div>
+
+      {/* Netflix Cinematic Billboard Hero Banner */}
+      <div className="netflix-hero-container">
+        {backdropUrl && (
+          <div 
+            className="netflix-hero-backdrop"
+            style={{ backgroundImage: `url(${backdropUrl})` }}
+          />
+        )}
+        <div className="netflix-hero-vignette-vertical" />
+        <div className="netflix-hero-vignette-horizontal" />
+
+        <div className="netflix-hero-content">
+          <h1 className="netflix-hero-title">{details.title || details.name}</h1>
+
+          <div className="netflix-meta-row">
+            <span className="netflix-match-score">{matchScore}% Match</span>
+            {releaseYear && <span className="netflix-meta-item">{releaseYear}</span>}
+            <span className="netflix-badge-box">16+</span>
+            {formattedRuntime && <span className="netflix-meta-item">{formattedRuntime}</span>}
+            {!isMovie && (
+              <span className="netflix-meta-item">
+                {seasons.length > 0 ? `${seasons.filter((s: any) => s.season_number > 0).length} Seasons` : '1 Season'}
+              </span>
+            )}
+            <span className="netflix-badge-box">Ultra HD 4K</span>
+            <span className="netflix-badge-box">5.1 Audio</span>
+          </div>
+
+          <p className="netflix-hero-overview">
+            {details.overview || 'No description available for this catalog entry.'}
+          </p>
+
+          <div className="netflix-hero-actions">
+            <button 
+              className="netflix-btn-play"
+              onClick={() => {
+                if (isMovie) {
+                  onPlay(video);
+                } else {
+                  const firstEp = episodes[0]?.episodeNumber || 1;
+                  onPlay(video, currentSeason, firstEp);
+                }
+              }}
+            >
+              <Play size={20} fill="currentColor" />
+              <span>{isMovie ? 'Play Movie' : `Play S${currentSeason}:E1`}</span>
+            </button>
+          </div>
+
+          <div className="netflix-hero-details-row">
+            {genresText && (
+              <div>
+                <strong>Genres: </strong>
+                <span>{genresText}</span>
+              </div>
+            )}
+            {cast.length > 0 && (
+              <div>
+                <strong>Starring: </strong>
+                {cast.slice(0, 4).map((c, idx) => (
+                  <span key={c.id}>
+                    <span 
+                      style={{ cursor: 'pointer', color: '#fff', textDecoration: 'underline', textUnderlineOffset: '3px' }}
+                      onClick={() => {
+                        if (onSelectActor) onSelectActor(c);
+                        else setSelectedActor(c);
+                      }}
+                    >
+                      {c.name}
+                    </span>
+                    {idx < Math.min(cast.length, 4) - 1 ? ', ' : ''}
+                  </span>
+                ))}
+              </div>
+            )}
+            {details.original_language && (
+              <div>
+                <strong>Original Audio: </strong>
+                <span>{details.original_language.toUpperCase()}</span>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+
+      <div className="netflix-page-body">
+
         {/* Cast Section */}
         {cast.length > 0 && (
-          <div className="media-details-section">
-            <div className="section-header-row">
-              <h2>Cast & Characters</h2>
+          <div className="netflix-section">
+            <div className="netflix-section-header">
+              <h2 className="netflix-section-title">Cast & Crew</h2>
               <div className="scroll-arrow-controls">
-                <button className="arrow-scroll-btn" onClick={() => handleScrollCast('left')}>
-                  <ChevronLeft size={16} />
+                <button className="arrow-scroll-btn" onClick={() => handleScrollCast('left')} title="Scroll Left">
+                  <ChevronLeft size={18} />
                 </button>
-                <button className="arrow-scroll-btn" onClick={() => handleScrollCast('right')}>
-                  <ChevronRight size={16} />
+                <button className="arrow-scroll-btn" onClick={() => handleScrollCast('right')} title="Scroll Right">
+                  <ChevronRight size={18} />
                 </button>
               </div>
             </div>
 
-            <div className="cast-scroll-container" ref={castScrollRef}>
+            <div className="netflix-cast-slider" ref={castScrollRef}>
               {cast.map((actor) => (
                 <div 
-                  className="actor-card-item" 
+                  className="netflix-cast-card" 
                   key={actor.id}
                   onClick={() => {
                     if (onSelectActor) {
@@ -514,38 +489,19 @@ export const OnlineDetailsPage: React.FC<OnlineDetailsPageProps> = ({
                       setSelectedActor({ id: actor.id, name: actor.name, profilePath: actor.profilePath });
                     }
                   }}
-                  style={{ cursor: 'pointer' }}
+                  title={`View ${actor.name}`}
                 >
-                  <div className="actor-profile-image-wrapper">
+                  <div className="netflix-cast-photo-wrapper">
                     {actor.profilePath ? (
-                      <img src={actor.profilePath} alt={actor.name} className="actor-profile-image" />
+                      <img src={actor.profilePath} alt={actor.name} className="netflix-cast-photo" loading="lazy" />
                     ) : (
-                      <div className="actor-profile-fallback">
-                        <User size={24} />
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: 'rgba(255,255,255,0.3)' }}>
+                        <User size={36} />
                       </div>
                     )}
-                    <div style={{
-                      position: 'absolute',
-                      bottom: 0,
-                      left: 0,
-                      right: 0,
-                      background: 'linear-gradient(to top, rgba(0,0,0,0.85) 0%, rgba(0,0,0,0) 100%)',
-                      padding: '8px 10px',
-                      color: '#fff',
-                      fontSize: '0.75rem',
-                      fontWeight: 600,
-                      textAlign: 'center',
-                      whiteSpace: 'nowrap',
-                      overflow: 'hidden',
-                      textOverflow: 'ellipsis',
-                      zIndex: 2
-                    }}>
-                      {actor.character}
-                    </div>
                   </div>
-                  <div className="actor-card-details" style={{ padding: '0 4px', textAlign: 'center' }}>
-                    <span className="actor-real-name" style={{ color: 'var(--text-muted, rgba(255,255,255,0.7))', fontSize: '0.82rem', fontWeight: 600 }}>{actor.name}</span>
-                  </div>
+                  <div className="netflix-cast-name">{actor.name}</div>
+                  <div className="netflix-cast-char">{actor.character}</div>
                 </div>
               ))}
             </div>
@@ -554,11 +510,10 @@ export const OnlineDetailsPage: React.FC<OnlineDetailsPageProps> = ({
 
         {/* Episodes Section for TV Shows and Anime */}
         {!isMovie && (
-          <div className="media-details-section" style={{ marginTop: '2rem' }}>
-            <div className="section-header-row tv-selector-row" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.75rem', marginBottom: '1rem', width: '100%' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flex: 1, minWidth: 0 }}>
-                <h2 style={{ fontSize: '1.3rem', fontWeight: 800, margin: 0 }}>Episodes</h2>
-                
+          <div className="netflix-section">
+            <div className="netflix-section-header">
+              <div style={{ display: 'flex', alignItems: 'center', gap: '1.25rem', flexWrap: 'wrap' }}>
+                <h2 className="netflix-section-title">Episodes</h2>
                 {video.type === 'online_tv' && seasons.length > 0 && (
                   <div className="season-selector-dropdown-wrapper">
                     <CustomSelect
@@ -571,64 +526,49 @@ export const OnlineDetailsPage: React.FC<OnlineDetailsPageProps> = ({
                           label: `Season ${s.season_number}`
                         }))}
                       hideSearch={true}
-                      width="130px"
+                      width="140px"
                     />
                   </div>
                 )}
               </div>
 
-              {/* View Mode Toggle Controls (Icon-only buttons in 1 row) */}
-              <div style={{ display: 'flex', alignItems: 'center', background: 'var(--surface, rgba(255, 255, 255, 0.05))', padding: '3px', borderRadius: '0.65rem', border: '1px solid var(--border-color, rgba(255, 255, 255, 0.08))' }}>
-                <button
-                  title="Tiles View"
-                  onClick={() => setEpisodeViewMode('grid')}
-                  style={{
-                    background: episodeViewMode === 'grid' ? 'var(--accent-glow, rgba(139, 92, 246, 0.3))' : 'transparent',
-                    border: 'none',
-                    color: episodeViewMode === 'grid' ? 'var(--accent-color, #a78bfa)' : 'var(--text-muted, rgba(255,255,255,0.5))',
-                    padding: '6px 10px',
-                    borderRadius: '0.45rem',
-                    cursor: 'pointer',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center'
-                  }}
-                >
-                  <LayoutGrid size={16} />
-                </button>
+              {/* View Mode Toggle Controls */}
+              <div style={{ display: 'flex', alignItems: 'center', background: 'rgba(255, 255, 255, 0.08)', padding: '3px', borderRadius: '8px', border: '1px solid rgba(255, 255, 255, 0.1)' }}>
                 <button
                   title="List View"
                   onClick={() => setEpisodeViewMode('list')}
                   style={{
-                    background: episodeViewMode === 'list' ? 'var(--accent-glow, rgba(139, 92, 246, 0.3))' : 'transparent',
+                    background: episodeViewMode === 'list' ? '#e50914' : 'transparent',
                     border: 'none',
-                    color: episodeViewMode === 'list' ? 'var(--accent-color, #a78bfa)' : 'var(--text-muted, rgba(255,255,255,0.5))',
-                    padding: '6px 10px',
-                    borderRadius: '0.45rem',
+                    color: '#fff',
+                    padding: '6px 12px',
+                    borderRadius: '6px',
                     cursor: 'pointer',
                     display: 'flex',
                     alignItems: 'center',
-                    justifyContent: 'center'
+                    justifyContent: 'center',
+                    transition: 'background 0.2s'
                   }}
                 >
                   <List size={16} />
                 </button>
                 <button
-                  title="Compact View"
-                  onClick={() => setEpisodeViewMode('compact')}
+                  title="Grid View"
+                  onClick={() => setEpisodeViewMode('grid')}
                   style={{
-                    background: episodeViewMode === 'compact' ? 'var(--accent-glow, rgba(139, 92, 246, 0.3))' : 'transparent',
+                    background: episodeViewMode === 'grid' ? '#e50914' : 'transparent',
                     border: 'none',
-                    color: episodeViewMode === 'compact' ? 'var(--accent-color, #a78bfa)' : 'var(--text-muted, rgba(255,255,255,0.5))',
-                    padding: '6px 10px',
-                    borderRadius: '0.45rem',
+                    color: '#fff',
+                    padding: '6px 12px',
+                    borderRadius: '6px',
                     cursor: 'pointer',
                     display: 'flex',
                     alignItems: 'center',
-                    justifyContent: 'center'
+                    justifyContent: 'center',
+                    transition: 'background 0.2s'
                   }}
                 >
-                  <AlignLeft size={16} />
+                  <LayoutGrid size={16} />
                 </button>
               </div>
             </div>
@@ -637,54 +577,35 @@ export const OnlineDetailsPage: React.FC<OnlineDetailsPageProps> = ({
               <EpisodeGridSkeleton count={8} />
             ) : (
               <div>
-                {/* View Mode 1: Grid Tiles View */}
-                {episodeViewMode === 'grid' && (
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: '1.25rem' }}>
+                {/* Netflix List View (Default authentic Netflix episode style) */}
+                {episodeViewMode === 'list' && (
+                  <div className="netflix-episodes-list">
                     {episodes.map((ep) => (
                       <div
                         key={ep.episodeNumber}
+                        className="netflix-episode-card"
                         onClick={() => onPlay(video, currentSeason, ep.episodeNumber)}
-                        style={{
-                          background: 'rgba(255, 255, 255, 0.03)',
-                          border: '1px solid rgba(255, 255, 255, 0.08)',
-                          borderRadius: '1rem',
-                          overflow: 'hidden',
-                          cursor: 'pointer',
-                          transition: 'all 0.25s ease',
-                          display: 'flex',
-                          flexDirection: 'column'
-                        }}
-                        onMouseEnter={(e) => {
-                          e.currentTarget.style.transform = 'translateY(-4px)';
-                          e.currentTarget.style.borderColor = 'rgba(139, 92, 246, 0.4)';
-                          e.currentTarget.style.boxShadow = '0 12px 24px rgba(0, 0, 0, 0.4)';
-                        }}
-                        onMouseLeave={(e) => {
-                          e.currentTarget.style.transform = 'none';
-                          e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.08)';
-                          e.currentTarget.style.boxShadow = 'none';
-                        }}
                       >
-                        <div style={{ width: '100%', aspectRatio: '16/9', position: 'relative', background: '#121218' }}>
+                        <div className="netflix-ep-num">{ep.episodeNumber}</div>
+                        <div className="netflix-ep-thumb-wrapper">
                           {(ep.stillPath || posterUrl) ? (
-                            <img src={ep.stillPath || posterUrl} alt={ep.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                            <img src={ep.stillPath || posterUrl} alt={ep.name} className="netflix-ep-thumb" loading="lazy" />
                           ) : (
                             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: 'rgba(255,255,255,0.4)' }}>
-                              <Play size={28} />
+                              <Play size={24} />
                             </div>
                           )}
-                          <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(to top, rgba(0,0,0,0.8) 0%, transparent 60%)', display: 'flex', alignItems: 'flex-end', padding: '0.75rem' }}>
-                            <span style={{ background: '#8b5cf6', color: '#fff', fontSize: '0.7rem', fontWeight: 800, padding: '2px 8px', borderRadius: '4px' }}>
-                              EP {ep.episodeNumber}
-                            </span>
+                          <div className="netflix-ep-play-overlay">
+                            <Play size={24} fill="#ffffff" />
                           </div>
                         </div>
-                        <div style={{ padding: '0.85rem 1rem' }}>
-                          <h4 style={{ margin: '0 0 0.35rem 0', fontSize: '0.9rem', fontWeight: 700, color: 'var(--text-primary, #fff)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                            {ep.name}
-                          </h4>
-                          <p style={{ margin: 0, fontSize: '0.75rem', color: 'var(--text-muted, rgba(255,255,255,0.5))', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
-                            {ep.overview || 'No overview available.'}
+                        <div className="netflix-ep-info">
+                          <div className="netflix-ep-header-row">
+                            <h4 className="netflix-ep-title">{ep.name}</h4>
+                            <span className="netflix-ep-duration">EP {ep.episodeNumber}</span>
+                          </div>
+                          <p className="netflix-ep-overview">
+                            {ep.overview || 'No overview available for this episode.'}
                           </p>
                         </div>
                       </div>
@@ -692,99 +613,54 @@ export const OnlineDetailsPage: React.FC<OnlineDetailsPageProps> = ({
                   </div>
                 )}
 
-                {/* View Mode 2: Compact List View */}
-                {episodeViewMode === 'list' && (
-                  <div className="details-episodes-list" style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                    {episodes.map((ep) => (
-                      <div 
-                        className="details-episode-list-item" 
-                        key={ep.episodeNumber}
-                        onClick={() => onPlay(video, currentSeason, ep.episodeNumber)}
-                        style={{
-                          display: 'flex',
-                          alignItems: 'center',
-                          gap: '16px',
-                          padding: '10px 14px',
-                          background: 'rgba(255, 255, 255, 0.03)',
-                          border: '1px solid rgba(255, 255, 255, 0.05)',
-                          borderRadius: '8px',
-                          cursor: 'pointer',
-                          transition: 'all 0.2s ease',
-                        }}
-                      >
-                        <div 
-                          style={{
-                            width: '70px',
-                            height: '40px',
-                            borderRadius: '4px',
-                            overflow: 'hidden',
-                            background: '#121212',
-                            flexShrink: 0,
-                            position: 'relative'
-                          }}
-                        >
-                          {(ep.stillPath || posterUrl) ? (
-                            <img 
-                              src={ep.stillPath || posterUrl} 
-                              alt={ep.name} 
-                              style={{ width: '100%', height: '100%', objectFit: 'cover' }} 
-                            />
-                          ) : (
-                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: 'var(--text-muted, rgba(255,255,255,0.4))' }}>
-                              <Play size={14} />
-                            </div>
-                          )}
-                          <div style={{ position: 'absolute', bottom: '2px', right: '4px', background: 'rgba(0,0,0,0.7)', padding: '1px 3px', borderRadius: '3px', fontSize: '9px', fontWeight: 700, color: 'white' }}>
-                            EP {ep.episodeNumber}
-                          </div>
-                        </div>
-                        <div style={{ flexGrow: 1, minWidth: 0 }}>
-                          <h4 style={{ margin: 0, fontSize: '0.85rem', color: 'var(--text-primary, white)', fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                            {ep.name}
-                          </h4>
-                        </div>
-                        <Play size={14} color="#8b5cf6" style={{ flexShrink: 0 }} />
-                      </div>
-                    ))}
-                  </div>
-                )}
-
-                {/* View Mode 3: Compact / Detailed View */}
-                {(episodeViewMode === 'compact' || episodeViewMode === 'detailed') && (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+                {/* Netflix Grid View */}
+                {episodeViewMode === 'grid' && (
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: '1.25rem' }}>
                     {episodes.map((ep) => (
                       <div
                         key={ep.episodeNumber}
                         onClick={() => onPlay(video, currentSeason, ep.episodeNumber)}
                         style={{
-                          display: 'flex',
-                          gap: '1.25rem',
-                          background: 'rgba(255, 255, 255, 0.03)',
+                          background: 'rgba(255, 255, 255, 0.04)',
                           border: '1px solid rgba(255, 255, 255, 0.08)',
-                          borderRadius: '1rem',
-                          padding: '1rem',
+                          borderRadius: '8px',
+                          overflow: 'hidden',
                           cursor: 'pointer',
-                          transition: 'all 0.25s ease'
+                          transition: 'all 0.25s cubic-bezier(0.16, 1, 0.3, 1)',
+                          display: 'flex',
+                          flexDirection: 'column'
+                        }}
+                        onMouseEnter={(e) => {
+                          e.currentTarget.style.transform = 'translateY(-4px)';
+                          e.currentTarget.style.borderColor = '#e50914';
+                          e.currentTarget.style.boxShadow = '0 12px 28px rgba(0, 0, 0, 0.6)';
+                        }}
+                        onMouseLeave={(e) => {
+                          e.currentTarget.style.transform = 'none';
+                          e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.08)';
+                          e.currentTarget.style.boxShadow = 'none';
                         }}
                       >
-                        <div style={{ width: '180px', height: '105px', borderRadius: '0.75rem', overflow: 'hidden', flexShrink: 0, position: 'relative', background: '#121218' }}>
+                        <div style={{ width: '100%', aspectRatio: '16/9', position: 'relative', background: '#1c1c1c' }}>
                           {(ep.stillPath || posterUrl) ? (
                             <img src={ep.stillPath || posterUrl} alt={ep.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
                           ) : (
-                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: 'var(--text-muted, rgba(255,255,255,0.4))' }}>
-                              <Play size={24} />
+                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: 'rgba(255,255,255,0.4)' }}>
+                              <Play size={28} />
                             </div>
                           )}
-                          <div style={{ position: 'absolute', bottom: '6px', left: '6px', background: '#8b5cf6', color: '#fff', fontSize: '0.7rem', fontWeight: 800, padding: '2px 6px', borderRadius: '4px' }}>
-                            EP {ep.episodeNumber}
+                          <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(to top, rgba(0,0,0,0.85) 0%, transparent 60%)', display: 'flex', alignItems: 'flex-end', padding: '0.75rem' }}>
+                            <span style={{ background: '#e50914', color: '#fff', fontSize: '0.72rem', fontWeight: 800, padding: '2px 8px', borderRadius: '3px' }}>
+                              EP {ep.episodeNumber}
+                            </span>
                           </div>
                         </div>
-                        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
-                          <h4 style={{ margin: '0 0 0.35rem 0', fontSize: '1rem', fontWeight: 700, color: 'var(--text-primary, #fff)' }}>
+                        <div style={{ padding: '0.9rem 1rem' }}>
+                          <h4 style={{ margin: '0 0 0.35rem 0', fontSize: '0.92rem', fontWeight: 700, color: '#ffffff', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                             {ep.name}
                           </h4>
-                          <p style={{ margin: 0, fontSize: '0.825rem', color: 'var(--text-muted, rgba(255,255,255,0.6))', lineHeight: 1.5 }}>
-                            {ep.overview || 'No overview available for this episode.'}
+                          <p style={{ margin: 0, fontSize: '0.78rem', color: 'rgba(255, 255, 255, 0.6)', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden', lineHeight: 1.45 }}>
+                            {ep.overview || 'No overview available.'}
                           </p>
                         </div>
                       </div>
@@ -798,19 +674,18 @@ export const OnlineDetailsPage: React.FC<OnlineDetailsPageProps> = ({
 
         {/* Recommendations / More Like This */}
         {recommendations.length > 0 && (
-          <div className="media-details-section" style={{ marginTop: '2.5rem', borderTop: '1px solid rgba(255, 255, 255, 0.05)', paddingTop: '2rem' }}>
-            <h2 style={{ fontSize: '1.4rem', fontWeight: 800, margin: '0 0 1.25rem 0' }}>More Like This</h2>
+          <div className="netflix-section">
+            <h2 className="netflix-section-title">More Like This</h2>
             {loadingRecommendations ? (
               <CarouselSkeleton count={7} />
             ) : (
               <div 
                 style={{
-                  display: 'flex',
-                  gap: '16px',
-                  overflowX: 'auto',
-                  paddingBottom: '1rem',
+                  display: 'grid',
+                  gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))',
+                  gap: '1.25rem',
+                  marginTop: '1.25rem'
                 }}
-                className="search-results-section" // reuse the thin scrollbar styling
               >
                 {recommendations.map((rec) => (
                   <div 
@@ -831,28 +706,43 @@ export const OnlineDetailsPage: React.FC<OnlineDetailsPageProps> = ({
                         });
                       }
                     }}
-                    className="media-rec-card"
-                    style={{
-                      transition: 'transform 0.2s',
-                    }}
-                    onMouseEnter={(e) => e.currentTarget.style.transform = 'scale(1.03)'}
-                    onMouseLeave={(e) => e.currentTarget.style.transform = 'none'}
+                    className="os2-card netflix-card"
+                    style={{ cursor: 'pointer' }}
                   >
-                    <div className="media-rec-card-image-wrapper">
+                    <div className="os2-card-poster-wrap">
                       {rec.posterPath ? (
-                        <img src={rec.posterPath} alt={rec.title} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                        <img src={rec.posterPath} alt={rec.title} className="os2-card-poster" loading="lazy" />
                       ) : (
-                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: 'var(--text-muted, rgba(255,255,255,0.4))', fontSize: '0.8rem', padding: '10px', textAlign: 'center' }}>
-                          {rec.title}
+                        <div className="os2-card-poster-placeholder">
+                          <span>{rec.title}</span>
                         </div>
                       )}
+                      <div className="netflix-card-badge-top">
+                        <span className="netflix-n-badge">N</span>
+                      </div>
+                      <div className="os2-card-hover-overlay">
+                        <div className="netflix-card-actions">
+                          <button className="netflix-quick-play-btn" title="Play">
+                            <Play size={16} fill="#000" />
+                          </button>
+                          <button className="netflix-quick-icon-btn" title="More Info">
+                            <Info size={16} />
+                          </button>
+                        </div>
+                        <div className="netflix-card-meta-line">
+                          <span className="netflix-match-pill">96% Match</span>
+                          <span className="netflix-card-tag">16+</span>
+                          <span className="netflix-card-tag">HD</span>
+                        </div>
+                      </div>
                     </div>
-                    <h4 style={{ margin: '8px 0 2px 0', fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-primary, white)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={rec.title}>
-                      {rec.title}
-                    </h4>
-                    <span style={{ fontSize: '0.7rem', color: 'var(--text-muted, rgba(255,255,255,0.4))' }}>
-                      {rec.year}
-                    </span>
+                    <div className="os2-card-body">
+                      <h4 className="os2-card-title">{rec.title}</h4>
+                      <div className="os2-card-meta">
+                        <span>{rec.year || 'Movie'}</span>
+                        <span className="os2-type-pill">{rec.type ? rec.type.toUpperCase() : 'HD'}</span>
+                      </div>
+                    </div>
                   </div>
                 ))}
               </div>

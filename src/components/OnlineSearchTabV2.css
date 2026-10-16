@@ -302,25 +302,26 @@
   }
 }
 
-/* Card V2 Styles */
+/* Netflix-Style Card V2 Styles */
 .os2-card {
-  background: var(--card-bg);
-  border: 1px solid var(--border-color);
-  border-radius: 8px;
+  background: #181818;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 6px;
   overflow: hidden;
   cursor: pointer;
-  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+  transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.3s cubic-bezier(0.16, 1, 0.3, 1), border-color 0.25s ease;
   display: flex;
   flex-direction: column;
-  box-shadow: var(--shadow-sm);
+  box-shadow: 0 4px 15px rgba(0, 0, 0, 0.5);
   position: relative;
 }
 
 .os2-card:hover {
-  transform: translateY(-6px);
-  border-color: var(--border-focus);
-  box-shadow: var(--shadow-md);
-  background: var(--card-hover-bg);
+  transform: translateY(-8px) scale(1.04);
+  border-color: rgba(229, 9, 20, 0.5);
+  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.9), 0 0 0 1px rgba(229, 9, 20, 0.4);
+  z-index: 10;
+  background: #1f1f1f;
 }
 
 .os2-poster {
@@ -328,18 +329,18 @@
   aspect-ratio: 2/3;
   width: 100%;
   overflow: hidden;
-  background: var(--surface);
+  background: #121212;
 }
 
 .os2-image {
   width: 100%;
   height: 100%;
   object-fit: cover;
-  transition: transform 0.4s ease;
+  transition: transform 0.45s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 .os2-card:hover .os2-image {
-  transform: scale(1.04);
+  transform: scale(1.06);
 }
 
 .os2-fallback {
@@ -352,91 +353,161 @@
   padding: 1rem;
   text-align: center;
   color: var(--text-muted);
-  background: var(--surface);
+  background: #181818;
 }
 
-.os2-overlay {
+/* Netflix Gradient Shade */
+.netflix-card-gradient {
   position: absolute;
   inset: 0;
-  background: var(--overlay-bg, rgba(0, 0, 0, 0.5));
-  opacity: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transition: opacity 0.2s;
-  z-index: 3;
+  background: linear-gradient(to top, rgba(20, 20, 20, 0.9) 0%, rgba(20, 20, 20, 0.2) 35%, transparent 60%);
+  pointer-events: none;
+  z-index: 2;
+  transition: background 0.3s ease;
 }
 
-.os2-card:hover .os2-overlay {
-  opacity: 1;
+.os2-card:hover .netflix-card-gradient {
+  background: linear-gradient(to top, rgba(20, 20, 20, 0.96) 0%, rgba(20, 20, 20, 0.35) 45%, transparent 75%);
 }
 
-.os2-play {
-  width: 44px;
-  height: 44px;
-  border-radius: 50%;
-  background: var(--accent-color);
-  border: none;
-  color: white;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  box-shadow: var(--shadow-md);
-  transform: scale(0.85);
-  transition: all 0.25s cubic-bezier(0.175, 0.885, 0.32, 1.2);
-}
-
-.os2-card:hover .os2-play {
-  transform: scale(1);
-}
-
-.os2-rating {
+/* Top Badges Row */
+.netflix-card-top-badges {
   position: absolute;
   top: 8px;
   left: 8px;
-  background: var(--card-bg);
-  padding: 3px 6px;
-  border-radius: 4px;
-  font-size: 0.75rem;
-  font-weight: 700;
-  color: #fbbf24;
-  border: 1px solid var(--border-color);
-  backdrop-filter: blur(4px);
+  right: 8px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  pointer-events: none;
+  z-index: 5;
+}
+
+/* Hover Quick Actions Bar */
+.netflix-card-hover-actions {
+  position: absolute;
+  bottom: 10px;
+  left: 10px;
+  right: 10px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
   z-index: 4;
+  opacity: 0;
+  transform: translateY(6px);
+  transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.os2-card:hover .netflix-card-hover-actions {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.netflix-card-play-btn {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: #e50914;
+  border: none;
+  color: #ffffff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  box-shadow: 0 4px 14px rgba(229, 9, 20, 0.5);
+  transition: transform 0.2s cubic-bezier(0.16, 1, 0.3, 1), background-color 0.2s;
+}
+
+.netflix-card-play-btn:hover {
+  transform: scale(1.12);
+  background: #f40612;
+}
+
+.netflix-card-info-btn {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: rgba(42, 42, 42, 0.85);
+  backdrop-filter: blur(8px);
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  color: #ffffff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: transform 0.2s, background-color 0.2s, border-color 0.2s;
+}
+
+.netflix-card-info-btn:hover {
+  transform: scale(1.12);
+  background: rgba(255, 255, 255, 0.25);
+  border-color: #ffffff;
 }
 
 .os2-watched {
-  position: absolute;
-  top: 10px;
-  left: 10px;
-  background: var(--accent-color, #8b5cf6);
-  color: white;
-  padding: 3px 8px;
-  border-radius: 4px;
+  background: #e50914;
+  color: #ffffff;
+  padding: 3px 7px;
+  border-radius: 3px;
   font-size: 10px;
-  font-weight: 700;
-  z-index: 10;
-  box-shadow: 0 2px 8px rgba(0,0,0,0.4);
-  display: flex;
+  font-weight: 800;
+  letter-spacing: 0.3px;
+  text-transform: uppercase;
+  display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: 3px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
 }
 
 .os2-details {
-  padding: 0.75rem;
+  padding: 0.85rem;
   display: flex;
   flex-direction: column;
   flex-grow: 1;
+  background: #181818;
+}
+
+.netflix-card-meta-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 5px;
+}
+
+.netflix-card-match {
+  color: #46d369;
+  font-weight: 800;
+  font-size: 0.78rem;
+  letter-spacing: -0.2px;
+}
+
+.netflix-card-badge {
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  color: rgba(255, 255, 255, 0.75);
+  font-size: 0.62rem;
+  font-weight: 700;
+  padding: 1px 4px;
+  border-radius: 2px;
+  line-height: 1.1;
+}
+
+.netflix-card-rating {
+  display: inline-flex;
+  align-items: center;
+  color: #fbbf24;
+  font-size: 0.78rem;
+  font-weight: 700;
 }
 
 .os2-title {
-  font-size: 0.9rem;
-  font-weight: 600;
-  color: var(--text-primary);
-  margin-bottom: 0.35rem;
+  font-size: 0.92rem;
+  font-weight: 700;
+  color: #ffffff;
+  margin: 0 0 0.35rem 0;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  letter-spacing: -0.2px;
 }
 
 .os2-meta {
@@ -447,32 +518,36 @@
 }
 
 .os2-year {
-  font-size: 0.8rem;
-  color: var(--text-muted);
+  font-size: 0.78rem;
+  color: rgba(255, 255, 255, 0.5);
+  font-weight: 500;
 }
 
 .os2-tag {
-  font-size: 0.7rem;
-  font-weight: 700;
+  font-size: 0.68rem;
+  font-weight: 800;
   text-transform: uppercase;
-  padding: 1px 5px;
+  padding: 2px 6px;
   border-radius: 3px;
-  letter-spacing: 0.5px;
+  letter-spacing: 0.4px;
 }
 
 .os2-tag.movie {
-  background: rgba(16, 185, 129, 0.15);
-  color: #34d399;
+  background: rgba(229, 9, 20, 0.18);
+  color: #ff5a60;
+  border: 1px solid rgba(229, 9, 20, 0.35);
 }
 
 .os2-tag.tv {
-  background: rgba(59, 130, 246, 0.15);
+  background: rgba(59, 130, 246, 0.18);
   color: #60a5fa;
+  border: 1px solid rgba(59, 130, 246, 0.35);
 }
 
 .os2-tag.anime {
-  background: rgba(139, 92, 246, 0.15);
-  color: #a78bfa;
+  background: rgba(168, 85, 247, 0.18);
+  color: #c084fc;
+  border: 1px solid rgba(168, 85, 247, 0.35);
 }
 
 /* Skeleton Loading Animation */

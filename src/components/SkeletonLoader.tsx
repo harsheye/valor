@@ -2,7 +2,7 @@ import React from 'react';
 
 export const MediaPageSkeleton: React.FC = () => {
   return (
-    <div style={{ width: '100vw', minHeight: '100vh', background: 'var(--bg-color)', color: 'var(--text-primary)', position: 'relative', overflow: 'hidden' }}>
+    <div style={{ width: '100%', minHeight: '100vh', background: 'var(--bg-color)', color: 'var(--text-primary)', position: 'relative', overflow: 'hidden' }}>
       {/* Hero Backdrop Placeholder */}
       <div className="skeleton-shimmer" style={{ width: '100%', height: '55vh', position: 'absolute', top: 0, left: 0, opacity: 0.3 }} />
       
@@ -62,7 +62,7 @@ export const CarouselSkeleton: React.FC<{ count?: number }> = ({ count = 6 }) =>
 
 export const ActorPageSkeleton: React.FC = () => {
   return (
-    <div style={{ width: '100vw', minHeight: '100vh', background: 'var(--bg-color)', color: 'var(--text-primary)', padding: '3rem 4rem', boxSizing: 'border-box' }}>
+    <div style={{ width: '100%', minHeight: '100vh', background: 'var(--bg-color)', color: 'var(--text-primary)', padding: '3rem 4rem', boxSizing: 'border-box' }}>
       <div style={{ display: 'grid', gridTemplateColumns: '320px 1fr', gap: '3.5rem', maxWidth: '1400px', margin: '0 auto' }}>
         {/* Left Column */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
