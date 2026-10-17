@@ -4,6 +4,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const saveBtn = document.getElementById('saveBtn');
   const statusEl = document.getElementById('status');
 
+  const btnHttps443 = document.getElementById('btnHttps443');
   const btnDevPort = document.getElementById('btnDevPort');
   const btnAppPort = document.getElementById('btnAppPort');
   const btnCustomPreset = document.getElementById('btnCustomPreset');
@@ -11,8 +12,15 @@ document.addEventListener('DOMContentLoaded', () => {
   // Load current settings
   chrome.storage.sync.get(['valorUrl', 'extensionEnabled'], (result) => {
     enableToggle.checked = result.extensionEnabled !== false;
-    valorUrlInput.value = result.valorUrl || 'http://localhost:5173/embed';
+    valorUrlInput.value = result.valorUrl || 'https://localhost/embed';
   });
+
+  if (btnHttps443) {
+    btnHttps443.addEventListener('click', () => {
+      valorUrlInput.value = 'https://localhost/embed';
+      saveSettings();
+    });
+  }
 
   if (btnDevPort) {
     btnDevPort.addEventListener('click', () => {
@@ -23,7 +31,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   if (btnAppPort) {
     btnAppPort.addEventListener('click', () => {
-      valorUrlInput.value = 'http://localhost:50001/embed';
+      valorUrlInput.value = 'http://localhost:50000/embed';
       saveSettings();
     });
   }
@@ -41,20 +49,19 @@ document.addEventListener('DOMContentLoaded', () => {
 
   function normalizeUrl(input) {
     let val = (input || '').trim();
-    if (!val) return 'http://localhost:5173/embed';
+    if (!val) return 'https://localhost/embed';
 
-    // Check if user entered just a port (e.g. 5173 or :5173)
+    // Check if user entered just a port (e.g. 443, :443, 5173)
     if (/^:?\d+$/.test(val)) {
-      return `http://localhost:${val.replace(':', '')}/embed`;
+      const port = val.replace(':', '');
+      if (port === '443') return 'https://localhost/embed';
+      if (port === '80') return 'http://localhost/embed';
+      return `http://localhost:${port}/embed`;
     }
 
     // Prepend protocol if missing
     if (!/^https?:\/\//i.test(val)) {
-      if (val.startsWith('localhost') || val.startsWith('127.0.0.1')) {
-        val = 'http://' + val;
-      } else {
-        val = 'https://' + val;
-      }
+      val = 'https://' + val;
     }
 
     try {

@@ -23,7 +23,7 @@
         <key>HOST</key>
         <string>0.0.0.0</string>
         <key>PORT</key>
-        <string>80</string>
+        <string>443</string>
         <key>PORT_BACKEND</key>
         <string>50001</string>
     </dict>

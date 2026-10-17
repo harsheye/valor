@@ -1,28 +1,27 @@
 // Valor Auto-Embed Content Script
 
 (function() {
-  let valorEmbedUrl = 'http://localhost:5173/embed';
+  let valorEmbedUrl = 'https://localhost/embed';
   let extensionEnabled = true;
   let replacedContainers = new Set();
   let currentUrl = window.location.href;
 
   function normalizeEmbedUrl(rawUrl) {
-    if (!rawUrl || typeof rawUrl !== 'string') return 'http://localhost:5173/embed';
+    if (!rawUrl || typeof rawUrl !== 'string') return 'https://localhost/embed';
     let str = rawUrl.trim();
-    if (!str) return 'http://localhost:5173/embed';
+    if (!str) return 'https://localhost/embed';
 
-    // If user typed only a port number, e.g. 5173 or :50001
+    // If user typed only a port number, e.g. 443, :443, 5173
     if (/^:?\d+$/.test(str)) {
-      return `http://localhost:${str.replace(':', '')}/embed`;
+      const port = str.replace(':', '');
+      if (port === '443') return 'https://localhost/embed';
+      if (port === '80') return 'http://localhost/embed';
+      return `http://localhost:${port}/embed`;
     }
 
-    // Add protocol if missing
+    // Add protocol if missing (default to https)
     if (!/^https?:\/\//i.test(str)) {
-      if (str.startsWith('localhost') || str.startsWith('127.0.0.1')) {
-        str = 'http://' + str;
-      } else {
-        str = 'https://' + str;
-      }
+      str = 'https://' + str;
     }
 
     try {
@@ -33,7 +32,7 @@
       return parsed.toString();
     } catch (e) {
       console.warn('[Valor Extension] Invalid URL provided, using fallback:', rawUrl, e);
-      return 'http://localhost:5173/embed';
+      return 'https://localhost/embed';
     }
   }
 
@@ -52,9 +51,8 @@
     return false;
   }
 
-  // Prevent running on Valor itself (prevents infinite loop/double UI)
+  // Prevent running on Valor itself (prevents double UI / infinite loop)
   if (isValorHostPage()) {
-    console.log('[Valor Extension] Ignoring Valor player instance to prevent Double UI loop.');
     return;
   }
 
@@ -63,17 +61,53 @@
     const isLocal = valorEmbedUrl.includes('localhost') || valorEmbedUrl.includes('127.0.0.1');
     if (!isLocal) return; // Do not attempt local port scan if user configured a remote player
 
+    // Check backend heartbeat which reports active servicePort and protocol
     try {
-      const r50001 = await fetch('http://127.0.0.1:50001/api/heartbeat', { method: 'POST' }).catch(() => null);
-      if (r50001 && r50001.ok) {
-        valorEmbedUrl = 'http://127.0.0.1:50001/embed';
+      const res = await fetch('http://127.0.0.1:50001/api/heartbeat', { method: 'POST' }).catch(() => null);
+      if (res && res.ok) {
+        const data = await res.json().catch(() => null);
+        if (data && data.servicePort) {
+          const proto = data.protocol || (data.servicePort === 443 ? 'https' : 'http');
+          const portPart = (data.servicePort === 443 || data.servicePort === 80) ? '' : `:${data.servicePort}`;
+          valorEmbedUrl = `${proto}://localhost${portPart}/embed`;
+          return;
+        }
+      }
+    } catch {}
+
+    // Check HTTPS on port 443
+    try {
+      const r443 = await fetch('https://localhost/embed', { method: 'HEAD' }).catch(() => null);
+      if (r443 && r443.ok) {
+        valorEmbedUrl = 'https://localhost/embed';
         return;
       }
     } catch {}
+
+    // Check Vite dev port (5173)
     try {
       const r5173 = await fetch('http://localhost:5173/embed', { method: 'HEAD' }).catch(() => null);
       if (r5173 && r5173.ok) {
         valorEmbedUrl = 'http://localhost:5173/embed';
+        return;
+      }
+    } catch {}
+
+    // Check local service port (50000)
+    try {
+      const r50000 = await fetch('http://localhost:50000/embed', { method: 'HEAD' }).catch(() => null);
+      if (r50000 && r50000.ok) {
+        valorEmbedUrl = 'http://localhost:50000/embed';
+        return;
+      }
+    } catch {}
+
+    // Check standard HTTP port (80)
+    try {
+      const r80 = await fetch('http://localhost:80/embed', { method: 'HEAD' }).catch(() => null);
+      if (r80 && r80.ok) {
+        valorEmbedUrl = 'http://localhost/embed';
+        return;
       }
     } catch {}
   }
@@ -111,7 +145,6 @@
       }
 
       if (isValorHostPage()) {
-        console.log('[Valor Extension] Current page matches configured Valor player host. Ignoring.');
         return;
       }
 
@@ -178,114 +211,7 @@
 
   function handlePage() {
     if (!extensionEnabled || isValorHostPage()) return;
-
-    const hostname = window.location.hostname.toLowerCase();
-    const pathname = window.location.pathname;
-
-    // 1. Twitch Channel Detection
-    if (hostname.includes('twitch.tv')) {
-      const parts = pathname.split('/').filter(Boolean);
-      const nonChannelRoutes = ['directory', 'videos', 'settings', 'downloads', 'wallet', 'subscriptions', 'drops', 'prime', 'p', 'search', 'moderator'];
-      if (parts.length >= 1 && !nonChannelRoutes.includes(parts[0].toLowerCase())) {
-        const channelName = parts[0].toLowerCase();
-        replaceTwitchPlayer(channelName);
-        return;
-      }
-    }
-
-    // 2. Stripchat Model Detection
-    if (hostname.includes('stripchat.com')) {
-      const parts = pathname.split('/').filter(Boolean);
-      const nonModelRoutes = ['tag', 'category', 'girls', 'couples', 'men', 'trans', 'vr', 'favorites', 'search'];
-      if (parts.length >= 1 && !nonModelRoutes.includes(parts[0].toLowerCase())) {
-        const modelName = parts[0];
-        replaceStripchatPlayer(modelName);
-        return;
-      }
-    }
-
-    // 3. Direct Video / Media Page Detection (e.g. FileDitch, standalone .mkv, .mp4)
     scanForVideos();
-  }
-
-  function replaceTwitchPlayer(channelName) {
-    const playerSelectors = [
-      '[data-a-target="video-player"]',
-      '.video-player__container',
-      '.video-player',
-      'main .persistent-player'
-    ];
-
-    let targetContainer = null;
-    for (const sel of playerSelectors) {
-      const el = document.querySelector(sel);
-      if (el) {
-        targetContainer = el;
-        break;
-      }
-    }
-
-    if (!targetContainer) {
-      const video = document.querySelector('video');
-      if (video && video.parentElement) {
-        targetContainer = video.parentElement;
-      }
-    }
-
-    if (targetContainer && !replacedContainers.has(targetContainer) && targetContainer.dataset.valorReplaced !== channelName) {
-      replacedContainers.add(targetContainer);
-      targetContainer.dataset.valorReplaced = channelName;
-
-      // Pause any native video
-      const nativeVideos = targetContainer.querySelectorAll('video');
-      nativeVideos.forEach(v => {
-        try { v.pause(); v.muted = true; } catch (e) {}
-      });
-
-      const targetUrl = buildTargetEmbedUrl({ twitch: channelName });
-      if (!targetUrl) return;
-
-      const iframe = document.createElement('iframe');
-      const extensionEmbedUrl = chrome.runtime.getURL('embed.html') + '?target=' + encodeURIComponent(targetUrl);
-      iframe.src = extensionEmbedUrl;
-      iframe.allow = 'autoplay; fullscreen; encrypted-media; picture-in-picture; clipboard-write';
-      iframe.style.width = '100%';
-      iframe.style.height = '100%';
-      iframe.style.minHeight = '360px';
-      iframe.style.border = 'none';
-      iframe.style.display = 'block';
-      iframe.style.position = 'relative';
-      iframe.style.zIndex = '10';
-
-      targetContainer.innerHTML = '';
-      targetContainer.appendChild(iframe);
-      console.log(`[Valor Extension] Successfully embedded Twitch channel: ${channelName}`);
-    }
-  }
-
-  function replaceStripchatPlayer(modelName) {
-    const container = document.querySelector('.player-wrapper') || document.querySelector('.video-box') || document.querySelector('video')?.parentElement;
-    if (container && !replacedContainers.has(container) && container.dataset.valorReplaced !== modelName) {
-      replacedContainers.add(container);
-      container.dataset.valorReplaced = modelName;
-
-      const targetUrl = buildTargetEmbedUrl({ stripchat: modelName });
-      if (!targetUrl) return;
-
-      const iframe = document.createElement('iframe');
-      const extensionEmbedUrl = chrome.runtime.getURL('embed.html') + '?target=' + encodeURIComponent(targetUrl);
-      iframe.src = extensionEmbedUrl;
-      iframe.allow = 'autoplay; fullscreen; encrypted-media; picture-in-picture; clipboard-write';
-      iframe.style.width = '100%';
-      iframe.style.height = '100%';
-      iframe.style.minHeight = '360px';
-      iframe.style.border = 'none';
-      iframe.style.display = 'block';
-
-      container.innerHTML = '';
-      container.appendChild(iframe);
-      console.log(`[Valor Extension] Successfully embedded Stripchat model: ${modelName}`);
-    }
   }
 
   function scanForVideos() {
@@ -313,6 +239,14 @@
       const sourceElem = videoElement.querySelector('source');
       if (sourceElem) {
         src = sourceElem.getAttribute('src') || sourceElem.src;
+      }
+    }
+
+    if (!src || src.startsWith('blob:')) {
+      if (videoElement.dataset && videoElement.dataset.src) {
+        src = videoElement.dataset.src;
+      } else if (videoElement.getAttribute('data-src')) {
+        src = videoElement.getAttribute('data-src');
       }
     }
 

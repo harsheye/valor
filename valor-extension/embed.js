@@ -31,24 +31,36 @@ window.addEventListener('message', (event) => {
 
         // Handle proxy fetch requests from the player
         if (event.data && event.data.type === 'PROXY_FETCH') {
-            chrome.runtime.sendMessage({ 
-                type: 'PROXY_FETCH', 
-                url: event.data.url, 
-                options: event.data.options,
-                blob: event.data.blob
-            }, (response) => {
+            try {
+                chrome.runtime.sendMessage({ 
+                    type: 'PROXY_FETCH', 
+                    url: event.data.url, 
+                    options: event.data.options,
+                    blob: event.data.blob
+                }, (response) => {
+                    const lastErr = chrome.runtime.lastError;
+                    const res = response || { ok: false, error: lastErr ? lastErr.message : 'No response from background proxy' };
+                    if (valorFrame && valorFrame.contentWindow) {
+                        valorFrame.contentWindow.postMessage({
+                            type: 'PROXY_FETCH_RESPONSE',
+                            id: event.data.id,
+                            response: res
+                        }, '*');
+                    }
+                });
+            } catch (err) {
                 if (valorFrame && valorFrame.contentWindow) {
                     valorFrame.contentWindow.postMessage({
                         type: 'PROXY_FETCH_RESPONSE',
                         id: event.data.id,
-                        response: response
+                        response: { ok: false, error: err.message }
                     }, '*');
                 }
-            });
+            }
             return;
         }
 
-        // Forward embed protocol events to the host webpage (e.g. Twitch or video host page)
+        // Forward embed protocol events to the host webpage
         if (event.data && event.data.source === 'valor-embed-iframe') {
             if (window.parent && window.parent !== window) {
                 window.parent.postMessage(event.data, '*');

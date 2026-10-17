@@ -7,30 +7,21 @@ import type { EmbedCommand, EmbedMessageWrapper, ControlsConfig, ThemeConfig } f
 export const EmbedPlayerPage: React.FC = () => {
   const [video, setVideo] = useState<VideoItem | null>(() => {
     const params = new URLSearchParams(window.location.search);
-    const mediaUrl = params.get('url');
+    const mediaUrl = params.get('url') || params.get('media') || params.get('src');
     if (mediaUrl) {
       return {
         id: 'embed-session',
         title: params.get('title') || 'Embedded Video',
         url: mediaUrl,
         type: 'url',
-        currentTime: 0,
+        currentTime: Number(params.get('t') || params.get('time') || 0) || 0,
         duration: '0',
+        isRemote: true,
         audioTracks: [],
         subtitleTracks: []
       };
     }
     return null;
-  });
-
-  const [twitchChannel, setTwitchChannel] = useState<string | null>(() => {
-    const params = new URLSearchParams(window.location.search);
-    return params.get('twitch') || null;
-  });
-
-  const [stripchatUsername, setStripchatUsername] = useState<string | null>(() => {
-    const params = new URLSearchParams(window.location.search);
-    return params.get('stripchat') || null;
   });
 
   const [inputVal, setInputVal] = useState('');
@@ -69,7 +60,6 @@ export const EmbedPlayerPage: React.FC = () => {
   // PostMessage Bridge listener
   useEffect(() => {
     const handleMessage = (event: MessageEvent) => {
-      // Basic security check (can be expanded based on allowedOrigins)
       if (!event.data || event.data.source !== 'valor-embed-host') return;
       
       const wrapper: EmbedMessageWrapper = event.data;
@@ -77,192 +67,131 @@ export const EmbedPlayerPage: React.FC = () => {
 
       switch (cmd.type) {
         case 'LOAD':
-          setVideo({
-            id: 'embed-session',
-            title: 'Embedded Media',
-            url: cmd.payload.media || cmd.payload.url || '',
-            type: 'url',
-            currentTime: cmd.payload.currentTime || 0,
-            duration: String(cmd.payload.duration || 0),
-            isRemote: true,
-            hlsPlaylist: cmd.payload.hlsPlaylist,
-            playbackMode: (cmd.payload.playbackMode as any) || undefined,
-            audioTracks: [],
-            subtitleTracks: []
-          });
+          if (cmd.payload && (cmd.payload.url || cmd.payload.media)) {
+            setVideo({
+              id: 'embed-session',
+              title: cmd.payload.title || 'Embedded Media',
+              url: cmd.payload.media || cmd.payload.url || '',
+              type: 'url',
+              currentTime: cmd.payload.currentTime || 0,
+              duration: String(cmd.payload.duration || 0),
+              isRemote: true,
+              hlsPlaylist: cmd.payload.hlsPlaylist,
+              playbackMode: (cmd.payload.playbackMode as any) || undefined,
+              audioTracks: [],
+              subtitleTracks: []
+            });
+          }
           break;
         case 'UPDATE_CONFIG':
           if (cmd.payload.controls) setControls(prev => ({ ...prev, ...cmd.payload.controls }));
           if (cmd.payload.theme) setTheme(prev => ({ ...prev, ...cmd.payload.theme }));
           break;
-        // The rest of the playback commands (PLAY, PAUSE, SEEK, etc.) will be handled 
-        // by the RemoteVideoPlayer directly via an exposed ref or context, 
-        // or by bubbling down props. For simplicity, we can pass a `commandBus` down to RemoteVideoPlayer.
       }
     };
 
     window.addEventListener('message', handleMessage);
     // Tell parent we are ready to receive commands
-    window.parent.postMessage({ source: 'valor-embed-iframe', version: '1.0.0', payload: { type: 'READY' } }, '*');
+    try {
+      window.parent.postMessage({ source: 'valor-embed-iframe', version: '1.0.0', payload: { type: 'READY' } }, '*');
+    } catch (e) {}
 
     return () => window.removeEventListener('message', handleMessage);
   }, []);
 
-  const [twitchLoading, setTwitchLoading] = useState(false);
-  const [twitchError, setTwitchError] = useState<string | null>(null);
+  const handlePlayUrl = (targetUrl: string) => {
+    const trimmed = targetUrl.trim();
+    if (!trimmed) return;
+    setVideo({
+      id: 'embed-session',
+      title: 'Direct Video Stream',
+      url: trimmed,
+      type: 'url',
+      currentTime: 0,
+      duration: '0',
+      isRemote: true,
+      audioTracks: [],
+      subtitleTracks: []
+    });
+  };
 
-  useEffect(() => {
-    if (!twitchChannel || video) return;
-
-    const fetchTwitch = async () => {
-      setTwitchLoading(true);
-      setTwitchError(null);
-      try {
-        const clientId = 'kimne78kx3ncx6brgo4mv6wki5h1ko';
-        const tokenRes = await fetch('https://gql.twitch.tv/gql', {
-          method: 'POST',
-          headers: { 'Client-ID': clientId, 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            operationName: 'PlaybackAccessToken',
-            variables: { isLive: true, login: twitchChannel, isVod: false, vodID: '', playerType: 'embed' },
-            extensions: { persistedQuery: { version: 1, sha256Hash: '0828119ded1c13477966434e15800ff57ddacf13ba1911c129dc2200705b0712' } }
-          })
-        });
-        const tokenData = await tokenRes.json();
-        if (!tokenData?.data?.streamPlaybackAccessToken) {
-          throw new Error('Stream is currently offline or does not exist');
-        }
-        const sig = tokenData.data.streamPlaybackAccessToken.signature;
-        const token = tokenData.data.streamPlaybackAccessToken.value;
-        const url = `/twitch-usher/api/channel/hls/${twitchChannel}.m3u8?client_id=${clientId}&token=${encodeURIComponent(token)}&sig=${sig}&allow_source=true&allow_audio_only=true`;
-        
-        setVideo({
-          id: `twitch-${twitchChannel}`,
-          title: `${twitchChannel} - Twitch`,
-          url: url,
-          type: 'url',
-          currentTime: 0,
-          duration: '0',
-          isRemote: true,
-          audioTracks: [],
-          subtitleTracks: []
-        });
-      } catch (err) {
-        console.error(err);
-        setTwitchError('Failed to load Twitch stream. It might be offline.');
-      } finally {
-        setTwitchLoading(false);
-      }
-    };
-
-    fetchTwitch();
-  }, [twitchChannel, video]);
-
-  useEffect(() => {
-    if (!stripchatUsername || video) return;
-
-    const fetchStripchat = async () => {
-      setTwitchLoading(true);
-      setTwitchError(null);
-      try {
-        const res = await fetch(`/stripchat-api/${stripchatUsername}/cam`);
-        if (!res.ok) throw new Error('Stream offline or not found');
-        const data = await res.json();
-        
-        let m3u8Url = '';
-        if (data && data.cam && data.cam.streamName) {
-           const server = data.cam.edgeServer || data.cam.host || 'b-hls-14.doppiocdn.com';
-           m3u8Url = `https://${server}/hls/${data.cam.streamName}/master/${data.cam.streamName}_auto.m3u8`;
-        } else if (data && data.cam && data.cam.streamUrl) {
-           m3u8Url = data.cam.streamUrl;
-        } else {
-           throw new Error('No stream data available');
-        }
-
-        setVideo({
-          id: `stripchat-${stripchatUsername}`,
-          title: `${stripchatUsername} - Stripchat`,
-          url: m3u8Url,
-          type: 'url',
-          currentTime: 0,
-          duration: '0',
-          isRemote: true,
-          audioTracks: [],
-          subtitleTracks: []
-        });
-      } catch (err) {
-        console.error(err);
-        setTwitchError('Failed to load Stripchat stream. It might be offline.');
-      } finally {
-        setTwitchLoading(false);
-      }
-    };
-
-    fetchStripchat();
-  }, [stripchatUsername, video]);
-
-  if (!video && !twitchChannel && !stripchatUsername) {
+  if (!video) {
     return (
-      <div style={{ width: '100vw', height: '100vh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', background: 'var(--bg-color)', color: 'var(--text-primary)' }}>
-        <h2 style={{ marginBottom: 24, fontSize: '24px', fontWeight: 'bold' }}>Valor Embed Player</h2>
-        <div style={{ display: 'flex', gap: '8px' }}>
-          <input 
-            type="text" 
-            placeholder="Enter username..." 
-            value={inputVal}
-            onChange={(e) => setInputVal(e.target.value)}
-            style={{ padding: '10px 14px', borderRadius: '6px', border: '1px solid #333', background: '#1a1a1a', color: 'white', outline: 'none', width: '250px' }}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' && inputVal.trim()) {
-                setTwitchChannel(inputVal.trim());
-              }
-            }}
-          />
-          <button 
-            onClick={() => {
-              if (inputVal.trim()) setTwitchChannel(inputVal.trim());
-            }}
-            style={{ padding: '10px 20px', borderRadius: '6px', background: '#9146FF', color: 'white', border: 'none', cursor: 'pointer', fontWeight: 'bold' }}
-          >
-            Play Twitch
-          </button>
-          <button 
-            onClick={() => {
-              if (inputVal.trim()) setStripchatUsername(inputVal.trim());
-            }}
-            style={{ padding: '10px 20px', borderRadius: '6px', background: '#f53e3e', color: 'white', border: 'none', cursor: 'pointer', fontWeight: 'bold' }}
-          >
-            Play Stripchat
-          </button>
+      <div style={{
+        width: '100vw',
+        height: '100vh',
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+        justifyContent: 'center',
+        backgroundColor: 'var(--bg-color, #0b0f19)',
+        color: 'var(--text-primary, #ffffff)',
+        fontFamily: 'var(--font-family, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif)',
+        padding: '20px',
+        boxSizing: 'border-box'
+      }}>
+        <div style={{
+          maxWidth: '480px',
+          width: '100%',
+          backgroundColor: '#141a28',
+          borderRadius: '12px',
+          padding: '28px 24px',
+          boxShadow: '0 8px 32px rgba(0,0,0,0.5)',
+          border: '1px solid rgba(255,255,255,0.08)',
+          textAlign: 'center'
+        }}>
+          <div style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: '48px', height: '48px', borderRadius: '50%', background: 'linear-gradient(135deg, #ff3e3e, #d62828)', marginBottom: '16px' }}>
+            <span style={{ fontSize: '22px', color: '#fff', marginLeft: '3px' }}>▶</span>
+          </div>
+          <h2 style={{ margin: '0 0 8px 0', fontSize: '20px', fontWeight: 600 }}>Valor Embed Player</h2>
+          <p style={{ margin: '0 0 20px 0', fontSize: '13px', color: '#94a3b8' }}>
+            Enter a direct video or stream URL (MP4, MKV, HLS .m3u8, WebM) to begin playback:
+          </p>
+          <div style={{ display: 'flex', gap: '8px' }}>
+            <input 
+              type="text" 
+              placeholder="https://example.com/video.mp4 or .m3u8" 
+              value={inputVal}
+              onChange={(e) => setInputVal(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') handlePlayUrl(inputVal);
+              }}
+              style={{
+                flex: 1,
+                padding: '10px 14px',
+                borderRadius: '8px',
+                border: '1px solid #334155',
+                backgroundColor: '#0b0f19',
+                color: '#ffffff',
+                fontSize: '13px',
+                outline: 'none'
+              }}
+            />
+            <button 
+              type="button"
+              onClick={() => handlePlayUrl(inputVal)}
+              style={{
+                padding: '10px 18px',
+                borderRadius: '8px',
+                backgroundColor: '#ff3e3e',
+                color: '#ffffff',
+                border: 'none',
+                cursor: 'pointer',
+                fontWeight: 600,
+                fontSize: '13px',
+                transition: 'background-color 0.2s'
+              }}
+            >
+              Play
+            </button>
+          </div>
         </div>
       </div>
     );
   }
 
-  if (twitchLoading || ((twitchChannel || stripchatUsername) && !video)) {
-    return (
-      <div style={{ width: '100vw', height: '100vh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', background: 'var(--bg-color)', color: 'var(--text-primary)' }}>
-        {twitchError ? (
-          <>
-            <div style={{ color: '#ff4444', marginBottom: 16 }}>{twitchError}</div>
-            <button 
-              onClick={() => { setTwitchChannel(null); setStripchatUsername(null); setTwitchError(null); }}
-              style={{ padding: '8px 16px', borderRadius: '6px', background: '#333', color: 'white', border: 'none', cursor: 'pointer' }}
-            >
-              Try Again
-            </button>
-          </>
-        ) : (
-          <div>Fetching Stream...</div>
-        )}
-      </div>
-    );
-  }
-
-  if (!video) return <div style={{ color: 'white', padding: 20 }}>Loading media...</div>;
-
   return (
-    <div style={{ width: '100vw', height: '100vh', overflow: 'hidden', background: 'var(--bg-color)' }}>
+    <div style={{ width: '100vw', height: '100vh', overflow: 'hidden', background: 'var(--bg-color, #000000)' }}>
       {theme.logoUrl && !theme.hideLogo && (
         <img 
           src={theme.logoUrl} 
@@ -278,37 +207,36 @@ export const EmbedPlayerPage: React.FC = () => {
         />
       )}
       
-      {/* 
-        We pass controlsConfig down to RemoteVideoPlayer.
-        RemoteVideoPlayer will need to be updated to respect these configs.
-      */}
       <RemoteVideoPlayer 
         isEmbed={true}
         video={video}
         onBack={() => {
           setVideo(null);
-          setTwitchChannel(null);
-          setStripchatUsername(null);
-          setTwitchError(null);
-          window.parent.postMessage({ source: 'valor-embed-iframe', version: '1.0.0', payload: { type: 'CLOSE' } }, '*');
+          try {
+            window.parent.postMessage({ source: 'valor-embed-iframe', version: '1.0.0', payload: { type: 'CLOSE' } }, '*');
+          } catch (e) {}
         }}
         onUpdateVideo={(updater) => {
           if (typeof updater === 'function') {
             const newVideo = updater(video);
             if (newVideo.currentTime !== video.currentTime) {
               setVideo(newVideo);
-              window.parent.postMessage({ source: 'valor-embed-iframe', version: '1.0.0', payload: { type: 'TIME_UPDATE', payload: { currentTime: newVideo.currentTime, duration: newVideo.duration } } }, '*');
+              try {
+                window.parent.postMessage({ source: 'valor-embed-iframe', version: '1.0.0', payload: { type: 'TIME_UPDATE', payload: { currentTime: newVideo.currentTime, duration: newVideo.duration } } }, '*');
+              } catch (e) {}
             } else {
               setVideo(newVideo);
             }
           } else {
             setVideo(updater);
-            window.parent.postMessage({ source: 'valor-embed-iframe', version: '1.0.0', payload: { type: 'TIME_UPDATE', payload: { currentTime: updater.currentTime, duration: updater.duration } } }, '*');
+            try {
+              window.parent.postMessage({ source: 'valor-embed-iframe', version: '1.0.0', payload: { type: 'TIME_UPDATE', payload: { currentTime: updater.currentTime, duration: updater.duration } } }, '*');
+            } catch (e) {}
           }
         }}
         showPlayButton={controls.play}
         showTimeDisplay={true}
-        showPlayBar={controls.play} // Assuming if play is hidden, playbar might be hidden, but we'll show it for seek
+        showPlayBar={controls.play}
         showVolumeControl={controls.volume}
         showFullscreen={controls.fullscreen}
         subSettings={{ fontSize: 'medium', color: 'white', backdrop: 'shadow', fontFamily: 'sans-serif', fontStyle: 'normal', customTextColor: '', customBgColor: '', customSize: 100 }}

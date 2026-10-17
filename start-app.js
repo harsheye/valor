@@ -4,7 +4,7 @@ import https from 'https';
 import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
-import { spawn } from 'child_process';
+import { spawn, execSync } from 'child_process';
 import { DatabaseSync } from 'node:sqlite';
 import { DataStore } from './dataStore.js';
 import { createReverseProxyTelemetry } from './analyticsTracker.js';
@@ -62,6 +62,57 @@ if (!fs.existsSync(path.join(appDir, 'dist')) && fs.existsSync(path.join(execDir
 const dataDir = path.join(appDir, '.valor_data');
 if (!fs.existsSync(dataDir)) {
   fs.mkdirSync(dataDir, { recursive: true });
+}
+
+function getOrCreateSslCert() {
+  const sslDir = path.join(dataDir, 'ssl');
+  if (!fs.existsSync(sslDir)) {
+    fs.mkdirSync(sslDir, { recursive: true });
+  }
+  const certPath = path.join(sslDir, 'cert.pem');
+  const keyPath = path.join(sslDir, 'key.pem');
+
+  if (fs.existsSync(certPath) && fs.existsSync(keyPath)) {
+    return {
+      cert: fs.readFileSync(certPath),
+      key: fs.readFileSync(keyPath)
+    };
+  }
+
+  console.log('[SSL] Generating self-signed TLS/SSL certificate with SAN (localhost, 127.0.0.1, ::1)...');
+  const confPath = path.join(sslDir, 'openssl.cnf');
+  const confContent = `[req]
+default_bits = 2048
+prompt = no
+default_md = sha256
+distinguished_name = dn
+x509_extensions = v3_req
+
+[dn]
+CN = localhost
+
+[v3_req]
+subjectAltName = @alt_names
+
+[alt_names]
+DNS.1 = localhost
+DNS.2 = *.localhost
+IP.1 = 127.0.0.1
+IP.2 = ::1
+`;
+  fs.writeFileSync(confPath, confContent);
+
+  try {
+    execSync(`openssl req -x509 -newkey rsa:2048 -nodes -sha256 -subj '/CN=localhost' -keyout "${keyPath}" -out "${certPath}" -days 3650 -config "${confPath}"`, { stdio: 'pipe' });
+    console.log('[SSL] SSL certificate and key generated successfully in .valor_data/ssl');
+    return {
+      cert: fs.readFileSync(certPath),
+      key: fs.readFileSync(keyPath)
+    };
+  } catch (err) {
+    console.error('[SSL] Failed to generate SSL certificate via openssl:', err.message);
+    return null;
+  }
 }
 
 // Initialize SQLite database
@@ -330,7 +381,7 @@ console.info = (...args) => handleLog('INFO', originalInfo, colors.info, args);
 console.warn = (...args) => handleLog('WARN', originalWarn, colors.warn, args);
 console.error = (...args) => handleLog('ERROR', originalError, colors.error, args);
 
-const PORT_SERVICE = parseInt(process.env.PORT || process.env.PORT_SERVICE || '80', 10);
+const PORT_SERVICE = parseInt(process.env.PORT || process.env.PORT_SERVICE || '443', 10);
 const PORT_BACKEND = parseInt(process.env.PORT_BACKEND || '50001', 10);
 
 const getJsonBody = (req) => new Promise((resolve) => {
@@ -405,125 +456,13 @@ const backendServer = http.createServer((req, res) => {
     console.error('[IP check error]', e.message);
   }
 
-  // Twitch Usher Proxy
-  if (pathname.startsWith('/twitch-usher/')) {
-    const usherPath = req.url.replace(/^\/twitch-usher/, '');
-    const usherUrl = `https://usher.ttvnw.net${usherPath}`;
-    const proxyReq = https.request(usherUrl, {
-      method: req.method,
-      headers: {
-        'Origin': 'https://www.twitch.tv',
-        'Referer': 'https://www.twitch.tv/',
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'
-      }
-    }, (proxyRes) => {
-      const headers = { ...proxyRes.headers };
-      delete headers['access-control-allow-origin'];
-      headers['Access-Control-Allow-Origin'] = '*';
-      res.writeHead(proxyRes.statusCode || 200, headers);
-      proxyRes.pipe(res);
-    });
-    proxyReq.on('error', (e) => {
-      res.statusCode = 500;
-      res.end(e.message);
-    });
-    if (req.readable) req.pipe(proxyReq);
-    else proxyReq.end();
-    return;
-  }
-
-  // Twitch Stream & Segment CDN Proxy with Redirect Following
-  if (pathname.startsWith('/twitch-proxy/')) {
-    let targetUrlString = req.url.slice('/twitch-proxy/'.length);
-    try {
-      targetUrlString = decodeURIComponent(targetUrlString);
-    } catch {}
-    targetUrlString = targetUrlString.replace(/^(https?):\/([^\/])/, '$1://$2');
-    
-    if (!targetUrlString.startsWith('http')) {
-      res.statusCode = 400;
-      res.end('Invalid or missing target URL: ' + targetUrlString);
-      return;
-    }
-
-    const forwardRequest = (targetUrl, redirectCount = 0) => {
-      if (redirectCount > 5) {
-        res.statusCode = 502;
-        return res.end('Too many redirects');
-      }
-      try {
-        const target = new URL(targetUrl);
-        const isHttps = target.protocol === 'https:';
-        const client = isHttps ? https : http;
-        const options = {
-          hostname: target.hostname,
-          port: target.port || (isHttps ? 443 : 80),
-          path: target.pathname + target.search,
-          method: req.method,
-          headers: {
-            'Origin': 'https://www.twitch.tv',
-            'Referer': 'https://www.twitch.tv/',
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'
-          }
-        };
-
-        const proxyReq = client.request(options, (proxyRes) => {
-          if (proxyRes.statusCode && proxyRes.statusCode >= 300 && proxyRes.statusCode < 400 && proxyRes.headers.location) {
-            let nextLoc = proxyRes.headers.location;
-            if (!nextLoc.startsWith('http')) {
-              nextLoc = new URL(nextLoc, targetUrl).toString();
-            }
-            return forwardRequest(nextLoc, redirectCount + 1);
-          }
-          const headers = { ...proxyRes.headers };
-          delete headers['access-control-allow-origin'];
-          headers['Access-Control-Allow-Origin'] = '*';
-          res.writeHead(proxyRes.statusCode || 200, headers);
-          proxyRes.pipe(res);
-        });
-
-        proxyReq.on('error', (e) => {
-          res.statusCode = 500;
-          res.end(e.message);
-        });
-
-        if (req.readable && redirectCount === 0) {
-          req.pipe(proxyReq);
-        } else {
-          proxyReq.end();
-        }
-      } catch (e) {
-        res.statusCode = 500;
-        res.end(String(e));
-      }
-    };
-
-    forwardRequest(targetUrlString);
-    return;
-  }
-
-  // Stripchat API Proxy
-  if (pathname.startsWith('/stripchat-api/')) {
-    const stripchatPath = req.url.replace(/^\/stripchat-api/, '');
-    const targetUrl = `https://stripchat.com/api/front/v2/models/username${stripchatPath}`;
-    const proxyReq = https.request(targetUrl, {
-      method: req.method,
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'
-      }
-    }, (proxyRes) => {
-      const headers = { ...proxyRes.headers };
-      delete headers['access-control-allow-origin'];
-      headers['Access-Control-Allow-Origin'] = '*';
-      res.writeHead(proxyRes.statusCode || 200, headers);
-      proxyRes.pipe(res);
-    });
-    proxyReq.on('error', (e) => {
-      res.statusCode = 500;
-      res.end(e.message);
-    });
-    if (req.readable) req.pipe(proxyReq);
-    else proxyReq.end();
+  // Redirect /embed to active service server port if accessed via backend port
+  if (pathname === '/embed' || pathname.startsWith('/embed/')) {
+    const hostName = req.headers.host ? req.headers.host.split(':')[0] : 'localhost';
+    const portPart = PORT_SERVICE === 443 ? '' : `:${PORT_SERVICE}`;
+    const target = `https://${hostName}${portPart}${req.url}`;
+    res.writeHead(302, { 'Location': target });
+    res.end();
     return;
   }
 
@@ -534,7 +473,11 @@ const backendServer = http.createServer((req, res) => {
     res.statusCode = 200;
     res.setHeader('Content-Type', 'application/json');
     
-    const responseData = { status: 'ok' };
+    const responseData = { 
+      status: 'ok', 
+      servicePort: PORT_SERVICE,
+      protocol: 'https'
+    };
     if (pendingPlayFile) {
       responseData.playFile = pendingPlayFile;
       pendingPlayFile = null;
@@ -556,9 +499,10 @@ const backendServer = http.createServer((req, res) => {
       pendingPlayFile = file;
     } else {
       if (shouldOpen) {
+        const baseUrl = PORT_SERVICE === 443 ? 'https://localhost/' : `https://localhost:${PORT_SERVICE}/`;
         const openUrl = file 
-          ? `http://localhost:${PORT_SERVICE}/?file=${encodeURIComponent(file)}`
-          : `http://localhost:${PORT_SERVICE}/`;
+          ? `${baseUrl}?file=${encodeURIComponent(file)}`
+          : baseUrl;
           
         console.log(`[Server] No active tab. Opening browser: ${openUrl}`);
         if (process.platform === 'win32') {
@@ -2195,6 +2139,7 @@ async function start() {
   
   if (!backendOnly) {
     try {
+      const sslConfig = getOrCreateSslCert();
       viteServer = await createViteServer({
         mode: 'development',
         plugins: [
@@ -2204,7 +2149,7 @@ async function start() {
               server.middlewares.use((req, res, next) => {
                 if (req.url && req.url.startsWith('/node_modules/.vite/deps/')) {
                   try {
-                    const parsedUrl = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
+                    const parsedUrl = new URL(req.url, `https://${req.headers.host || 'localhost'}`);
                     if (parsedUrl.searchParams.has('v')) {
                       parsedUrl.searchParams.delete('v');
                       req.url = parsedUrl.pathname + (parsedUrl.search ? parsedUrl.search : '');
@@ -2221,6 +2166,8 @@ async function start() {
           port: PORT_SERVICE,
           strictPort: true,
           host: HOST,
+          https: sslConfig || true,
+          allowedHosts: true,
           open: false,
           headers: {
             'Cache-Control': 'no-cache',
@@ -2231,7 +2178,8 @@ async function start() {
       viteServer.middlewares.use((req, res, next) => {
         if (req.url && req.url.startsWith('/api/play')) {
           try {
-            const parsedUrl = new URL(req.url, `http://localhost:${PORT_SERVICE}`);
+            const portPart = PORT_SERVICE === 443 ? '' : `:${PORT_SERVICE}`;
+            const parsedUrl = new URL(req.url, `https://localhost${portPart}`);
             const file = parsedUrl.searchParams.get('file');
             if (file) {
               console.log(`[Server] Active tab detected (via Service Server). Queueing file for playback: ${file}`);
@@ -2246,12 +2194,14 @@ async function start() {
       });
       await viteServer.listen();
       success = true;
-      console.log(`[Server] Valor service server (Vite dev) is running on http://${HOST}:${PORT_SERVICE}`);
+      const displayUrl = PORT_SERVICE === 443 ? `https://${HOST}` : `https://${HOST}:${PORT_SERVICE}`;
+      console.log(`[Server] Valor service server (HTTPS) is running on ${displayUrl}`);
     } catch (err) {
       if (err.code === 'EADDRINUSE' || (err.message && err.message.includes('already in use'))) {
         console.warn(`[Server] Port ${PORT_SERVICE} is already in use.`);
         console.warn(`[Server] Valor is ALREADY running in the background (via launchd)!`);
-        console.warn(`[Server] You do not need to run 'npm start'. The app is live at: http://localhost:${PORT_SERVICE}`);
+        const displayUrl = PORT_SERVICE === 443 ? 'https://localhost' : `https://localhost:${PORT_SERVICE}`;
+        console.warn(`[Server] You do not need to run 'npm start'. The app is live at: ${displayUrl}`);
         process.exit(0);
       }
       console.error(`[Server] Failed to bind service server to port ${PORT_SERVICE}:`, err);
@@ -2265,7 +2215,8 @@ async function start() {
       if (err.code === 'EADDRINUSE') {
         console.warn(`[Server] Port ${PORT_BACKEND} is already in use.`);
         console.warn(`[Server] Valor is ALREADY running in the background (via launchd)!`);
-        console.warn(`[Server] You do not need to run 'npm start'. The app is live at: http://localhost:${PORT_SERVICE}`);
+        const displayUrl = PORT_SERVICE === 443 ? 'https://localhost' : `https://localhost:${PORT_SERVICE}`;
+        console.warn(`[Server] You do not need to run 'npm start'. The app is live at: ${displayUrl}`);
         process.exit(0);
       }
       console.error('[Server Error]', err);
@@ -2284,9 +2235,10 @@ async function start() {
         }
 
         if (shouldOpen) {
+          const baseUrl = PORT_SERVICE === 443 ? 'https://localhost/' : `https://localhost:${PORT_SERVICE}/`;
           const openUrl = resolvedFilePath 
-            ? `http://localhost:${PORT_SERVICE}/?file=${encodeURIComponent(resolvedFilePath)}`
-            : `http://localhost:${PORT_SERVICE}/`;
+            ? `${baseUrl}?file=${encodeURIComponent(resolvedFilePath)}`
+            : baseUrl;
             
           console.log(`[Server] Opening browser: ${openUrl}`);
           

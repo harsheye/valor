@@ -4,7 +4,7 @@ chrome.runtime.onInstalled.addListener(() => {
   // Set default settings if not already set
   chrome.storage.sync.get(['valorUrl', 'extensionEnabled'], (result) => {
     if (!result.valorUrl) {
-      chrome.storage.sync.set({ valorUrl: 'http://localhost:5173/embed' });
+      chrome.storage.sync.set({ valorUrl: 'https://localhost/embed' });
     }
     if (result.extensionEnabled === undefined) {
       chrome.storage.sync.set({ extensionEnabled: true });

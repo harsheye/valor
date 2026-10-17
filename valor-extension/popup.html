@@ -19,12 +19,13 @@
 
     <div class="setting-row vertical">
       <label for="valorUrl">Valor Embed URL / Host:</label>
-      <input type="text" id="valorUrl" placeholder="https://remote-site.com/embed or http://localhost:5173/embed" />
-      <div class="hint">Use any remote site or local server:</div>
+      <input type="text" id="valorUrl" placeholder="https://localhost/embed" />
+      <div class="hint">Use HTTPS local server, Cloudflare tunnel, or remote player:</div>
       <div class="btn-group">
+        <button type="button" id="btnHttps443" class="btn-preset" title="Local HTTPS (Port 443)">HTTPS 443</button>
         <button type="button" id="btnDevPort" class="btn-preset" title="Local Dev (Port 5173)">Dev 5173</button>
-        <button type="button" id="btnAppPort" class="btn-preset" title="Local App (Port 50001)">App 50001</button>
-        <button type="button" id="btnCustomPreset" class="btn-preset" title="Focus custom / remote URL input">Custom/Remote</button>
+        <button type="button" id="btnAppPort" class="btn-preset" title="Service (Port 50000)">Port 50000</button>
+        <button type="button" id="btnCustomPreset" class="btn-preset" title="Focus custom / remote URL input">Custom</button>
       </div>
     </div>
 

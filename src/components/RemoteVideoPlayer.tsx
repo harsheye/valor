@@ -292,21 +292,8 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
 
     if (isDirectHls && videoRef.current) {
       if (Hls.isSupported()) {
-        class CustomLoader extends Hls.DefaultConfig.loader {
-          constructor(config: any) {
-            super(config);
-          }
-          load(context: any, config: any, callbacks: any) {
-            if (context.url && (context.url.includes('ttvnw.net') || context.url.includes('doppiocdn')) && !context.url.startsWith('/twitch-usher') && !context.url.startsWith('/twitch-proxy')) {
-              context.url = '/twitch-proxy/' + encodeURIComponent(context.url);
-            }
-            super.load(context, config, callbacks);
-          }
-        }
-
         const hls = new Hls({ 
           autoStartLoad: true,
-          loader: CustomLoader as any,
           liveSyncDurationCount: 3,
           liveMaxLatencyDurationCount: 10,
           lowLatencyMode: true,
@@ -2023,9 +2010,9 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
   // Auto-probe local and remote file streams on startup if not already scanned
   useEffect(() => {
     const autoProbe = async () => {
-      // Skip probing if streams already exist, or if it's direct HLS/Stripchat/Twitch
+      // Skip probing if streams already exist, or if it's direct HLS
       if (video.streams || probingVideoIdRef.current === video.id) return;
-      if (video.url && (video.url.includes('.m3u8') || video.url.includes('twitch') || video.url.includes('stripchat'))) return;
+      if (video.url && video.url.includes('.m3u8')) return;
 
       if ((video.type === 'local' && video.file) || ((video.type === 'url' || video.isRemote) && video.url)) {
         probingVideoIdRef.current = video.id;
@@ -2184,7 +2171,6 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
     isDirectHls ||
     duration === Infinity ||
     !isFinite(duration) ||
-    (video.id && String(video.id).startsWith('twitch-')) ||
     (hlsInstanceRef.current && (hlsInstanceRef.current as any).levels?.[0]?.details?.live)
   );
 
