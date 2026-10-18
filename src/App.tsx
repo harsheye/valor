@@ -326,7 +326,7 @@ const defaultSettings = {
   getOverlayDataFromTmdb: true as boolean,
   tmdbApiKey: '' as string,
   experienceMode: 'local' as 'local' | 'cloud' | 'hybrid',
-  overlayPosition: 'bottom-left' as 'bottom-left' | 'bottom-right' | 'top-left' | 'top-right',
+  overlayPosition: 'middle-left' as 'middle-left' | 'bottom-left' | 'bottom-right' | 'top-left' | 'top-right',
   overlayShowBackground: true as boolean,
   overlayShowRating: true as boolean,
   overlayShowOverview: true as boolean,

@@ -1750,9 +1750,10 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                             <div className="pref-row animate-fade-in" style={{ margin: 0 }}>
                               <span className="pref-label">Overlay Position</span>
                               <CustomSelect 
-                                value={settings.overlayPosition || 'bottom-left'}
+                                value={settings.overlayPosition || 'middle-left'}
                                 onChange={(val) => handleDefaultLangChange('overlayPosition', val)}
                                 options={[
+                                  { value: 'middle-left', label: 'Middle Left (Netflix style)' },
                                   { value: 'bottom-left', label: 'Bottom Left' },
                                   { value: 'bottom-right', label: 'Bottom Right' },
                                   { value: 'top-left', label: 'Top Left' },
@@ -1820,21 +1821,27 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                           const x = (e.clientX - rect.left) / rect.width;
                           const y = (e.clientY - rect.top) / rect.height;
                           const isLeft = x < 0.5;
+                          if (isLeft && y >= 0.35 && y <= 0.65) {
+                            handleDefaultLangChange('overlayPosition', 'middle-left');
+                            return;
+                          }
                           const isTop = y < 0.5;
                           const newPos = `${isTop ? 'top' : 'bottom'}-${isLeft ? 'left' : 'right'}`;
                           handleDefaultLangChange('overlayPosition', newPos);
                         }}
                         >
                           {/* Position corner hint dots */}
-                          {['top-left', 'top-right', 'bottom-left', 'bottom-right'].map(pos => {
-                            const isSel = (settings.overlayPosition || 'bottom-left') === pos;
+                          {['middle-left', 'top-left', 'top-right', 'bottom-left', 'bottom-right'].map(pos => {
+                            const isSel = (settings.overlayPosition || 'middle-left') === pos;
                             return (
                               <div 
                                 key={pos}
                                 style={{
                                   position: 'absolute',
-                                  ...(pos.includes('top') ? { top: '10px' } : { bottom: '10px' }),
-                                  ...(pos.includes('left') ? { left: '10px' } : { right: '10px' }),
+                                  ...(pos === 'middle-left' ? { top: 'calc(50% - 8px)', left: '10px' } : {
+                                    ...(pos.includes('top') ? { top: '10px' } : { bottom: '10px' }),
+                                    ...(pos.includes('left') ? { left: '10px' } : { right: '10px' }),
+                                  }),
                                   width: '16px',
                                   height: '16px',
                                   borderRadius: '50%',
@@ -1852,18 +1859,25 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                           <div style={{
                             position: 'absolute',
                             ...((() => {
-                              const pos = settings.overlayPosition || 'bottom-left';
+                              const pos = settings.overlayPosition || 'middle-left';
+                              if (pos === 'middle-left') {
+                                return {
+                                  top: '50%',
+                                  transform: 'translateY(-50%)',
+                                  left: '20px'
+                                };
+                              }
                               return {
                                 ...(pos.includes('top') ? { top: '20px' } : { bottom: '20px' }),
                                 ...(pos.includes('left') ? { left: '20px' } : { right: '20px' }),
                               };
                             })()),
                             maxWidth: '45%',
-                            textAlign: (settings.overlayPosition || 'bottom-left').includes('right') ? 'right' as const : 'left' as const,
+                            textAlign: (settings.overlayPosition || 'middle-left').includes('right') ? 'right' as const : 'left' as const,
                             display: 'flex',
                             flexDirection: 'column',
                             gap: '4px',
-                            alignItems: (settings.overlayPosition || 'bottom-left').includes('right') ? 'flex-end' : 'flex-start',
+                            alignItems: (settings.overlayPosition || 'middle-left').includes('right') ? 'flex-end' : 'flex-start',
                             transition: 'all 0.35s cubic-bezier(0.16, 1, 0.3, 1)',
                             pointerEvents: 'none'
                           }}>
