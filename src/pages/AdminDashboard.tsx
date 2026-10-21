@@ -39,7 +39,16 @@ import {
   SlidersHorizontal,
   RotateCcw,
   AlertTriangle,
-  Info
+  Info,
+  Calendar,
+  TrendingUp,
+  Laptop,
+  Copy,
+  Play,
+  Pause,
+  Compass,
+  Share2,
+  Flame
 } from 'lucide-react';
 
 interface ActiveUser {
@@ -76,11 +85,61 @@ interface AdminOverview {
   };
 }
 
-interface HourlyItem {
-  hour: string;
+interface ActivityItem {
+  label: string;
+  sublabel?: string;
+  date?: string;
+  hour?: string;
   requests: number;
   bytes: number;
   activeUsers: number;
+  thirdPartyRequests?: number;
+}
+
+interface AvailableDateItem {
+  day: string;
+  count: number;
+  third_party_count: number;
+}
+
+interface ThirdPartyEndpoint {
+  service: string;
+  path: string;
+  requests: number;
+  bytes: number;
+  avgLatencyMs: number;
+  errorCount: number;
+  lastCalled?: string | null;
+}
+
+interface ThirdPartyService {
+  name: string;
+  service?: string;
+  requests: number;
+  bytes: number;
+  avgLatencyMs: number;
+  errorCount: number;
+  lastCalled?: string | null;
+  status: 'operational' | 'degraded' | 'offline';
+}
+
+interface ThirdPartyStats {
+  totalRequests: number;
+  totalBytes: number;
+  avgLatencyMs: number;
+  services: ThirdPartyService[];
+  endpoints: ThirdPartyEndpoint[];
+}
+
+interface TimeframeSummary {
+  timeframe: string;
+  targetDate: string;
+  totalRequests: number;
+  totalBytes: number;
+  totalVisitors: number;
+  thirdPartyRequests: number;
+  thirdPartyRatio: string;
+  peakActivity: { label: string; requests: number };
 }
 
 interface BreakdownItem {
@@ -96,12 +155,46 @@ interface TimeBucket {
 }
 
 interface DetailedAnalytics {
-  hourlyData: HourlyItem[];
+  timeframe?: string;
+  targetDate?: string;
+  activityData?: ActivityItem[];
+  hourlyData: ActivityItem[];
+  timeframeSummary?: TimeframeSummary;
+  availableDates?: AvailableDateItem[];
+  thirdPartyStats?: ThirdPartyStats;
   browserBreakdown: BreakdownItem[];
   osBreakdown: BreakdownItem[];
   deviceBreakdown: BreakdownItem[];
   topPaths: { path: string; count: number }[];
   timeSpentBuckets: TimeBucket[];
+}
+
+interface VisitorDevice {
+  deviceId: string;
+  firstSeen: string;
+  lastSeen: string;
+  visitCount: number;
+  totalDurationSeconds: number;
+  totalRequests: number;
+  bytesTransferred: number;
+  lastIp: string;
+  ips: string[];
+  userAgent?: string;
+  browser: string;
+  os: string;
+  device: string;
+  userId?: string;
+  profileName?: string;
+  embedCallsCount: number;
+  embedReferers: string[];
+  lastPath?: string;
+}
+
+interface VisitorDevicesResponse {
+  devices: VisitorDevice[];
+  totalDevicesCount: number;
+  totalEmbedCallsCount: number;
+  topEmbedReferrers: { referer: string; count: number; last_seen?: string }[];
 }
 
 interface TrafficLog {
@@ -117,6 +210,9 @@ interface TrafficLog {
   os: string;
   device?: string;
   userId?: string;
+  deviceId?: string;
+  referer?: string;
+  isEmbed?: boolean;
 }
 
 interface UserAccount {
@@ -159,15 +255,42 @@ const ALL_STATUS_GROUPS = [
 ] as const;
 
 const ALL_CATEGORIES = [
-  { id: 'api', label: 'API (/api/*)' },
-  { id: 'stream', label: 'Media / Stream' },
-  { id: 'static', label: 'Static Assets' },
-  { id: 'other', label: 'Pages / Other' }
+  { id: '3rdparty', label: '3rd Party APIs (VLR, Trakt, TMDB)', color: '#ec4899', bg: 'rgba(236, 72, 153, 0.15)' },
+  { id: 'api', label: 'Internal API (/api/*)', color: '#38bdf8', bg: 'rgba(56, 189, 248, 0.15)' },
+  { id: 'stream', label: 'Media / Stream', color: '#c084fc', bg: 'rgba(192, 132, 252, 0.15)' },
+  { id: 'static', label: 'Static Assets', color: '#94a3b8', bg: 'rgba(148, 163, 184, 0.15)' },
+  { id: 'other', label: 'Pages / Other', color: '#fbbf24', bg: 'rgba(251, 191, 36, 0.15)' }
 ] as const;
 
-function categorizePath(path: string): 'stream' | 'api' | 'static' | 'other' {
+export function isThirdPartyPath(path: string): boolean {
+  if (!path) return false;
+  return (
+    path.startsWith('/api/vlr') ||
+    path.startsWith('/api/trakt') ||
+    path.startsWith('/api/tmdb') ||
+    path.includes('/subtitles') ||
+    path.includes('opensubtitles') ||
+    path.includes('vlr.gg') ||
+    path.includes('trakt.tv') ||
+    path.includes('themoviedb.org')
+  );
+}
+
+export function getThirdPartyService(path: string): string {
+  if (!path) return 'Other';
+  if (path.includes('/vlr') || path.includes('vlr.gg')) return 'VLR.gg';
+  if (path.includes('/trakt') || path.includes('trakt.tv')) return 'Trakt.tv';
+  if (path.includes('/tmdb') || path.includes('themoviedb.org')) return 'TMDB';
+  if (path.includes('/subtitles') || path.includes('opensubtitles')) return 'OpenSubtitles';
+  return '3rd Party';
+}
+
+function categorizePath(path: string): '3rdparty' | 'stream' | 'api' | 'static' | 'other' {
   if (!path) return 'other';
-  if (/\.(mp4|webm|m3u8|ts|m4s|mp3|ogg|wav)(\?|$)/i.test(path) || path.includes('/stream') || path.includes('/video')) {
+  if (isThirdPartyPath(path)) {
+    return '3rdparty';
+  }
+  if (/\.(mp4|webm|m3u8|ts|m4s|mp3|ogg|wav)(\?|$)/i.test(path) || path.includes('/stream') || path.includes('/video') || path.includes('/local-video-stream')) {
     return 'stream';
   }
   if (path.startsWith('/api/')) {
@@ -202,31 +325,67 @@ export const AdminDashboard: React.FC = () => {
   const [loginSubmitting, setLoginSubmitting] = useState<boolean>(false);
 
   // Tab & Data State
-  const [activeTab, setActiveTab] = useState<'overview' | 'sessions' | 'traffic' | 'users'>('overview');
+  const [activeTab, setActiveTab] = useState<'overview' | 'traffic' | 'devices' | 'thirdparty' | 'sessions' | 'users'>('overview');
   const [overview, setOverview] = useState<AdminOverview | null>(null);
   const [analytics, setAnalytics] = useState<DetailedAnalytics | null>(null);
   const [trafficLogs, setTrafficLogs] = useState<TrafficLog[]>([]);
   const [usersList, setUsersList] = useState<UserAccount[]>([]);
+
+  // Visitor Devices Directory & Intelligence State
+  const [devicesList, setDevicesList] = useState<VisitorDevice[]>([]);
+  const [totalDevicesCount, setTotalDevicesCount] = useState<number>(0);
+  const [totalEmbedCallsCount, setTotalEmbedCallsCount] = useState<number>(0);
+  const [topEmbedReferrers, setTopEmbedReferrers] = useState<{ referer: string; count: number; last_seen?: string }[]>([]);
+  const [deviceSearchQuery, setDeviceSearchQuery] = useState<string>('');
+  const [deviceSortBy, setDeviceSortBy] = useState<'last_seen' | 'visits' | 'duration' | 'requests' | 'bytes' | 'embeds'>('last_seen');
+  const [deviceFilter, setDeviceFilter] = useState<'all' | 'embeds_only' | 'mobile' | 'desktop'>('all');
+  const [selectedDeviceDetail, setSelectedDeviceDetail] = useState<VisitorDevice | null>(null);
+  const [selectedDeviceLogs, setSelectedDeviceLogs] = useState<TrafficLog[]>([]);
+  const [deviceDetailLoading, setDeviceDetailLoading] = useState<boolean>(false);
   
   const [loading, setLoading] = useState<boolean>(true);
   const [refreshing, setRefreshing] = useState<boolean>(false);
   const [autoRefreshInterval, setAutoRefreshInterval] = useState<number>(5); // 0 = off
+  const [isStreamPaused, setIsStreamPaused] = useState<boolean>(false);
+  const [copiedId, setCopiedId] = useState<string | null>(null);
   const [terminatingSessionId, setTerminatingSessionId] = useState<string | null>(null);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
   // User Accounts Search
   const [userSearchQuery, setUserSearchQuery] = useState<string>('');
 
-  // Traffic Feed Advanced Filtering State
+  // Activity Timeframe State (Months, Weeks, Days, and Any Day)
+  const [activityTimeframe, setActivityTimeframe] = useState<'day' | 'week' | 'month' | 'year' | 'custom_day'>('day');
+  const [selectedActivityDate, setSelectedActivityDate] = useState<string>(() => new Date().toISOString().slice(0, 10));
+
+  // Third-Party Health Ping State
+  const [thirdPartyPingLoading, setThirdPartyPingLoading] = useState<boolean>(false);
+  const [thirdPartyPingResults, setThirdPartyPingResults] = useState<any[] | null>(null);
+
+  // Traffic Feed Advanced Filtering & Preset State
   const [hideHeartbeat, setHideHeartbeat] = useState<boolean>(true);
   const [hideLog, setHideLog] = useState<boolean>(true);
   const [errorsOnly, setErrorsOnly] = useState<boolean>(false);
   const [slowOnly, setSlowOnly] = useState<boolean>(false);
+  const [embedOnlyFilter, setEmbedOnlyFilter] = useState<boolean>(false);
+  const [selectedDeviceIdFilter, setSelectedDeviceIdFilter] = useState<string>('');
+  const [activeQuickPreset, setActiveQuickPreset] = useState<'all' | '3rdparty' | 'embed' | 'errors' | 'slow' | 'stream' | 'today'>('all');
+
+  // Traffic Scope & Deep Database Filters
+  const [trafficDateFilter, setTrafficDateFilter] = useState<'all' | 'today' | 'yesterday' | 'custom'>('all');
+  const [trafficCustomDate, setTrafficCustomDate] = useState<string>(() => new Date().toISOString().slice(0, 10));
+  const [selectedProvider, setSelectedProvider] = useState<string>('all'); // 'all', 'vlr', 'trakt', 'tmdb', 'opensubtitles'
+  const [selectedLatencyFilter, setSelectedLatencyFilter] = useState<'all' | 'fast' | 'normal' | 'slow' | 'veryslow'>('all');
+  const [selectedDeviceFilter, setSelectedDeviceFilter] = useState<string>('all');
+  const [selectedBrowserFilter, setSelectedBrowserFilter] = useState<string>('all');
+  const [trafficPayloadFilter, setTrafficPayloadFilter] = useState<'all' | 'small' | 'medium' | 'large'>('all');
+  const [trafficSortOrder, setTrafficSortOrder] = useState<'newest' | 'oldest' | 'slowest' | 'fastest' | 'largest'>('newest');
+  const [trafficLimit, setTrafficLimit] = useState<number>(150);
 
   // Multi-Select Filters
   const [selectedMethods, setSelectedMethods] = useState<string[]>(['GET', 'POST', 'OPTIONS', 'PUT', 'DELETE', 'PATCH']);
   const [selectedStatusGroups, setSelectedStatusGroups] = useState<string[]>(['2xx', '3xx', '4xx', '5xx']);
-  const [selectedCategories, setSelectedCategories] = useState<string[]>(['api', 'stream', 'static', 'other']);
+  const [selectedCategories, setSelectedCategories] = useState<string[]>(['3rdparty', 'api', 'stream', 'static', 'other']);
 
   // Selection Mode: 'include' (Show Selected) vs 'exclude' (Hide Selected / Show Unselected)
   const [filterMode, setFilterMode] = useState<'include' | 'exclude'>('include');
@@ -322,28 +481,59 @@ export const AdminDashboard: React.FC = () => {
   };
 
   // Fetch Telemetry & Admin Data
-  const fetchData = useCallback(async (isManual = false) => {
+  const fetchData = useCallback(async (isManual = false, overrideTimeframe?: string, overrideDate?: string) => {
     if (!adminToken) return;
     if (isManual) setRefreshing(true);
     try {
       const authHeaders = { 'x-admin-token': adminToken };
-      const [overviewRes, analyticsRes, logsRes, usersRes] = await Promise.all([
+      const tf = overrideTimeframe || activityTimeframe;
+      const dt = overrideDate || selectedActivityDate;
+
+      let trafficUrl = `/api/admin/traffic-logs?limit=${trafficLimit}`;
+      if (selectedProvider !== 'all') {
+        trafficUrl += `&provider=${encodeURIComponent(selectedProvider)}`;
+      }
+      if (trafficDateFilter === 'today') {
+        trafficUrl += `&date=${new Date().toISOString().slice(0, 10)}`;
+      } else if (trafficDateFilter === 'yesterday') {
+        const yest = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
+        trafficUrl += `&date=${yest}`;
+      } else if (trafficDateFilter === 'custom' && trafficCustomDate) {
+        trafficUrl += `&date=${trafficCustomDate}`;
+      }
+      if (selectedDeviceIdFilter) {
+        trafficUrl += `&deviceId=${encodeURIComponent(selectedDeviceIdFilter)}`;
+      }
+      if (embedOnlyFilter) {
+        trafficUrl += `&embedOnly=true`;
+      }
+
+      let devicesUrl = `/api/admin/devices?limit=100&sortBy=${deviceSortBy}&filter=${deviceFilter}`;
+      if (deviceSearchQuery.trim()) {
+        devicesUrl += `&search=${encodeURIComponent(deviceSearchQuery.trim())}`;
+      }
+
+      const [overviewRes, analyticsRes, logsRes, usersRes, devicesRes] = await Promise.all([
         fetch('/api/admin/overview', { headers: authHeaders }).then(r => {
           if (r.status === 401) { setIsAuthenticated(false); throw new Error('Unauthorized'); }
           return r.json();
         }).catch(() => null),
-        fetch('/api/admin/analytics', { headers: authHeaders }).then(r => {
+        fetch(`/api/admin/analytics?timeframe=${tf}&targetDate=${dt}`, { headers: authHeaders }).then(r => {
           if (r.status === 401) { setIsAuthenticated(false); throw new Error('Unauthorized'); }
           return r.json();
         }).catch(() => null),
-        fetch('/api/admin/traffic-logs?limit=150', { headers: authHeaders }).then(r => {
+        fetch(trafficUrl, { headers: authHeaders }).then(r => {
           if (r.status === 401) { setIsAuthenticated(false); throw new Error('Unauthorized'); }
           return r.json();
         }).catch(() => []),
         fetch('/api/admin/users', { headers: authHeaders }).then(r => {
           if (r.status === 401) { setIsAuthenticated(false); throw new Error('Unauthorized'); }
           return r.json();
-        }).catch(() => [])
+        }).catch(() => []),
+        fetch(devicesUrl, { headers: authHeaders }).then(r => {
+          if (r.status === 401) { setIsAuthenticated(false); throw new Error('Unauthorized'); }
+          return r.json();
+        }).catch(() => null)
       ]);
 
       if (overviewRes && !overviewRes.error) {
@@ -358,6 +548,12 @@ export const AdminDashboard: React.FC = () => {
       if (Array.isArray(usersRes)) {
         setUsersList(usersRes);
       }
+      if (devicesRes && !devicesRes.error) {
+        setDevicesList(devicesRes.devices || []);
+        setTotalDevicesCount(devicesRes.totalDevicesCount || 0);
+        setTotalEmbedCallsCount(devicesRes.totalEmbedCallsCount || 0);
+        setTopEmbedReferrers(devicesRes.topEmbedReferrers || []);
+      }
     } catch (err: any) {
       if (err.message === 'Unauthorized') {
         showToast('Admin session expired. Please sign in again.');
@@ -368,7 +564,83 @@ export const AdminDashboard: React.FC = () => {
       setLoading(false);
       if (isManual) setRefreshing(false);
     }
-  }, [adminToken]);
+  }, [
+    adminToken, 
+    activityTimeframe, 
+    selectedActivityDate, 
+    trafficLimit, 
+    trafficDateFilter, 
+    trafficCustomDate, 
+    selectedProvider,
+    selectedDeviceIdFilter,
+    embedOnlyFilter,
+    deviceSortBy,
+    deviceFilter,
+    deviceSearchQuery
+  ]);
+
+  const handleCopy = (text: string, id: string) => {
+    if (!text) return;
+    navigator.clipboard?.writeText(text);
+    setCopiedId(id);
+    showToast(`Copied: ${text.length > 28 ? text.slice(0, 28) + '...' : text}`);
+    setTimeout(() => setCopiedId(null), 2000);
+  };
+
+  const handleInspectDevice = async (device: VisitorDevice) => {
+    setSelectedDeviceDetail(device);
+    setDeviceDetailLoading(true);
+    try {
+      const res = await fetch(`/api/admin/devices/${encodeURIComponent(device.deviceId)}`, {
+        headers: { 'x-admin-token': adminToken || '' }
+      });
+      const data = await res.json();
+      if (data && data.device) {
+        setSelectedDeviceDetail(data.device);
+        setSelectedDeviceLogs(data.recentLogs || []);
+      }
+    } catch (e: any) {
+      console.error('Failed to load device details:', e);
+    } finally {
+      setDeviceDetailLoading(false);
+    }
+  };
+
+  const handleFilterByDevice = (deviceId: string) => {
+    setSelectedDeviceIdFilter(deviceId);
+    setActiveTab('traffic');
+    showToast(`Filtering traffic for device ${deviceId.slice(0, 16)}...`);
+  };
+
+  const handleTimeframeChange = (tf: 'day' | 'week' | 'month' | 'year' | 'custom_day') => {
+    setActivityTimeframe(tf);
+    fetchData(false, tf, selectedActivityDate);
+  };
+
+  const handleActivityDateChange = (dt: string) => {
+    setSelectedActivityDate(dt);
+    setActivityTimeframe('custom_day');
+    fetchData(false, 'custom_day', dt);
+  };
+
+  const handlePingThirdParty = async () => {
+    if (!adminToken) return;
+    setThirdPartyPingLoading(true);
+    try {
+      const res = await fetch('/api/admin/third-party/ping', {
+        headers: { 'x-admin-token': adminToken }
+      });
+      const data = await res.json();
+      if (data && data.providers) {
+        setThirdPartyPingResults(data.providers);
+        showToast('3rd Party API connectivity test completed');
+      }
+    } catch (e: any) {
+      showToast(`Ping failed: ${e.message}`);
+    } finally {
+      setThirdPartyPingLoading(false);
+    }
+  };
 
   useEffect(() => {
     if (isAuthenticated) {
@@ -376,14 +648,14 @@ export const AdminDashboard: React.FC = () => {
     }
   }, [isAuthenticated, fetchData]);
 
-  // Auto-refresh interval
+  // Auto-refresh interval (pauses when stream is paused)
   useEffect(() => {
-    if (!isAuthenticated || autoRefreshInterval <= 0) return;
+    if (!isAuthenticated || autoRefreshInterval <= 0 || isStreamPaused) return;
     const interval = setInterval(() => {
       fetchData(false);
     }, autoRefreshInterval * 1000);
     return () => clearInterval(interval);
-  }, [isAuthenticated, autoRefreshInterval, fetchData]);
+  }, [isAuthenticated, autoRefreshInterval, isStreamPaused, fetchData]);
 
   const handleTerminateSession = async (sessionId: string) => {
     if (!sessionId || !adminToken) return;
@@ -481,6 +753,16 @@ export const AdminDashboard: React.FC = () => {
     setHideLog(true);
     setErrorsOnly(false);
     setSlowOnly(false);
+    setEmbedOnlyFilter(false);
+    setSelectedDeviceIdFilter('');
+    setActiveQuickPreset('all');
+    setSelectedProvider('all');
+    setSelectedLatencyFilter('all');
+    setSelectedDeviceFilter('all');
+    setSelectedBrowserFilter('all');
+    setTrafficPayloadFilter('all');
+    setTrafficDateFilter('all');
+    setTrafficSortOrder('newest');
     setFilterMode('include');
     setSelectedMethods([...ALL_METHODS]);
     setSelectedStatusGroups(ALL_STATUS_GROUPS.map(s => s.id));
@@ -488,8 +770,55 @@ export const AdminDashboard: React.FC = () => {
     setTrafficSearchQuery('');
   };
 
+  const applyQuickPreset = (preset: 'all' | '3rdparty' | 'embed' | 'errors' | 'slow' | 'stream' | 'today') => {
+    setActiveQuickPreset(preset);
+    if (preset === 'all') {
+      handleResetFilters();
+      return;
+    }
+    if (preset === 'embed') {
+      setEmbedOnlyFilter(true);
+      setErrorsOnly(false);
+      setSlowOnly(false);
+      setSelectedCategories(ALL_CATEGORIES.map(c => c.id));
+      return;
+    }
+    if (preset === '3rdparty') {
+      setFilterMode('include');
+      setSelectedCategories(['3rdparty']);
+      setHideHeartbeat(true);
+      setHideLog(true);
+      setErrorsOnly(false);
+      setSlowOnly(false);
+      setEmbedOnlyFilter(false);
+      setSelectedProvider('all');
+    } else if (preset === 'errors') {
+      setErrorsOnly(true);
+      setSlowOnly(false);
+      setEmbedOnlyFilter(false);
+      setSelectedCategories(ALL_CATEGORIES.map(c => c.id));
+    } else if (preset === 'slow') {
+      setSlowOnly(true);
+      setErrorsOnly(false);
+      setEmbedOnlyFilter(false);
+      setSelectedLatencyFilter('slow');
+      setSelectedCategories(ALL_CATEGORIES.map(c => c.id));
+    } else if (preset === 'stream') {
+      setFilterMode('include');
+      setSelectedCategories(['stream']);
+      setHideHeartbeat(true);
+      setHideLog(true);
+      setErrorsOnly(false);
+      setSlowOnly(false);
+      setEmbedOnlyFilter(false);
+    } else if (preset === 'today') {
+      setTrafficDateFilter('today');
+    }
+  };
+
   const isFiltersCustomized = useMemo(() => {
-    if (!hideHeartbeat || !hideLog || errorsOnly || slowOnly || trafficSearchQuery.trim()) return true;
+    if (!hideHeartbeat || !hideLog || errorsOnly || slowOnly || embedOnlyFilter || selectedDeviceIdFilter || trafficSearchQuery.trim()) return true;
+    if (selectedProvider !== 'all' || selectedLatencyFilter !== 'all' || selectedDeviceFilter !== 'all' || selectedBrowserFilter !== 'all' || trafficPayloadFilter !== 'all' || trafficDateFilter !== 'all' || trafficSortOrder !== 'newest') return true;
     if (filterMode === 'exclude') {
       return selectedMethods.length > 0 || selectedStatusGroups.length > 0 || selectedCategories.length > 0;
     }
@@ -502,7 +831,16 @@ export const AdminDashboard: React.FC = () => {
     hideLog, 
     errorsOnly, 
     slowOnly, 
+    embedOnlyFilter,
+    selectedDeviceIdFilter,
     trafficSearchQuery, 
+    selectedProvider,
+    selectedLatencyFilter,
+    selectedDeviceFilter,
+    selectedBrowserFilter,
+    trafficPayloadFilter,
+    trafficDateFilter,
+    trafficSortOrder,
     filterMode, 
     selectedMethods, 
     selectedStatusGroups, 
@@ -510,11 +848,19 @@ export const AdminDashboard: React.FC = () => {
   ]);
 
   const filteredTraffic = useMemo(() => {
-    return trafficLogs.filter(log => {
+    let result = trafficLogs.filter(log => {
       const path = log.path || '';
       const method = (log.method || 'GET').toUpperCase();
       const statusGroup = getStatusGroup(log.statusCode);
       const category = categorizePath(path);
+
+      // 0. Device ID and Embed Only filters
+      if (selectedDeviceIdFilter && log.deviceId !== selectedDeviceIdFilter) {
+        return false;
+      }
+      if (embedOnlyFilter && !log.isEmbed && !(log.path && log.path.includes('/embed')) && !(log.referer && log.referer.includes('/embed'))) {
+        return false;
+      }
 
       // 1. Noise reduction filters (Hide Heartbeat & Hide Log)
       if (hideHeartbeat && path.includes('/api/heartbeat')) {
@@ -534,11 +880,33 @@ export const AdminDashboard: React.FC = () => {
         return false;
       }
 
-      // 4. Multi-Select Criteria (Method, Status, Category)
-      // When filterMode === 'include':
-      // The item MUST match selected methods, status groups, and categories.
-      // When filterMode === 'exclude':
-      // The item is EXCLUDED if it matches ANY of the selected items (i.e. shows unselected items).
+      // 4. Third-Party Provider specific filter
+      if (selectedProvider !== 'all') {
+        const svc = getThirdPartyService(path).toLowerCase();
+        if (selectedProvider === 'vlr' && !svc.includes('vlr')) return false;
+        if (selectedProvider === 'trakt' && !svc.includes('trakt')) return false;
+        if (selectedProvider === 'tmdb' && !svc.includes('tmdb')) return false;
+        if (selectedProvider === 'opensubtitles' && !svc.includes('opensubtitles')) return false;
+      }
+
+      // 5. Granular Latency Filter
+      const lat = log.latencyMs || 0;
+      if (selectedLatencyFilter === 'fast' && lat >= 50) return false;
+      if (selectedLatencyFilter === 'normal' && (lat < 50 || lat > 200)) return false;
+      if (selectedLatencyFilter === 'slow' && (lat < 200 || lat > 1000)) return false;
+      if (selectedLatencyFilter === 'veryslow' && lat <= 1000) return false;
+
+      // 6. Device & Browser Filter
+      if (selectedDeviceFilter !== 'all' && (log.device || 'Desktop') !== selectedDeviceFilter) return false;
+      if (selectedBrowserFilter !== 'all' && (log.browser || 'Unknown') !== selectedBrowserFilter) return false;
+
+      // 7. Payload Size Filter
+      const b = log.bytes || 0;
+      if (trafficPayloadFilter === 'small' && b >= 10240) return false;
+      if (trafficPayloadFilter === 'medium' && (b < 10240 || b > 1048576)) return false;
+      if (trafficPayloadFilter === 'large' && b <= 1048576) return false;
+
+      // 8. Multi-Select Criteria (Method, Status, Category)
       if (filterMode === 'include') {
         if (!selectedMethods.includes(method)) return false;
         if (!selectedStatusGroups.includes(statusGroup)) return false;
@@ -549,20 +917,20 @@ export const AdminDashboard: React.FC = () => {
         if (selectedCategories.length > 0 && selectedCategories.includes(category)) return false;
       }
 
-      // 5. Search query with negation support ('!' prefix excludes)
+      // 9. Search query with negation support ('!' prefix excludes)
       if (trafficSearchQuery.trim()) {
         const tokens = trafficSearchQuery.trim().toLowerCase().split(/\s+/);
-        const searchTarget = `${path} ${method} ${log.ip || ''} ${log.browser || ''} ${log.statusCode} ${log.os || ''}`.toLowerCase();
+        const searchTarget = `${path} ${method} ${log.ip || ''} ${log.browser || ''} ${log.statusCode} ${log.os || ''} ${log.device || ''} ${log.deviceId || ''} ${log.referer || ''} ${getThirdPartyService(path)}`.toLowerCase();
 
         for (const token of tokens) {
           if (token.startsWith('!')) {
             const neg = token.slice(1);
             if (neg && searchTarget.includes(neg)) {
-              return false; // Negation matched: exclude
+              return false;
             }
           } else {
             if (!searchTarget.includes(token)) {
-              return false; // Required term missing: exclude
+              return false;
             }
           }
         }
@@ -570,17 +938,40 @@ export const AdminDashboard: React.FC = () => {
 
       return true;
     });
+
+    // Sort order
+    if (trafficSortOrder === 'newest') {
+      result.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+    } else if (trafficSortOrder === 'oldest') {
+      result.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+    } else if (trafficSortOrder === 'slowest') {
+      result.sort((a, b) => (b.latencyMs || 0) - (a.latencyMs || 0));
+    } else if (trafficSortOrder === 'fastest') {
+      result.sort((a, b) => (a.latencyMs || 0) - (b.latencyMs || 0));
+    } else if (trafficSortOrder === 'largest') {
+      result.sort((a, b) => (b.bytes || 0) - (a.bytes || 0));
+    }
+
+    return result;
   }, [
     trafficLogs, 
     hideHeartbeat, 
     hideLog, 
     errorsOnly, 
     slowOnly, 
+    embedOnlyFilter,
+    selectedDeviceIdFilter,
+    selectedProvider,
+    selectedLatencyFilter,
+    selectedDeviceFilter,
+    selectedBrowserFilter,
+    trafficPayloadFilter,
     selectedMethods, 
     selectedStatusGroups, 
     selectedCategories, 
     filterMode, 
-    trafficSearchQuery
+    trafficSearchQuery,
+    trafficSortOrder
   ]);
 
   const filteredActiveUsers = useMemo(() => {
@@ -596,11 +987,17 @@ export const AdminDashboard: React.FC = () => {
     );
   }, [overview?.activeUsers, userSearchQuery]);
 
-  const maxHourlyRequests = useMemo(() => {
-    if (!analytics?.hourlyData || analytics.hourlyData.length === 0) return 10;
-    const maxVal = Math.max(...analytics.hourlyData.map(h => h.requests));
-    return maxVal > 0 ? maxVal : 10;
+  const activeTimelineData = useMemo(() => {
+    return analytics?.activityData || analytics?.hourlyData || [];
   }, [analytics]);
+
+  const maxTimelineRequests = useMemo(() => {
+    if (!activeTimelineData || activeTimelineData.length === 0) return 10;
+    const maxVal = Math.max(...activeTimelineData.map(h => h.requests));
+    return maxVal > 0 ? maxVal : 10;
+  }, [activeTimelineData]);
+
+  const maxHourlyRequests = maxTimelineRequests;
 
   const maxTimeBucketCount = useMemo(() => {
     if (!analytics?.timeSpentBuckets) return 1;
@@ -1012,8 +1409,25 @@ export const AdminDashboard: React.FC = () => {
       }}>
         {[
           { id: 'overview', label: 'Overview', icon: BarChart3 },
+          { 
+            id: 'devices', 
+            label: `Visitors & Devices (${totalDevicesCount || devicesList.length})`, 
+            icon: Laptop,
+            badge: totalEmbedCallsCount ? `${totalEmbedCallsCount} embeds` : undefined
+          },
+          { 
+            id: 'traffic', 
+            label: 'Traffic Feed', 
+            icon: Radio,
+            badge: isStreamPaused ? 'Paused' : undefined
+          },
+          { 
+            id: 'thirdparty', 
+            label: `3rd Party APIs (${analytics?.thirdPartyStats?.totalRequests ?? 0})`, 
+            icon: Zap,
+            highlight: Boolean(analytics?.thirdPartyStats?.totalRequests && analytics.thirdPartyStats.totalRequests > 0)
+          },
           { id: 'sessions', label: `Active Users (${overview?.activeUsersCount ?? 0})`, icon: Users },
-          { id: 'traffic', label: 'Traffic Feed', icon: Radio },
           { id: 'users', label: `Registered Accounts (${usersList.length})`, icon: Database },
         ].map(tab => {
           const Icon = tab.icon;
@@ -1028,17 +1442,33 @@ export const AdminDashboard: React.FC = () => {
                 gap: '7px',
                 padding: '9px 15px',
                 border: 'none',
-                borderBottom: isActive ? '2px solid var(--accent-color, #38bdf8)' : '2px solid transparent',
+                borderBottom: isActive 
+                  ? (tab.id === 'thirdparty' ? '2px solid #ec4899' : '2px solid var(--accent-color, #38bdf8)') 
+                  : '2px solid transparent',
                 backgroundColor: 'transparent',
-                color: isActive ? 'var(--accent-color, #38bdf8)' : 'var(--text-muted, #94a3b8)',
+                color: isActive 
+                  ? (tab.id === 'thirdparty' ? '#ec4899' : 'var(--accent-color, #38bdf8)') 
+                  : 'var(--text-muted, #94a3b8)',
                 cursor: 'pointer',
                 fontSize: '0.84rem',
                 fontWeight: isActive ? 600 : 500,
                 transition: 'all 0.12s ease'
               }}
             >
-              <Icon size={15} />
+              <Icon size={15} color={isActive ? (tab.id === 'thirdparty' ? '#ec4899' : 'var(--accent-color, #38bdf8)') : undefined} />
               <span>{tab.label}</span>
+              {tab.badge && (
+                <span style={{
+                  padding: '1px 6px',
+                  borderRadius: '10px',
+                  backgroundColor: tab.id === 'devices' ? 'rgba(168, 85, 247, 0.2)' : 'rgba(234, 179, 8, 0.2)',
+                  color: tab.id === 'devices' ? '#c084fc' : '#facc15',
+                  fontSize: '0.68rem',
+                  fontWeight: 700
+                }}>
+                  {tab.badge}
+                </span>
+              )}
             </button>
           );
         })}
@@ -1262,33 +1692,210 @@ export const AdminDashboard: React.FC = () => {
             gridTemplateColumns: 'repeat(auto-fit, minmax(460px, 1fr))',
             gap: '1.25rem'
           }}>
-            {/* Chart 1: Hourly Traffic & Bandwidth Volume Chart */}
+            {/* Chart 1: Multi-Timeframe Activity & Volume Chart */}
             <div style={{
               backgroundColor: 'var(--surface, #1e293b)',
               border: '1px solid var(--border-color, rgba(255, 255, 255, 0.07))',
               borderRadius: '12px',
               padding: '1.25rem',
               display: 'flex',
-              flexDirection: 'column'
+              flexDirection: 'column',
+              gap: '12px'
             }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem' }}>
+              {/* Header with Title and Timeframe Selector */}
+              <div style={{
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                flexWrap: 'wrap',
+                gap: '10px'
+              }}>
                 <div>
-                  <h3 style={{ margin: 0, fontSize: '0.95rem', fontWeight: 600 }}>Hourly Activity</h3>
-                  <span style={{ fontSize: '0.72rem', color: 'var(--text-muted, #94a3b8)' }}>Requests per hour (Past 12 Hours)</span>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <h3 style={{ margin: 0, fontSize: '0.98rem', fontWeight: 600 }}>Activity Timeline</h3>
+                    <span style={{
+                      padding: '2px 7px',
+                      borderRadius: '10px',
+                      backgroundColor: 'rgba(56, 189, 248, 0.1)',
+                      color: 'var(--accent-color, #38bdf8)',
+                      fontSize: '0.68rem',
+                      fontWeight: 600
+                    }}>
+                      {activityTimeframe === 'day' ? 'Today (24 Hours)' :
+                       activityTimeframe === 'custom_day' ? `Day: ${selectedActivityDate}` :
+                       activityTimeframe === 'week' ? 'Past 7 Days' :
+                       activityTimeframe === 'month' ? 'Past 30 Days' : 'Past 12 Months'}
+                    </span>
+                  </div>
+                  <span style={{ fontSize: '0.72rem', color: 'var(--text-muted, #94a3b8)' }}>
+                    HTTP request volume, bandwidth & 3rd party API calls over time
+                  </span>
                 </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', fontSize: '0.72rem' }}>
+
+                {/* Timeframe Toggle Buttons */}
+                <div style={{
+                  display: 'flex',
+                  backgroundColor: 'rgba(0, 0, 0, 0.3)',
+                  padding: '3px',
+                  borderRadius: '7px',
+                  border: '1px solid var(--border-color, rgba(255, 255, 255, 0.08))',
+                  gap: '2px'
+                }}>
+                  {[
+                    { id: 'day', label: 'Today (24h)' },
+                    { id: 'week', label: 'Week (7d)' },
+                    { id: 'month', label: 'Month (30d)' },
+                    { id: 'year', label: 'Months' },
+                    { id: 'custom_day', label: 'Any Day 📅' }
+                  ].map(tf => {
+                    const isSelected = activityTimeframe === tf.id;
+                    return (
+                      <button
+                        key={tf.id}
+                        onClick={() => handleTimeframeChange(tf.id as any)}
+                        style={{
+                          backgroundColor: isSelected ? 'var(--accent-color, #38bdf8)' : 'transparent',
+                          color: isSelected ? '#000' : 'var(--text-muted, #94a3b8)',
+                          border: 'none',
+                          borderRadius: '5px',
+                          padding: '4px 9px',
+                          fontSize: '0.72rem',
+                          fontWeight: isSelected ? 700 : 500,
+                          cursor: 'pointer',
+                          transition: 'all 0.15s ease'
+                        }}
+                      >
+                        {tf.label}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Date Picker Bar & Active Days Quick Selector */}
+              <div style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                flexWrap: 'wrap',
+                gap: '8px',
+                padding: '7px 10px',
+                backgroundColor: 'rgba(255, 255, 255, 0.02)',
+                borderRadius: '8px',
+                border: '1px solid rgba(255, 255, 255, 0.04)'
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '5px', fontSize: '0.72rem', color: 'var(--text-muted, #94a3b8)', fontWeight: 600 }}>
+                    <Calendar size={13} color="#38bdf8" />
+                    <span>Select Specific Day:</span>
+                  </div>
+                  <input
+                    type="date"
+                    value={selectedActivityDate}
+                    max={new Date().toISOString().slice(0, 10)}
+                    onChange={(e) => handleActivityDateChange(e.target.value)}
+                    style={{
+                      padding: '3px 8px',
+                      borderRadius: '5px',
+                      border: '1px solid var(--border-color, rgba(255, 255, 255, 0.12))',
+                      backgroundColor: 'rgba(0, 0, 0, 0.4)',
+                      color: 'var(--text-primary)',
+                      fontSize: '0.72rem',
+                      outline: 'none',
+                      cursor: 'pointer'
+                    }}
+                  />
+                  {analytics?.availableDates && analytics.availableDates.length > 0 && (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '4px', marginLeft: '4px', flexWrap: 'wrap' }}>
+                      <span style={{ fontSize: '0.68rem', color: 'var(--text-muted, #94a3b8)' }}>Active:</span>
+                      {analytics.availableDates.slice(0, 4).map(d => (
+                        <button
+                          key={d.day}
+                          onClick={() => handleActivityDateChange(d.day)}
+                          style={{
+                            padding: '2px 6px',
+                            borderRadius: '4px',
+                            backgroundColor: selectedActivityDate === d.day && activityTimeframe === 'custom_day' ? 'rgba(56, 189, 248, 0.2)' : 'rgba(255, 255, 255, 0.04)',
+                            border: selectedActivityDate === d.day && activityTimeframe === 'custom_day' ? '1px solid rgba(56, 189, 248, 0.4)' : '1px solid rgba(255, 255, 255, 0.06)',
+                            color: selectedActivityDate === d.day && activityTimeframe === 'custom_day' ? '#38bdf8' : 'var(--text-muted, #94a3b8)',
+                            fontSize: '0.67rem',
+                            cursor: 'pointer',
+                            fontWeight: 600
+                          }}
+                          title={`${d.count} total requests, ${d.third_party_count} 3rd party`}
+                        >
+                          {d.day.slice(5)} ({d.count})
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {/* Legend */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: '12px', fontSize: '0.7rem' }}>
                   <span style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
                     <span style={{ width: '8px', height: '8px', backgroundColor: '#38bdf8', borderRadius: '2px' }} />
-                    Requests
+                    <span style={{ color: 'var(--text-muted, #94a3b8)' }}>Total / Internal</span>
+                  </span>
+                  <span style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                    <span style={{ width: '8px', height: '8px', backgroundColor: '#ec4899', borderRadius: '2px' }} />
+                    <span style={{ color: '#ec4899', fontWeight: 600 }}>3rd Party (VLR, etc.)</span>
                   </span>
                 </div>
               </div>
 
-              {/* Bar Chart */}
-              <div style={{ height: '200px', display: 'flex', alignItems: 'flex-end', gap: '10px', paddingBottom: '20px', position: 'relative' }}>
-                {analytics?.hourlyData && analytics.hourlyData.length > 0 ? (
-                  analytics.hourlyData.map((item, idx) => {
-                    const heightPercent = Math.max(6, Math.min(100, Math.round((item.requests / maxHourlyRequests) * 100)));
+              {/* Period Summary KPI Strip */}
+              <div style={{
+                display: 'grid',
+                gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))',
+                gap: '8px',
+                padding: '8px 10px',
+                backgroundColor: 'rgba(0, 0, 0, 0.2)',
+                borderRadius: '8px'
+              }}>
+                <div>
+                  <div style={{ fontSize: '0.65rem', color: 'var(--text-muted, #94a3b8)', textTransform: 'uppercase' }}>Period Requests</div>
+                  <div style={{ fontSize: '1.05rem', fontWeight: 700, color: 'var(--text-primary)' }}>
+                    {analytics?.timeframeSummary?.totalRequests?.toLocaleString() ?? 0}
+                  </div>
+                </div>
+                <div>
+                  <div style={{ fontSize: '0.65rem', color: 'var(--text-muted, #94a3b8)', textTransform: 'uppercase' }}>3rd Party Calls</div>
+                  <div style={{ fontSize: '1.05rem', fontWeight: 700, color: '#ec4899', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                    {analytics?.timeframeSummary?.thirdPartyRequests?.toLocaleString() ?? 0}
+                    <span style={{ fontSize: '0.68rem', opacity: 0.8 }}>({analytics?.timeframeSummary?.thirdPartyRatio || '0%'})</span>
+                  </div>
+                </div>
+                <div>
+                  <div style={{ fontSize: '0.65rem', color: 'var(--text-muted, #94a3b8)', textTransform: 'uppercase' }}>Period Bandwidth</div>
+                  <div style={{ fontSize: '1.05rem', fontWeight: 700, color: '#c084fc' }}>
+                    {formatBytes(analytics?.timeframeSummary?.totalBytes ?? 0)}
+                  </div>
+                </div>
+                <div>
+                  <div style={{ fontSize: '0.65rem', color: 'var(--text-muted, #94a3b8)', textTransform: 'uppercase' }}>Peak Activity</div>
+                  <div style={{ fontSize: '1.05rem', fontWeight: 700, color: '#f59e0b' }}>
+                    {analytics?.timeframeSummary?.peakActivity?.label || 'None'}
+                    <span style={{ fontSize: '0.68rem', color: 'var(--text-muted, #94a3b8)', marginLeft: '3px' }}>
+                      ({analytics?.timeframeSummary?.peakActivity?.requests || 0})
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Bar Chart Container */}
+              <div style={{ height: '210px', display: 'flex', alignItems: 'flex-end', gap: activeTimelineData.length > 20 ? '4px' : '8px', paddingBottom: '22px', position: 'relative' }}>
+                {activeTimelineData && activeTimelineData.length > 0 ? (
+                  activeTimelineData.map((item, idx) => {
+                    const totalReqs = item.requests || 0;
+                    const tpReqs = item.thirdPartyRequests || 0;
+                    const nonTpReqs = Math.max(0, totalReqs - tpReqs);
+
+                    const heightPercent = totalReqs > 0 ? Math.max(6, Math.min(100, Math.round((totalReqs / maxTimelineRequests) * 100))) : 0;
+                    const tpSharePercent = totalReqs > 0 ? (tpReqs / totalReqs) : 0;
+
+                    const tooltipText = `${item.label} (${item.sublabel || item.date || ''}):\n• Total Requests: ${totalReqs}\n• 3rd Party APIs: ${tpReqs}\n• Bandwidth: ${formatBytes(item.bytes)}\n• Visitors: ${item.activeUsers}`;
+
                     return (
                       <div key={idx} style={{
                         flex: 1,
@@ -1299,48 +1906,79 @@ export const AdminDashboard: React.FC = () => {
                         justifyContent: 'flex-end',
                         position: 'relative'
                       }}>
-                        <div 
-                          title={`${item.hour}: ${item.requests} reqs, ${formatBytes(item.bytes)} transferred`}
-                          style={{
+                        {totalReqs > 0 ? (
+                          <div 
+                            title={tooltipText}
+                            style={{
+                              width: '100%',
+                              maxWidth: activeTimelineData.length > 24 ? '18px' : '32px',
+                              height: `${heightPercent}%`,
+                              borderRadius: '3px 3px 0 0',
+                              transition: 'height 0.3s ease',
+                              cursor: 'pointer',
+                              position: 'relative',
+                              display: 'flex',
+                              flexDirection: 'column',
+                              overflow: 'hidden'
+                            }}
+                          >
+                            {/* 3rd Party portion (pink/magenta) */}
+                            {tpReqs > 0 && (
+                              <div style={{
+                                width: '100%',
+                                height: `${Math.round(tpSharePercent * 100)}%`,
+                                backgroundColor: '#ec4899',
+                                borderBottom: nonTpReqs > 0 ? '1px solid rgba(0,0,0,0.3)' : 'none'
+                              }} />
+                            )}
+                            {/* Internal portion (cyan) */}
+                            {nonTpReqs > 0 && (
+                              <div style={{
+                                width: '100%',
+                                flex: 1,
+                                background: 'linear-gradient(180deg, #38bdf8 0%, rgba(56, 189, 248, 0.4) 100%)'
+                              }} />
+                            )}
+
+                            {totalReqs > 0 && activeTimelineData.length <= 24 && (
+                              <span style={{
+                                position: 'absolute',
+                                top: '-18px',
+                                left: '50%',
+                                transform: 'translateX(-50%)',
+                                fontSize: '0.62rem',
+                                color: 'var(--text-muted, #94a3b8)',
+                                fontWeight: 700
+                              }}>
+                                {totalReqs}
+                              </span>
+                            )}
+                          </div>
+                        ) : (
+                          <div style={{
                             width: '100%',
-                            maxWidth: '32px',
-                            height: `${heightPercent}%`,
-                            background: 'linear-gradient(180deg, #38bdf8 0%, rgba(56, 189, 248, 0.35) 100%)',
-                            borderRadius: '3px 3px 0 0',
-                            transition: 'height 0.3s ease',
-                            cursor: 'pointer',
-                            position: 'relative'
-                          }}
-                        >
-                          {item.requests > 0 && (
-                            <span style={{
-                              position: 'absolute',
-                              top: '-18px',
-                              left: '50%',
-                              transform: 'translateX(-50%)',
-                              fontSize: '0.65rem',
-                              color: 'var(--text-muted, #94a3b8)',
-                              fontWeight: 600
-                            }}>
-                              {item.requests}
-                            </span>
-                          )}
-                        </div>
+                            maxWidth: '12px',
+                            height: '3px',
+                            backgroundColor: 'rgba(255, 255, 255, 0.05)',
+                            borderRadius: '2px'
+                          }} />
+                        )}
+
                         <span style={{
                           position: 'absolute',
                           bottom: '0',
-                          fontSize: '0.65rem',
+                          fontSize: activeTimelineData.length > 20 ? '0.58rem' : '0.65rem',
                           color: 'var(--text-muted, #94a3b8)',
                           whiteSpace: 'nowrap'
                         }}>
-                          {item.hour}
+                          {activeTimelineData.length > 24 && idx % 2 !== 0 ? '' : item.label}
                         </span>
                       </div>
                     );
                   })
                 ) : (
                   <div style={{ width: '100%', textAlign: 'center', alignSelf: 'center', color: 'var(--text-muted, #94a3b8)', fontSize: '0.8rem' }}>
-                    Collecting hourly traffic telemetry...
+                    Collecting activity telemetry for selected timeframe...
                   </div>
                 )}
               </div>
@@ -1495,6 +2133,522 @@ export const AdminDashboard: React.FC = () => {
                   <div style={{ color: 'var(--text-muted, #94a3b8)', fontSize: '0.75rem' }}>No records</div>
                 )}
               </div>
+            </div>
+            {/* 3rd Party APIs Breakdown */}
+            <div style={{
+              backgroundColor: 'var(--surface, #1e293b)',
+              border: '1px solid var(--border-color, rgba(255, 255, 255, 0.07))',
+              borderRadius: '12px',
+              padding: '1.25rem',
+              display: 'flex',
+              flexDirection: 'column'
+            }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.85rem' }}>
+                <h4 style={{ margin: 0, fontSize: '0.88rem', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '8px', color: '#ec4899' }}>
+                  <Zap size={15} color="#ec4899" />
+                  3rd Party Integrations
+                </h4>
+                <button
+                  onClick={() => setActiveTab('thirdparty')}
+                  style={{
+                    fontSize: '0.7rem',
+                    color: '#ec4899',
+                    backgroundColor: 'rgba(236, 72, 153, 0.1)',
+                    border: '1px solid rgba(236, 72, 153, 0.3)',
+                    borderRadius: '4px',
+                    padding: '2px 8px',
+                    cursor: 'pointer',
+                    fontWeight: 600,
+                    transition: 'all 0.15s ease'
+                  }}
+                >
+                  View Details &rarr;
+                </button>
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', flex: 1, justifyContent: 'center' }}>
+                {analytics?.thirdPartyStats?.services && analytics.thirdPartyStats.services.length > 0 ? (
+                  analytics.thirdPartyStats.services.map((svc) => (
+                    <div key={svc.name || svc.service} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: '0.78rem' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                        <span style={{ width: '6px', height: '6px', borderRadius: '50%', backgroundColor: '#ec4899' }} />
+                        <span style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{svc.name || svc.service}</span>
+                      </div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                        <span style={{ fontSize: '0.74rem', color: '#ec4899', fontWeight: 700 }}>
+                          {svc.requests.toLocaleString()} reqs
+                        </span>
+                        <span style={{ fontSize: '0.68rem', color: 'var(--text-muted, #94a3b8)' }}>
+                          ({formatBytes(svc.bytes)})
+                        </span>
+                      </div>
+                    </div>
+                  ))
+                ) : (
+                  <div style={{ color: 'var(--text-muted, #94a3b8)', fontSize: '0.75rem', textAlign: 'center', padding: '8px 0' }}>
+                    No 3rd party calls logged in this period
+                  </div>
+                )}
+                {analytics?.thirdPartyStats?.totalRequests ? (
+                  <div style={{ marginTop: '4px', paddingTop: '6px', borderTop: '1px solid rgba(255, 255, 255, 0.05)', display: 'flex', justifyContent: 'space-between', fontSize: '0.72rem', color: 'var(--text-muted, #94a3b8)' }}>
+                    <span>Total 3rd party share:</span>
+                    <span style={{ color: '#ec4899', fontWeight: 700 }}>{analytics?.timeframeSummary?.thirdPartyRatio || '0%'}</span>
+                  </div>
+                ) : null}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* TAB: 3RD PARTY EXTERNAL APIS & SCRAPERS */}
+      {/* ========================================================================= */}
+      {activeTab === 'thirdparty' && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+          {/* Header Card */}
+          <div style={{
+            backgroundColor: 'var(--surface, #1e293b)',
+            border: '1px solid var(--border-color, rgba(255, 255, 255, 0.08))',
+            borderRadius: '12px',
+            padding: '1.25rem 1.5rem',
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            flexWrap: 'wrap',
+            gap: '12px'
+          }}>
+            <div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <Zap size={20} color="#ec4899" />
+                <h3 style={{ margin: 0, fontSize: '1.1rem', fontWeight: 600 }}>Third-Party APIs & Scrapers</h3>
+                <span style={{
+                  padding: '2px 8px',
+                  borderRadius: '10px',
+                  backgroundColor: 'rgba(236, 72, 153, 0.15)',
+                  border: '1px solid rgba(236, 72, 153, 0.3)',
+                  color: '#ec4899',
+                  fontSize: '0.72rem',
+                  fontWeight: 700
+                }}>
+                  Upstream Telemetry
+                </span>
+              </div>
+              <p style={{ margin: '4px 0 0', color: 'var(--text-muted, #94a3b8)', fontSize: '0.76rem' }}>
+                Performance tracking, latency metrics, and health tests for external services: VLR.gg (Esports Scraper), Trakt.tv, TheMovieDB, and OpenSubtitles.
+              </p>
+            </div>
+
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+              <button
+                onClick={handlePingThirdParty}
+                disabled={thirdPartyPingLoading}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  padding: '7px 14px',
+                  borderRadius: '6px',
+                  backgroundColor: 'rgba(236, 72, 153, 0.15)',
+                  border: '1px solid rgba(236, 72, 153, 0.4)',
+                  color: '#ec4899',
+                  fontSize: '0.78rem',
+                  fontWeight: 600,
+                  cursor: thirdPartyPingLoading ? 'not-allowed' : 'pointer',
+                  opacity: thirdPartyPingLoading ? 0.7 : 1,
+                  transition: 'all 0.15s ease'
+                }}
+                title="Test live connectivity and response times of upstream providers"
+              >
+                <RefreshCw size={13} className={thirdPartyPingLoading ? 'animate-spin' : ''} />
+                <span>{thirdPartyPingLoading ? 'Pinging Providers...' : 'Ping Providers Now'}</span>
+              </button>
+
+              <button
+                onClick={() => {
+                  setSelectedCategories(['3rdparty']);
+                  setSelectedProvider('all');
+                  setActiveTab('traffic');
+                }}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  padding: '7px 14px',
+                  borderRadius: '6px',
+                  backgroundColor: 'rgba(255, 255, 255, 0.05)',
+                  border: '1px solid var(--border-color, rgba(255, 255, 255, 0.1))',
+                  color: 'var(--text-primary)',
+                  fontSize: '0.78rem',
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                  transition: 'all 0.15s ease'
+                }}
+              >
+                <Radio size={13} color="#38bdf8" />
+                <span>View in Traffic Feed</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Top KPI Ribbon */}
+          <div style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))',
+            gap: '1rem'
+          }}>
+            <div style={{
+              backgroundColor: 'var(--surface, #1e293b)',
+              border: '1px solid var(--border-color, rgba(255, 255, 255, 0.07))',
+              borderRadius: '10px',
+              padding: '1rem 1.15rem'
+            }}>
+              <div style={{ fontSize: '0.7rem', color: 'var(--text-muted, #94a3b8)', textTransform: 'uppercase', fontWeight: 600 }}>Total 3rd Party Calls</div>
+              <div style={{ fontSize: '1.4rem', fontWeight: 700, color: '#ec4899', marginTop: '4px' }}>
+                {analytics?.thirdPartyStats?.totalRequests?.toLocaleString() ?? 0}
+              </div>
+              <div style={{ fontSize: '0.72rem', color: 'var(--text-muted, #94a3b8)', marginTop: '2px' }}>
+                {analytics?.timeframeSummary?.thirdPartyRatio || '0%'} of all requests
+              </div>
+            </div>
+
+            <div style={{
+              backgroundColor: 'var(--surface, #1e293b)',
+              border: '1px solid var(--border-color, rgba(255, 255, 255, 0.07))',
+              borderRadius: '10px',
+              padding: '1rem 1.15rem'
+            }}>
+              <div style={{ fontSize: '0.7rem', color: 'var(--text-muted, #94a3b8)', textTransform: 'uppercase', fontWeight: 600 }}>Data Transferred</div>
+              <div style={{ fontSize: '1.4rem', fontWeight: 700, color: '#c084fc', marginTop: '4px' }}>
+                {formatBytes(analytics?.thirdPartyStats?.totalBytes ?? 0)}
+              </div>
+              <div style={{ fontSize: '0.72rem', color: 'var(--text-muted, #94a3b8)', marginTop: '2px' }}>
+                Upstream payload volume
+              </div>
+            </div>
+
+            <div style={{
+              backgroundColor: 'var(--surface, #1e293b)',
+              border: '1px solid var(--border-color, rgba(255, 255, 255, 0.07))',
+              borderRadius: '10px',
+              padding: '1rem 1.15rem'
+            }}>
+              <div style={{ fontSize: '0.7rem', color: 'var(--text-muted, #94a3b8)', textTransform: 'uppercase', fontWeight: 600 }}>Average Latency</div>
+              <div style={{ fontSize: '1.4rem', fontWeight: 700, color: '#fbbf24', marginTop: '4px' }}>
+                {analytics?.thirdPartyStats?.avgLatencyMs ?? 0} <span style={{ fontSize: '0.9rem', fontWeight: 500 }}>ms</span>
+              </div>
+              <div style={{ fontSize: '0.72rem', color: 'var(--text-muted, #94a3b8)', marginTop: '2px' }}>
+                Scraping & proxy round-trip
+              </div>
+            </div>
+
+            <div style={{
+              backgroundColor: 'var(--surface, #1e293b)',
+              border: '1px solid var(--border-color, rgba(255, 255, 255, 0.07))',
+              borderRadius: '10px',
+              padding: '1rem 1.15rem'
+            }}>
+              <div style={{ fontSize: '0.7rem', color: 'var(--text-muted, #94a3b8)', textTransform: 'uppercase', fontWeight: 600 }}>Active Endpoints</div>
+              <div style={{ fontSize: '1.4rem', fontWeight: 700, color: '#38bdf8', marginTop: '4px' }}>
+                {analytics?.thirdPartyStats?.endpoints?.length ?? 0}
+              </div>
+              <div style={{ fontSize: '0.72rem', color: 'var(--text-muted, #94a3b8)', marginTop: '2px' }}>
+                Unique proxied paths
+              </div>
+            </div>
+          </div>
+
+          {/* Upstream Providers Grid */}
+          <div style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))',
+            gap: '1.25rem'
+          }}>
+            {[
+              {
+                id: 'vlr',
+                name: 'VLR.gg',
+                tag: 'Esports Scraper',
+                desc: 'Scrapes live match scores, tournament brackets, and team telemetry from vlr.gg',
+                color: '#ec4899',
+                pingName: 'VLR.gg (Esports Scraper)'
+              },
+              {
+                id: 'trakt',
+                name: 'Trakt.tv',
+                tag: 'Cloud Sync & Scrobble',
+                desc: 'Synchronizes watch history, ratings, and playback scrobbling with Trakt cloud',
+                color: '#ef4444',
+                pingName: 'Trakt.tv (Scrobbler & Sync)'
+              },
+              {
+                id: 'tmdb',
+                name: 'TheMovieDB',
+                tag: 'Metadata & Posters',
+                desc: 'Fetches high-resolution poster art, episode titles, cast bios, and metadata',
+                color: '#38bdf8',
+                pingName: 'TheMovieDB (Metadata & Posters)'
+              },
+              {
+                id: 'opensubtitles',
+                name: 'OpenSubtitles',
+                tag: 'Subtitle Downloader',
+                desc: 'Multi-language subtitle search, synchronizations, and VTT / SRT downloads',
+                color: '#10b981',
+                pingName: 'OpenSubtitles'
+              }
+            ].map((provider) => {
+              const svcStats = analytics?.thirdPartyStats?.services?.find(
+                s => (s.name || s.service || '').toLowerCase().includes(provider.id)
+              );
+              const pingResult = thirdPartyPingResults?.find(
+                p => p.name.toLowerCase().includes(provider.id)
+              );
+
+              return (
+                <div key={provider.id} style={{
+                  backgroundColor: 'var(--surface, #1e293b)',
+                  border: '1px solid var(--border-color, rgba(255, 255, 255, 0.08))',
+                  borderRadius: '12px',
+                  padding: '1.25rem',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: '12px'
+                }}>
+                  {/* Provider Header */}
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                    <div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <span style={{ fontSize: '1rem', fontWeight: 700, color: 'var(--text-primary)' }}>{provider.name}</span>
+                        <span style={{
+                          fontSize: '0.66rem',
+                          fontWeight: 700,
+                          padding: '2px 6px',
+                          borderRadius: '4px',
+                          backgroundColor: `${provider.color}18`,
+                          border: `1px solid ${provider.color}40`,
+                          color: provider.color
+                        }}>
+                          {provider.tag}
+                        </span>
+                      </div>
+                      <p style={{ margin: '4px 0 0', fontSize: '0.72rem', color: 'var(--text-muted, #94a3b8)', lineHeight: '1.3' }}>
+                        {provider.desc}
+                      </p>
+                    </div>
+
+                    {/* Ping Badge if available */}
+                    {pingResult && (
+                      <span style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '4px',
+                        padding: '2px 7px',
+                        borderRadius: '10px',
+                        fontSize: '0.68rem',
+                        fontWeight: 600,
+                        backgroundColor: pingResult.status === 'online' ? 'rgba(34, 197, 94, 0.15)' : 'rgba(239, 68, 68, 0.15)',
+                        color: pingResult.status === 'online' ? '#4ade80' : '#f87171',
+                        border: `1px solid ${pingResult.status === 'online' ? 'rgba(34, 197, 94, 0.3)' : 'rgba(239, 68, 68, 0.3)'}`
+                      }}>
+                        <span style={{ width: '5px', height: '5px', borderRadius: '50%', backgroundColor: pingResult.status === 'online' ? '#22c55e' : '#ef4444' }} />
+                        {pingResult.status === 'online' ? `${pingResult.latencyMs}ms` : 'Error'}
+                      </span>
+                    )}
+                  </div>
+
+                  {/* Provider Metrics Strip */}
+                  <div style={{
+                    display: 'grid',
+                    gridTemplateColumns: 'repeat(3, 1fr)',
+                    gap: '8px',
+                    padding: '8px',
+                    backgroundColor: 'rgba(0, 0, 0, 0.2)',
+                    borderRadius: '8px',
+                    textAlign: 'center'
+                  }}>
+                    <div>
+                      <div style={{ fontSize: '0.64rem', color: 'var(--text-muted, #94a3b8)', textTransform: 'uppercase' }}>Requests</div>
+                      <div style={{ fontSize: '0.95rem', fontWeight: 700, color: 'var(--text-primary)', marginTop: '2px' }}>
+                        {svcStats?.requests?.toLocaleString() ?? 0}
+                      </div>
+                    </div>
+                    <div>
+                      <div style={{ fontSize: '0.64rem', color: 'var(--text-muted, #94a3b8)', textTransform: 'uppercase' }}>Bandwidth</div>
+                      <div style={{ fontSize: '0.95rem', fontWeight: 700, color: '#c084fc', marginTop: '2px' }}>
+                        {formatBytes(svcStats?.bytes ?? 0)}
+                      </div>
+                    </div>
+                    <div>
+                      <div style={{ fontSize: '0.64rem', color: 'var(--text-muted, #94a3b8)', textTransform: 'uppercase' }}>Avg Latency</div>
+                      <div style={{ fontSize: '0.95rem', fontWeight: 700, color: '#fbbf24', marginTop: '2px' }}>
+                        {svcStats?.avgLatencyMs ? `${svcStats.avgLatencyMs}ms` : '—'}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Action Link */}
+                  <button
+                    onClick={() => {
+                      setSelectedProvider(provider.id);
+                      setSelectedCategories(['3rdparty']);
+                      setActiveTab('traffic');
+                    }}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      gap: '5px',
+                      padding: '6px 12px',
+                      borderRadius: '6px',
+                      backgroundColor: `${provider.color}12`,
+                      border: `1px solid ${provider.color}35`,
+                      color: provider.color,
+                      fontSize: '0.74rem',
+                      fontWeight: 600,
+                      cursor: 'pointer',
+                      transition: 'all 0.15s ease'
+                    }}
+                  >
+                    <span>Filter {provider.name} in Traffic Feed</span>
+                    <ChevronRight size={12} />
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+
+          {/* Endpoints Detailed Table */}
+          <div style={{
+            backgroundColor: 'var(--surface, #1e293b)',
+            border: '1px solid var(--border-color, rgba(255, 255, 255, 0.08))',
+            borderRadius: '12px',
+            overflow: 'hidden'
+          }}>
+            <div style={{
+              padding: '1.15rem 1.5rem',
+              borderBottom: '1px solid var(--border-color, rgba(255, 255, 255, 0.08))',
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center'
+            }}>
+              <div>
+                <h3 style={{ margin: 0, fontSize: '0.98rem', fontWeight: 600 }}>External Endpoint Invocations</h3>
+                <p style={{ margin: '2px 0 0', color: 'var(--text-muted, #94a3b8)', fontSize: '0.74rem' }}>
+                  Granular performance per 3rd-party proxied route
+                </p>
+              </div>
+              <span style={{ fontSize: '0.72rem', color: 'var(--text-muted, #94a3b8)' }}>
+                {analytics?.thirdPartyStats?.endpoints?.length ?? 0} endpoints tracked
+              </span>
+            </div>
+
+            <div style={{ overflowX: 'auto' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.8rem' }}>
+                <thead>
+                  <tr style={{
+                    backgroundColor: 'rgba(255, 255, 255, 0.02)',
+                    color: 'var(--text-muted, #94a3b8)',
+                    borderBottom: '1px solid var(--border-color, rgba(255, 255, 255, 0.06))',
+                    fontSize: '0.7rem',
+                    textTransform: 'uppercase',
+                    letterSpacing: '0.04em'
+                  }}>
+                    <th style={{ padding: '9px 14px' }}>Service</th>
+                    <th style={{ padding: '9px 14px' }}>Proxied Endpoint</th>
+                    <th style={{ padding: '9px 14px' }}>Requests</th>
+                    <th style={{ padding: '9px 14px' }}>Data Volume</th>
+                    <th style={{ padding: '9px 14px' }}>Avg Latency</th>
+                    <th style={{ padding: '9px 14px' }}>Errors</th>
+                    <th style={{ padding: '9px 14px' }}>Last Invoked</th>
+                    <th style={{ padding: '9px 14px', textAlign: 'right' }}>Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {analytics?.thirdPartyStats?.endpoints && analytics.thirdPartyStats.endpoints.length > 0 ? (
+                    analytics.thirdPartyStats.endpoints.map((ep) => {
+                      const isVlr = ep.service.toLowerCase().includes('vlr');
+                      const serviceColor = isVlr ? '#ec4899' : ep.service.toLowerCase().includes('trakt') ? '#ef4444' : '#38bdf8';
+                      const isHighLatency = (ep.avgLatencyMs || 0) > 1000;
+
+                      return (
+                        <tr key={ep.path} style={{
+                          borderBottom: '1px solid var(--border-color, rgba(255, 255, 255, 0.04))',
+                          transition: 'background-color 0.15s ease'
+                        }}>
+                          <td style={{ padding: '9px 14px' }}>
+                            <span style={{
+                              padding: '2px 6px',
+                              borderRadius: '4px',
+                              backgroundColor: `${serviceColor}18`,
+                              border: `1px solid ${serviceColor}35`,
+                              color: serviceColor,
+                              fontSize: '0.7rem',
+                              fontWeight: 700
+                            }}>
+                              {ep.service}
+                            </span>
+                          </td>
+                          <td style={{ padding: '9px 14px', fontFamily: 'monospace' }}>
+                            <span style={{ color: 'var(--text-primary)', fontWeight: 600 }}>{ep.path}</span>
+                          </td>
+                          <td style={{ padding: '9px 14px', fontWeight: 600 }}>
+                            {ep.requests.toLocaleString()}
+                          </td>
+                          <td style={{ padding: '9px 14px', color: '#c084fc' }}>
+                            {formatBytes(ep.bytes)}
+                          </td>
+                          <td style={{ padding: '9px 14px' }}>
+                            <span style={{
+                              color: isHighLatency ? '#f87171' : (ep.avgLatencyMs > 300 ? '#fbbf24' : '#4ade80'),
+                              fontWeight: 600
+                            }}>
+                              {ep.avgLatencyMs} ms
+                            </span>
+                          </td>
+                          <td style={{ padding: '9px 14px' }}>
+                            {ep.errorCount > 0 ? (
+                              <span style={{ color: '#f87171', fontWeight: 600 }}>{ep.errorCount}</span>
+                            ) : (
+                              <span style={{ color: 'var(--text-muted, #94a3b8)' }}>0</span>
+                            )}
+                          </td>
+                          <td style={{ padding: '9px 14px', color: 'var(--text-muted, #94a3b8)', fontSize: '0.74rem' }}>
+                            {ep.lastCalled ? String(ep.lastCalled).slice(0, 19).replace('T', ' ') : '—'}
+                          </td>
+                          <td style={{ padding: '9px 14px', textAlign: 'right' }}>
+                            <button
+                              onClick={() => {
+                                setTrafficSearchQuery(ep.path);
+                                setSelectedCategories(['3rdparty']);
+                                setActiveTab('traffic');
+                              }}
+                              style={{
+                                padding: '3px 8px',
+                                borderRadius: '4px',
+                                backgroundColor: 'rgba(56, 189, 248, 0.1)',
+                                border: '1px solid rgba(56, 189, 248, 0.25)',
+                                color: 'var(--accent-color, #38bdf8)',
+                                fontSize: '0.7rem',
+                                fontWeight: 600,
+                                cursor: 'pointer'
+                              }}
+                              title="Filter Traffic feed to this endpoint"
+                            >
+                              Inspect Traffic
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })
+                  ) : (
+                    <tr>
+                      <td colSpan={8} style={{ padding: '2rem 1rem', textAlign: 'center', color: 'var(--text-muted, #94a3b8)' }}>
+                        No third-party endpoint invocations captured for the current timeframe.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
             </div>
           </div>
         </div>
@@ -1813,42 +2967,260 @@ export const AdminDashboard: React.FC = () => {
               </div>
             </div>
 
-            {/* Quick Filter Strip (Always Visible) */}
+            {/* Quick Presets Strip */}
+            <div style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px',
+              flexWrap: 'wrap',
+              paddingBottom: '8px',
+              borderBottom: '1px solid rgba(255, 255, 255, 0.05)'
+            }}>
+              <span style={{ fontSize: '0.68rem', color: 'var(--text-muted, #94a3b8)', fontWeight: 700, textTransform: 'uppercase', marginRight: '4px' }}>
+                Presets:
+              </span>
+              {[
+                { id: 'all', label: 'All Traffic' },
+                { id: '3rdparty', label: '⚡ 3rd Party (VLR/Trakt)', color: '#ec4899' },
+                { id: 'errors', label: '⚠️ Errors (4xx/5xx)', color: '#f87171' },
+                { id: 'slow', label: '⏱️ Slow (>200ms)', color: '#fbbf24' },
+                { id: 'stream', label: '🎬 Media Streams', color: '#c084fc' },
+                { id: 'today', label: '📅 Today Only', color: '#38bdf8' }
+              ].map(p => {
+                const isActive = activeQuickPreset === p.id;
+                return (
+                  <button
+                    key={p.id}
+                    onClick={() => applyQuickPreset(p.id as any)}
+                    style={{
+                      padding: '4px 10px',
+                      borderRadius: '6px',
+                      fontSize: '0.72rem',
+                      fontWeight: isActive ? 700 : 500,
+                      backgroundColor: isActive 
+                        ? (p.color ? `${p.color}25` : 'rgba(56, 189, 248, 0.2)')
+                        : 'rgba(255, 255, 255, 0.04)',
+                      border: isActive 
+                        ? (p.color ? `1px solid ${p.color}60` : '1px solid rgba(56, 189, 248, 0.4)')
+                        : '1px solid var(--border-color, rgba(255, 255, 255, 0.06))',
+                      color: isActive ? (p.color || '#38bdf8') : 'var(--text-muted, #94a3b8)',
+                      cursor: 'pointer',
+                      transition: 'all 0.15s ease'
+                    }}
+                  >
+                    {p.label}
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* Granular Filters & Scoping Strip */}
             <div style={{
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'space-between',
               gap: '10px',
               flexWrap: 'wrap',
-              paddingTop: '6px'
+              paddingTop: '2px'
             }}>
-              {/* Quick noise reduction & flags */}
-              <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
-                <span style={{ fontSize: '0.7rem', color: 'var(--text-muted, #94a3b8)', marginRight: '2px', fontWeight: 600, textTransform: 'uppercase' }}>
-                  Quick Filters:
-                </span>
+              {/* Selectors Row */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                {/* Provider Filter */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                  <select
+                    value={selectedProvider}
+                    onChange={e => {
+                      setSelectedProvider(e.target.value);
+                      setActiveQuickPreset('all');
+                    }}
+                    style={{
+                      backgroundColor: selectedProvider !== 'all' ? 'rgba(236, 72, 153, 0.15)' : 'rgba(0, 0, 0, 0.25)',
+                      border: selectedProvider !== 'all' ? '1px solid rgba(236, 72, 153, 0.4)' : '1px solid var(--border-color, rgba(255, 255, 255, 0.12))',
+                      color: selectedProvider !== 'all' ? '#ec4899' : 'var(--text-primary)',
+                      borderRadius: '6px',
+                      padding: '5px 8px',
+                      fontSize: '0.74rem',
+                      fontWeight: selectedProvider !== 'all' ? 700 : 500,
+                      outline: 'none',
+                      cursor: 'pointer'
+                    }}
+                    title="Filter by third-party upstream provider"
+                  >
+                    <option value="all">🌐 All Providers</option>
+                    <option value="vlr">⚡ VLR.gg (Esports Scraper)</option>
+                    <option value="trakt">📺 Trakt.tv (Sync)</option>
+                    <option value="tmdb">🎬 TheMovieDB (Posters)</option>
+                    <option value="opensubtitles">💬 OpenSubtitles</option>
+                  </select>
+                </div>
 
+                {/* Date Filter & Custom Day */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
+                  <select
+                    value={trafficDateFilter}
+                    onChange={e => {
+                      setTrafficDateFilter(e.target.value as any);
+                      setActiveQuickPreset('all');
+                    }}
+                    style={{
+                      backgroundColor: trafficDateFilter !== 'all' ? 'rgba(56, 189, 248, 0.15)' : 'rgba(0, 0, 0, 0.25)',
+                      border: trafficDateFilter !== 'all' ? '1px solid rgba(56, 189, 248, 0.4)' : '1px solid var(--border-color, rgba(255, 255, 255, 0.12))',
+                      color: trafficDateFilter !== 'all' ? '#38bdf8' : 'var(--text-primary)',
+                      borderRadius: '6px',
+                      padding: '5px 8px',
+                      fontSize: '0.74rem',
+                      fontWeight: trafficDateFilter !== 'all' ? 700 : 500,
+                      outline: 'none',
+                      cursor: 'pointer'
+                    }}
+                    title="Filter database traffic by day"
+                  >
+                    <option value="all">📅 All Dates</option>
+                    <option value="today">📅 Today</option>
+                    <option value="yesterday">📅 Yesterday</option>
+                    <option value="custom">📅 Specific Day...</option>
+                  </select>
+
+                  {trafficDateFilter === 'custom' && (
+                    <input
+                      type="date"
+                      value={trafficCustomDate}
+                      onChange={e => setTrafficCustomDate(e.target.value)}
+                      style={{
+                        backgroundColor: 'rgba(0, 0, 0, 0.3)',
+                        border: '1px solid rgba(56, 189, 248, 0.4)',
+                        color: '#38bdf8',
+                        borderRadius: '6px',
+                        padding: '4px 6px',
+                        fontSize: '0.74rem',
+                        outline: 'none',
+                        cursor: 'pointer'
+                      }}
+                      title="Select specific calendar day to query"
+                    />
+                  )}
+                </div>
+
+                {/* Latency Filter */}
+                <select
+                  value={selectedLatencyFilter}
+                  onChange={e => {
+                    setSelectedLatencyFilter(e.target.value as any);
+                    setActiveQuickPreset('all');
+                  }}
+                  style={{
+                    backgroundColor: selectedLatencyFilter !== 'all' ? 'rgba(245, 158, 11, 0.15)' : 'rgba(0, 0, 0, 0.25)',
+                    border: selectedLatencyFilter !== 'all' ? '1px solid rgba(245, 158, 11, 0.4)' : '1px solid var(--border-color, rgba(255, 255, 255, 0.12))',
+                    color: selectedLatencyFilter !== 'all' ? '#fbbf24' : 'var(--text-primary)',
+                    borderRadius: '6px',
+                    padding: '5px 8px',
+                    fontSize: '0.74rem',
+                    fontWeight: selectedLatencyFilter !== 'all' ? 700 : 500,
+                    outline: 'none',
+                    cursor: 'pointer'
+                  }}
+                  title="Filter by response latency"
+                >
+                  <option value="all">⏱️ All Latencies</option>
+                  <option value="fast">⚡ Fast (&lt; 50ms)</option>
+                  <option value="normal">⏱️ Normal (50 - 200ms)</option>
+                  <option value="slow">🐢 Slow (200 - 1000ms)</option>
+                  <option value="veryslow">⚠️ Very Slow (&gt; 1000ms)</option>
+                </select>
+
+                {/* Device Filter */}
+                <select
+                  value={selectedDeviceFilter}
+                  onChange={e => setSelectedDeviceFilter(e.target.value)}
+                  style={{
+                    backgroundColor: selectedDeviceFilter !== 'all' ? 'rgba(168, 85, 247, 0.15)' : 'rgba(0, 0, 0, 0.25)',
+                    border: selectedDeviceFilter !== 'all' ? '1px solid rgba(168, 85, 247, 0.4)' : '1px solid var(--border-color, rgba(255, 255, 255, 0.12))',
+                    color: selectedDeviceFilter !== 'all' ? '#c084fc' : 'var(--text-primary)',
+                    borderRadius: '6px',
+                    padding: '5px 8px',
+                    fontSize: '0.74rem',
+                    fontWeight: selectedDeviceFilter !== 'all' ? 700 : 500,
+                    outline: 'none',
+                    cursor: 'pointer'
+                  }}
+                  title="Filter by client device type"
+                >
+                  <option value="all">📱 All Devices</option>
+                  <option value="Desktop">💻 Desktop</option>
+                  <option value="Mobile">📱 Mobile</option>
+                  <option value="Tablet">📟 Tablet</option>
+                </select>
+
+                {/* Sort Order */}
+                <select
+                  value={trafficSortOrder}
+                  onChange={e => setTrafficSortOrder(e.target.value as any)}
+                  style={{
+                    backgroundColor: 'rgba(0, 0, 0, 0.25)',
+                    border: '1px solid var(--border-color, rgba(255, 255, 255, 0.12))',
+                    color: 'var(--text-muted, #94a3b8)',
+                    borderRadius: '6px',
+                    padding: '5px 8px',
+                    fontSize: '0.74rem',
+                    outline: 'none',
+                    cursor: 'pointer'
+                  }}
+                  title="Order results by criteria"
+                >
+                  <option value="newest">Sort: Newest First</option>
+                  <option value="oldest">Sort: Oldest First</option>
+                  <option value="slowest">Sort: Slowest Latency</option>
+                  <option value="fastest">Sort: Fastest Latency</option>
+                  <option value="largest">Sort: Largest Payload</option>
+                </select>
+
+                {/* Limit selector */}
+                <select
+                  value={trafficLimit}
+                  onChange={e => setTrafficLimit(Number(e.target.value))}
+                  style={{
+                    backgroundColor: 'rgba(0, 0, 0, 0.25)',
+                    border: '1px solid var(--border-color, rgba(255, 255, 255, 0.12))',
+                    color: 'var(--text-muted, #94a3b8)',
+                    borderRadius: '6px',
+                    padding: '5px 8px',
+                    fontSize: '0.74rem',
+                    outline: 'none',
+                    cursor: 'pointer'
+                  }}
+                  title="Rows fetched from database"
+                >
+                  <option value={50}>50 rows</option>
+                  <option value={150}>150 rows</option>
+                  <option value={300}>300 rows</option>
+                  <option value={500}>500 rows</option>
+                  <option value={1000}>1000 rows</option>
+                </select>
+              </div>
+
+              {/* Quick noise reduction toggles */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
                 {/* Hide Heartbeats */}
                 <button
                   onClick={() => setHideHeartbeat(prev => !prev)}
                   style={{
                     display: 'flex',
                     alignItems: 'center',
-                    gap: '5px',
+                    gap: '4px',
                     backgroundColor: hideHeartbeat ? 'rgba(34, 197, 94, 0.12)' : 'rgba(255, 255, 255, 0.04)',
                     border: hideHeartbeat ? '1px solid rgba(34, 197, 94, 0.35)' : '1px solid var(--border-color, rgba(255, 255, 255, 0.08))',
                     color: hideHeartbeat ? '#4ade80' : 'var(--text-muted, #94a3b8)',
                     borderRadius: '6px',
-                    padding: '4px 9px',
+                    padding: '4px 8px',
                     cursor: 'pointer',
-                    fontSize: '0.72rem',
+                    fontSize: '0.71rem',
                     fontWeight: 600,
                     transition: 'all 0.15s ease'
                   }}
                   title="Hide telemetry polling from /api/heartbeat"
                 >
-                  {hideHeartbeat ? <Check size={11} strokeWidth={3} /> : <span style={{ width: '11px', height: '11px', borderRadius: '50%', border: '1px solid currentColor', display: 'inline-block' }} />}
-                  Hide Heartbeats
+                  {hideHeartbeat ? <Check size={10} strokeWidth={3} /> : <span style={{ width: '10px', height: '10px', borderRadius: '50%', border: '1px solid currentColor', display: 'inline-block' }} />}
+                  Heartbeats
                 </button>
 
                 {/* Hide Logs */}
@@ -1857,21 +3229,21 @@ export const AdminDashboard: React.FC = () => {
                   style={{
                     display: 'flex',
                     alignItems: 'center',
-                    gap: '5px',
+                    gap: '4px',
                     backgroundColor: hideLog ? 'rgba(34, 197, 94, 0.12)' : 'rgba(255, 255, 255, 0.04)',
                     border: hideLog ? '1px solid rgba(34, 197, 94, 0.35)' : '1px solid var(--border-color, rgba(255, 255, 255, 0.08))',
                     color: hideLog ? '#4ade80' : 'var(--text-muted, #94a3b8)',
                     borderRadius: '6px',
-                    padding: '4px 9px',
+                    padding: '4px 8px',
                     cursor: 'pointer',
-                    fontSize: '0.72rem',
+                    fontSize: '0.71rem',
                     fontWeight: 600,
                     transition: 'all 0.15s ease'
                   }}
                   title="Hide client event logs from /api/log"
                 >
-                  {hideLog ? <Check size={11} strokeWidth={3} /> : <span style={{ width: '11px', height: '11px', borderRadius: '50%', border: '1px solid currentColor', display: 'inline-block' }} />}
-                  Hide Logs
+                  {hideLog ? <Check size={10} strokeWidth={3} /> : <span style={{ width: '10px', height: '10px', borderRadius: '50%', border: '1px solid currentColor', display: 'inline-block' }} />}
+                  Logs
                 </button>
 
                 {/* Errors Only */}
@@ -1880,21 +3252,21 @@ export const AdminDashboard: React.FC = () => {
                   style={{
                     display: 'flex',
                     alignItems: 'center',
-                    gap: '5px',
+                    gap: '4px',
                     backgroundColor: errorsOnly ? 'rgba(239, 68, 68, 0.16)' : 'rgba(255, 255, 255, 0.04)',
                     border: errorsOnly ? '1px solid rgba(239, 68, 68, 0.4)' : '1px solid var(--border-color, rgba(255, 255, 255, 0.08))',
                     color: errorsOnly ? '#f87171' : 'var(--text-muted, #94a3b8)',
                     borderRadius: '6px',
-                    padding: '4px 9px',
+                    padding: '4px 8px',
                     cursor: 'pointer',
-                    fontSize: '0.72rem',
+                    fontSize: '0.71rem',
                     fontWeight: 600,
                     transition: 'all 0.15s ease'
                   }}
                   title="Show only 4xx and 5xx responses"
                 >
                   <AlertTriangle size={11} />
-                  Errors Only
+                  Errors
                 </button>
 
                 {/* Slow Only */}
@@ -1903,14 +3275,14 @@ export const AdminDashboard: React.FC = () => {
                   style={{
                     display: 'flex',
                     alignItems: 'center',
-                    gap: '5px',
+                    gap: '4px',
                     backgroundColor: slowOnly ? 'rgba(245, 158, 11, 0.16)' : 'rgba(255, 255, 255, 0.04)',
                     border: slowOnly ? '1px solid rgba(245, 158, 11, 0.4)' : '1px solid var(--border-color, rgba(255, 255, 255, 0.08))',
                     color: slowOnly ? '#fbbf24' : 'var(--text-muted, #94a3b8)',
                     borderRadius: '6px',
-                    padding: '4px 9px',
+                    padding: '4px 8px',
                     cursor: 'pointer',
-                    fontSize: '0.72rem',
+                    fontSize: '0.71rem',
                     fontWeight: 600,
                     transition: 'all 0.15s ease'
                   }}
@@ -1922,7 +3294,7 @@ export const AdminDashboard: React.FC = () => {
               </div>
 
               {/* Search with Negation */}
-              <div style={{ position: 'relative', minWidth: '240px', flex: '1 1 240px', maxWidth: '380px' }}>
+              <div style={{ position: 'relative', minWidth: '220px', flex: '1 1 220px', maxWidth: '340px' }}>
                 <input
                   type="text"
                   placeholder="Search path, IP, method... (!word to exclude)"
@@ -2284,29 +3656,67 @@ export const AdminDashboard: React.FC = () => {
                           </span>
                         </td>
                         <td style={{ padding: '7px 12px' }}>
-                          <span style={{
-                            padding: '1px 5px',
-                            borderRadius: '3px',
-                            backgroundColor: `${categoryColor}15`,
-                            color: categoryColor,
-                            fontSize: '0.66rem',
-                            fontWeight: 600,
-                            textTransform: 'uppercase'
-                          }}>
-                            {category}
-                          </span>
+                          {isThirdPartyPath(log.path) ? (
+                            <span style={{
+                              padding: '2px 6px',
+                              borderRadius: '4px',
+                              backgroundColor: 'rgba(236, 72, 153, 0.18)',
+                              border: '1px solid rgba(236, 72, 153, 0.4)',
+                              color: '#ec4899',
+                              fontSize: '0.66rem',
+                              fontWeight: 700,
+                              whiteSpace: 'nowrap'
+                            }}>
+                              ⚡ {getThirdPartyService(log.path)}
+                            </span>
+                          ) : (
+                            <span style={{
+                              padding: '1px 5px',
+                              borderRadius: '3px',
+                              backgroundColor: `${categoryColor}15`,
+                              color: categoryColor,
+                              fontSize: '0.66rem',
+                              fontWeight: 600,
+                              textTransform: 'uppercase'
+                            }}>
+                              {category}
+                            </span>
+                          )}
                         </td>
                         <td style={{ padding: '7px 12px', color: 'var(--text-primary)', wordBreak: 'break-all' }}>
                           {log.path}
                         </td>
-                        <td style={{ padding: '7px 12px', color: isSlow ? '#fbbf24' : '#94a3b8', whiteSpace: 'nowrap' }}>
-                          {Math.round(log.latencyMs || 0)} ms
+                        <td style={{ padding: '7px 12px', whiteSpace: 'nowrap' }}>
+                          {(log.latencyMs || 0) > 1000 ? (
+                            <span style={{ color: '#f87171', fontWeight: 700, display: 'inline-flex', alignItems: 'center', gap: '3px' }}>
+                              <span>{Math.round(log.latencyMs)} ms</span>
+                              <span style={{ fontSize: '0.62rem', backgroundColor: 'rgba(239, 68, 68, 0.2)', padding: '1px 3px', borderRadius: '3px' }}>SLOW</span>
+                            </span>
+                          ) : (log.latencyMs || 0) > 200 ? (
+                            <span style={{ color: '#fbbf24', fontWeight: 600 }}>{Math.round(log.latencyMs)} ms</span>
+                          ) : (
+                            <span style={{ color: '#94a3b8' }}>{Math.round(log.latencyMs || 0)} ms</span>
+                          )}
                         </td>
                         <td style={{ padding: '7px 12px', color: '#c084fc', whiteSpace: 'nowrap' }}>
                           {formatBytes(log.bytes || 0)}
                         </td>
                         <td style={{ padding: '7px 12px', color: 'var(--text-muted, #94a3b8)', whiteSpace: 'nowrap' }}>
-                          {log.ip} {log.browser && `(${log.browser})`}
+                          <span style={{ color: 'var(--text-primary)', fontWeight: 500 }}>{log.ip || '—'}</span>
+                          {log.device && (
+                            <span style={{
+                              marginLeft: '6px',
+                              padding: '1px 4px',
+                              borderRadius: '3px',
+                              backgroundColor: log.device === 'Desktop' ? 'rgba(255, 255, 255, 0.05)' : 'rgba(168, 85, 247, 0.12)',
+                              color: log.device === 'Desktop' ? 'var(--text-muted, #94a3b8)' : '#c084fc',
+                              fontSize: '0.64rem',
+                              fontWeight: 600
+                            }}>
+                              {log.device}
+                            </span>
+                          )}
+                          {log.browser && <span style={{ marginLeft: '4px', opacity: 0.75, fontSize: '0.72rem' }}>({log.browser})</span>}
                         </td>
                         <td style={{ padding: '7px 12px', textAlign: 'center' }}>
                           <button

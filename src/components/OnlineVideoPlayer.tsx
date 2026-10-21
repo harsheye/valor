@@ -1274,7 +1274,7 @@ export const OnlineVideoPlayer: React.FC<OnlineVideoPlayerProps> = ({
           src={getEmbedUrl()}
           style={{ width: '100%', height: '100%', border: 'none' }}
           allowFullScreen
-          allow="autoplay; encrypted-media"
+          allow="autoplay; encrypted-media; fullscreen; picture-in-picture"
           {...{ credentialless: "true" }}
         />
       </div>

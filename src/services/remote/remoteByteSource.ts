@@ -32,10 +32,14 @@ const proxyFetch = (url: string, options: any, blob: boolean): Promise<any> => {
   });
 };
 
+const getBackendProxyUrl = (url: string): string => {
+  return `/api/proxy?url=${encodeURIComponent(url)}`;
+};
+
 export class HttpByteSource implements ByteSource {
   private url: string;
   private size: number | null = null;
-  private useProxy = false;
+  private proxyMode: 'none' | 'extension' | 'backend' = 'none';
 
   constructor(url: string) {
     this.url = url;
@@ -46,47 +50,50 @@ export class HttpByteSource implements ByteSource {
 
     let lastError: any = null;
 
-    try {
-      const response = await fetch(this.url, { method: 'HEAD' });
-      if (response.status !== 200 && response.status !== 206) {
-        throw new Error(`HEAD request failed with status: ${response.status}`);
+    if (this.proxyMode === 'none') {
+      try {
+        const response = await fetch(this.url, { method: 'HEAD' });
+        if (response.status === 200 || response.status === 206) {
+          const length = response.headers.get('Content-Length');
+          if (length) {
+            this.size = parseInt(length, 10);
+            return this.size;
+          }
+        }
+      } catch (e) {
+        lastError = e;
       }
-      const length = response.headers.get('Content-Length');
-      if (length) {
-        this.size = parseInt(length, 10);
-        return this.size;
+
+      try {
+        const response = await fetch(this.url, {
+          headers: { Range: 'bytes=0-0' }
+        });
+        if (response.status === 200 || response.status === 206) {
+          const range = response.headers.get('Content-Range');
+          if (range) {
+            const parts = range.split('/');
+            if (parts.length > 1) {
+              this.size = parseInt(parts[1], 10);
+              return this.size;
+            }
+          }
+          const length = response.headers.get('Content-Length');
+          if (length) {
+            this.size = parseInt(length, 10);
+            return this.size;
+          }
+        }
+      } catch (err) {
+        lastError = err;
       }
-    } catch (e) {
-      console.warn('HEAD request failed, falling back to GET Range bytes=0-0:', e);
-      lastError = e;
     }
 
-    try {
-      const response = await fetch(this.url, {
-        headers: { Range: 'bytes=0-0' }
-      });
-      if (response.status !== 200 && response.status !== 206) {
-        throw new Error(`GET range request failed with status: ${response.status}`);
-      }
-      const range = response.headers.get('Content-Range');
-      if (range) {
-        const parts = range.split('/');
-        if (parts.length > 1) {
-          this.size = parseInt(parts[1], 10);
-          return this.size;
-        }
-      }
-      const length = response.headers.get('Content-Length');
-      if (length) {
-        this.size = parseInt(length, 10);
-        return this.size;
-      }
-    } catch (err) {
-      console.warn('Direct fetch failed. Trying proxy fallback...', err);
+    // Direct fetch failed or blocked by CORS: try extension proxy first if in iframe
+    if (window !== window.parent) {
       try {
         const proxyRes = await proxyFetch(this.url, { headers: { Range: 'bytes=0-0' } }, false);
-        this.useProxy = true; // remember to use proxy for reads
-        const range = proxyRes.headers['content-range'];
+        this.proxyMode = 'extension';
+        const range = proxyRes.headers?.['content-range'];
         if (range) {
           const parts = range.split('/');
           if (parts.length > 1) {
@@ -94,41 +101,96 @@ export class HttpByteSource implements ByteSource {
             return this.size;
           }
         }
-        const length = proxyRes.headers['content-length'];
+        const length = proxyRes.headers?.['content-length'];
         if (length) {
           this.size = parseInt(length, 10);
           return this.size;
         }
       } catch (proxyErr) {
-        console.error('Proxy fallback failed as well:', proxyErr);
-        throw proxyErr;
+        lastError = proxyErr;
       }
-      throw err || lastError;
     }
-    
-    throw new Error('Could not determine remote file size');
+
+    // Try Valor backend proxy fallback (/api/proxy)
+    try {
+      const proxyUrl = getBackendProxyUrl(this.url);
+      const response = await fetch(proxyUrl, {
+        headers: { Range: 'bytes=0-0' }
+      });
+      if (response.status === 200 || response.status === 206) {
+        this.proxyMode = 'backend';
+        const range = response.headers.get('Content-Range');
+        if (range) {
+          const parts = range.split('/');
+          if (parts.length > 1) {
+            this.size = parseInt(parts[1], 10);
+            return this.size;
+          }
+        }
+        const length = response.headers.get('Content-Length');
+        if (length) {
+          this.size = parseInt(length, 10);
+          return this.size;
+        }
+      }
+    } catch (backendErr) {
+      lastError = backendErr;
+    }
+
+    throw lastError || new Error('Could not determine remote file size');
   }
 
   async read(start: number, end: number, signal?: AbortSignal): Promise<Uint8Array> {
-    if (this.useProxy) {
+    if (this.proxyMode === 'extension') {
       const proxyRes = await proxyFetch(this.url, { headers: { Range: `bytes=${start}-${end}` } }, true);
       const binaryString = atob(proxyRes.base64);
       const bytes = new Uint8Array(binaryString.length);
       for (let i = 0; i < binaryString.length; i++) {
-          bytes[i] = binaryString.charCodeAt(i);
+        bytes[i] = binaryString.charCodeAt(i);
       }
       return bytes;
     }
 
-    const response = await fetch(this.url, {
-      headers: { Range: `bytes=${start}-${end}` },
-      signal
-    });
-    if (response.status !== 206 && response.status !== 200) {
-      throw new Error(`Failed to fetch range ${start}-${end}, status: ${response.status}`);
+    if (this.proxyMode === 'backend') {
+      const proxyUrl = getBackendProxyUrl(this.url);
+      const response = await fetch(proxyUrl, {
+        headers: { Range: `bytes=${start}-${end}` },
+        signal
+      });
+      if (response.status !== 206 && response.status !== 200) {
+        throw new Error(`Failed to fetch range ${start}-${end} via backend proxy, status: ${response.status}`);
+      }
+      const arrayBuffer = await response.arrayBuffer();
+      return new Uint8Array(arrayBuffer);
     }
-    const arrayBuffer = await response.arrayBuffer();
-    return new Uint8Array(arrayBuffer);
+
+    try {
+      const response = await fetch(this.url, {
+        headers: { Range: `bytes=${start}-${end}` },
+        signal
+      });
+      if (response.status === 206 || response.status === 200) {
+        const arrayBuffer = await response.arrayBuffer();
+        return new Uint8Array(arrayBuffer);
+      }
+    } catch (directErr) {
+      // Fallback to backend proxy
+      try {
+        const proxyUrl = getBackendProxyUrl(this.url);
+        const response = await fetch(proxyUrl, {
+          headers: { Range: `bytes=${start}-${end}` },
+          signal
+        });
+        if (response.status === 206 || response.status === 200) {
+          this.proxyMode = 'backend';
+          const arrayBuffer = await response.arrayBuffer();
+          return new Uint8Array(arrayBuffer);
+        }
+      } catch (e) {}
+      throw directErr;
+    }
+
+    throw new Error(`Failed to fetch range ${start}-${end}`);
   }
 }
 
@@ -468,7 +530,21 @@ export async function detectUrlCapabilities(url: string): Promise<boolean> {
     return false;
   } catch (e) {
     clearTimeout(id);
-    console.warn('CORS or network error during capability detection:', e);
+    console.warn('Direct capability detection failed (CORS or network error). Trying backend proxy fallback...', e);
+    try {
+      const proxyUrl = getBackendProxyUrl(url);
+      const proxyController = new AbortController();
+      const pId = setTimeout(() => proxyController.abort(), 4000);
+      const res = await fetch(proxyUrl, {
+        headers: { Range: 'bytes=0-15' },
+        signal: proxyController.signal
+      });
+      clearTimeout(pId);
+      if (res.status === 200 || res.status === 206) {
+        const buffer = await res.arrayBuffer();
+        return buffer.byteLength > 0;
+      }
+    } catch (err) {}
     return false;
   }
 }

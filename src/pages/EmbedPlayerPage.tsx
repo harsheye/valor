@@ -1,24 +1,104 @@
 import React, { useEffect, useState } from 'react';
 import { RemoteVideoPlayer } from '../components/RemoteVideoPlayer';
 import type { VideoItem } from '../types/media';
+import type { SubtitleSettings } from '../components/SubtitleOverlay';
 import { DEFAULT_CONTROLS_CONFIG } from '../utils/embedProtocol';
 import type { EmbedCommand, EmbedMessageWrapper, ControlsConfig, ThemeConfig } from '../utils/embedProtocol';
 
+import { 
+  getEmbedSubtitlesSync, 
+  getEmbedSubtitlesAsync, 
+  saveEmbedSubtitles, 
+  trimSubtitleName 
+} from '../utils/embedSubtitleStorage';
+import {
+  saveMediaTimestamp,
+  getMediaTimestamp
+} from '../utils/mediaTimestampStorage';
+
+function deriveTitleFromUrl(url: string, explicitTitle?: string | null): string {
+  if (explicitTitle && explicitTitle.trim() && explicitTitle !== 'Embedded Video' && explicitTitle !== 'Embedded Media') {
+    return explicitTitle.trim();
+  }
+  try {
+    const pathname = new URL(url).pathname;
+    const segments = pathname.split('/').filter(Boolean);
+    const last = segments.pop() || '';
+    const clean = decodeURIComponent(last).replace(/\.[^/.]+$/, '').trim();
+    if (clean && clean.length > 1 && !/^(video|master|playlist|index|stream|chunk)$/i.test(clean)) {
+      return clean;
+    }
+  } catch {}
+  return explicitTitle || 'Embedded Video';
+}
+
 export const EmbedPlayerPage: React.FC = () => {
+  const [embedSettings] = useState(() => {
+    try {
+      const saved = localStorage.getItem('valor_settings');
+      if (saved) return JSON.parse(saved);
+    } catch {}
+    return {};
+  });
+
+  const [subSettings, setSubSettings] = useState<SubtitleSettings>(() => {
+    try {
+      const savedSub = localStorage.getItem('valor_sub_settings');
+      if (savedSub) return JSON.parse(savedSub);
+      const savedSettings = localStorage.getItem('valor_settings');
+      if (savedSettings) {
+        const parsed = JSON.parse(savedSettings);
+        if (parsed.subSettings) return parsed.subSettings;
+      }
+    } catch {}
+    return {
+      fontSize: 'medium',
+      color: 'white',
+      backdrop: 'shadow',
+      fontFamily: 'sans-serif',
+      fontStyle: 'normal',
+      customTextColor: '',
+      customBgColor: '',
+      customSize: 100,
+      showViewColumn: false,
+      showStyleColumn: false
+    };
+  });
+
+  const handleUpdateSubSettings = (updated: Partial<SubtitleSettings>) => {
+    setSubSettings((prev) => {
+      const next = { ...prev, ...updated };
+      try {
+        localStorage.setItem('valor_sub_settings', JSON.stringify(next));
+        const savedSettings = localStorage.getItem('valor_settings');
+        if (savedSettings) {
+          const parsed = JSON.parse(savedSettings);
+          parsed.subSettings = next;
+          localStorage.setItem('valor_settings', JSON.stringify(parsed));
+        }
+      } catch {}
+      return next;
+    });
+  };
+
   const [video, setVideo] = useState<VideoItem | null>(() => {
     const params = new URLSearchParams(window.location.search);
     const mediaUrl = params.get('url') || params.get('media') || params.get('src');
     if (mediaUrl) {
+      const cachedSubs = getEmbedSubtitlesSync(mediaUrl);
+      const paramTime = Number(params.get('t') || params.get('time') || 0) || 0;
+      const savedTime = getMediaTimestamp(mediaUrl);
+      const initialTime = paramTime > 0 ? paramTime : savedTime;
       return {
         id: 'embed-session',
-        title: params.get('title') || 'Embedded Video',
+        title: deriveTitleFromUrl(mediaUrl, params.get('title')),
         url: mediaUrl,
         type: 'url',
-        currentTime: Number(params.get('t') || params.get('time') || 0) || 0,
+        currentTime: initialTime,
         duration: '0',
         isRemote: true,
         audioTracks: [],
-        subtitleTracks: []
+        subtitleTracks: cachedSubs
       };
     }
     return null;
@@ -57,6 +137,44 @@ export const EmbedPlayerPage: React.FC = () => {
     if (theme.radius !== undefined) document.documentElement.style.setProperty('--border-radius', `${theme.radius}px`);
   }, [theme]);
 
+  // Report Embed Session Telemetry
+  useEffect(() => {
+    try {
+      const devId = (window as any).__VALOR_DEVICE_ID__ || localStorage.getItem('valor_device_id') || 'dev_embed';
+      const ref = document.referrer || window.location.href;
+      fetch('/api/embed/ping', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-device-id': devId,
+          'x-embed-referrer': ref
+        },
+        body: JSON.stringify({
+          referrer: ref,
+          title: video?.title || 'Embedded Media',
+          path: window.location.pathname
+        })
+      }).catch(() => {});
+    } catch(e) {}
+  }, []);
+
+  // Check browser memory / IndexedDB asynchronously for downloaded subtitles if empty
+  useEffect(() => {
+    if (!video?.url) return;
+    if (video.subtitleTracks && video.subtitleTracks.length > 0) return;
+    getEmbedSubtitlesAsync(video.url).then((asyncSubs) => {
+      if (asyncSubs && asyncSubs.length > 0) {
+        setVideo((prev) => {
+          if (!prev) return prev;
+          if (!prev.subtitleTracks || prev.subtitleTracks.length === 0) {
+            return { ...prev, subtitleTracks: asyncSubs };
+          }
+          return prev;
+        });
+      }
+    });
+  }, [video?.url]);
+
   // PostMessage Bridge listener
   useEffect(() => {
     const handleMessage = (event: MessageEvent) => {
@@ -68,24 +186,43 @@ export const EmbedPlayerPage: React.FC = () => {
       switch (cmd.type) {
         case 'LOAD':
           if (cmd.payload && (cmd.payload.url || cmd.payload.media)) {
+            const mediaUrl = cmd.payload.media || cmd.payload.url || '';
+            const cachedSubs = getEmbedSubtitlesSync(mediaUrl);
+            const explicitTime = cmd.payload.currentTime;
+            const savedTime = getMediaTimestamp(mediaUrl);
+            const initialTime = typeof explicitTime === 'number' && explicitTime > 0 ? explicitTime : savedTime;
             setVideo({
               id: 'embed-session',
-              title: cmd.payload.title || 'Embedded Media',
-              url: cmd.payload.media || cmd.payload.url || '',
+              title: deriveTitleFromUrl(mediaUrl, cmd.payload.title),
+              url: mediaUrl,
               type: 'url',
-              currentTime: cmd.payload.currentTime || 0,
+              currentTime: initialTime,
               duration: String(cmd.payload.duration || 0),
               isRemote: true,
               hlsPlaylist: cmd.payload.hlsPlaylist,
               playbackMode: (cmd.payload.playbackMode as any) || undefined,
               audioTracks: [],
-              subtitleTracks: []
+              subtitleTracks: cachedSubs
             });
           }
           break;
         case 'UPDATE_CONFIG':
           if (cmd.payload.controls) setControls(prev => ({ ...prev, ...cmd.payload.controls }));
           if (cmd.payload.theme) setTheme(prev => ({ ...prev, ...cmd.payload.theme }));
+          break;
+        case 'SET_FULLSCREEN':
+          if (cmd.payload && typeof cmd.payload.fullscreen === 'boolean') {
+            const doc: any = document;
+            if (cmd.payload.fullscreen) {
+              if (!doc.fullscreenElement && !doc.webkitFullscreenElement) {
+                (document.documentElement.requestFullscreen || (document.documentElement as any).webkitRequestFullscreen)?.call(document.documentElement)?.catch?.(() => {});
+              }
+            } else {
+              if (doc.fullscreenElement || doc.webkitFullscreenElement) {
+                (doc.exitFullscreen || doc.webkitExitFullscreen)?.call(doc)?.catch?.(() => {});
+              }
+            }
+          }
           break;
       }
     };
@@ -99,19 +236,36 @@ export const EmbedPlayerPage: React.FC = () => {
     return () => window.removeEventListener('message', handleMessage);
   }, []);
 
+  // Persist media playback timestamp on browser reload or unload
+  useEffect(() => {
+    const handleUnload = () => {
+      if (video?.url && typeof video.currentTime === 'number') {
+        saveMediaTimestamp(video.url, video.currentTime, Number(video.duration) || 0, video.title);
+      }
+    };
+    window.addEventListener('beforeunload', handleUnload);
+    window.addEventListener('pagehide', handleUnload);
+    return () => {
+      window.removeEventListener('beforeunload', handleUnload);
+      window.removeEventListener('pagehide', handleUnload);
+    };
+  }, [video]);
+
   const handlePlayUrl = (targetUrl: string) => {
     const trimmed = targetUrl.trim();
     if (!trimmed) return;
+    const cachedSubs = getEmbedSubtitlesSync(trimmed);
+    const savedTime = getMediaTimestamp(trimmed);
     setVideo({
       id: 'embed-session',
       title: 'Direct Video Stream',
       url: trimmed,
       type: 'url',
-      currentTime: 0,
+      currentTime: savedTime,
       duration: '0',
       isRemote: true,
       audioTracks: [],
-      subtitleTracks: []
+      subtitleTracks: cachedSubs
     });
   };
 
@@ -217,21 +371,25 @@ export const EmbedPlayerPage: React.FC = () => {
           } catch (e) {}
         }}
         onUpdateVideo={(updater) => {
+          let newVideo: VideoItem;
           if (typeof updater === 'function') {
-            const newVideo = updater(video);
-            if (newVideo.currentTime !== video.currentTime) {
-              setVideo(newVideo);
-              try {
-                window.parent.postMessage({ source: 'valor-embed-iframe', version: '1.0.0', payload: { type: 'TIME_UPDATE', payload: { currentTime: newVideo.currentTime, duration: newVideo.duration } } }, '*');
-              } catch (e) {}
-            } else {
-              setVideo(newVideo);
-            }
+            newVideo = updater(video);
           } else {
-            setVideo(updater);
+            newVideo = updater;
+          }
+          if (newVideo?.url && newVideo.subtitleTracks && newVideo.subtitleTracks.length > 0) {
+            saveEmbedSubtitles(newVideo, newVideo.subtitleTracks);
+          }
+          if (newVideo?.url && typeof newVideo.currentTime === 'number') {
+            saveMediaTimestamp(newVideo.url, newVideo.currentTime, Number(newVideo.duration) || 0, newVideo.title);
+          }
+          if (newVideo.currentTime !== video.currentTime) {
+            setVideo(newVideo);
             try {
-              window.parent.postMessage({ source: 'valor-embed-iframe', version: '1.0.0', payload: { type: 'TIME_UPDATE', payload: { currentTime: updater.currentTime, duration: updater.duration } } }, '*');
+              window.parent.postMessage({ source: 'valor-embed-iframe', version: '1.0.0', payload: { type: 'TIME_UPDATE', payload: { currentTime: newVideo.currentTime, duration: newVideo.duration } } }, '*');
             } catch (e) {}
+          } else {
+            setVideo(newVideo);
           }
         }}
         showPlayButton={controls.play}
@@ -239,8 +397,9 @@ export const EmbedPlayerPage: React.FC = () => {
         showPlayBar={controls.play}
         showVolumeControl={controls.volume}
         showFullscreen={controls.fullscreen}
-        subSettings={{ fontSize: 'medium', color: 'white', backdrop: 'shadow', fontFamily: 'sans-serif', fontStyle: 'normal', customTextColor: '', customBgColor: '', customSize: 100 }}
-        onUpdateSubSettings={() => {}}
+        subSettings={subSettings}
+        onUpdateSubSettings={handleUpdateSubSettings}
+        openSubtitlesApiKey={embedSettings.openSubtitlesApiKey || ''}
       />
     </div>
   );

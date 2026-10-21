@@ -119,9 +119,8 @@ export function createReverseProxyTelemetry(dataStore) {
 
     // Parse or generate Session ID
     let sessionId = req.headers['x-valor-session'];
-    if (!sessionId) {
-      // Check cookies
-      const cookieHeader = req.headers.cookie || '';
+    const cookieHeader = req.headers.cookie || '';
+    if (!sessionId && cookieHeader) {
       const match = cookieHeader.match(/valor_sid=([^;]+)/);
       if (match) {
         sessionId = match[1];
@@ -135,8 +134,47 @@ export function createReverseProxyTelemetry(dataStore) {
       sessionId = `sess_${hash}`;
     }
 
-    // Set header so browser knows its session ID
+    // Parse or generate Device ID (persistent across all sessions, tabs, and visits)
+    let deviceId = req.headers['x-device-id'] || req.headers['x-valor-device-id'];
+    if (!deviceId && cookieHeader) {
+      const devMatch = cookieHeader.match(/valor_device_id=([^;]+)/);
+      if (devMatch) {
+        deviceId = devMatch[1];
+      }
+    }
+
+    let parsedUrl;
+    try {
+      parsedUrl = new URL(req.url, 'http://localhost');
+      if (!deviceId) {
+        deviceId = parsedUrl.searchParams.get('device_id') || parsedUrl.searchParams.get('deviceId');
+      }
+    } catch (e) {
+      parsedUrl = { pathname: req.url || '/', searchParams: new URLSearchParams() };
+    }
+
+    if (!deviceId) {
+      // Stable persistent device fingerprint hash (IP subnet + UA + Accept-Language)
+      const rawFp = `${ip}|${userAgent}|${req.headers['accept-language'] || ''}`;
+      const fpHash = crypto.createHash('sha256').update(rawFp).digest('hex').substring(0, 18);
+      deviceId = `dev_${fpHash}`;
+    }
+
+    // Set response headers and cookie so browser maintains its device identity
     res.setHeader('X-Valor-Session', sessionId);
+    res.setHeader('X-Device-Id', deviceId);
+    if (!cookieHeader.includes('valor_device_id=')) {
+      res.setHeader('Set-Cookie', `valor_device_id=${deviceId}; Path=/; Max-Age=315360000; SameSite=Lax`);
+    }
+
+    // Referer & Embed URL detection ("on what url it was called")
+    const referer = req.headers['x-embed-referrer'] || req.headers['referer'] || req.headers['referrer'] || req.headers['origin'] || '';
+    const path = parsedUrl.pathname || req.url || '/';
+    const isEmbed = path.startsWith('/embed') || 
+                    path.startsWith('/api/embed') || 
+                    Boolean(parsedUrl.searchParams?.get?.('embed')) ||
+                    req.headers['sec-fetch-dest'] === 'iframe' ||
+                    (referer && !referer.includes('localhost') && !referer.includes('127.0.0.1'));
 
     // Track response bytes
     let bytesSent = 0;
@@ -160,13 +198,11 @@ export function createReverseProxyTelemetry(dataStore) {
     // When request finishes, report asynchronously to DataStore (Redis + Postgres)
     res.on('finish', () => {
       const latencyMs = Date.now() - startTime;
-      const parsedUrl = new URL(req.url, 'http://localhost');
-      const path = parsedUrl.pathname;
       const method = req.method;
       const statusCode = res.statusCode;
 
       // Extract optional userId if attached
-      const userId = req.headers['x-valor-user-id'] || parsedUrl.searchParams.get('userId') || null;
+      const userId = req.headers['x-valor-user-id'] || parsedUrl.searchParams?.get?.('userId') || null;
       const profileName = req.headers['x-valor-profile-name'] ? decodeURIComponent(req.headers['x-valor-profile-name']) : null;
 
       // Ignore telemetry self-polling requests to keep metrics clean
@@ -176,6 +212,7 @@ export function createReverseProxyTelemetry(dataStore) {
 
       dataStore.recordRequest({
         sessionId,
+        deviceId,
         ip,
         userAgent,
         browser,
@@ -187,7 +224,9 @@ export function createReverseProxyTelemetry(dataStore) {
         bytesTransferred: bytesSent,
         latencyMs,
         userId,
-        profileName
+        profileName,
+        referer,
+        isEmbed
       }).catch(err => {
         // Non-blocking error handling
       });

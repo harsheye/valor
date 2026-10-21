@@ -14,6 +14,7 @@ import { FFmpeg } from "@ffmpeg/ffmpeg";
 import { fetchFile } from "@ffmpeg/util";
 import type { ByteSource } from "./local/localByteSource";
 import { logger } from "../utils/logger";
+import { isWasmSupported } from "../utils/wasmCheck";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -119,6 +120,11 @@ export class FFmpegService {
     // Different video — tear down and restart
     if (this.ffmpeg) {
       await this.terminateWorker();
+    }
+
+    if (!isWasmSupported()) {
+      logger.warn('[FFmpegService] WebAssembly is not supported in this browser environment.');
+      throw new Error('WebAssembly is not supported in this browser environment.');
     }
 
     const ff = new FFmpeg();

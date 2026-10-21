@@ -11,6 +11,7 @@ import { PlaybackState } from './PlaybackState';
 import { PlaybackSession } from './PlaybackSession';
 import { Timeline } from './Timeline';
 import { logger } from '../../utils/logger';
+import { isWasmSupported } from '../../utils/wasmCheck';
 
 const getAudioBoostMultiplier = (boostPercent: number): number => {
   if (boostPercent <= 100) return 1.0;
@@ -125,13 +126,20 @@ export class PlaybackController {
 
   async initialize(videoEl: HTMLVideoElement, streamIndex: number | null): Promise<void> {
     this.videoEl = videoEl;
-    this.videoEl.muted = true; // Mute video element - audio is played via AudioContext
+    if (typeof streamIndex === 'number' && streamIndex >= 0) {
+      this.videoEl.muted = true; // Mute video element only when alternate audio is played via AudioContext
+    }
     this.state.activeStreamIndex = typeof streamIndex === 'number' ? streamIndex : -1;
     this.bufferManager.resetFailures();
     
     // 1. Setup new playback generation to initialize abort signals and sessionId correctly
     const generation = this.startNewPlaybackGeneration('initialize');
     logger.playback(`controller=${this.instanceId} initializing audio track ${this.state.activeStreamIndex}`);
+
+    if (!isWasmSupported()) {
+      logger.warn(`[PlaybackController-${this.instanceId}] WebAssembly is not supported. Skipping client-side FFmpeg initialization.`);
+      return;
+    }
 
     this.ff = await this.ffmpegMgr.load();
     if (this.session.abortController.signal.aborted || generation !== this.session.playbackGeneration) {
@@ -785,6 +793,9 @@ export class PlaybackController {
   async switchAudioTrack(streamIndex: number | null): Promise<void> {
     if (this.session.abortController.signal.aborted) return;
     this.state.activeStreamIndex = typeof streamIndex === 'number' ? streamIndex : -1;
+    if (this.videoEl) {
+      this.videoEl.muted = this.state.activeStreamIndex !== -1;
+    }
     console.log(`[PlaybackController-${this.instanceId}] switchAudioTrack called. streamIndex=${this.state.activeStreamIndex}`);
     this.fetchingKeys.clear();
     this.playbackQueue.clear();
@@ -817,12 +828,15 @@ export class PlaybackController {
     this.session.destroy();
     
     this.stopHeartbeat();
-    if (this.videoEl && this.listenersBound) {
-      this.videoEl.removeEventListener('timeupdate', this.onTimeUpdate);
-      this.videoEl.removeEventListener('play', this.onPlayEvent);
-      this.videoEl.removeEventListener('pause', this.onPauseEvent);
-      this.listenersBound = false;
-      console.log(`[PlaybackController-${this.instanceId}] Event listeners removed from video element.`);
+    if (this.videoEl) {
+      this.videoEl.muted = false;
+      if (this.listenersBound) {
+        this.videoEl.removeEventListener('timeupdate', this.onTimeUpdate);
+        this.videoEl.removeEventListener('play', this.onPlayEvent);
+        this.videoEl.removeEventListener('pause', this.onPauseEvent);
+        this.listenersBound = false;
+        console.log(`[PlaybackController-${this.instanceId}] Event listeners removed from video element.`);
+      }
     }
     this.fetchingKeys.clear();
     this.playbackQueue.clear();

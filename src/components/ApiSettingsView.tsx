@@ -1,8 +1,16 @@
 import React, { useState, useEffect } from 'react';
 import { 
   Eye, EyeOff, Copy, Edit2, Check, RefreshCw, 
-  Database
+  Database, ShieldCheck, ExternalLink, Key
 } from 'lucide-react';
+import { 
+  initiateTraktPkceAuth, 
+  testTraktApi, 
+  sanitizeTraktRedirectUri,
+  generateTraktDeviceCode,
+  pollTraktDeviceToken,
+  fetchTraktUserProfile
+} from '../services/traktAuth';
 
 const SexyCheckbox: React.FC<{
   checked: boolean;
@@ -60,31 +68,91 @@ export const ApiSettingsView: React.FC<ApiSettingsViewProps> = ({
   const [showTmdbKey, setShowTmdbKey] = useState(false);
   const [showOsKey, setShowOsKey] = useState(false);
   const [showIntroDbKey, setShowIntroDbKey] = useState(false);
-  const [showTraktKey, setShowTraktKey] = useState(false);
 
   // Local state for editing key
   const [editingTmdb, setEditingTmdb] = useState(false);
   const [editingOs, setEditingOs] = useState(false);
   const [editingIntroDb, setEditingIntroDb] = useState(false);
-  const [editingTrakt, setEditingTrakt] = useState(false);
 
   // Local key buffers
   const [tmdbKeyVal, setTmdbKeyVal] = useState(settings.tmdbApiKey || '');
   const [osKeyVal, setOsKeyVal] = useState(settings.openSubtitlesApiKey || '');
   const [introDbKeyVal, setIntroDbKeyVal] = useState(settings.theIntroDbApiKey || '');
-  const [traktKeyVal, setTraktKeyVal] = useState(settings.traktAccessToken || '');
 
   // Sync buffers with settings updates
   useEffect(() => { setTmdbKeyVal(settings.tmdbApiKey || ''); }, [settings.tmdbApiKey]);
   useEffect(() => { setOsKeyVal(settings.openSubtitlesApiKey || ''); }, [settings.openSubtitlesApiKey]);
   useEffect(() => { setIntroDbKeyVal(settings.theIntroDbApiKey || ''); }, [settings.theIntroDbApiKey]);
-  useEffect(() => { setTraktKeyVal(settings.traktAccessToken || ''); }, [settings.traktAccessToken]);
 
   // Loading/Test states
   const [testingTmdb, setTestingTmdb] = useState(false);
   const [testingOs, setTestingOs] = useState(false);
   const [testingIntroDb, setTestingIntroDb] = useState(false);
   const [testingTrakt, setTestingTrakt] = useState(false);
+
+  // Trakt Device Code Flow state
+  const [deviceAuthInfo, setDeviceAuthInfo] = useState<{ user_code: string; verification_url: string; device_code: string } | null>(null);
+  const [isDeviceAuthPolling, setIsDeviceAuthPolling] = useState(false);
+
+  const handleStartDeviceAuth = async () => {
+    try {
+      setIsDeviceAuthPolling(true);
+      const data = await generateTraktDeviceCode();
+      setDeviceAuthInfo({
+        user_code: data.user_code,
+        verification_url: data.verification_url || 'https://auth.trakt.tv/activate',
+        device_code: data.device_code
+      });
+      addToast(`Trakt Code: ${data.user_code}. Authorize at trakt.tv/activate`, 'success');
+
+      const intervalSec = Math.max(data.interval || 5, 5);
+      const expiryMs = (data.expires_in || 600) * 1000;
+      const startTime = Date.now();
+
+      const timer = setInterval(async () => {
+        if (Date.now() - startTime > expiryMs) {
+          clearInterval(timer);
+          setIsDeviceAuthPolling(false);
+          setDeviceAuthInfo(null);
+          addToast('Trakt Device Code expired. Please try again.', 'warning');
+          return;
+        }
+
+        try {
+          const pollRes = await pollTraktDeviceToken(data.device_code);
+          if (pollRes.success && pollRes.token) {
+            clearInterval(timer);
+            setIsDeviceAuthPolling(false);
+            setDeviceAuthInfo(null);
+            const token = pollRes.token.access_token;
+            handleDefaultLangChange('traktAccessToken', token);
+            if (pollRes.token.refresh_token) {
+              handleDefaultLangChange('traktRefreshToken', pollRes.token.refresh_token);
+            }
+            const profile = await fetchTraktUserProfile(token);
+            if (profile?.username) {
+              handleDefaultLangChange('traktUsername', profile.username);
+              if (profile.avatarUrl) handleDefaultLangChange('traktAvatar', profile.avatarUrl);
+              addToast(`Successfully connected to Trakt.tv as @${profile.username}!`, 'success');
+            } else {
+              addToast('Successfully connected to Trakt.tv!', 'success');
+            }
+          } else if (!pollRes.pending) {
+            clearInterval(timer);
+            setIsDeviceAuthPolling(false);
+            setDeviceAuthInfo(null);
+            addToast(`Device authorization stopped: ${pollRes.error || 'Failed'}`, 'error');
+          }
+        } catch (e: unknown) {
+          console.warn('[Trakt Device Poll]', e);
+        }
+      }, intervalSec * 1000);
+    } catch (err: unknown) {
+      setIsDeviceAuthPolling(false);
+      const msg = err instanceof Error ? err.message : 'Failed to generate code';
+      addToast(`Failed to generate Trakt code: ${msg}`, 'error');
+    }
+  };
 
   const copyToClipboard = (text: string, label: string) => {
     if (!text) {
@@ -97,7 +165,11 @@ export const ApiSettingsView: React.FC<ApiSettingsViewProps> = ({
 
   const handleTestConnection = async (service: 'tmdb' | 'opensubtitles' | 'theintrodb' | 'trakt', key: string) => {
     if (!key && service !== 'theintrodb') {
-      addToast(`Please enter an API key to test connection for ${service.toUpperCase()}`, 'warning');
+      if (service === 'trakt') {
+        addToast('Please connect your Trakt.tv account first to test connection.', 'warning');
+      } else {
+        addToast(`Please enter an API key to test connection for ${service.toUpperCase()}`, 'warning');
+      }
       return;
     }
 
@@ -121,10 +193,19 @@ export const ApiSettingsView: React.FC<ApiSettingsViewProps> = ({
       }, 700);
     } else if (service === 'trakt') {
       setTestingTrakt(true);
-      setTimeout(() => {
-        setTestingTrakt(false);
-        addToast('Trakt.tv API connection validated.', 'success');
-      }, 900);
+      testTraktApi(key)
+        .then((res) => {
+          setTestingTrakt(false);
+          if (res.ok) {
+            addToast(res.message, 'success');
+          } else {
+            addToast(`Trakt Test: ${res.message}`, 'error');
+          }
+        })
+        .catch((err) => {
+          setTestingTrakt(false);
+          addToast(`Trakt Test Error: ${err.message || 'Failed to connect'}`, 'error');
+        });
     }
   };
 
@@ -270,7 +351,7 @@ export const ApiSettingsView: React.FC<ApiSettingsViewProps> = ({
         <div className="premium-glass-card card-accent-trakt glow-hover-trakt" style={{ display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
           <div>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '0.75rem' }}>
-              <div style={{ height: '40px', display: 'flex', alignItems: 'center' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                 <div style={{
                   display: 'flex',
                   alignItems: 'center',
@@ -287,11 +368,26 @@ export const ApiSettingsView: React.FC<ApiSettingsViewProps> = ({
                   <span style={{ display: 'inline-block', width: '8px', height: '8px', borderRadius: '50%', background: '#ed1c24', boxShadow: '0 0 8px #ed1c24' }}></span>
                   <span>TRAKT.TV</span>
                 </div>
+                <div style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '4px',
+                  background: 'rgba(34, 197, 94, 0.12)',
+                  border: '1px solid rgba(34, 197, 94, 0.28)',
+                  padding: '3px 7px',
+                  borderRadius: '6px',
+                  color: '#22c55e',
+                  fontSize: '0.65rem',
+                  fontWeight: 700
+                }}>
+                  <ShieldCheck size={11} />
+                  <span>PKCE S256</span>
+                </div>
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
                 <span className={`pulse-dot ${settings.traktAccessToken ? 'pulse-green' : 'pulse-gray'}`} />
                 <span style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-secondary)' }}>
-                  {settings.traktAccessToken ? 'Connected' : 'Disconnected'}
+                  {settings.traktAccessToken ? (settings.traktUsername ? `@${settings.traktUsername}` : 'Connected') : 'Disconnected'}
                 </span>
               </div>
             </div>
@@ -313,76 +409,201 @@ export const ApiSettingsView: React.FC<ApiSettingsViewProps> = ({
                 />
               </div>
             </div>
-            <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', margin: '0 0 0.85rem 0' }}>Watch history & bookmarks sync</p>
+            <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', margin: '0 0 0.85rem 0' }}>Watch history & bookmarks cloud sync</p>
 
-            {/* Masked Key Display / Edit */}
-            <div style={{ background: 'var(--surface)', border: '1px solid var(--border-color)', borderRadius: '8px', padding: '0.45rem 0.6rem', marginBottom: '0.85rem' }}>
-              <span style={{ display: 'block', fontSize: '0.62rem', color: 'var(--text-muted)', textTransform: 'uppercase', fontWeight: 600, marginBottom: '0.15rem' }}>Access Token</span>
-              {editingTrakt ? (
-                <div style={{ display: 'flex', gap: '0.35rem', alignItems: 'center' }}>
-                  <input 
-                    type="text" 
-                    value={traktKeyVal} 
-                    placeholder="Paste Access Token..."
-                    onChange={(e) => setTraktKeyVal(e.target.value)}
-                    style={{ flex: 1, background: 'var(--card-bg)', border: '1px solid var(--border-color)', color: 'var(--text-primary)', borderRadius: '4px', padding: '0.2rem 0.4rem', fontSize: '0.78rem', outline: 'none' }}
-                  />
-                  <button 
-                    onClick={() => handleSaveKey('traktAccessToken', traktKeyVal, setEditingTrakt)}
-                    style={{ background: 'rgba(34, 197, 94, 0.2)', border: 'none', color: '#22c55e', padding: '0.25rem', borderRadius: '4px', cursor: 'pointer' }}
-                  >
-                    <Check size={14} />
-                  </button>
-                </div>
-              ) : (
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <span style={{ fontSize: '0.8rem', fontFamily: 'monospace', color: 'var(--text-primary)' }}>
-                    {maskKey(traktKeyVal)}
-                  </span>
-                  <div style={{ display: 'flex', gap: '0.35rem' }}>
-                    <button onClick={() => setShowTraktKey(!showTraktKey)} style={{ background: 'transparent', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', padding: 0 }} title="Show/Hide">
-                      {showTraktKey ? <EyeOff size={13} /> : <Eye size={13} />}
-                    </button>
-                    <button onClick={() => copyToClipboard(traktKeyVal, 'Trakt Token')} style={{ background: 'transparent', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', padding: 0 }} title="Copy">
-                      <Copy size={13} />
-                    </button>
-                    <button onClick={() => setEditingTrakt(true)} style={{ background: 'transparent', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', padding: 0 }} title="Edit">
-                      <Edit2 size={13} />
-                    </button>
+            {/* Trakt User Badge if connected */}
+            {settings.traktAccessToken ? (
+              <div style={{
+                background: 'rgba(237, 28, 36, 0.08)',
+                border: '1px solid rgba(237, 28, 36, 0.2)',
+                borderRadius: '8px',
+                padding: '0.65rem 0.75rem',
+                marginBottom: '0.85rem'
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '0.45rem' }}>
+                  {settings.traktAvatar ? (
+                    <img
+                      src={settings.traktAvatar}
+                      alt={settings.traktUsername || 'Trakt User'}
+                      style={{ width: '32px', height: '32px', borderRadius: '50%', objectFit: 'cover', border: '1.5px solid #ed1c24' }}
+                    />
+                  ) : (
+                    <div style={{ width: '32px', height: '32px', borderRadius: '50%', background: '#ed1c24', color: '#fff', fontSize: '0.8rem', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700 }}>
+                      {(settings.traktUsername || 'T')[0].toUpperCase()}
+                    </div>
+                  )}
+                  <div style={{ overflow: 'hidden', flex: 1 }}>
+                    <div style={{ fontSize: '0.84rem', fontWeight: 700, color: 'var(--text-primary)', whiteSpace: 'nowrap', textOverflow: 'ellipsis', overflow: 'hidden' }}>
+                      {settings.traktUsername ? `@${settings.traktUsername}` : 'Trakt Member'}
+                    </div>
+                    <div style={{ fontSize: '0.65rem', color: '#22c55e', display: 'flex', alignItems: 'center', gap: '4px', marginTop: '2px', fontWeight: 600 }}>
+                      <ShieldCheck size={11} />
+                      <span>OAuth 2.0 PKCE Verified</span>
+                    </div>
                   </div>
                 </div>
-              )}
-            </div>
+                <div style={{ fontSize: '0.68rem', color: 'var(--text-secondary)', display: 'flex', flexDirection: 'column', gap: '2px', borderTop: '1px solid rgba(255,255,255,0.06)', paddingTop: '0.4rem' }}>
+                  <span>✓ Real-time playback scrobbling</span>
+                  <span>✓ Cloud sync for history & bookmarks</span>
+                </div>
+              </div>
+            ) : (
+              <div style={{
+                background: 'var(--surface)',
+                border: '1px dashed var(--border-color)',
+                borderRadius: '8px',
+                padding: '0.7rem 0.8rem',
+                marginBottom: '0.85rem',
+                fontSize: '0.74rem',
+                color: 'var(--text-muted)',
+                lineHeight: 1.45
+              }}>
+                Sync scrobbles, history, and bookmarks across all your devices. Click <strong style={{ color: 'var(--text-primary)' }}>Connect via PKCE</strong> to sign in securely without managing API keys, or use <strong style={{ color: 'var(--text-primary)' }}>Device Code</strong> on another device.
+              </div>
+            )}
           </div>
 
           {/* Action Pills */}
           <div>
-            <div style={{ display: 'flex', gap: '0.35rem', marginBottom: '0.5rem' }}>
+            {/* Active Device Code Flow Display */}
+            {deviceAuthInfo && (
+              <div style={{
+                background: 'rgba(237, 28, 36, 0.1)',
+                border: '1px solid rgba(237, 28, 36, 0.35)',
+                borderRadius: '8px',
+                padding: '0.75rem',
+                marginBottom: '0.75rem',
+                textAlign: 'center'
+              }}>
+                <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginBottom: '0.25rem', fontWeight: 600 }}>
+                  TRAKT ACTIVATION CODE
+                </div>
+                <div style={{
+                  fontSize: '1.4rem',
+                  fontWeight: 900,
+                  letterSpacing: '4px',
+                  color: '#ff4d4f',
+                  fontFamily: 'monospace',
+                  marginBottom: '0.4rem',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: '8px'
+                }}>
+                  <span>{deviceAuthInfo.user_code}</span>
+                  <button
+                    type="button"
+                    onClick={() => copyToClipboard(deviceAuthInfo.user_code, 'Activation Code')}
+                    style={{ background: 'transparent', border: 'none', color: '#ff4d4f', cursor: 'pointer', padding: 0 }}
+                    title="Copy Code"
+                  >
+                    <Copy size={15} />
+                  </button>
+                </div>
+                <div style={{ display: 'flex', gap: '6px', justifyContent: 'center', marginBottom: '0.5rem' }}>
+                  <a
+                    href={deviceAuthInfo.verification_url}
+                    target="_blank"
+                    rel="noreferrer"
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '4px',
+                      background: 'var(--accent-color)',
+                      color: '#fff',
+                      fontSize: '0.72rem',
+                      fontWeight: 700,
+                      padding: '4px 10px',
+                      borderRadius: '6px',
+                      textDecoration: 'none'
+                    }}
+                  >
+                    <span>Authorize at trakt.tv/activate</span>
+                    <ExternalLink size={12} />
+                  </a>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setDeviceAuthInfo(null);
+                      setIsDeviceAuthPolling(false);
+                    }}
+                    style={{
+                      background: 'transparent',
+                      border: '1px solid var(--border-color)',
+                      color: 'var(--text-muted)',
+                      fontSize: '0.72rem',
+                      padding: '4px 8px',
+                      borderRadius: '6px',
+                      cursor: 'pointer'
+                    }}
+                  >
+                    Cancel
+                  </button>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', fontSize: '0.68rem', color: 'var(--text-muted)' }}>
+                  <RefreshCw size={11} className="animate-spin" />
+                  <span>Waiting for authorization on Trakt...</span>
+                </div>
+              </div>
+            )}
+
+            <div style={{ display: 'flex', gap: '0.35rem', flexWrap: 'wrap' }}>
               <button 
                 onClick={() => {
                   if (settings.traktAccessToken) {
                     handleDefaultLangChange('traktAccessToken', '');
+                    handleDefaultLangChange('traktUsername', '');
+                    handleDefaultLangChange('traktAvatar', '');
                     addToast('Disconnected from Trakt.tv', 'warning');
                   } else {
-                    const redirectUri = settings.traktRedirectUri || 'http://localhost:50000';
-                    window.location.href = `https://trakt.tv/oauth/authorize?response_type=code&client_id=f2926f0d87d3e789c50a3c276ab6002f5027dec31089fe75792c2836165c7289&redirect_uri=${encodeURIComponent(redirectUri)}`;
+                    const redirectUri = sanitizeTraktRedirectUri(settings.traktRedirectUri);
+                    initiateTraktPkceAuth({ redirectUri, isLoginAction: false });
                   }
                 }}
                 style={{
                   flex: 1.2,
-                  background: settings.traktAccessToken ? '#1f1f1f' : 'var(--accent-color)',
-                  border: settings.traktAccessToken ? '1px solid #333' : '1px solid var(--accent-color)',
+                  background: settings.traktAccessToken ? '#1f1f1f' : 'linear-gradient(135deg, #ed1c24, #b91c1c)',
+                  border: settings.traktAccessToken ? '1px solid #333' : 'none',
                   color: '#fff',
-                  fontSize: '0.75rem', fontWeight: 600, padding: '0.5rem 0.5rem', borderRadius: '6px', cursor: 'pointer', transition: 'all 0.2s'
+                  fontSize: '0.75rem', fontWeight: 600, padding: '0.5rem 0.5rem', borderRadius: '6px', cursor: 'pointer', transition: 'all 0.2s',
+                  boxShadow: settings.traktAccessToken ? 'none' : '0 2px 10px rgba(237, 28, 36, 0.3)'
                 }}
               >
-                {settings.traktAccessToken ? 'Disconnect' : 'Connect'}
+                {settings.traktAccessToken ? 'Disconnect' : 'Connect via PKCE'}
               </button>
+
+              {!settings.traktAccessToken && (
+                <button
+                  type="button"
+                  onClick={handleStartDeviceAuth}
+                  disabled={isDeviceAuthPolling}
+                  style={{
+                    flex: 1,
+                    background: 'var(--card-bg)',
+                    border: '1px solid rgba(237, 28, 36, 0.4)',
+                    color: '#ff4d4f',
+                    fontSize: '0.75rem',
+                    fontWeight: 600,
+                    padding: '0.5rem 0.5rem',
+                    borderRadius: '6px',
+                    cursor: isDeviceAuthPolling ? 'not-allowed' : 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: '0.25rem'
+                  }}
+                  title="Authenticate by entering code at trakt.tv/activate"
+                >
+                  <Key size={12} />
+                  <span>{isDeviceAuthPolling ? 'Polling...' : 'Device Code'}</span>
+                </button>
+              )}
+
               <button 
-                onClick={() => handleTestConnection('trakt', traktKeyVal)}
+                onClick={() => handleTestConnection('trakt', settings.traktAccessToken)}
                 disabled={testingTrakt}
                 style={{
-                  flex: 1,
+                  flex: 0.9,
                   background: 'var(--card-bg)', border: '1px solid var(--border-color)', color: 'var(--text-secondary)',
                   fontSize: '0.75rem', fontWeight: 600, padding: '0.5rem 0.5rem', borderRadius: '6px', cursor: 'pointer', transition: 'all 0.2s',
                   display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.25rem'
@@ -390,18 +611,6 @@ export const ApiSettingsView: React.FC<ApiSettingsViewProps> = ({
               >
                 {testingTrakt ? <RefreshCw size={11} className="animate-spin" /> : 'Test API'}
               </button>
-            </div>
-            
-            {/* Redirect URI Input */}
-            <div style={{ background: 'var(--surface)', border: '1px solid var(--border-color)', borderRadius: '8px', padding: '0.45rem 0.6rem', marginTop: '0.65rem' }}>
-              <span style={{ display: 'block', fontSize: '0.62rem', color: 'var(--text-muted)', textTransform: 'uppercase', fontWeight: 600, marginBottom: '0.15rem' }}>Redirect URI</span>
-              <input 
-                type="text" 
-                value={settings.traktRedirectUri || ''}
-                placeholder="e.g. http://localhost:50000"
-                onChange={(e) => handleDefaultLangChange('traktRedirectUri', e.target.value)}
-                style={{ width: '100%', background: 'var(--card-bg)', border: '1px solid var(--border-color)', color: 'var(--text-primary)', borderRadius: '4px', padding: '0.35rem 0.5rem', fontSize: '0.8rem', outline: 'none', boxSizing: 'border-box' }}
-              />
             </div>
           </div>
         </div>
