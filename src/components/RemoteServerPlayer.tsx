@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
-import { 
+import {
+  Search,
   Play, Pause, RotateCcw, RotateCw, X, 
   Maximize, Minimize, MonitorPlay,
   Volume2, Volume1, VolumeX, AlertCircle, Lock, Unlock,
@@ -15,6 +16,7 @@ import { BookmarkModal } from './BookmarkModal';
 import { parseSubtitles, cleanSubtitleText } from '../utils/subtitleParser';
 import { logger } from '../utils/logger';
 import { MediaAuthModal } from './MediaAuthModal';
+import { MediaIdentifyModal } from './MediaIdentifyModal';
 import { getSavedCredentials, saveCredentials, clearCredentials } from '../services/remote/mediaAuthStore';
 import { saveMediaTimestamp, getMediaTimestamp } from '../utils/mediaTimestampStorage';
 import { classifyVideoTitle } from '../utils/libraryClassifier';
@@ -186,6 +188,8 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
 
   const [isPlaying, setIsPlaying] = useState(false);
   const [isBuffering, setIsBuffering] = useState(false);
+  const [showCenterPlayHint, setShowCenterPlayHint] = useState(false);
+  const hasSeekedInitialRef = useRef(false);
   const [currentTime, setCurrentTime] = useState<number>(() => video.currentTime || 0);
   const latestTimeRef = useRef<number>(currentTime);
   latestTimeRef.current = currentTime;
@@ -242,6 +246,14 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
   const [showBookmarksPopover, setShowBookmarksPopover] = useState(false);
   const [showAddBookmarkDialog, setShowAddBookmarkDialog] = useState(false);
   const [bookmarks, setBookmarks] = useState<Bookmark[]>(() => video.bookmarks || []);
+  const [showIdentifyModal, setShowIdentifyModal] = useState(false);
+
+  const activeSkipBookmark = useMemo(() => {
+    return bookmarks.find(b => {
+      if (!b.endTime || b.endTime <= b.time) return false;
+      return currentTime >= b.time && currentTime < b.endTime;
+    });
+  }, [bookmarks, currentTime]);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
   // Elements & Audio Context
@@ -909,6 +921,35 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
                 Switch to Simple Media
               </button>
             )}
+            <button
+              onClick={() => setShowIdentifyModal(true)}
+              style={{
+                background: 'rgba(59, 130, 246, 0.2)',
+                border: '1px solid rgba(59, 130, 246, 0.4)',
+                color: '#93c5fd',
+                padding: '7px 14px',
+                borderRadius: '20px',
+                fontSize: '12px',
+                fontWeight: 700,
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '6px',
+                transition: 'all 0.15s ease'
+              }}
+              onMouseEnter={e => {
+                e.currentTarget.style.background = 'rgba(59, 130, 246, 0.35)';
+                e.currentTarget.style.color = '#ffffff';
+              }}
+              onMouseLeave={e => {
+                e.currentTarget.style.background = 'rgba(59, 130, 246, 0.2)';
+                e.currentTarget.style.color = '#93c5fd';
+              }}
+              title="Search IMDB to fetch Intro & Outro skip markers"
+            >
+              <Search size={14} />
+              Sync IntroDB
+            </button>
             <OdometerClock date={clockDate} />
             <button 
               onClick={() => setIsLocked(prev => !prev)}
@@ -1126,6 +1167,59 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
             await runRemoteProbe(video.url, creds);
             setAuthModalState(prev => ({ ...prev, isOpen: false, isLoading: false }));
           }}
+        />
+      )}
+      {/* Floating Skip Intro / Outro Button */}
+      {activeSkipBookmark && (
+        <button
+          onClick={() => handleSeek(activeSkipBookmark.endTime!)}
+          style={{
+            position: 'absolute',
+            bottom: '90px',
+            right: '32px',
+            zIndex: 3500,
+            background: 'rgba(15, 23, 42, 0.9)',
+            border: '1px solid rgba(255, 255, 255, 0.3)',
+            backdropFilter: 'blur(10px)',
+            color: '#ffffff',
+            padding: '10px 20px',
+            borderRadius: '30px',
+            fontSize: '14px',
+            fontWeight: 700,
+            cursor: 'pointer',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '8px',
+            boxShadow: '0 8px 24px rgba(0, 0, 0, 0.6)'
+          }}
+        >
+          <SkipForward size={16} color="#60a5fa" />
+          Skip {activeSkipBookmark.label || 'Segment'}
+        </button>
+      )}
+
+      {/* 9. Media Identify & TheIntroDB Modal */}
+      {showIdentifyModal && (
+        <MediaIdentifyModal
+          isOpen={showIdentifyModal}
+          videoTitle={video.title || ''}
+          duration={duration}
+          onClose={() => setShowIdentifyModal(false)}
+          onApplyBookmarks={(newBms, mediaInfo) => {
+            setBookmarks(prev => {
+              const existingIds = new Set(prev.map(b => b.id));
+              const filteredNew = newBms.filter(b => !existingIds.has(b.id));
+              const updated = [...prev, ...filteredNew];
+              onUpdateVideo({
+                ...video,
+                title: mediaInfo.title || video.title,
+                tmdbId: mediaInfo.tmdbId,
+                bookmarks: updated
+              }, false);
+              return updated;
+            });
+          }}
+          onToast={msg => triggerSwitchToast(msg)}
         />
       )}
     </div>

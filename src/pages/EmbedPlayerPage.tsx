@@ -145,7 +145,11 @@ export const EmbedPlayerPage: React.FC = () => {
       const paramTime = Number(params.get('t') || params.get('time') || 0) || 0;
       const savedTime = getMediaTimestamp(mediaUrl);
       const initialTime = paramTime > 0 ? paramTime : savedTime;
+      const cinemaVal = (params.get('iscinema') || params.get('isCinema') || params.get('cinema') || '').toLowerCase().trim();
+      const isCinema = cinemaVal === 'true' || cinemaVal === '1' || cinemaVal === 'yes' || cinemaVal === 'on';
       return {
+        isCinema,
+        playbackMode: isCinema ? 'server' : undefined,
         id: 'embed-session',
         title: deriveTitleFromUrl(mediaUrl, params.get('title')),
         url: mediaUrl,
@@ -456,8 +460,9 @@ export const EmbedPlayerPage: React.FC = () => {
         />
       )}
       
-      <RemoteVideoPlayer 
+      <RemoteVideoPlayer
         isEmbed={true}
+        isCinema={(video as any)?.isCinema}
         video={video}
         onBack={() => {
           setVideo(null);
