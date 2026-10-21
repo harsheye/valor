@@ -8,6 +8,9 @@ import { spawn, execSync } from 'child_process';
 import { DatabaseSync } from 'node:sqlite';
 import { DataStore } from './dataStore.js';
 import { createReverseProxyTelemetry } from './analyticsTracker.js';
+import { RemoteSessionManager } from './server/remote/remoteSessionManager.js';
+import { handleStreamRoute } from './server/remote/streamController.js';
+import { SessionMediaManager } from './server/remote/sessionMediaManager.js';
 
 process.on('uncaughtException', (err) => {
   console.error('[Server Uncaught Exception]', err);
@@ -60,6 +63,8 @@ if (!fs.existsSync(path.join(appDir, 'dist')) && fs.existsSync(path.join(execDir
   appDir = execDir;
 }
 const dataDir = path.join(appDir, '.valor_data');
+const remoteSessionManager = new RemoteSessionManager(dataDir);
+const sessionMediaManager = new SessionMediaManager(dataDir);
 if (!fs.existsSync(dataDir)) {
   fs.mkdirSync(dataDir, { recursive: true });
 }
@@ -533,6 +538,19 @@ const backendServer = http.createServer((req, res) => {
     const target = `https://${hostName}${portPart}${req.url}`;
     res.writeHead(302, { 'Location': target });
     res.end();
+    return;
+  }
+
+  // Remote Streaming Pipeline & HLS Session API
+  if (pathname.startsWith('/api/remote/')) {
+    handleStreamRoute(req, res, parsedUrl, remoteSessionManager).catch(err => {
+      console.error('[RemoteStream] Error handling route:', err);
+      if (!res.headersSent) {
+        res.statusCode = 500;
+        res.setHeader('Content-Type', 'application/json');
+        res.end(JSON.stringify({ error: err.message || 'Internal server error' }));
+      }
+    });
     return;
   }
 
@@ -2431,94 +2449,92 @@ const backendServer = http.createServer((req, res) => {
     return;
   }
 
-  // Remote media proxy endpoint with Range and CORS bypass support
+  // Remote media proxy endpoint with SessionMediaManager (240s sliding window cache)
   if (pathname === '/api/proxy-media') {
-    const rawTargetUrl = parsedUrl.searchParams.get('url');
-    if (!rawTargetUrl) {
-      res.statusCode = 400;
-      res.setHeader('Content-Type', 'application/json');
-      res.end(JSON.stringify({ error: 'Missing url parameter' }));
-      return;
-    }
-
-    try {
-      const targetUrl = new URL(rawTargetUrl);
-      const isHttps = targetUrl.protocol === 'https:';
-      const client = isHttps ? https : http;
-
-      const outgoingHeaders = {
-        'User-Agent': req.headers['user-agent'] || 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Accept': '*/*',
-        'Accept-Encoding': 'identity'
-      };
-
-      if (req.headers['range']) {
-        outgoingHeaders['Range'] = req.headers['range'];
+    (async () => {
+      const rawTargetUrl = parsedUrl.searchParams.get('url');
+      if (!rawTargetUrl) {
+        res.statusCode = 400;
+        res.setHeader('Content-Type', 'application/json');
+        res.end(JSON.stringify({ error: 'Missing url parameter' }));
+        return;
       }
 
-      if (req.headers['authorization']) {
-        outgoingHeaders['Authorization'] = req.headers['authorization'];
-      } else if (targetUrl.username || targetUrl.password) {
-        const creds = Buffer.from(`${decodeURIComponent(targetUrl.username)}:${decodeURIComponent(targetUrl.password)}`).toString('base64');
-        outgoingHeaders['Authorization'] = `Basic ${creds}`;
+      res.setHeader('Access-Control-Allow-Origin', '*');
+      res.setHeader('Access-Control-Allow-Headers', '*');
+      res.setHeader('Access-Control-Expose-Headers', 'Content-Range, Content-Length, Accept-Ranges, Content-Type');
+
+      if (req.method === 'OPTIONS') {
+        res.statusCode = 204;
+        res.end();
+        return;
       }
 
-      const proxyReq = client.request(targetUrl, {
-        method: req.method,
-        headers: outgoingHeaders,
-        rejectUnauthorized: false
-      }, (proxyRes) => {
-        res.statusCode = proxyRes.statusCode || 200;
+      try {
+        const rawUser = parsedUrl.searchParams.get('user');
+        const rawPass = parsedUrl.searchParams.get('pass');
+        let auth = undefined;
+        if (rawUser) {
+          auth = { username: rawUser, password: rawPass || '' };
+        }
 
-        const forwardHeaders = [
-          'content-type',
-          'content-length',
-          'content-range',
-          'accept-ranges',
-          'etag',
-          'last-modified',
-          'www-authenticate'
-        ];
+        const durationStr = parsedUrl.searchParams.get('duration');
+        const duration = durationStr ? parseFloat(durationStr) : 0;
 
-        for (const h of forwardHeaders) {
-          if (proxyRes.headers[h]) {
-            res.setHeader(h, proxyRes.headers[h]);
-          }
+        let sessionId = parsedUrl.searchParams.get('sessionId');
+        if (!sessionId) {
+          const clientIp = req.socket.remoteAddress || 'local';
+          sessionId = `sess_${crypto.createHash('md5').update(`${clientIp}_${rawTargetUrl}`).digest('hex').slice(0, 8)}`;
+        }
+
+        const worker = sessionMediaManager.getOrCreateWorker(sessionId, rawTargetUrl, { auth, duration });
+        const rangeHeader = req.headers['range'];
+
+        if (req.method === 'HEAD') {
+          await worker.init();
+          res.statusCode = 200;
+          res.setHeader('Accept-Ranges', 'bytes');
+          res.setHeader('Content-Type', worker.contentType || 'video/mp4');
+          res.setHeader('Content-Length', worker.totalSize);
+          res.end();
+          return;
+        }
+
+        const result = await worker.serveRange(rangeHeader);
+
+        if (result.isRangeNotSatisfiable) {
+          res.statusCode = 416;
+          res.setHeader('Content-Range', `bytes */${result.totalSize}`);
+          res.end();
+          return;
+        }
+
+        if (result.isPartial) {
+          res.statusCode = 206;
+          res.setHeader('Content-Range', `bytes ${result.start}-${result.end}/${result.totalSize}`);
+        } else {
+          res.statusCode = 200;
         }
 
         res.setHeader('Accept-Ranges', 'bytes');
-        res.setHeader('Access-Control-Allow-Origin', '*');
-        res.setHeader('Access-Control-Allow-Headers', '*');
-        res.setHeader('Access-Control-Expose-Headers', 'Content-Range, Content-Length, Accept-Ranges, Content-Type, WWW-Authenticate');
+        res.setHeader('Content-Type', result.contentType || 'video/mp4');
+        res.setHeader('Content-Length', result.buffer.length);
 
-        proxyRes.pipe(res);
-      });
-
-      proxyReq.on('error', (err) => {
-        console.error('[Proxy Media Error]', err.message);
+        res.end(result.buffer);
+      } catch (err) {
+        if (req.destroyed || res.writableEnded) return;
+        if (err.code === 'ECONNRESET' || err.message === 'socket hang up') return;
+        console.error('[SessionMediaProxy Error]', err.message);
         if (!res.headersSent) {
-          res.statusCode = 502;
+          const isAuth = err.message && (err.message.includes('401') || err.message.toLowerCase().includes('unauthorized'));
+          const status = err.message && err.message.includes('SSRF_GUARD') ? 403 : (isAuth ? 401 : 502);
+          res.statusCode = status;
           res.setHeader('Content-Type', 'application/json');
-          res.end(JSON.stringify({ error: 'Proxy request failed', message: err.message }));
+          res.end(JSON.stringify({ error: isAuth ? 'AUTH_REQUIRED' : 'Proxy request failed', message: err.message }));
         }
-      });
-
-      req.on('close', () => {
-        proxyReq.destroy();
-      });
-
-      if (req.method !== 'GET' && req.method !== 'HEAD') {
-        req.pipe(proxyReq);
-      } else {
-        proxyReq.end();
       }
-      return;
-    } catch (err) {
-      res.statusCode = 400;
-      res.setHeader('Content-Type', 'application/json');
-      res.end(JSON.stringify({ error: 'Invalid URL', message: err.message }));
-      return;
-    }
+    })();
+    return;
   }
 
   res.statusCode = 404;
@@ -2669,6 +2685,17 @@ async function start() {
     });
   }
 }
+
+process.on('SIGINT', () => {
+  try { remoteSessionManager?.destroyAll(); } catch {}
+  try { sessionMediaManager?.destroyAll(); } catch {}
+  process.exit(0);
+});
+process.on('SIGTERM', () => {
+  try { remoteSessionManager?.destroyAll(); } catch {}
+  try { sessionMediaManager?.destroyAll(); } catch {}
+  process.exit(0);
+});
 
 start().catch((err) => {
   console.error('[Server] Failed to start server:', err);

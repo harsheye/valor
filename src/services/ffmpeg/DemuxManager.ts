@@ -3,6 +3,7 @@ import { logger } from '../../utils/logger';
 import type { ByteSource } from '../local/localByteSource';
 import { FFmpegManager } from './FFmpegManager';
 import { remoteMediaAccess } from '../remote/remoteMediaAccess';
+import { getSavedCredentials } from '../remote/mediaAuthStore';
 import type { ProbeResult, MediaStreamInfo } from '../pipeline/MediaPipeline';
 
 export class DemuxManager {
@@ -11,25 +12,25 @@ export class DemuxManager {
 
   constructor(
     private ffmpegMgr: FFmpegManager,
-    private videoFileOrSource: File | ByteSource
+    private videoFileOrSource: File | ByteSource,
+    private remoteUrl?: string
   ) {}
+
+  public getRemoteUrl(): string | null {
+    if (this.remoteUrl) return this.remoteUrl;
+    if (this.isFile(this.videoFileOrSource)) return null;
+    const src = this.videoFileOrSource as any;
+    if (typeof src?.url === 'string') return src.url;
+    if (src?.source && typeof src.source.url === 'string') return src.source.url;
+    return null;
+  }
 
   private isFile(obj: any): obj is File {
     return obj instanceof File || (obj && typeof obj.size === 'number' && typeof obj.slice === 'function');
   }
 
-  private async getSizeFallback(source: any): Promise<number> {
-    if (typeof source.getSize === 'function') {
-      return await source.getSize();
-    }
-    if (typeof source.size === 'number') {
-      return source.size;
-    }
-    throw new Error('Source does not expose getSize() or size');
-  }
-
   createSibling(ffmpegMgr: FFmpegManager): DemuxManager {
-    return new DemuxManager(ffmpegMgr, this.videoFileOrSource);
+    return new DemuxManager(ffmpegMgr, this.videoFileOrSource, this.remoteUrl || this.getRemoteUrl() || undefined);
   }
 
   async getMountedInputPath(ff: FFmpeg): Promise<string> {
@@ -64,6 +65,63 @@ export class DemuxManager {
   }
 
   async probe(ff: FFmpeg): Promise<ProbeResult> {
+    const remoteUrl = this.getRemoteUrl();
+    if (remoteUrl) {
+      try {
+        const creds = getSavedCredentials(remoteUrl);
+        const res = await fetch('/api/remote/probe', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            url: remoteUrl,
+            auth: creds ? { username: creds.username, password: creds.password } : undefined
+          })
+        });
+
+        if (res.ok) {
+          const data = await res.json();
+          const streams: MediaStreamInfo[] = [];
+
+          for (const v of (data.videoStreams || [])) {
+            streams.push({
+              index: v.index,
+              type: 'video',
+              codec: v.codec,
+              details: `${v.codec}, ${v.width}x${v.height}`
+            });
+          }
+
+          for (const a of (data.audioStreams || [])) {
+            streams.push({
+              index: a.index,
+              type: 'audio',
+              codec: a.codec,
+              language: a.language,
+              details: `${a.codec}, ${a.sampleRate} Hz, ${a.channels} channels`
+            });
+          }
+
+          for (const s of (data.subtitleStreams || [])) {
+            streams.push({
+              index: s.index,
+              type: 'subtitle',
+              codec: s.codec,
+              language: s.language,
+              details: `${s.codec} (${s.language})`
+            });
+          }
+
+          logger.success(`[DemuxManager] Remote probe succeeded via backend for ${remoteUrl}: ${streams.length} streams found`);
+          return {
+            duration: data.duration || 0,
+            streams
+          };
+        }
+      } catch (probeErr) {
+        logger.warn('[DemuxManager] Backend remote probe failed, falling back:', probeErr);
+      }
+    }
+
     const inputPath = await this.getMountedInputPath(ff);
     
     if (!this.isFile(this.videoFileOrSource)) {
@@ -138,15 +196,6 @@ export class DemuxManager {
     return { duration, streams };
   }
 
-  private getMkvHeaderOnly(bytes: Uint8Array): Uint8Array {
-    for (let i = 0; i <= bytes.length - 4; i++) {
-      if (bytes[i] === 0x1f && bytes[i + 1] === 0x43 && bytes[i + 2] === 0xb6 && bytes[i + 3] === 0x75) {
-        return bytes.subarray(0, i);
-      }
-    }
-    return bytes;
-  }
-
   /**
    * Slice a short segment of audio into WAV bytes
    */
@@ -158,6 +207,34 @@ export class DemuxManager {
     seekMap?: any[],
     signal?: AbortSignal
   ): Promise<Uint8Array> {
+    const remoteUrl = this.getRemoteUrl();
+    if (remoteUrl) {
+      const creds = getSavedCredentials(remoteUrl);
+      const params = new URLSearchParams({
+        url: remoteUrl,
+        streamIndex: streamIndex.toString(),
+        startTime: startTime.toFixed(3),
+        duration: duration.toString()
+      });
+      if (creds?.username) {
+        params.set('user', creds.username);
+        if (creds.password) {
+          params.set('pass', creds.password);
+        }
+      }
+
+      const res = await fetch(`/api/remote/audio-packet?${params.toString()}`, {
+        signal
+      });
+
+      if (!res.ok) {
+        throw new Error(`Failed to fetch audio packet from backend: ${res.status} ${res.statusText}`);
+      }
+
+      const arrayBuffer = await res.arrayBuffer();
+      return new Uint8Array(arrayBuffer);
+    }
+
     const mountedInputPath = await this.getMountedInputPath(ff);
     const tempOutFile = `slice_${streamIndex}_${startTime}.wav`;
     const isRemoteSource = !this.isFile(this.videoFileOrSource);
