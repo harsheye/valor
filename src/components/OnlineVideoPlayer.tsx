@@ -287,7 +287,9 @@ export const OnlineVideoPlayer: React.FC<OnlineVideoPlayerProps> = ({
                 id: `api-intro-${idx}`,
                 time: msToSec(item.start_ms),
                 endTime: msToSec(item.end_ms),
+                startTime: msToSec(item.start_ms),
                 label: 'Intro',
+                category: 'Intro',
                 isIntro: true,
                 isOutro: false,
                 skipEnabled: true,
@@ -302,7 +304,9 @@ export const OnlineVideoPlayer: React.FC<OnlineVideoPlayerProps> = ({
                 id: `api-recap-${idx}`,
                 time: msToSec(item.start_ms),
                 endTime: msToSec(item.end_ms),
-                label: 'Recap',
+                startTime: msToSec(item.start_ms),
+                label: 'Preview / Recap',
+                category: 'Preview',
                 isIntro: true,
                 isOutro: false,
                 skipEnabled: true,
@@ -317,13 +321,34 @@ export const OnlineVideoPlayer: React.FC<OnlineVideoPlayerProps> = ({
                 id: `api-credits-${idx}`,
                 time: msToSec(item.start_ms),
                 endTime: msToSec(item.end_ms),
-                label: 'Credits/Outro',
+                startTime: msToSec(item.start_ms),
+                label: 'Credits / Outro',
+                category: 'Outro',
                 isIntro: false,
                 isOutro: true,
                 skipEnabled: true,
                 createdBy: 'theintrodb'
               });
             });
+          }
+
+          if (tidbBms.length > 0) {
+            // Save every timestamp found in IntroDB into our database!
+            try {
+              fetch('/api/timestamps/save-introdb', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  tmdbId: resolvedTmdbId,
+                  season: isTV ? season : null,
+                  episode: isTV ? episode : null,
+                  videoId: video.id,
+                  mediaName: video.title || '',
+                  introDbData,
+                  userId: userId || 'theintrodb'
+                })
+              }).catch(() => {});
+            } catch (saveErr) {}
           }
         }
       } catch (err) {

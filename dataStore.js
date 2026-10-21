@@ -5,6 +5,7 @@
 import pg from 'pg';
 import Redis from 'ioredis';
 import crypto from 'crypto';
+import { lookupIpIntelligence, getFlagEmoji } from './geoLookup.js';
 
 const { Pool } = pg;
 
@@ -72,14 +73,18 @@ export class DataStore {
       console.warn(`\x1b[33m[Redis Warning]\x1b[0m Could not connect to Docker Redis (${err.message}). Lazy caching disabled.`);
     }
 
-    // Run table verification if PostgreSQL is connected
-    if (this.isPgConnected) {
-      await this.ensurePgTables();
-    }
+    // Run table verification for both PostgreSQL and SQLite
+    await this.ensureTables();
+
+    // Run background geo intelligence backfill
+    this.backfillGeoIntelligence().catch(err => {
+      console.warn('[Geo Intelligence Backfill]', err.message);
+    });
   }
 
-  async ensurePgTables() {
-    const initSql = `
+  async ensureTables() {
+    if (this.isPgConnected && this.pgPool) {
+      const initSql = `
       CREATE TABLE IF NOT EXISTS profiles (
           user_id VARCHAR(64) PRIMARY KEY,
           name VARCHAR(255) NOT NULL,
@@ -232,25 +237,109 @@ export class DataStore {
       );
 
       CREATE INDEX IF NOT EXISTS idx_analytics_traffic_created ON analytics_traffic_logs(created_at DESC);
-      CREATE INDEX IF NOT EXISTS idx_analytics_traffic_device_id ON analytics_traffic_logs(device_id);
       CREATE INDEX IF NOT EXISTS idx_analytics_devices_last_seen ON analytics_devices(last_seen DESC);
       CREATE INDEX IF NOT EXISTS idx_analytics_devices_visits ON analytics_devices(visit_count DESC);
       CREATE INDEX IF NOT EXISTS idx_analytics_sessions_last_seen ON analytics_sessions(last_seen DESC);
-    `;
-    try {
-      await this.pgPool.query(initSql);
-      await this.pgPool.query(`ALTER TABLE analytics_traffic_logs ADD COLUMN IF NOT EXISTS device VARCHAR(64) DEFAULT 'Desktop';`).catch(() => {});
-      await this.pgPool.query(`ALTER TABLE analytics_traffic_logs ADD COLUMN IF NOT EXISTS device_id VARCHAR(128);`).catch(() => {});
-      await this.pgPool.query(`ALTER TABLE analytics_traffic_logs ADD COLUMN IF NOT EXISTS referer TEXT;`).catch(() => {});
-      await this.pgPool.query(`ALTER TABLE analytics_traffic_logs ADD COLUMN IF NOT EXISTS is_embed BOOLEAN DEFAULT FALSE;`).catch(() => {});
-      await this.pgPool.query(`CREATE INDEX IF NOT EXISTS idx_analytics_traffic_device_id ON analytics_traffic_logs(device_id);`).catch(() => {});
-    } catch (e) {
-      console.error('[PostgreSQL] Failed ensuring tables:', e.message);
+      CREATE INDEX IF NOT EXISTS idx_bookmarks_tmdb ON bookmarks(tmdb_id, season, episode);
+      CREATE INDEX IF NOT EXISTS idx_bookmarks_video_id ON bookmarks(video_id);
+      CREATE INDEX IF NOT EXISTS idx_bookmarks_category ON bookmarks(category);
+      CREATE INDEX IF NOT EXISTS idx_bookmarks_created_by ON bookmarks(created_by);
+        CREATE TABLE IF NOT EXISTS webhooks (
+            id VARCHAR(128) PRIMARY KEY,
+            name VARCHAR(255) NOT NULL,
+            url TEXT NOT NULL,
+            secret TEXT,
+            events JSONB DEFAULT '["*"]'::jsonb,
+            enabled BOOLEAN DEFAULT TRUE,
+            created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+            last_triggered TIMESTAMP WITH TIME ZONE,
+            total_deliveries INT DEFAULT 0,
+            failed_deliveries INT DEFAULT 0
+        );
+
+        CREATE TABLE IF NOT EXISTS webhook_deliveries (
+            id VARCHAR(128) PRIMARY KEY,
+            webhook_id VARCHAR(128),
+            webhook_name VARCHAR(255),
+            event VARCHAR(64),
+            status VARCHAR(32),
+            status_code INT,
+            latency_ms INT,
+            payload TEXT,
+            response_body TEXT,
+            created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+        );
+
+        CREATE TABLE IF NOT EXISTS blocked_ips (
+            ip VARCHAR(64) PRIMARY KEY,
+            reason TEXT,
+            created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+        );
+      `;
+      try {
+        await this.pgPool.query(initSql);
+        await this.pgPool.query(`ALTER TABLE analytics_traffic_logs ADD COLUMN IF NOT EXISTS device VARCHAR(64) DEFAULT 'Desktop';`).catch(() => {});
+        await this.pgPool.query(`ALTER TABLE analytics_traffic_logs ADD COLUMN IF NOT EXISTS device_id VARCHAR(128);`).catch(() => {});
+        await this.pgPool.query(`ALTER TABLE analytics_traffic_logs ADD COLUMN IF NOT EXISTS referer TEXT;`).catch(() => {});
+        await this.pgPool.query(`ALTER TABLE analytics_traffic_logs ADD COLUMN IF NOT EXISTS is_embed BOOLEAN DEFAULT FALSE;`).catch(() => {});
+        await this.pgPool.query(`ALTER TABLE analytics_traffic_logs ADD COLUMN IF NOT EXISTS country VARCHAR(64);`).catch(() => {});
+        await this.pgPool.query(`ALTER TABLE analytics_traffic_logs ADD COLUMN IF NOT EXISTS country_code VARCHAR(8);`).catch(() => {});
+        await this.pgPool.query(`ALTER TABLE analytics_traffic_logs ADD COLUMN IF NOT EXISTS city VARCHAR(128);`).catch(() => {});
+        await this.pgPool.query(`ALTER TABLE analytics_traffic_logs ADD COLUMN IF NOT EXISTS region VARCHAR(128);`).catch(() => {});
+        await this.pgPool.query(`ALTER TABLE analytics_traffic_logs ADD COLUMN IF NOT EXISTS isp VARCHAR(255);`).catch(() => {});
+        await this.pgPool.query(`ALTER TABLE analytics_traffic_logs ADD COLUMN IF NOT EXISTS reverse_dns TEXT;`).catch(() => {});
+
+        await this.pgPool.query(`ALTER TABLE analytics_devices ADD COLUMN IF NOT EXISTS country VARCHAR(64);`).catch(() => {});
+        await this.pgPool.query(`ALTER TABLE analytics_devices ADD COLUMN IF NOT EXISTS country_code VARCHAR(8);`).catch(() => {});
+        await this.pgPool.query(`ALTER TABLE analytics_devices ADD COLUMN IF NOT EXISTS city VARCHAR(128);`).catch(() => {});
+        await this.pgPool.query(`ALTER TABLE analytics_devices ADD COLUMN IF NOT EXISTS region VARCHAR(128);`).catch(() => {});
+        await this.pgPool.query(`ALTER TABLE analytics_devices ADD COLUMN IF NOT EXISTS isp VARCHAR(255);`).catch(() => {});
+        await this.pgPool.query(`ALTER TABLE analytics_devices ADD COLUMN IF NOT EXISTS org VARCHAR(255);`).catch(() => {});
+        await this.pgPool.query(`ALTER TABLE analytics_devices ADD COLUMN IF NOT EXISTS lat NUMERIC;`).catch(() => {});
+        await this.pgPool.query(`ALTER TABLE analytics_devices ADD COLUMN IF NOT EXISTS lon NUMERIC;`).catch(() => {});
+        await this.pgPool.query(`ALTER TABLE analytics_devices ADD COLUMN IF NOT EXISTS reverse_dns TEXT;`).catch(() => {});
+        await this.pgPool.query(`CREATE INDEX IF NOT EXISTS idx_analytics_traffic_device_id ON analytics_traffic_logs(device_id);`).catch(() => {});
+        await this.pgPool.query(`CREATE INDEX IF NOT EXISTS idx_bookmarks_tmdb ON bookmarks(tmdb_id, season, episode);`).catch(() => {});
+        await this.pgPool.query(`CREATE INDEX IF NOT EXISTS idx_bookmarks_video_id ON bookmarks(video_id);`).catch(() => {});
+        await this.pgPool.query(`CREATE INDEX IF NOT EXISTS idx_bookmarks_category ON bookmarks(category);`).catch(() => {});
+        await this.pgPool.query(`CREATE INDEX IF NOT EXISTS idx_bookmarks_created_by ON bookmarks(created_by);`).catch(() => {});
+      } catch (e) {
+        console.error('[PostgreSQL] Failed ensuring tables:', e.message);
+      }
     }
 
     if (this.sqliteDb) {
       try {
         this.sqliteDb.exec(`
+          CREATE TABLE IF NOT EXISTS blocked_ips (
+            ip TEXT PRIMARY KEY,
+            reason TEXT,
+            created_at TEXT DEFAULT (datetime('now'))
+          );
+
+          CREATE TABLE IF NOT EXISTS analytics_sessions (
+            session_id TEXT PRIMARY KEY,
+            ip TEXT,
+            user_agent TEXT,
+            browser TEXT,
+            os TEXT,
+            device TEXT DEFAULT 'Desktop',
+            user_id TEXT,
+            profile_name TEXT,
+            first_seen TEXT DEFAULT (datetime('now')),
+            last_seen TEXT DEFAULT (datetime('now')),
+            total_duration_seconds INTEGER DEFAULT 0,
+            total_requests INTEGER DEFAULT 1,
+            bytes_transferred INTEGER DEFAULT 0,
+            current_path TEXT,
+            country TEXT,
+            country_code TEXT,
+            city TEXT,
+            region TEXT,
+            isp TEXT,
+            reverse_dns TEXT
+          );
+
           CREATE TABLE IF NOT EXISTS analytics_devices (
             device_id TEXT PRIMARY KEY,
             first_seen TEXT DEFAULT (datetime('now')),
@@ -269,13 +358,143 @@ export class DataStore {
             profile_name TEXT,
             embed_calls_count INTEGER DEFAULT 0,
             embed_referers TEXT DEFAULT '[]',
-            last_path TEXT
+            last_path TEXT,
+            country TEXT,
+            country_code TEXT,
+            city TEXT,
+            region TEXT,
+            isp TEXT,
+            org TEXT,
+            lat REAL,
+            lon REAL,
+            reverse_dns TEXT
+          );
+
+          CREATE TABLE IF NOT EXISTS analytics_traffic_logs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_id TEXT,
+            ip TEXT,
+            method TEXT,
+            path TEXT,
+            status_code INTEGER,
+            latency_ms INTEGER,
+            bytes_transferred INTEGER DEFAULT 0,
+            user_agent TEXT,
+            browser TEXT,
+            os TEXT,
+            user_id TEXT,
+            device TEXT DEFAULT 'Desktop',
+            device_id TEXT,
+            referer TEXT,
+            is_embed INTEGER DEFAULT 0,
+            country TEXT,
+            country_code TEXT,
+            city TEXT,
+            region TEXT,
+            isp TEXT,
+            reverse_dns TEXT,
+            created_at TEXT DEFAULT (datetime('now'))
+          );
+
+          CREATE TABLE IF NOT EXISTS webhooks (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            url TEXT NOT NULL,
+            secret TEXT,
+            events TEXT DEFAULT '["*"]',
+            enabled INTEGER DEFAULT 1,
+            created_at TEXT DEFAULT (datetime('now')),
+            last_triggered TEXT,
+            total_deliveries INTEGER DEFAULT 0,
+            failed_deliveries INTEGER DEFAULT 0
+          );
+
+          CREATE TABLE IF NOT EXISTS webhook_deliveries (
+            id TEXT PRIMARY KEY,
+            webhook_id TEXT,
+            webhook_name TEXT,
+            event TEXT,
+            status TEXT,
+            status_code INTEGER,
+            latency_ms INTEGER,
+            payload TEXT,
+            response_body TEXT,
+            created_at TEXT DEFAULT (datetime('now'))
           );
         `);
-        try { this.sqliteDb.exec(`ALTER TABLE analytics_traffic_logs ADD COLUMN device TEXT DEFAULT 'Desktop';`); } catch(e){}
-        try { this.sqliteDb.exec(`ALTER TABLE analytics_traffic_logs ADD COLUMN device_id TEXT;`); } catch(e){}
-        try { this.sqliteDb.exec(`ALTER TABLE analytics_traffic_logs ADD COLUMN referer TEXT;`); } catch(e){}
-        try { this.sqliteDb.exec(`ALTER TABLE analytics_traffic_logs ADD COLUMN is_embed INTEGER DEFAULT 0;`); } catch(e){}
+
+        // Migration columns
+        const sqliteAlterColumns = [
+          "ALTER TABLE analytics_devices ADD COLUMN country TEXT",
+          "ALTER TABLE analytics_devices ADD COLUMN country_code TEXT",
+          "ALTER TABLE analytics_devices ADD COLUMN city TEXT",
+          "ALTER TABLE analytics_devices ADD COLUMN region TEXT",
+          "ALTER TABLE analytics_devices ADD COLUMN isp TEXT",
+          "ALTER TABLE analytics_devices ADD COLUMN org TEXT",
+          "ALTER TABLE analytics_devices ADD COLUMN lat REAL",
+          "ALTER TABLE analytics_devices ADD COLUMN lon REAL",
+          "ALTER TABLE analytics_devices ADD COLUMN reverse_dns TEXT",
+          "ALTER TABLE analytics_sessions ADD COLUMN country TEXT",
+          "ALTER TABLE analytics_sessions ADD COLUMN country_code TEXT",
+          "ALTER TABLE analytics_sessions ADD COLUMN city TEXT",
+          "ALTER TABLE analytics_sessions ADD COLUMN region TEXT",
+          "ALTER TABLE analytics_sessions ADD COLUMN isp TEXT",
+          "ALTER TABLE analytics_sessions ADD COLUMN reverse_dns TEXT",
+          "ALTER TABLE analytics_traffic_logs ADD COLUMN country TEXT",
+          "ALTER TABLE analytics_traffic_logs ADD COLUMN country_code TEXT",
+          "ALTER TABLE analytics_traffic_logs ADD COLUMN city TEXT",
+          "ALTER TABLE analytics_traffic_logs ADD COLUMN region TEXT",
+          "ALTER TABLE analytics_traffic_logs ADD COLUMN isp TEXT",
+          "ALTER TABLE analytics_traffic_logs ADD COLUMN reverse_dns TEXT",
+          "ALTER TABLE analytics_traffic_logs ADD COLUMN device TEXT DEFAULT 'Desktop'",
+          "ALTER TABLE analytics_traffic_logs ADD COLUMN device_id TEXT",
+          "ALTER TABLE analytics_traffic_logs ADD COLUMN referer TEXT",
+          "ALTER TABLE analytics_traffic_logs ADD COLUMN is_embed INTEGER DEFAULT 0",
+          "ALTER TABLE bookmarks ADD COLUMN createdBy TEXT DEFAULT 'manual'",
+          "CREATE INDEX IF NOT EXISTS idx_bookmarks_tmdb ON bookmarks(tmdbId, season, episode)",
+          "CREATE INDEX IF NOT EXISTS idx_bookmarks_videoId ON bookmarks(videoId)",
+          "CREATE INDEX IF NOT EXISTS idx_bookmarks_category ON bookmarks(category)"
+        ];
+        for (const alterSql of sqliteAlterColumns) {
+          try { this.sqliteDb.exec(alterSql); } catch (e) {}
+        }
+      } catch (e) {
+        console.error('[SQLite] Failed ensuring tables:', e.message);
+      }
+    }
+
+    // Prime in-memory cache of blocked IPs
+    try {
+      await this.isIpBlocked('0.0.0.0');
+    } catch (e) {}
+  }
+
+  async backfillGeoIntelligence() {
+    if (this.sqliteDb) {
+      try {
+        const devs = this.sqliteDb.prepare("SELECT device_id, last_ip FROM analytics_devices WHERE country IS NULL OR country = ''").all();
+        for (const dev of devs) {
+          if (dev.last_ip) {
+            const geo = await lookupIpIntelligence(dev.last_ip);
+            this.sqliteDb.prepare(`
+              UPDATE analytics_devices SET
+                country = ?, country_code = ?, city = ?, region = ?, isp = ?, org = ?, lat = ?, lon = ?, reverse_dns = ?
+              WHERE device_id = ?
+            `).run(geo.country, geo.countryCode, geo.city, geo.region, geo.isp, geo.org, geo.lat, geo.lon, geo.reverseDns, dev.device_id);
+          }
+        }
+
+        const logs = this.sqliteDb.prepare("SELECT DISTINCT ip FROM analytics_traffic_logs WHERE (country IS NULL OR country = '') AND ip IS NOT NULL LIMIT 50").all();
+        for (const log of logs) {
+          if (log.ip) {
+            const geo = await lookupIpIntelligence(log.ip);
+            this.sqliteDb.prepare(`
+              UPDATE analytics_traffic_logs SET
+                country = ?, country_code = ?, city = ?, region = ?, isp = ?, reverse_dns = ?
+              WHERE ip = ?
+            `).run(geo.country, geo.countryCode, geo.city, geo.region, geo.isp, geo.reverseDns, log.ip);
+          }
+        }
       } catch (e) {}
     }
   }
@@ -610,6 +829,37 @@ export class DataStore {
             v.tmdbId || null,
             Boolean(v.hasScrobbledTrakt)
           ]);
+
+          // Persist video bookmarks to PostgreSQL if present
+          if (Array.isArray(v.bookmarks) && v.bookmarks.length > 0) {
+            const upsertBookmarkPg = `
+              INSERT INTO bookmarks (
+                user_id, video_id, id, time, end_time, label, is_intro, is_outro, skip_enabled,
+                title, description, category, start_time, thumbnail, favorite,
+                updated_at, episode, season, color, tmdb_id, user_name, user_time, media_name, created_by
+              ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, CURRENT_TIMESTAMP, $16, $17, $18, $19, $20, $21, $22, $23)
+              ON CONFLICT (user_id, video_id, id) DO UPDATE SET
+                time = EXCLUDED.time, end_time = EXCLUDED.end_time, label = EXCLUDED.label,
+                is_intro = EXCLUDED.is_intro, is_outro = EXCLUDED.is_outro, skip_enabled = EXCLUDED.skip_enabled,
+                title = EXCLUDED.title, description = EXCLUDED.description, category = EXCLUDED.category,
+                start_time = EXCLUDED.start_time, thumbnail = EXCLUDED.thumbnail, favorite = EXCLUDED.favorite,
+                updated_at = CURRENT_TIMESTAMP, episode = EXCLUDED.episode, season = EXCLUDED.season,
+                color = EXCLUDED.color, tmdb_id = EXCLUDED.tmdb_id, user_name = EXCLUDED.user_name,
+                user_time = EXCLUDED.user_time, media_name = EXCLUDED.media_name, created_by = EXCLUDED.created_by
+            `;
+            for (const bm of v.bookmarks) {
+              await client.query(upsertBookmarkPg, [
+                userId, v.id, bm.id, Number(bm.time) || 0,
+                bm.endTime !== undefined && bm.endTime !== null ? Number(bm.endTime) : null,
+                bm.label || '', Boolean(bm.isIntro), Boolean(bm.isOutro), Boolean(bm.skipEnabled),
+                bm.title || null, bm.description || null, bm.category || null,
+                bm.startTime !== undefined && bm.startTime !== null ? Number(bm.startTime) : null,
+                bm.thumbnail || null, Boolean(bm.favorite),
+                v.episode || null, v.season || null, bm.color || null, v.tmdbId || null,
+                bm.userName || null, bm.userTime || null, v.title || null, bm.createdBy || 'manual'
+              ]).catch(() => {});
+            }
+          }
         }
 
         await client.query('COMMIT');
@@ -645,6 +895,31 @@ export class DataStore {
             JSON.stringify(v.subtitleTracks || []), v.episode || null, v.season || null,
             v.color || null, v.tmdbId || null, v.hasScrobbledTrakt ? 1 : 0
           );
+
+          if (Array.isArray(v.bookmarks) && v.bookmarks.length > 0) {
+            const upsertStmt = this.sqliteDb.prepare(`
+              INSERT OR REPLACE INTO bookmarks (
+                userId, videoId, id, time, endTime, label, isIntro, isOutro, skipEnabled,
+                title, description, category, startTime, thumbnail, favorite,
+                createdAt, updatedAt, episode, season, color, tmdbId,
+                userName, userTime, mediaName, createdBy
+              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'), ?, ?, ?, ?, ?, ?, ?, ?)
+            `);
+            for (const bm of v.bookmarks) {
+              try {
+                upsertStmt.run(
+                  userId, v.id, bm.id, Number(bm.time) || 0,
+                  bm.endTime !== undefined && bm.endTime !== null ? Number(bm.endTime) : null,
+                  bm.label || '', bm.isIntro ? 1 : 0, bm.isOutro ? 1 : 0, bm.skipEnabled ? 1 : 0,
+                  bm.title || null, bm.description || null, bm.category || null,
+                  bm.startTime !== undefined && bm.startTime !== null ? Number(bm.startTime) : null,
+                  bm.thumbnail || null, bm.favorite ? 1 : 0,
+                  v.episode || null, v.season || null, bm.color || null, v.tmdbId || null,
+                  bm.userName || null, bm.userTime || null, v.title || null, bm.createdBy || 'manual'
+                );
+              } catch (e) {}
+            }
+          }
         }
       } catch (e) {}
     }
@@ -836,6 +1111,20 @@ export class DataStore {
     const dateStr = new Date().toISOString().slice(0, 10);
     const hourStr = new Date().getHours().toString();
 
+    // Resolve GeoIP & Reverse DNS intelligence asynchronously
+    const geo = await lookupIpIntelligence(ip).catch(() => ({
+      country: 'Unknown',
+      countryCode: 'UN',
+      flag: '🌐',
+      city: 'Unknown',
+      region: 'Unknown',
+      isp: 'Unknown ISP',
+      org: 'Unknown Org',
+      lat: 0,
+      lon: 0,
+      reverseDns: ip || 'Unknown'
+    }));
+
     // 1. Write to Redis (High Speed Memory Tier)
     if (this.isRedisConnected && this.redis) {
       try {
@@ -859,6 +1148,12 @@ export class DataStore {
           sessionId,
           deviceId,
           ip: ip || '127.0.0.1',
+          reverseDns: geo.reverseDns || ip || 'Unknown',
+          country: geo.country || 'Unknown',
+          countryCode: geo.countryCode || 'UN',
+          city: geo.city || 'Unknown',
+          region: geo.region || 'Unknown',
+          isp: geo.isp || 'Unknown',
           browser: browser || 'Unknown',
           os: os || 'Unknown',
           device: device || 'Desktop',
@@ -892,6 +1187,10 @@ export class DataStore {
           id: `req_${crypto.randomBytes(4).toString('hex')}`,
           timestamp: now,
           ip: ip || '127.0.0.1',
+          reverseDns: geo.reverseDns || ip,
+          country: geo.country,
+          countryCode: geo.countryCode,
+          city: geo.city,
           method: method || 'GET',
           path: path || '/',
           statusCode: statusCode || 200,
@@ -918,36 +1217,46 @@ export class DataStore {
     if (this.isPgConnected && this.pgPool) {
       try {
         this.pgPool.query(
-          `INSERT INTO analytics_traffic_logs (session_id, ip, method, path, status_code, latency_ms, bytes_transferred, user_agent, browser, os, user_id, device, device_id, referer, is_embed)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)`,
-          [sessionId, ip, method, path, statusCode, latencyMs, bytesTransferred, (userAgent || '').slice(0, 500), browser, os, userId, device || 'Desktop', deviceId, referer || '', Boolean(isEmbed)]
+          `INSERT INTO analytics_traffic_logs (session_id, ip, method, path, status_code, latency_ms, bytes_transferred, user_agent, browser, os, user_id, device, device_id, referer, is_embed, country, country_code, city, region, isp, reverse_dns)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)`,
+          [sessionId, ip, method, path, statusCode, latencyMs, bytesTransferred, (userAgent || '').slice(0, 500), browser, os, userId, device || 'Desktop', deviceId, referer || '', Boolean(isEmbed), geo.country, geo.countryCode, geo.city, geo.region, geo.isp, geo.reverseDns]
         ).catch(() => {});
 
         this.pgPool.query(
-          `INSERT INTO analytics_sessions (session_id, ip, user_agent, browser, os, device, user_id, profile_name, last_seen, total_requests, bytes_transferred, current_path)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), 1, $9, $10)
+          `INSERT INTO analytics_sessions (session_id, device_id, ip, user_agent, browser, os, device, user_id, profile_name, last_seen, total_requests, bytes_transferred, current_path, country, country_code, city, region, isp, reverse_dns)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW(), 1, $10, $11, $12, $13, $14, $15, $16, $17)
            ON CONFLICT (session_id) DO UPDATE SET
+             device_id = COALESCE($2, analytics_sessions.device_id),
              last_seen = NOW(),
              total_requests = analytics_sessions.total_requests + 1,
-             bytes_transferred = analytics_sessions.bytes_transferred + $9,
-             current_path = $10,
-             user_id = COALESCE($7, analytics_sessions.user_id),
-             profile_name = COALESCE($8, analytics_sessions.profile_name)`,
-          [sessionId, ip, (userAgent || '').slice(0, 500), browser, os, device, userId, profileName, bytesTransferred, path]
+             bytes_transferred = analytics_sessions.bytes_transferred + $10,
+             current_path = $11,
+             user_id = COALESCE($8, analytics_sessions.user_id),
+             profile_name = COALESCE($9, analytics_sessions.profile_name),
+             country = COALESCE($12, analytics_sessions.country),
+             city = COALESCE($14, analytics_sessions.city),
+             reverse_dns = COALESCE($17, analytics_sessions.reverse_dns)`,
+          [sessionId, deviceId, ip, (userAgent || '').slice(0, 500), browser, os, device, userId, profileName, bytesTransferred, path, geo.country, geo.countryCode, geo.city, geo.region, geo.isp, geo.reverseDns]
         ).catch(() => {});
 
         // Visitor Devices Intelligence Upsert
         const embedCountIncr = isEmbed ? 1 : 0;
+        const cleanIp = ip || '127.0.0.1';
+        const cleanReferer = referer || '';
+        const ipJsonStr = JSON.stringify([cleanIp]);
+        const refererJsonStr = cleanReferer ? JSON.stringify([cleanReferer]) : '[]';
+
         this.pgPool.query(
           `INSERT INTO analytics_devices (
              device_id, first_seen, last_seen, visit_count, total_duration_seconds, total_requests,
              bytes_transferred, last_ip, ips, user_agent, browser, os, device, user_id, profile_name,
-             embed_calls_count, embed_referers, last_path
+             embed_calls_count, embed_referers, last_path, country, country_code, city, region, isp, org, lat, lon, reverse_dns
            )
            VALUES (
              $1, NOW(), NOW(), 1, 0, 1,
-             $2, $3, jsonb_build_array($3::text), $4, $5, $6, $7, $8, $9,
-             $10, CASE WHEN $11 != '' THEN jsonb_build_array($11::text) ELSE '[]'::jsonb END, $12
+             $2, $3, $4::jsonb, $5, $6, $7, $8, $9, $10,
+             $11, $12::jsonb, $14,
+             $15, $16, $17, $18, $19, $20, $21, $22, $23
            )
            ON CONFLICT (device_id) DO UPDATE SET
              visit_count = CASE 
@@ -964,67 +1273,120 @@ export class DataStore {
              bytes_transferred = analytics_devices.bytes_transferred + $2,
              last_ip = $3,
              ips = CASE 
-               WHEN NOT (analytics_devices.ips ? $3) THEN analytics_devices.ips || jsonb_build_array($3::text)
+               WHEN NOT (analytics_devices.ips ? $3) THEN analytics_devices.ips || $4::jsonb
                ELSE analytics_devices.ips
              END,
-             user_agent = COALESCE($4, analytics_devices.user_agent),
-             browser = COALESCE($5, analytics_devices.browser),
-             os = COALESCE($6, analytics_devices.os),
-             device = COALESCE($7, analytics_devices.device),
-             user_id = COALESCE($8, analytics_devices.user_id),
-             profile_name = COALESCE($9, analytics_devices.profile_name),
-             embed_calls_count = analytics_devices.embed_calls_count + $10,
+             user_agent = COALESCE($5, analytics_devices.user_agent),
+             browser = COALESCE($6, analytics_devices.browser),
+             os = COALESCE($7, analytics_devices.os),
+             device = COALESCE($8, analytics_devices.device),
+             user_id = COALESCE($9, analytics_devices.user_id),
+             profile_name = COALESCE($10, analytics_devices.profile_name),
+             embed_calls_count = analytics_devices.embed_calls_count + $11,
              embed_referers = CASE
-               WHEN $11 != '' AND NOT (analytics_devices.embed_referers ? $11) THEN analytics_devices.embed_referers || jsonb_build_array($11::text)
+               WHEN $13 != '' AND NOT (analytics_devices.embed_referers ? $13) THEN analytics_devices.embed_referers || $12::jsonb
                ELSE analytics_devices.embed_referers
              END,
-             last_path = $12`,
+             last_path = $14,
+             country = COALESCE($15, analytics_devices.country),
+             country_code = COALESCE($16, analytics_devices.country_code),
+             city = COALESCE($17, analytics_devices.city),
+             region = COALESCE($18, analytics_devices.region),
+             isp = COALESCE($19, analytics_devices.isp),
+             org = COALESCE($20, analytics_devices.org),
+             lat = COALESCE($21, analytics_devices.lat),
+             lon = COALESCE($22, analytics_devices.lon),
+             reverse_dns = COALESCE($23, analytics_devices.reverse_dns)`,
           [
-            deviceId, bytesTransferred, ip || '127.0.0.1', (userAgent || '').slice(0, 500),
+            deviceId, bytesTransferred, cleanIp, ipJsonStr, (userAgent || '').slice(0, 500),
             browser, os, device || 'Desktop', userId, profileName,
-            embedCountIncr, referer || '', path
+            embedCountIncr, refererJsonStr, cleanReferer, path,
+            geo.country, geo.countryCode, geo.city, geo.region, geo.isp, geo.org, geo.lat, geo.lon, geo.reverseDns
           ]
-        ).catch(() => {});
+        ).catch(err => {
+          console.error('[Postgres analytics_devices error]', err.message);
+        });
       } catch (e) {}
     } else if (this.sqliteDb) {
       try {
         this.sqliteDb.prepare(
-          `INSERT INTO analytics_traffic_logs (session_id, ip, method, path, status_code, latency_ms, bytes_transferred, user_agent, browser, os, user_id, device, device_id, referer, is_embed)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-        ).run(sessionId, ip, method, path, statusCode, latencyMs, bytesTransferred, (userAgent || '').slice(0, 500), browser, os, userId, device || 'Desktop', deviceId, referer || '', isEmbed ? 1 : 0);
+          `INSERT INTO analytics_traffic_logs (session_id, ip, method, path, status_code, latency_ms, bytes_transferred, user_agent, browser, os, user_id, device, device_id, referer, is_embed, country, country_code, city, region, isp, reverse_dns)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        ).run(
+          sessionId, ip, method, path, statusCode, latencyMs, bytesTransferred, (userAgent || '').slice(0, 500),
+          browser, os, userId, device || 'Desktop', deviceId, referer || '', isEmbed ? 1 : 0,
+          geo.country, geo.countryCode, geo.city, geo.region, geo.isp, geo.reverseDns
+        );
 
         const existing = this.sqliteDb.prepare('SELECT session_id, total_requests, bytes_transferred FROM analytics_sessions WHERE session_id = ?').get(sessionId);
         if (existing) {
           this.sqliteDb.prepare(
             `UPDATE analytics_sessions SET 
+               device_id = COALESCE(?, device_id),
                last_seen = datetime('now'),
                total_requests = total_requests + 1,
                bytes_transferred = bytes_transferred + ?,
                current_path = ?,
                user_id = COALESCE(?, user_id),
-               profile_name = COALESCE(?, profile_name)
+               profile_name = COALESCE(?, profile_name),
+               country = COALESCE(?, country),
+               city = COALESCE(?, city),
+               reverse_dns = COALESCE(?, reverse_dns)
              WHERE session_id = ?`
-          ).run(bytesTransferred, path, userId, profileName, sessionId);
+          ).run(deviceId, bytesTransferred, path, userId, profileName, geo.country, geo.city, geo.reverseDns, sessionId);
         } else {
           this.sqliteDb.prepare(
-            `INSERT INTO analytics_sessions (session_id, ip, user_agent, browser, os, device, user_id, profile_name, total_requests, bytes_transferred, current_path)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)`
-          ).run(sessionId, ip, (userAgent || '').slice(0, 500), browser, os, device, userId, profileName, bytesTransferred, path);
+            `INSERT INTO analytics_sessions (session_id, device_id, ip, user_agent, browser, os, device, user_id, profile_name, total_requests, bytes_transferred, current_path, country, country_code, city, region, isp, reverse_dns)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?)`
+          ).run(sessionId, deviceId, ip, (userAgent || '').slice(0, 500), browser, os, device, userId, profileName, bytesTransferred, path, geo.country, geo.countryCode, geo.city, geo.region, geo.isp, geo.reverseDns);
+
+          // Dispatch session start webhook
+          this.dispatchWebhook('visitor.session_start', {
+            sessionId,
+            deviceId,
+            ip,
+            country: geo.country,
+            city: geo.city,
+            browser,
+            os,
+            device,
+            currentPath: path,
+            timestamp: new Date().toISOString()
+          }).catch(() => {});
         }
 
         // SQLite devices upsert
-        const devExist = this.sqliteDb.prepare('SELECT device_id, last_seen, visit_count, total_duration_seconds, total_requests, bytes_transferred, embed_calls_count, embed_referers FROM analytics_devices WHERE device_id = ?').get(deviceId);
+        const devExist = this.sqliteDb.prepare('SELECT device_id, last_seen, visit_count, total_duration_seconds, total_requests, bytes_transferred, embed_calls_count, embed_referers, ips FROM analytics_devices WHERE device_id = ?').get(deviceId);
         if (devExist) {
           let embedRefs = [];
           try { embedRefs = JSON.parse(devExist.embed_referers || '[]'); } catch(e){}
           if (referer && !embedRefs.includes(referer)) embedRefs.push(referer);
 
+          let ipList = [];
+          try { ipList = JSON.parse(devExist.ips || '[]'); } catch(e){}
+          if (ip && !ipList.includes(ip)) ipList.push(ip);
+
+          let visitCount = devExist.visit_count || 1;
+          let totalDuration = devExist.total_duration_seconds || 0;
+          if (devExist.last_seen) {
+            const lastSeenTime = new Date(devExist.last_seen + (devExist.last_seen.endsWith('Z') ? '' : 'Z')).getTime() || new Date(devExist.last_seen).getTime();
+            const elapsedSec = Math.floor((Date.now() - lastSeenTime) / 1000);
+            if (elapsedSec > 1800) {
+              visitCount += 1;
+            } else if (elapsedSec >= 1 && elapsedSec < 1800) {
+              totalDuration += Math.min(60, elapsedSec);
+            }
+          }
+
           this.sqliteDb.prepare(
             `UPDATE analytics_devices SET
                last_seen = datetime('now'),
+               visit_count = ?,
+               total_duration_seconds = ?,
                total_requests = total_requests + 1,
                bytes_transferred = bytes_transferred + ?,
                last_ip = ?,
+               ips = ?,
                user_agent = COALESCE(?, user_agent),
                browser = COALESCE(?, browser),
                os = COALESCE(?, os),
@@ -1033,24 +1395,154 @@ export class DataStore {
                profile_name = COALESCE(?, profile_name),
                embed_calls_count = embed_calls_count + ?,
                embed_referers = ?,
-               last_path = ?
+               last_path = ?,
+               country = COALESCE(?, country),
+               country_code = COALESCE(?, country_code),
+               city = COALESCE(?, city),
+               region = COALESCE(?, region),
+               isp = COALESCE(?, isp),
+               org = COALESCE(?, org),
+               lat = COALESCE(?, lat),
+               lon = COALESCE(?, lon),
+               reverse_dns = COALESCE(?, reverse_dns)
              WHERE device_id = ?`
-          ).run(bytesTransferred, ip, (userAgent || '').slice(0, 500), browser, os, device, userId, profileName, isEmbed ? 1 : 0, JSON.stringify(embedRefs), path, deviceId);
+          ).run(
+            visitCount, totalDuration, bytesTransferred, ip, JSON.stringify(ipList),
+            (userAgent || '').slice(0, 500), browser, os, device, userId, profileName,
+            isEmbed ? 1 : 0, JSON.stringify(embedRefs), path,
+            geo.country, geo.countryCode, geo.city, geo.region, geo.isp, geo.org, geo.lat, geo.lon, geo.reverseDns,
+            deviceId
+          );
         } else {
           const embedRefs = referer ? [referer] : [];
           this.sqliteDb.prepare(
             `INSERT INTO analytics_devices (
                device_id, first_seen, last_seen, visit_count, total_duration_seconds, total_requests,
                bytes_transferred, last_ip, ips, user_agent, browser, os, device, user_id, profile_name,
-               embed_calls_count, embed_referers, last_path
+               embed_calls_count, embed_referers, last_path, country, country_code, city, region, isp, org, lat, lon, reverse_dns
              )
-             VALUES (?, datetime('now'), datetime('now'), 1, 0, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+             VALUES (?, datetime('now'), datetime('now'), 1, 0, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
           ).run(
             deviceId, bytesTransferred, ip, JSON.stringify([ip]), (userAgent || '').slice(0, 500),
-            browser, os, device, userId, profileName, isEmbed ? 1 : 0, JSON.stringify(embedRefs), path
+            browser, os, device, userId, profileName, isEmbed ? 1 : 0, JSON.stringify(embedRefs), path,
+            geo.country, geo.countryCode, geo.city, geo.region, geo.isp, geo.org, geo.lat, geo.lon, geo.reverseDns
           );
+
+          // Dispatch new visitor webhook
+          this.dispatchWebhook('visitor.new', {
+            deviceId,
+            ip,
+            reverseDns: geo.reverseDns,
+            country: geo.country,
+            city: geo.city,
+            flag: geo.flag,
+            browser,
+            os,
+            device,
+            firstSeen: new Date().toISOString()
+          }).catch(() => {});
         }
-      } catch (e) {}
+      } catch (e) {
+        console.error('[SQLite recordRequest error]', e.message);
+      }
+    }
+
+    // Real-Time Event Broadcasting to Dashboard (SSE / Live Webhook Push)
+    if (typeof global.broadcastAdminEvent === 'function') {
+      try {
+        global.broadcastAdminEvent('traffic_log', {
+          id: `req_${now}_${Math.random().toString(36).substring(2, 7)}`,
+          timestamp: now,
+          ip: ip || '127.0.0.1',
+          reverseDns: geo.reverseDns || ip,
+          country: geo.country,
+          countryCode: geo.countryCode,
+          flag: geo.flag,
+          city: geo.city,
+          region: geo.region,
+          isp: geo.isp,
+          method: method || 'GET',
+          path: path || '/',
+          statusCode: statusCode || 200,
+          latencyMs: latencyMs || 0,
+          bytes: bytesTransferred || 0,
+          browser: browser || 'Unknown',
+          os: os || 'Unknown',
+          device: device || 'Desktop',
+          deviceId,
+          referer: referer || '',
+          isEmbed: Boolean(isEmbed),
+          userId: userId || 'Guest'
+        });
+
+        global.broadcastAdminEvent('session_update', {
+          sessionId,
+          deviceId,
+          ip: ip || '127.0.0.1',
+          reverseDns: geo.reverseDns || ip,
+          country: geo.country,
+          countryCode: geo.countryCode,
+          flag: geo.flag,
+          city: geo.city,
+          region: geo.region,
+          isp: geo.isp,
+          browser: browser || 'Unknown',
+          os: os || 'Unknown',
+          device: device || 'Desktop',
+          userId: userId || 'Guest',
+          profileName: profileName || 'Guest User',
+          currentPath: path || '/',
+          status: isEmbed || path.includes('/stream') ? 'streaming' : 'online',
+          durationSeconds: 1,
+          bytesTransferred,
+          totalRequests: 1,
+          lastSeen: new Date().toISOString()
+        });
+
+        global.broadcastAdminEvent('device_update', {
+          deviceId,
+          ip,
+          lastIp: ip,
+          country: geo.country,
+          countryCode: geo.countryCode,
+          flag: geo.flag,
+          city: geo.city,
+          region: geo.region,
+          isp: geo.isp,
+          org: geo.org,
+          reverseDns: geo.reverseDns,
+          browser,
+          os,
+          device,
+          lastSeen: new Date().toISOString()
+        });
+      } catch (err) {}
+    }
+
+    // Webhook for server errors or traffic alerts
+    if (statusCode >= 500) {
+      this.dispatchWebhook('traffic.alert', {
+        type: 'http_error_5xx',
+        statusCode,
+        method,
+        path,
+        ip,
+        latencyMs,
+        timestamp: new Date().toISOString()
+      }).catch(() => {});
+    }
+
+    // Webhook for embed stream start
+    if (isEmbed && (path.includes('/stream') || path.includes('/video') || path.includes('/embed') || path.includes('/api/proxy'))) {
+      this.dispatchWebhook('embed.stream_started', {
+        deviceId,
+        ip,
+        referer,
+        path,
+        country: geo.country,
+        city: geo.city,
+        timestamp: new Date().toISOString()
+      }).catch(() => {});
     }
   }
 
@@ -1926,7 +2418,7 @@ export class DataStore {
         let idx = 1;
 
         if (search) {
-          whereClauses.push(`(device_id ILIKE $${idx} OR last_ip ILIKE $${idx} OR browser ILIKE $${idx} OR os ILIKE $${idx} OR user_agent ILIKE $${idx} OR profile_name ILIKE $${idx})`);
+          whereClauses.push(`(device_id ILIKE $${idx} OR last_ip ILIKE $${idx} OR browser ILIKE $${idx} OR os ILIKE $${idx} OR user_agent ILIKE $${idx} OR profile_name ILIKE $${idx} OR country ILIKE $${idx} OR city ILIKE $${idx} OR reverse_dns ILIKE $${idx} OR isp ILIKE $${idx})`);
           params.push(`%${search}%`);
           idx++;
         }
@@ -1937,6 +2429,8 @@ export class DataStore {
           whereClauses.push(`device = 'Mobile'`);
         } else if (filter === 'desktop') {
           whereClauses.push(`device = 'Desktop'`);
+        } else if (filter === 'tablet') {
+          whereClauses.push(`device = 'Tablet'`);
         }
 
         const whereSql = whereClauses.length > 0 ? `WHERE ${whereClauses.join(' AND ')}` : '';
@@ -1977,7 +2471,8 @@ export class DataStore {
                   total_requests as "totalRequests", bytes_transferred as "bytesTransferred",
                   last_ip as "lastIp", ips, user_agent as "userAgent", browser, os,
                   COALESCE(device, 'Desktop') as device, user_id as "userId", profile_name as "profileName",
-                  embed_calls_count as "embedCallsCount", embed_referers as "embedReferers", last_path as "lastPath"
+                  embed_calls_count as "embedCallsCount", embed_referers as "embedReferers", last_path as "lastPath",
+                  country, country_code as "countryCode", city, region, isp, org, lat, lon, reverse_dns as "reverseDns"
            FROM analytics_devices
            ${whereSql}
            ORDER BY ${orderCol}
@@ -1985,39 +2480,141 @@ export class DataStore {
           params
         );
 
-        devices = rowsRes.rows.map(r => ({
-          ...r,
-          bytesTransferred: parseInt(r.bytesTransferred, 10) || 0,
-          totalDurationSeconds: parseInt(r.totalDurationSeconds, 10) || 0,
-          visitCount: parseInt(r.visitCount, 10) || 1,
-          totalRequests: parseInt(r.totalRequests, 10) || 0,
-          embedCallsCount: parseInt(r.embedCallsCount, 10) || 0,
-          ips: Array.isArray(r.ips) ? r.ips : (typeof r.ips === 'string' ? JSON.parse(r.ips || '[]') : []),
-          embedReferers: Array.isArray(r.embedReferers) ? r.embedReferers : (typeof r.embedReferers === 'string' ? JSON.parse(r.embedReferers || '[]') : [])
-        }));
+        const adminIp = (options.adminIp || '').replace(/^::ffff:/, '').trim();
+        const isLocalAdmin = !adminIp || ['127.0.0.1', '::1', 'localhost'].includes(adminIp);
+
+        devices = rowsRes.rows.map(r => {
+          const lastIpClean = (r.lastIp || '').replace(/^::ffff:/, '').trim();
+          const ipsArray = Array.isArray(r.ips) ? r.ips : (typeof r.ips === 'string' ? JSON.parse(r.ips || '[]') : []);
+          const isMyDev = Boolean(
+            adminIp && (
+              lastIpClean === adminIp ||
+              ipsArray.some(ip => String(ip).replace(/^::ffff:/, '').trim() === adminIp) ||
+              (isLocalAdmin && ['127.0.0.1', '::1', 'localhost'].includes(lastIpClean))
+            )
+          );
+          return {
+            ...r,
+            isMyDevice: isMyDev,
+            bytesTransferred: parseInt(r.bytesTransferred, 10) || 0,
+            totalDurationSeconds: parseInt(r.totalDurationSeconds, 10) || 0,
+            visitCount: parseInt(r.visitCount, 10) || 1,
+            totalRequests: parseInt(r.totalRequests, 10) || 0,
+            embedCallsCount: parseInt(r.embedCallsCount, 10) || 0,
+            ips: ipsArray,
+            embedReferers: Array.isArray(r.embedReferers) ? r.embedReferers : (typeof r.embedReferers === 'string' ? JSON.parse(r.embedReferers || '[]') : []),
+            flag: getFlagEmoji(r.countryCode)
+          };
+        });
+        if (filter === 'my_device') {
+          devices = devices.filter(d => d.isMyDevice);
+        } else if (filter === 'external_only') {
+          devices = devices.filter(d => !d.isMyDevice);
+        }
       } catch (err) {
         console.error('[PostgreSQL getVisitorDevices error]', err.message);
       }
     } else if (this.sqliteDb) {
       try {
+        let whereClauses = [];
+        let params = [];
+
+        if (search) {
+          whereClauses.push('(device_id LIKE ? OR last_ip LIKE ? OR browser LIKE ? OR os LIKE ? OR user_agent LIKE ? OR profile_name LIKE ? OR country LIKE ? OR city LIKE ? OR reverse_dns LIKE ? OR isp LIKE ?)');
+          params.push(`%${search}%`, `%${search}%`, `%${search}%`, `%${search}%`, `%${search}%`, `%${search}%`, `%${search}%`, `%${search}%`, `%${search}%`, `%${search}%`);
+        }
+
+        if (filter === 'embeds_only') {
+          whereClauses.push('embed_calls_count > 0');
+        } else if (filter === 'mobile') {
+          whereClauses.push("device = 'Mobile'");
+        } else if (filter === 'desktop') {
+          whereClauses.push("device = 'Desktop'");
+        } else if (filter === 'tablet') {
+          whereClauses.push("device = 'Tablet'");
+        }
+
+        const whereSql = whereClauses.length > 0 ? `WHERE ${whereClauses.join(' AND ')}` : '';
+
+        let orderCol = 'last_seen DESC';
+        if (sortBy === 'visits') orderCol = 'visit_count DESC, last_seen DESC';
+        else if (sortBy === 'duration') orderCol = 'total_duration_seconds DESC, last_seen DESC';
+        else if (sortBy === 'requests') orderCol = 'total_requests DESC, last_seen DESC';
+        else if (sortBy === 'bytes') orderCol = 'bytes_transferred DESC, last_seen DESC';
+        else if (sortBy === 'embeds') orderCol = 'embed_calls_count DESC, last_seen DESC';
+
+        try {
+          const stats = this.sqliteDb.prepare('SELECT count(*) as total_devices, COALESCE(sum(embed_calls_count), 0) as total_embed_calls FROM analytics_devices').get();
+          if (stats) {
+            totalDevicesCount = stats.total_devices || 0;
+            totalEmbedCallsCount = stats.total_embed_calls || 0;
+          }
+        } catch (e) {}
+
+        try {
+          const refRows = this.sqliteDb.prepare(
+            `SELECT referer, count(*) as count, max(created_at) as last_seen
+             FROM analytics_traffic_logs
+             WHERE referer IS NOT NULL AND referer != '' AND referer NOT LIKE '%localhost%' AND referer NOT LIKE '%127.0.0.1%'
+             GROUP BY referer
+             ORDER BY count DESC
+             LIMIT 10`
+          ).all();
+          topEmbedReferrers = refRows;
+        } catch (e) {}
+
+        params.push(limit);
         const rows = this.sqliteDb.prepare(
           `SELECT device_id as deviceId, first_seen as firstSeen, last_seen as lastSeen,
                   visit_count as visitCount, total_duration_seconds as totalDurationSeconds,
                   total_requests as totalRequests, bytes_transferred as bytesTransferred,
                   last_ip as lastIp, ips, user_agent as userAgent, browser, os,
                   COALESCE(device, 'Desktop') as device, user_id as userId, profile_name as profileName,
-                  embed_calls_count as embedCallsCount, embed_referers as embedReferers, last_path as lastPath
+                  embed_calls_count as embedCallsCount, embed_referers as embedReferers, last_path as lastPath,
+                  country, country_code as countryCode, city, region, isp, org, lat, lon, reverse_dns as reverseDns
            FROM analytics_devices
-           ORDER BY last_seen DESC
+           ${whereSql}
+           ORDER BY ${orderCol}
            LIMIT ?`
-        ).all(limit);
-        devices = rows.map(r => ({
-          ...r,
-          ips: typeof r.ips === 'string' ? JSON.parse(r.ips || '[]') : r.ips,
-          embedReferers: typeof r.embedReferers === 'string' ? JSON.parse(r.embedReferers || '[]') : r.embedReferers
-        }));
-        totalDevicesCount = devices.length;
-      } catch (e) {}
+        ).all(...params);
+
+        const adminIp = (options.adminIp || '').replace(/^::ffff:/, '').trim();
+        const isLocalAdmin = !adminIp || ['127.0.0.1', '::1', 'localhost'].includes(adminIp);
+
+        devices = rows.map(r => {
+          const lastIpClean = (r.lastIp || '').replace(/^::ffff:/, '').trim();
+          const ipsArray = typeof r.ips === 'string' ? JSON.parse(r.ips || '[]') : (r.ips || []);
+          const isMyDev = Boolean(
+            adminIp && (
+              lastIpClean === adminIp ||
+              ipsArray.some(ip => String(ip).replace(/^::ffff:/, '').trim() === adminIp) ||
+              (isLocalAdmin && ['127.0.0.1', '::1', 'localhost'].includes(lastIpClean))
+            )
+          );
+          return {
+            ...r,
+            isMyDevice: isMyDev,
+            bytesTransferred: parseInt(r.bytesTransferred, 10) || 0,
+            totalDurationSeconds: parseInt(r.totalDurationSeconds, 10) || 0,
+            visitCount: parseInt(r.visitCount, 10) || 1,
+            totalRequests: parseInt(r.totalRequests, 10) || 0,
+            embedCallsCount: parseInt(r.embedCallsCount, 10) || 0,
+            ips: ipsArray,
+            embedReferers: typeof r.embedReferers === 'string' ? JSON.parse(r.embedReferers || '[]') : (r.embedReferers || []),
+            flag: getFlagEmoji(r.countryCode)
+          };
+        });
+        if (filter === 'my_device') {
+          devices = devices.filter(d => d.isMyDevice);
+        } else if (filter === 'external_only') {
+          devices = devices.filter(d => !d.isMyDevice);
+        }
+        if (!search && filter === 'all') {
+          totalDevicesCount = Math.max(totalDevicesCount, devices.length);
+        }
+      } catch (e) {
+        console.error('[SQLite getVisitorDevices error]', e.message);
+      }
     }
 
     return {
@@ -2041,20 +2638,28 @@ export class DataStore {
                   total_requests as "totalRequests", bytes_transferred as "bytesTransferred",
                   last_ip as "lastIp", ips, user_agent as "userAgent", browser, os,
                   COALESCE(device, 'Desktop') as device, user_id as "userId", profile_name as "profileName",
-                  embed_calls_count as "embedCallsCount", embed_referers as "embedReferers", last_path as "lastPath"
+                  embed_calls_count as "embedCallsCount", embed_referers as "embedReferers", last_path as "lastPath",
+                  country, country_code as "countryCode", city, region, isp, org, lat, lon, reverse_dns as "reverseDns"
            FROM analytics_devices
            WHERE device_id = $1`,
           [deviceId]
         );
         if (dRes.rows[0]) {
-          device = dRes.rows[0];
+          const r = dRes.rows[0];
+          device = {
+            ...r,
+            ips: Array.isArray(r.ips) ? r.ips : (typeof r.ips === 'string' ? JSON.parse(r.ips || '[]') : []),
+            embedReferers: Array.isArray(r.embedReferers) ? r.embedReferers : (typeof r.embedReferers === 'string' ? JSON.parse(r.embedReferers || '[]') : []),
+            flag: getFlagEmoji(r.countryCode)
+          };
         }
 
         const lRes = await this.pgPool.query(
           `SELECT id, created_at as timestamp, ip, method, path, status_code as "statusCode",
                   latency_ms as "latencyMs", bytes_transferred as bytes, browser, os,
                   COALESCE(device, 'Desktop') as device, user_id as "userId",
-                  device_id as "deviceId", referer, is_embed as "isEmbed"
+                  device_id as "deviceId", referer, is_embed as "isEmbed",
+                  country, city, reverse_dns as "reverseDns"
            FROM analytics_traffic_logs
            WHERE device_id = $1
            ORDER BY created_at DESC
@@ -2069,19 +2674,344 @@ export class DataStore {
       } catch (e) {
         console.error('[PostgreSQL getDeviceDetail error]', e.message);
       }
+    } else if (this.sqliteDb) {
+      try {
+        const dRow = this.sqliteDb.prepare(
+          `SELECT device_id as deviceId, first_seen as firstSeen, last_seen as lastSeen,
+                  visit_count as visitCount, total_duration_seconds as totalDurationSeconds,
+                  total_requests as totalRequests, bytes_transferred as bytesTransferred,
+                  last_ip as lastIp, ips, user_agent as userAgent, browser, os,
+                  COALESCE(device, 'Desktop') as device, user_id as userId, profile_name as profileName,
+                  embed_calls_count as embedCallsCount, embed_referers as embedReferers, last_path as lastPath,
+                  country, country_code as countryCode, city, region, isp, org, lat, lon, reverse_dns as reverseDns
+           FROM analytics_devices
+           WHERE device_id = ?`
+        ).get(deviceId);
+        if (dRow) {
+          device = {
+            ...dRow,
+            bytesTransferred: parseInt(dRow.bytesTransferred, 10) || 0,
+            totalDurationSeconds: parseInt(dRow.totalDurationSeconds, 10) || 0,
+            visitCount: parseInt(dRow.visitCount, 10) || 1,
+            totalRequests: parseInt(dRow.totalRequests, 10) || 0,
+            embedCallsCount: parseInt(dRow.embedCallsCount, 10) || 0,
+            ips: typeof dRow.ips === 'string' ? JSON.parse(dRow.ips || '[]') : (dRow.ips || []),
+            embedReferers: typeof dRow.embedReferers === 'string' ? JSON.parse(dRow.embedReferers || '[]') : (dRow.embedReferers || []),
+            flag: getFlagEmoji(dRow.countryCode)
+          };
+        }
+
+        const lRows = this.sqliteDb.prepare(
+          `SELECT id, created_at as timestamp, ip, method, path, status_code as statusCode,
+                  latency_ms as latencyMs, bytes_transferred as bytes, browser, os,
+                  COALESCE(device, 'Desktop') as device, user_id as userId,
+                  device_id as deviceId, referer, is_embed as isEmbed,
+                  country, city, reverse_dns as reverseDns
+           FROM analytics_traffic_logs
+           WHERE device_id = ?
+           ORDER BY id DESC
+           LIMIT 50`
+        ).all(deviceId);
+        logs = lRows.map(r => ({
+          ...r,
+          bytes: parseInt(r.bytes, 10) || 0,
+          timestamp: new Date(r.timestamp).getTime()
+        }));
+      } catch (e) {
+        console.error('[SQLite getDeviceDetail error]', e.message);
+      }
     }
 
     return { device, logs };
   }
 
   async terminateSession(sessionId) {
+    if (!sessionId) return { success: false };
     if (this.isRedisConnected && this.redis) {
       try {
         await this.redis.zrem('valor:active_sessions', sessionId);
         await this.redis.del(`valor:session:${sessionId}`);
       } catch (e) {}
     }
+    if (this.isPgConnected && this.pgPool) {
+      try {
+        await this.pgPool.query(`DELETE FROM analytics_sessions WHERE session_id = $1`, [sessionId]);
+      } catch (e) {}
+    }
+    if (this.sqliteDb) {
+      try {
+        this.sqliteDb.prepare(`DELETE FROM analytics_sessions WHERE session_id = ?`).run(sessionId);
+      } catch (e) {}
+    }
+    return { success: true, sessionId };
+  }
+
+  async isIpBlocked(ip) {
+    if (!ip) return false;
+    if (this._blockedIpsCache && this._blockedIpsCache.has(ip)) return true;
+    if (!this._blockedIpsCache) {
+      this._blockedIpsCache = new Set();
+      try {
+        if (this.isPgConnected && this.pgPool) {
+          const res = await this.pgPool.query(`SELECT ip FROM blocked_ips`);
+          res.rows.forEach(r => this._blockedIpsCache.add(r.ip));
+        } else if (this.sqliteDb) {
+          const rows = this.sqliteDb.prepare(`SELECT ip FROM blocked_ips`).all();
+          rows.forEach(r => this._blockedIpsCache.add(r.ip));
+        }
+      } catch (e) {}
+    }
+    return this._blockedIpsCache.has(ip);
+  }
+
+  async blockIp(ip, reason = 'Administrative action') {
+    if (!ip) return { success: false };
+    if (!this._blockedIpsCache) this._blockedIpsCache = new Set();
+    this._blockedIpsCache.add(ip);
+    const now = new Date().toISOString();
+    if (this.isPgConnected && this.pgPool) {
+      try {
+        await this.pgPool.query(`INSERT INTO blocked_ips (ip, reason, created_at) VALUES ($1, $2, NOW()) ON CONFLICT (ip) DO NOTHING`, [ip, reason]);
+      } catch (e) {}
+    }
+    if (this.sqliteDb) {
+      try {
+        this.sqliteDb.prepare(`INSERT OR IGNORE INTO blocked_ips (ip, reason, created_at) VALUES (?, ?, ?)`).run(ip, reason, now);
+      } catch (e) {}
+    }
+    this.dispatchWebhook('security.ip_blocked', { ip, reason, timestamp: now }).catch(() => {});
+    return { success: true, ip, reason };
+  }
+
+  async unblockIp(ip) {
+    if (!ip) return { success: false };
+    if (this._blockedIpsCache) this._blockedIpsCache.delete(ip);
+    if (this.isPgConnected && this.pgPool) {
+      try {
+        await this.pgPool.query(`DELETE FROM blocked_ips WHERE ip = $1`, [ip]);
+      } catch (e) {}
+    }
+    if (this.sqliteDb) {
+      try {
+        this.sqliteDb.prepare(`DELETE FROM blocked_ips WHERE ip = ?`).run(ip);
+      } catch (e) {}
+    }
+    return { success: true, ip };
+  }
+
+  // --------------------------------------------------------------------------
+  // Webhooks Management & Dispatcher
+  // --------------------------------------------------------------------------
+
+  async getWebhooks() {
+    let list = [];
+    if (this.isPgConnected && this.pgPool) {
+      try {
+        const res = await this.pgPool.query(`SELECT id, name, url, secret, events, enabled, created_at as "createdAt", last_triggered as "lastTriggered", total_deliveries as "totalDeliveries", failed_deliveries as "failedDeliveries" FROM webhooks ORDER BY created_at DESC`);
+        list = res.rows.map(r => ({
+          ...r,
+          events: Array.isArray(r.events) ? r.events : (typeof r.events === 'string' ? JSON.parse(r.events || '["*"]') : ['*']),
+          enabled: Boolean(r.enabled)
+        }));
+      } catch (e) {}
+    } else if (this.sqliteDb) {
+      try {
+        const rows = this.sqliteDb.prepare(`SELECT id, name, url, secret, events, enabled, created_at as createdAt, last_triggered as lastTriggered, total_deliveries as totalDeliveries, failed_deliveries as failedDeliveries FROM webhooks ORDER BY created_at DESC`).all();
+        list = rows.map(r => ({
+          ...r,
+          events: typeof r.events === 'string' ? JSON.parse(r.events || '["*"]') : (r.events || ['*']),
+          enabled: Boolean(r.enabled)
+        }));
+      } catch (e) {}
+    }
+    return list;
+  }
+
+  async createWebhook(data) {
+    const id = `wh_${crypto.randomBytes(8).toString('hex')}`;
+    const name = data.name || 'Webhook Endpoint';
+    const url = data.url;
+    const secret = data.secret || null;
+    const events = Array.isArray(data.events) ? data.events : ['*'];
+    const enabled = data.enabled !== false ? 1 : 0;
+    const now = new Date().toISOString();
+
+    if (this.isPgConnected && this.pgPool) {
+      try {
+        await this.pgPool.query(
+          `INSERT INTO webhooks (id, name, url, secret, events, enabled, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+          [id, name, url, secret, JSON.stringify(events), Boolean(enabled), now]
+        );
+      } catch (e) {}
+    } else if (this.sqliteDb) {
+      try {
+        this.sqliteDb.prepare(
+          `INSERT INTO webhooks (id, name, url, secret, events, enabled, created_at, total_deliveries, failed_deliveries) VALUES (?, ?, ?, ?, ?, ?, ?, 0, 0)`
+        ).run(id, name, url, secret, JSON.stringify(events), enabled, now);
+      } catch (e) {}
+    }
+
+    return { id, name, url, secret, events, enabled: Boolean(enabled), createdAt: now };
+  }
+
+  async updateWebhook(id, data) {
+    const events = Array.isArray(data.events) ? JSON.stringify(data.events) : (typeof data.events === 'string' ? data.events : '["*"]');
+    const enabled = data.enabled !== false ? 1 : 0;
+
+    if (this.isPgConnected && this.pgPool) {
+      try {
+        await this.pgPool.query(
+          `UPDATE webhooks SET name = COALESCE($1, name), url = COALESCE($2, url), secret = COALESCE($3, secret), events = $4, enabled = $5 WHERE id = $6`,
+          [data.name, data.url, data.secret, events, Boolean(enabled), id]
+        );
+      } catch (e) {}
+    } else if (this.sqliteDb) {
+      try {
+        this.sqliteDb.prepare(
+          `UPDATE webhooks SET name = COALESCE(?, name), url = COALESCE(?, url), secret = COALESCE(?, secret), events = ?, enabled = ? WHERE id = ?`
+        ).run(data.name, data.url, data.secret, events, enabled, id);
+      } catch (e) {}
+    }
     return { success: true };
+  }
+
+  async deleteWebhook(id) {
+    if (this.isPgConnected && this.pgPool) {
+      try {
+        await this.pgPool.query('DELETE FROM webhook_deliveries WHERE webhook_id = $1', [id]);
+        await this.pgPool.query('DELETE FROM webhooks WHERE id = $1', [id]);
+      } catch (e) {}
+    } else if (this.sqliteDb) {
+      try {
+        this.sqliteDb.prepare('DELETE FROM webhook_deliveries WHERE webhook_id = ?').run(id);
+        this.sqliteDb.prepare('DELETE FROM webhooks WHERE id = ?').run(id);
+      } catch (e) {}
+    }
+    return { success: true };
+  }
+
+  async getWebhookDeliveries(limit = 50) {
+    let list = [];
+    if (this.isPgConnected && this.pgPool) {
+      try {
+        const res = await this.pgPool.query(`SELECT id, webhook_id as "webhookId", webhook_name as "webhookName", event, status, status_code as "statusCode", latency_ms as "latencyMs", payload, response_body as "responseBody", created_at as "createdAt" FROM webhook_deliveries ORDER BY created_at DESC LIMIT $1`, [limit]);
+        list = res.rows;
+      } catch (e) {}
+    } else if (this.sqliteDb) {
+      try {
+        const rows = this.sqliteDb.prepare(`SELECT id, webhook_id as webhookId, webhook_name as webhookName, event, status, status_code as statusCode, latency_ms as latencyMs, payload, response_body as responseBody, created_at as createdAt FROM webhook_deliveries ORDER BY created_at DESC LIMIT ?`).all(limit);
+        list = rows;
+      } catch (e) {}
+    }
+    return list;
+  }
+
+  async testWebhook(id) {
+    const webhooks = await this.getWebhooks();
+    const wh = webhooks.find(w => w.id === id);
+    if (!wh) throw new Error('Webhook not found');
+
+    const testPayload = {
+      event: 'system.ping',
+      message: 'Test ping from Valor SaaS Admin Dashboard',
+      timestamp: new Date().toISOString(),
+      webhookId: wh.id,
+      webhookName: wh.name
+    };
+
+    return await this.sendWebhookDelivery(wh, 'system.ping', testPayload);
+  }
+
+  async dispatchWebhook(event, payload) {
+    try {
+      const webhooks = await this.getWebhooks();
+      const eligible = webhooks.filter(wh => wh.enabled && (wh.events.includes('*') || wh.events.includes(event)));
+      if (!eligible.length) return;
+
+      for (const wh of eligible) {
+        this.sendWebhookDelivery(wh, event, payload).catch(() => {});
+      }
+    } catch (e) {}
+  }
+
+  async sendWebhookDelivery(wh, event, payload) {
+    const deliveryId = `del_${crypto.randomBytes(6).toString('hex')}`;
+    const payloadStr = JSON.stringify({
+      id: deliveryId,
+      event,
+      timestamp: new Date().toISOString(),
+      data: payload
+    });
+
+    const headers = {
+      'Content-Type': 'application/json',
+      'User-Agent': 'Valor-SaaS-Admin-Webhook/2.0',
+      'X-Valor-Delivery': deliveryId,
+      'X-Valor-Event': event,
+      'X-Valor-Timestamp': new Date().toISOString()
+    };
+
+    if (wh.secret) {
+      const hmac = crypto.createHmac('sha256', wh.secret).update(payloadStr).digest('hex');
+      headers['X-Valor-Signature'] = `sha256=${hmac}`;
+    }
+
+    const t0 = Date.now();
+    let status = 'failed';
+    let statusCode = 0;
+    let responseBody = '';
+
+    try {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 6000);
+      const res = await fetch(wh.url, {
+        method: 'POST',
+        headers,
+        body: payloadStr,
+        signal: controller.signal
+      });
+      clearTimeout(timer);
+      statusCode = res.status;
+      const text = await res.text();
+      responseBody = text.slice(0, 1000);
+      status = (res.status >= 200 && res.status < 300) ? 'success' : 'failed';
+    } catch (err) {
+      responseBody = err.message || 'Request failed';
+      statusCode = 0;
+      status = 'failed';
+    }
+
+    const latencyMs = Date.now() - t0;
+    const now = new Date().toISOString();
+
+    // Record delivery
+    if (this.isPgConnected && this.pgPool) {
+      try {
+        await this.pgPool.query(
+          `INSERT INTO webhook_deliveries (id, webhook_id, webhook_name, event, status, status_code, latency_ms, payload, response_body, created_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+          [deliveryId, wh.id, wh.name, event, status, statusCode, latencyMs, payloadStr, responseBody, now]
+        );
+        const failIncr = status === 'failed' ? 1 : 0;
+        await this.pgPool.query(
+          `UPDATE webhooks SET total_deliveries = total_deliveries + 1, failed_deliveries = failed_deliveries + $1, last_triggered = $2 WHERE id = $3`,
+          [failIncr, now, wh.id]
+        );
+      } catch (e) {}
+    } else if (this.sqliteDb) {
+      try {
+        this.sqliteDb.prepare(
+          `INSERT INTO webhook_deliveries (id, webhook_id, webhook_name, event, status, status_code, latency_ms, payload, response_body, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        ).run(deliveryId, wh.id, wh.name, event, status, statusCode, latencyMs, payloadStr, responseBody, now);
+        const failIncr = status === 'failed' ? 1 : 0;
+        this.sqliteDb.prepare(
+          `UPDATE webhooks SET total_deliveries = total_deliveries + 1, failed_deliveries = failed_deliveries + ?, last_triggered = ? WHERE id = ?`
+        ).run(failIncr, now, wh.id);
+      } catch (e) {}
+    }
+
+    return { deliveryId, status, statusCode, latencyMs, responseBody };
   }
 
   async getRegisteredUsersList() {
@@ -2135,6 +3065,495 @@ export class DataStore {
     }
 
     return list;
+  }
+
+  // ==============================================================================
+  // Enterprise Media Timestamp & Bookmark Store (PostgreSQL + Redis + SQLite)
+  // Supports: Intro, Outro, Preview/Recap, Nudity, Sex, Gore, and Custom Bookmarks
+  // ==============================================================================
+
+  /**
+   * Fetch bookmarks for a given media by tmdbId (and season/episode) or videoId.
+   * Lazy-loads from Redis cache, then PostgreSQL, falling back to SQLite.
+   */
+  async getBookmarks({ tmdbId = null, season = null, episode = null, videoId = null, userId = null } = {}) {
+    const s = (season !== undefined && season !== null && season !== '') ? parseInt(season, 10) : null;
+    const ep = (episode !== undefined && episode !== null && episode !== '') ? parseInt(episode, 10) : null;
+    const tId = tmdbId ? parseInt(tmdbId, 10) : null;
+
+    const cacheKey = tId
+      ? `valor:cache:bookmarks:tmdb:${tId}:${s || 0}:${ep || 0}`
+      : `valor:cache:bookmarks:vid:${videoId || 'all'}`;
+
+    // 1. Check Redis Lazy Cache
+    try {
+      const cached = await this.cacheGet(cacheKey);
+      if (cached && Array.isArray(cached)) {
+        return cached;
+      }
+    } catch (e) {}
+
+    let rows = [];
+
+    // 2. Query PostgreSQL
+    if (this.isPgConnected && this.pgPool) {
+      try {
+        let query;
+        let params;
+        if (tId) {
+          if (s !== null && ep !== null && s !== 0) {
+            query = `SELECT * FROM bookmarks WHERE tmdb_id = $1 AND season = $2 AND episode = $3 ORDER BY time ASC`;
+            params = [tId, s, ep];
+          } else {
+            query = `SELECT * FROM bookmarks WHERE tmdb_id = $1 AND (season IS NULL OR season = 0) ORDER BY time ASC`;
+            params = [tId];
+          }
+        } else if (videoId) {
+          query = `SELECT * FROM bookmarks WHERE video_id = $1 ORDER BY time ASC`;
+          params = [videoId];
+        } else if (userId) {
+          query = `SELECT * FROM bookmarks WHERE user_id = $1 ORDER BY time ASC`;
+          params = [userId];
+        } else {
+          query = `SELECT * FROM bookmarks ORDER BY created_at DESC LIMIT 200`;
+          params = [];
+        }
+
+        const res = await this.pgPool.query(query, params);
+        rows = res.rows.map(bm => ({
+          id: bm.id,
+          time: bm.time,
+          endTime: bm.end_time !== null ? bm.end_time : undefined,
+          label: bm.label,
+          isIntro: Boolean(bm.is_intro),
+          isOutro: Boolean(bm.is_outro),
+          skipEnabled: Boolean(bm.skip_enabled),
+          title: bm.title || '',
+          description: bm.description || '',
+          category: bm.category || (bm.is_intro ? 'Intro' : bm.is_outro ? 'Outro' : 'Custom'),
+          startTime: bm.start_time !== null ? bm.start_time : bm.time,
+          thumbnail: bm.thumbnail || '',
+          favorite: Boolean(bm.favorite),
+          createdAt: bm.created_at,
+          updatedAt: bm.updated_at,
+          userName: bm.user_name || '',
+          userTime: bm.user_time || '',
+          mediaName: bm.media_name || '',
+          tmdbId: bm.tmdb_id,
+          episode: bm.episode,
+          season: bm.season,
+          color: bm.color || '',
+          userId: bm.user_id,
+          videoId: bm.video_id,
+          createdBy: bm.created_by || 'manual'
+        }));
+      } catch (err) {
+        console.error('[PostgreSQL] getBookmarks error:', err.message);
+      }
+    }
+
+    // 3. Fallback or merge from SQLite if PostgreSQL has no results or failed
+    if (rows.length === 0 && this.sqliteDb) {
+      try {
+        let sqliteRows = [];
+        if (tId) {
+          if (s !== null && ep !== null && s !== 0) {
+            sqliteRows = this.sqliteDb.prepare('SELECT * FROM bookmarks WHERE tmdbId = ? AND season = ? AND episode = ? ORDER BY time ASC').all(tId, s, ep);
+          } else {
+            sqliteRows = this.sqliteDb.prepare('SELECT * FROM bookmarks WHERE tmdbId = ? AND (season IS NULL OR season = 0 OR season = "") ORDER BY time ASC').all(tId);
+          }
+        } else if (videoId) {
+          sqliteRows = this.sqliteDb.prepare('SELECT * FROM bookmarks WHERE videoId = ? ORDER BY time ASC').all(videoId);
+        } else if (userId) {
+          sqliteRows = this.sqliteDb.prepare('SELECT * FROM bookmarks WHERE userId = ? ORDER BY time ASC').all(userId);
+        } else {
+          sqliteRows = this.sqliteDb.prepare('SELECT * FROM bookmarks ORDER BY time ASC LIMIT 200').all();
+        }
+
+        rows = sqliteRows.map(bm => ({
+          id: bm.id,
+          time: bm.time,
+          endTime: bm.endTime !== null ? bm.endTime : undefined,
+          label: bm.label,
+          isIntro: bm.isIntro === 1,
+          isOutro: bm.isOutro === 1,
+          skipEnabled: bm.skipEnabled === 1,
+          title: bm.title || '',
+          description: bm.description || '',
+          category: bm.category || (bm.isIntro ? 'Intro' : bm.isOutro ? 'Outro' : 'Custom'),
+          startTime: bm.startTime !== null ? bm.startTime : bm.time,
+          thumbnail: bm.thumbnail || '',
+          favorite: bm.favorite === 1,
+          createdAt: bm.createdAt,
+          updatedAt: bm.updatedAt,
+          userName: bm.userName || '',
+          userTime: bm.userTime || '',
+          mediaName: bm.mediaName || '',
+          tmdbId: bm.tmdbId,
+          episode: bm.episode,
+          season: bm.season,
+          color: bm.color || '',
+          userId: bm.userId,
+          videoId: bm.videoId,
+          createdBy: bm.createdBy || 'manual'
+        }));
+      } catch (err) {
+        console.error('[SQLite] getBookmarks error:', err.message);
+      }
+    }
+
+    // 4. Cache in Redis (1 hour TTL)
+    if (rows.length > 0) {
+      try {
+        await this.cacheSet(cacheKey, rows, 3600);
+      } catch (e) {}
+    }
+
+    return rows;
+  }
+
+  /**
+   * Save an array of bookmarks/timestamps into PostgreSQL and SQLite with cache invalidation.
+   */
+  async saveBookmarks(bookmarks, { tmdbId = null, season = null, episode = null, videoId = null, userId = null } = {}) {
+    if (!Array.isArray(bookmarks) || bookmarks.length === 0) {
+      return { success: true, count: 0 };
+    }
+
+    const tId = tmdbId ? parseInt(tmdbId, 10) : null;
+    const s = (season !== undefined && season !== null && season !== '') ? parseInt(season, 10) : null;
+    const ep = (episode !== undefined && episode !== null && episode !== '') ? parseInt(episode, 10) : null;
+    const activeUserId = userId || 'theintrodb';
+    const activeVideoId = videoId || (tId ? `tmdb-${tId}-${s || 0}-${ep || 0}` : 'default-video');
+
+    // 1. Persist to PostgreSQL
+    if (this.isPgConnected && this.pgPool) {
+      const client = await this.pgPool.connect();
+      try {
+        await client.query('BEGIN');
+        const upsertQuery = `
+          INSERT INTO bookmarks (
+            user_id, video_id, id, time, end_time, label, is_intro, is_outro, skip_enabled,
+            title, description, category, start_time, thumbnail, favorite,
+            created_at, updated_at, episode, season, color, tmdb_id,
+            user_name, user_time, media_name, created_by
+          ) VALUES (
+            $1, $2, $3, $4, $5, $6, $7, $8, $9,
+            $10, $11, $12, $13, $14, $15,
+            CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, $16, $17, $18, $19,
+            $20, $21, $22, $23
+          )
+          ON CONFLICT (user_id, video_id, id) DO UPDATE SET
+            time = EXCLUDED.time,
+            end_time = EXCLUDED.end_time,
+            label = EXCLUDED.label,
+            is_intro = EXCLUDED.is_intro,
+            is_outro = EXCLUDED.is_outro,
+            skip_enabled = EXCLUDED.skip_enabled,
+            title = EXCLUDED.title,
+            description = EXCLUDED.description,
+            category = EXCLUDED.category,
+            start_time = EXCLUDED.start_time,
+            thumbnail = EXCLUDED.thumbnail,
+            favorite = EXCLUDED.favorite,
+            updated_at = CURRENT_TIMESTAMP,
+            episode = EXCLUDED.episode,
+            season = EXCLUDED.season,
+            color = EXCLUDED.color,
+            tmdb_id = EXCLUDED.tmdb_id,
+            user_name = EXCLUDED.user_name,
+            user_time = EXCLUDED.user_time,
+            media_name = EXCLUDED.media_name,
+            created_by = EXCLUDED.created_by
+        `;
+
+        for (const bm of bookmarks) {
+          const bmUserId = bm.userId || activeUserId;
+          const bmVideoId = bm.videoId || activeVideoId;
+          const bmTmdbId = bm.tmdbId !== undefined && bm.tmdbId !== null ? parseInt(bm.tmdbId, 10) : tId;
+          const bmSeason = bm.season !== undefined && bm.season !== null ? parseInt(bm.season, 10) : s;
+          const bmEpisode = bm.episode !== undefined && bm.episode !== null ? parseInt(bm.episode, 10) : ep;
+
+          await client.query(upsertQuery, [
+            bmUserId,
+            bmVideoId,
+            bm.id,
+            Number(bm.time) || 0,
+            bm.endTime !== undefined && bm.endTime !== null ? Number(bm.endTime) : null,
+            bm.label || '',
+            Boolean(bm.isIntro),
+            Boolean(bm.isOutro),
+            Boolean(bm.skipEnabled),
+            bm.title || bm.label || '',
+            bm.description || null,
+            bm.category || (bm.isIntro ? 'Intro' : bm.isOutro ? 'Outro' : 'Custom'),
+            bm.startTime !== undefined && bm.startTime !== null ? Number(bm.startTime) : (Number(bm.time) || 0),
+            bm.thumbnail || null,
+            Boolean(bm.favorite),
+            bmEpisode,
+            bmSeason,
+            bm.color || null,
+            bmTmdbId,
+            bm.userName || null,
+            bm.userTime || null,
+            bm.mediaName || null,
+            bm.createdBy || 'manual'
+          ]);
+        }
+
+        await client.query('COMMIT');
+      } catch (err) {
+        await client.query('ROLLBACK');
+        console.error('[PostgreSQL] saveBookmarks error:', err.message);
+      } finally {
+        client.release();
+      }
+    }
+
+    // 2. Persist to SQLite
+    if (this.sqliteDb) {
+      try {
+        const insertStmt = this.sqliteDb.prepare(`
+          INSERT OR REPLACE INTO bookmarks (
+            userId, videoId, id, time, endTime, label, isIntro, isOutro, skipEnabled,
+            title, description, category, startTime, thumbnail, favorite,
+            createdAt, updatedAt, episode, season, color, tmdbId,
+            userName, userTime, mediaName, createdBy
+          ) VALUES (
+            ?, ?, ?, ?, ?, ?, ?, ?, ?,
+            ?, ?, ?, ?, ?, ?,
+            datetime('now'), datetime('now'), ?, ?, ?, ?,
+            ?, ?, ?, ?
+          )
+        `);
+
+        for (const bm of bookmarks) {
+          const bmUserId = bm.userId || activeUserId;
+          const bmVideoId = bm.videoId || activeVideoId;
+          const bmTmdbId = bm.tmdbId !== undefined && bm.tmdbId !== null ? parseInt(bm.tmdbId, 10) : tId;
+          const bmSeason = bm.season !== undefined && bm.season !== null ? parseInt(bm.season, 10) : s;
+          const bmEpisode = bm.episode !== undefined && bm.episode !== null ? parseInt(bm.episode, 10) : ep;
+
+          insertStmt.run(
+            bmUserId,
+            bmVideoId,
+            bm.id,
+            Number(bm.time) || 0,
+            bm.endTime !== undefined && bm.endTime !== null ? Number(bm.endTime) : null,
+            bm.label || '',
+            bm.isIntro ? 1 : 0,
+            bm.isOutro ? 1 : 0,
+            bm.skipEnabled ? 1 : 0,
+            bm.title || bm.label || '',
+            bm.description || null,
+            bm.category || (bm.isIntro ? 'Intro' : bm.isOutro ? 'Outro' : 'Custom'),
+            bm.startTime !== undefined && bm.startTime !== null ? Number(bm.startTime) : (Number(bm.time) || 0),
+            bm.thumbnail || null,
+            bm.favorite ? 1 : 0,
+            bmEpisode,
+            bmSeason,
+            bm.color || null,
+            bmTmdbId,
+            bm.userName || null,
+            bm.userTime || null,
+            bm.mediaName || null,
+            bm.createdBy || 'manual'
+          );
+        }
+      } catch (err) {
+        console.error('[SQLite] saveBookmarks error:', err.message);
+      }
+    }
+
+    // 3. Invalidate Redis Caches
+    try {
+      if (tId) {
+        await this.cacheDel(`valor:cache:bookmarks:tmdb:${tId}:${s || 0}:${ep || 0}`);
+      }
+      if (activeVideoId) {
+        await this.cacheDel(`valor:cache:bookmarks:vid:${activeVideoId}`);
+      }
+      if (userId) {
+        await this.cacheDel(`valor:cache:profile_data:${userId}`);
+      }
+    } catch (e) {}
+
+    return { success: true, count: bookmarks.length };
+  }
+
+  /**
+   * Save IntroDB timestamps (intro, recap/preview, credits/outro) into our database
+   * so they are cached permanently across the entire server.
+   */
+  async saveIntroDbTimestamps({ tmdbId, season = null, episode = null, videoId = null, mediaName = '', introDbData = null, timestamps = null, userId = 'theintrodb' }) {
+    const tId = tmdbId ? parseInt(tmdbId, 10) : null;
+    const s = (season !== undefined && season !== null && season !== '') ? parseInt(season, 10) : null;
+    const ep = (episode !== undefined && episode !== null && episode !== '') ? parseInt(episode, 10) : null;
+    const targetVideoId = videoId || (tId ? `tmdb-${tId}-${s || 0}-${ep || 0}` : 'media-tidb');
+
+    const normalizedBookmarks = [];
+    const msToSec = (ms) => (ms !== undefined && ms !== null ? Math.round(Number(ms) / 1000) : 0);
+
+    // If passed direct introDbData object from TheIntroDB API
+    if (introDbData && typeof introDbData === 'object') {
+      if (Array.isArray(introDbData.intro)) {
+        introDbData.intro.forEach((item, idx) => {
+          const start = item.start_sec !== undefined ? Number(item.start_sec) : msToSec(item.start_ms);
+          const end = item.end_sec !== undefined ? Number(item.end_sec) : msToSec(item.end_ms);
+          normalizedBookmarks.push({
+            id: `introdb-intro-${tId || '0'}-${s || 0}-${ep || 0}-${idx}-${Math.round(start)}`,
+            time: start,
+            endTime: end,
+            startTime: start,
+            label: 'Intro',
+            category: 'Intro',
+            isIntro: true,
+            isOutro: false,
+            skipEnabled: true,
+            createdBy: 'theintrodb',
+            userId: userId || 'theintrodb',
+            videoId: targetVideoId,
+            tmdbId: tId,
+            season: s,
+            episode: ep,
+            mediaName: mediaName
+          });
+        });
+      }
+
+      if (Array.isArray(introDbData.recap)) {
+        introDbData.recap.forEach((item, idx) => {
+          const start = item.start_sec !== undefined ? Number(item.start_sec) : msToSec(item.start_ms);
+          const end = item.end_sec !== undefined ? Number(item.end_sec) : msToSec(item.end_ms);
+          normalizedBookmarks.push({
+            id: `introdb-preview-${tId || '0'}-${s || 0}-${ep || 0}-${idx}-${Math.round(start)}`,
+            time: start,
+            endTime: end,
+            startTime: start,
+            label: 'Preview / Recap',
+            category: 'Preview',
+            isIntro: true,
+            isOutro: false,
+            skipEnabled: true,
+            createdBy: 'theintrodb',
+            userId: userId || 'theintrodb',
+            videoId: targetVideoId,
+            tmdbId: tId,
+            season: s,
+            episode: ep,
+            mediaName: mediaName
+          });
+        });
+      }
+
+      if (Array.isArray(introDbData.credits)) {
+        introDbData.credits.forEach((item, idx) => {
+          const start = item.start_sec !== undefined ? Number(item.start_sec) : msToSec(item.start_ms);
+          const end = item.end_sec !== undefined ? Number(item.end_sec) : msToSec(item.end_ms);
+          normalizedBookmarks.push({
+            id: `introdb-outro-${tId || '0'}-${s || 0}-${ep || 0}-${idx}-${Math.round(start)}`,
+            time: start,
+            endTime: end,
+            startTime: start,
+            label: 'Credits / Outro',
+            category: 'Outro',
+            isIntro: false,
+            isOutro: true,
+            skipEnabled: true,
+            createdBy: 'theintrodb',
+            userId: userId || 'theintrodb',
+            videoId: targetVideoId,
+            tmdbId: tId,
+            season: s,
+            episode: ep,
+            mediaName: mediaName
+          });
+        });
+      }
+    }
+
+    // If passed pre-parsed timestamps array
+    if (Array.isArray(timestamps)) {
+      timestamps.forEach((ts, idx) => {
+        const seg = (ts.type || ts.category || ts.label || 'intro').toLowerCase();
+        const isIntro = seg.includes('intro');
+        const isOutro = seg.includes('outro') || seg.includes('credit');
+        const isPreview = seg.includes('preview') || seg.includes('recap');
+        const isNudity = seg.includes('nudity') || seg.includes('sex');
+
+        let category = 'Intro';
+        let label = 'Intro';
+        if (isOutro) { category = 'Outro'; label = 'Credits / Outro'; }
+        else if (isPreview) { category = 'Preview'; label = 'Preview / Recap'; }
+        else if (isNudity) { category = 'Nudity'; label = 'Nudity'; }
+        else if (ts.category) { category = ts.category; label = ts.label || ts.category; }
+
+        const start = Number(ts.time ?? ts.startTime ?? ts.start_sec ?? 0);
+        const end = ts.endTime !== undefined ? Number(ts.endTime) : (ts.end_sec !== undefined ? Number(ts.end_sec) : undefined);
+
+        normalizedBookmarks.push({
+          id: ts.id || `introdb-${category.toLowerCase()}-${tId || '0'}-${s || 0}-${ep || 0}-${idx}-${Math.round(start)}`,
+          time: start,
+          endTime: end,
+          startTime: start,
+          label: ts.label || label,
+          category: category,
+          isIntro: isIntro || isPreview,
+          isOutro: isOutro,
+          skipEnabled: ts.skipEnabled !== undefined ? Boolean(ts.skipEnabled) : true,
+          createdBy: 'theintrodb',
+          userId: userId || 'theintrodb',
+          videoId: targetVideoId,
+          tmdbId: tId,
+          season: s,
+          episode: ep,
+          mediaName: mediaName || ts.mediaName || ''
+        });
+      });
+    }
+
+    if (normalizedBookmarks.length > 0) {
+      await this.saveBookmarks(normalizedBookmarks, { tmdbId: tId, season: s, episode: ep, videoId: targetVideoId, userId });
+      console.log(`\x1b[32m[IntroDB Sync]\x1b[0m Saved ${normalizedBookmarks.length} IntroDB timestamp(s) to our database for TMDB ${tId} (S${s || 0}E${ep || 0})`);
+    }
+
+    return normalizedBookmarks;
+  }
+
+  /**
+   * Delete a bookmark from PostgreSQL and SQLite.
+   */
+  async deleteBookmark({ userId, videoId, id, tmdbId = null, season = null, episode = null }) {
+    if (this.isPgConnected && this.pgPool) {
+      try {
+        await this.pgPool.query('DELETE FROM bookmarks WHERE user_id = $1 AND video_id = $2 AND id = $3', [userId, videoId, id]);
+      } catch (err) {
+        console.error('[PostgreSQL] deleteBookmark error:', err.message);
+      }
+    }
+
+    if (this.sqliteDb) {
+      try {
+        this.sqliteDb.prepare('DELETE FROM bookmarks WHERE userId = ? AND videoId = ? AND id = ?').run(userId, videoId, id);
+      } catch (err) {
+        console.error('[SQLite] deleteBookmark error:', err.message);
+      }
+    }
+
+    // Invalidate Redis
+    try {
+      if (tmdbId) {
+        await this.cacheDel(`valor:cache:bookmarks:tmdb:${tmdbId}:${season || 0}:${episode || 0}`);
+      }
+      if (videoId) {
+        await this.cacheDel(`valor:cache:bookmarks:vid:${videoId}`);
+      }
+      if (userId) {
+        await this.cacheDel(`valor:cache:profile_data:${userId}`);
+      }
+    } catch (e) {}
+
+    return { success: true };
   }
 }
 

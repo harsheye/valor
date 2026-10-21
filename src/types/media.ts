@@ -78,10 +78,11 @@ export interface Bookmark {
   episode?: number;
   season?: number;
   color?: string;
-  createdBy?: 'theintrodb' | 'manual' | 'system';
+  createdBy?: 'theintrodb' | 'manual' | 'system' | 'database' | string;
   tmdbId?: number;
   userName?: string;
   userTime?: string;
   mediaName?: string;
   userId?: string;
+  videoId?: string;
 }

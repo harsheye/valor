@@ -1379,7 +1379,9 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
                 id: `api-intro-${idx}`,
                 time: msToSec(item.start_ms),
                 endTime: msToSec(item.end_ms),
+                startTime: msToSec(item.start_ms),
                 label: 'Intro',
+                category: 'Intro',
                 isIntro: true,
                 isOutro: false,
                 skipEnabled: true,
@@ -1394,7 +1396,9 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
                 id: `api-recap-${idx}`,
                 time: msToSec(item.start_ms),
                 endTime: msToSec(item.end_ms),
-                label: 'Recap',
+                startTime: msToSec(item.start_ms),
+                label: 'Preview / Recap',
+                category: 'Preview',
                 isIntro: true,
                 isOutro: false,
                 skipEnabled: true,
@@ -1409,7 +1413,9 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
                 id: `api-credits-${idx}`,
                 time: msToSec(item.start_ms),
                 endTime: msToSec(item.end_ms),
-                label: 'Credits/Outro',
+                startTime: msToSec(item.start_ms),
+                label: 'Credits / Outro',
+                category: 'Outro',
                 isIntro: false,
                 isOutro: true,
                 skipEnabled: true,
@@ -1420,6 +1426,26 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
 
           if (tidbBms.length > 0) {
             hadTidbDataRef.current = true;
+            // Save every timestamp found in IntroDB into our database!
+            try {
+              fetch('/api/timestamps/save-introdb', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  tmdbId: resolvedTmdbId,
+                  season: isTV ? season : null,
+                  episode: isTV ? episode : null,
+                  videoId: video.id,
+                  mediaName: video.title || '',
+                  introDbData,
+                  userId: userId || 'theintrodb'
+                })
+              }).then(() => {
+                logger.player('[TheIntroDB] Successfully cached ' + tidbBms.length + ' timestamp(s) into our server database.');
+              }).catch(err => {
+                logger.player('[TheIntroDB Cache Warning] Failed saving to our DB: ' + err);
+              });
+            } catch (saveErr) {}
           }
         }
       } catch (err) {
