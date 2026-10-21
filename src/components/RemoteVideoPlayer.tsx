@@ -4,7 +4,7 @@ import {
   Play, Pause, RotateCcw, RotateCw, Cast, X, 
   MessageSquare, Maximize, Minimize, MonitorPlay,
   Volume2, Volume1, VolumeX, AlertCircle, Lock, Unlock,
-  Layers, Type, Clock, Sliders, SkipForward, Ban, FastForward, Zap, Coffee, ChevronRight, ChevronLeft, Eye, Settings, Bookmark as BookmarkIcon, Activity, Terminal
+  Layers, Type, Clock, Sliders, SkipForward, Ban, FastForward, Zap, Coffee, ChevronRight, ChevronLeft, Eye, Settings, Bookmark as BookmarkIcon, Activity, Terminal, Music
 } from 'lucide-react';
 import { Button } from './ui/button';
 import type { VideoItem, CustomAudioTrack, CustomSubtitleTrack, Bookmark } from '../types/media';
@@ -67,6 +67,13 @@ interface VideoPlayerProps {
   showPlayBar?: boolean;
   showVolumeControl?: boolean;
   showFullscreen?: boolean;
+  showCloseButton?: boolean;
+  showSubtitleControl?: boolean;
+  showBookmarksControl?: boolean;
+  showAudioControl?: boolean;
+  audioOnly?: boolean;
+  subFileOnly?: boolean;
+  allowSubUpload?: boolean;
   subSettings: SubtitleSettings;
   onUpdateSubSettings: (settings: Partial<SubtitleSettings>) => void;
   historySaveInterval?: number;
@@ -180,6 +187,13 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
   showPlayBar: propShowPlayBar = true,
   showVolumeControl: propShowVolumeControl = true,
   showFullscreen: propShowFullscreen = true,
+  showCloseButton: propShowCloseButton,
+  showSubtitleControl = true,
+  showBookmarksControl = true,
+  showAudioControl = true,
+  audioOnly = false,
+  subFileOnly = false,
+  allowSubUpload = true,
   subSettings,
   onUpdateSubSettings,
   historySaveInterval = 5,
@@ -802,6 +816,7 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
   const showPlayBar = isEmbed ? (propShowPlayBar !== false) : (showPlayBarMode === 'enable' || hoveredSetting === 'showPlayBar');
   const showVolumeControl = isEmbed ? (propShowVolumeControl !== false) : (showVolumeControlMode === 'enable' || hoveredSetting === 'showVolumeControl');
   const showFullscreen = isEmbed ? (propShowFullscreen !== false) : (showFullscreenMode === 'enable' || hoveredSetting === 'showFullscreen');
+  const showCloseButton = propShowCloseButton !== undefined ? propShowCloseButton : !isEmbed;
 
   const getHighlightClass = (key: string): string => {
     if (hoveredSetting !== key) return '';
@@ -4799,6 +4814,47 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
           }
         }}
       >
+        {audioOnly && (
+          <div 
+            className="audio-only-overlay"
+            style={{
+              position: 'absolute',
+              inset: 0,
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'center',
+              justifyContent: 'center',
+              background: 'radial-gradient(circle at center, rgba(30, 41, 59, 0.92) 0%, rgba(11, 15, 25, 0.98) 100%)',
+              zIndex: 2,
+              pointerEvents: 'none'
+            }}
+          >
+            <div 
+              style={{
+                width: '130px',
+                height: '130px',
+                borderRadius: '50%',
+                background: 'linear-gradient(135deg, rgba(255, 62, 62, 0.25), rgba(59, 130, 246, 0.25))',
+                border: '2px solid rgba(255, 255, 255, 0.18)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                boxShadow: isPlaying ? '0 0 35px rgba(59, 130, 246, 0.4)' : 'none',
+                transition: 'all 0.3s ease',
+                marginBottom: '18px'
+              }}
+            >
+              <Music size={52} color={isPlaying ? '#60a5fa' : '#94a3b8'} />
+            </div>
+            <div style={{ fontSize: '18px', fontWeight: 600, color: '#f8fafc', maxWidth: '80%', textAlign: 'center', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginBottom: '8px' }}>
+              {video.title || 'Audio Playback'}
+            </div>
+            <div style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', padding: '3px 10px', borderRadius: '12px', background: 'rgba(255, 255, 255, 0.08)', fontSize: '11px', color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.08em' }}>
+              <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: isPlaying ? '#22c55e' : '#64748b' }}></span>
+              Audio Only
+            </div>
+          </div>
+        )}
         <video
           ref={videoRef}
           onContextMenu={(e) => e.preventDefault()}
@@ -5306,9 +5362,11 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
           )}
 
           {/* Close Button */}
-          <button className="close-btn" onClick={handleExit} title="Close">
-            <X size={24} />
-          </button>
+          {showCloseButton && (
+            <button className="close-btn" onClick={handleExit} title="Close">
+              <X size={24} />
+            </button>
+          )}
         </div>
       )}
 
@@ -5767,7 +5825,7 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
               </div>
 
               <div className="bottom-controls-center-group">
-                {!isUndetectedLocalMedia && (
+                {(showSubtitleControl !== false || showAudioControl !== false) && (
                   <div 
                     className="popover-wrapper"
                     onMouseEnter={() => {
@@ -5782,7 +5840,7 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
                   >
                     <button className="audio-sub-trigger-btn">
                       <MessageSquare size={18} />
-                      <span>Audio & Subtitles</span>
+                      <span>{showAudioControl === false ? 'Subtitles' : (showSubtitleControl === false ? 'Audio' : 'Audio & Subtitles')}</span>
                     </button>
                     
                     {showAudioSubMenu && (
@@ -5818,12 +5876,16 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
                         onDownloadOpenSubtitle={downloadOpenSubtitle}
                         hasFetchedOpenSubtitles={hasFetchedOpenSubtitles}
                         onFetchOpenSubtitles={fetchOpenSubtitles}
+                        showAudioControl={showAudioControl !== false}
+                        showSubtitleControl={showSubtitleControl !== false}
+                        subFileOnly={subFileOnly === true}
+                        allowSubUpload={allowSubUpload !== false}
                       />
                     )}
                   </div>
                 )}
 
-                {!isUndetectedLocalMedia && (
+                {!isUndetectedLocalMedia && showBookmarksControl !== false && (
                   <div 
                     className="popover-wrapper"
                     style={{ marginLeft: '50px' }}
@@ -8503,7 +8565,7 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
             id: 'stats', label: 'Console', icon: <Terminal size={24} />, onClick: () => setShowConsoleOverlay(prev => !prev), disabled: false
           });
         }
-        if (config.audioSubs && !isUndetectedLocalMedia) {
+        if (config.audioSubs && (showSubtitleControl !== false || showAudioControl !== false)) {
           rItems.push({
             id: 'audio', label: 'Audio/Subs', icon: <MessageSquare size={24} />, onClick: () => setShowAudioSubMenu(true), disabled: isLocked
           });
@@ -8513,7 +8575,7 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
             id: 'fullscreen', label: (isFullscreen || isPseudoFullscreen) ? 'Exit Fullscreen' : 'Fullscreen', icon: (isFullscreen || isPseudoFullscreen) ? <Minimize size={24} /> : <Maximize size={24} />, onClick: toggleFullscreen, disabled: isLocked
           });
         }
-        if (config.bookmark && !isUndetectedLocalMedia) {
+        if (config.bookmark && !isUndetectedLocalMedia && showBookmarksControl !== false) {
           rItems.push({
             id: 'bookmark', label: 'Bookmark', icon: <BookmarkIcon size={24} />, onClick: () => setShowAddDialog(true), disabled: isLocked
           });

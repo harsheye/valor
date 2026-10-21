@@ -53,6 +53,11 @@ export interface AudioSubPopoverProps {
   onDownloadOpenSubtitle?: (fileId: number, fileName: string, language: string) => Promise<void>;
   hasFetchedOpenSubtitles?: boolean;
   onFetchOpenSubtitles?: (customQuery?: string) => void;
+
+  showAudioControl?: boolean;
+  showSubtitleControl?: boolean;
+  subFileOnly?: boolean;
+  allowSubUpload?: boolean;
 }
 
 export const AudioSubPopover: React.FC<AudioSubPopoverProps> = ({
@@ -86,7 +91,11 @@ export const AudioSubPopover: React.FC<AudioSubPopoverProps> = ({
   isOpenSubLoading = false,
   onDownloadOpenSubtitle,
   hasFetchedOpenSubtitles = false,
-  onFetchOpenSubtitles
+  onFetchOpenSubtitles,
+  showAudioControl = true,
+  showSubtitleControl = true,
+  subFileOnly = false,
+  allowSubUpload = true
 }) => {
   const [subSearchQuery, setSubSearchQuery] = useState('');
   const [downloadingFileId, setDownloadingFileId] = useState<number | null>(null);
@@ -146,18 +155,36 @@ export const AudioSubPopover: React.FC<AudioSubPopoverProps> = ({
   }, [currentTime, showViewColumn, selectedSubTrack]);
 
   // Dynamic layout calculations based on active columns
-  let popoverWidth = 460;
-  let gridCols = "1fr 1fr";
-  if (showViewColumn && showStyleColumn) {
-    popoverWidth = 960;
-    gridCols = "1fr 1fr 1.3fr 1.1fr";
-  } else if (showViewColumn) {
-    popoverWidth = 740;
-    gridCols = "1fr 1fr 1.3fr";
-  } else if (showStyleColumn) {
-    popoverWidth = 700;
-    gridCols = "1fr 1fr 1.1fr";
+  const effectiveAudioVisible = showAudioControl !== false;
+  const effectiveSubVisible = showSubtitleControl !== false;
+
+  let baseCols: string[] = [];
+  let baseWidth = 0;
+
+  if (effectiveAudioVisible) {
+    baseCols.push('1fr');
+    baseWidth += 230;
   }
+  if (effectiveSubVisible) {
+    baseCols.push('1fr');
+    baseWidth += 230;
+  }
+  if (baseCols.length === 0) {
+    baseCols.push('1fr');
+    baseWidth = 230;
+  }
+
+  if (showViewColumn) {
+    baseCols.push('1.3fr');
+    baseWidth += 280;
+  }
+  if (showStyleColumn) {
+    baseCols.push('1.1fr');
+    baseWidth += 240;
+  }
+
+  const popoverWidth = Math.max(baseWidth, 260);
+  const gridCols = baseCols.join(' ');
 
   return (
     <div 
@@ -173,78 +200,81 @@ export const AudioSubPopover: React.FC<AudioSubPopoverProps> = ({
     >
       <div className="popover-cols" style={{ gridTemplateColumns: gridCols, height: '100%' }}>
         {/* Audio Column */}
-        <div className="popover-col">
-          <h4 style={{ flexShrink: 0 }}>Audio</h4>
-          <div className="popover-options">
-            {/* Original / Native Stream Audio (always available) */}
-            <label 
-              className={`popover-option ${selectedAudioTrack === null ? 'active' : ''}`}
-              onClick={() => {
-                setSelectedAudioTrack(null);
-                setActiveAudioStreamIndex(null);
-                setShowAudioSubMenu(false);
-              }}
-            >
-              <input type="radio" name="audio-lang" checked={selectedAudioTrack === null} readOnly />
-              <span>Original (Default)</span>
-              {selectedAudioTrack === null && <Check size={14} className="check-icon" />}
-            </label>
+        {effectiveAudioVisible && (
+          <div className="popover-col">
+            <h4 style={{ flexShrink: 0 }}>Audio</h4>
+            <div className="popover-options">
+              {/* Original / Native Stream Audio (always available) */}
+              <label 
+                className={`popover-option ${selectedAudioTrack === null ? 'active' : ''}`}
+                onClick={() => {
+                  setSelectedAudioTrack(null);
+                  setActiveAudioStreamIndex(null);
+                  setShowAudioSubMenu(false);
+                }}
+              >
+                <input type="radio" name="audio-lang" checked={selectedAudioTrack === null} readOnly />
+                <span>Original (Default)</span>
+                {selectedAudioTrack === null && <Check size={14} className="check-icon" />}
+              </label>
 
-            {/* Scanned/Probed Embedded Tracks */}
-            {audioStreams.map((s) => {
-              const active = selectedAudioTrack?.streamIndex === s.index;
-              const label = getLangLabel(s.language, `Track #${s.index}`);
-              return (
-                <label key={`embed-aud-${s.index}`} className={`popover-option ${active ? 'active' : ''}`} onClick={() => { handleSelectEmbeddedAudio(s.index, s.codec, s.language); setShowAudioSubMenu(false); }}>
-                  <input type="radio" name="audio-lang" checked={active} readOnly />
-                  <span>{label}</span>
-                  {active && <Check size={14} className="check-icon" />}
-                </label>
-              );
-            })}
+              {/* Scanned/Probed Embedded Tracks */}
+              {audioStreams.map((s) => {
+                const active = selectedAudioTrack?.streamIndex === s.index;
+                const label = getLangLabel(s.language, `Track #${s.index}`);
+                return (
+                  <label key={`embed-aud-${s.index}`} className={`popover-option ${active ? 'active' : ''}`} onClick={() => { handleSelectEmbeddedAudio(s.index, s.codec, s.language); setShowAudioSubMenu(false); }}>
+                    <input type="radio" name="audio-lang" checked={active} readOnly />
+                    <span>{label}</span>
+                    {active && <Check size={14} className="check-icon" />}
+                  </label>
+                );
+              })}
 
-            {/* Custom Uploaded Tracks */}
-            {audioTracks.map((track) => {
-              const active = selectedAudioTrack?.id === track.id;
-              return (
-                <label key={track.id} className={`popover-option ${active ? 'active' : ''}`} onClick={() => { setSelectedAudioTrack(track); setShowAudioSubMenu(false); }}>
-                  <input type="radio" name="audio-lang" checked={active} readOnly />
-                  <span>{track.name}</span>
-                  {active && <Check size={14} className="check-icon" />}
-                </label>
-              );
-            })}
+              {/* Custom Uploaded Tracks */}
+              {audioTracks.map((track) => {
+                const active = selectedAudioTrack?.id === track.id;
+                return (
+                  <label key={track.id} className={`popover-option ${active ? 'active' : ''}`} onClick={() => { setSelectedAudioTrack(track); setShowAudioSubMenu(false); }}>
+                    <input type="radio" name="audio-lang" checked={active} readOnly />
+                    <span>{track.name}</span>
+                    {active && <Check size={14} className="check-icon" />}
+                  </label>
+                );
+              })}
 
-            {/* Custom Add Trigger */}
-            <label className="popover-option add-custom-btn" onClick={() => { customAudioInputRef.current?.click(); setShowAudioSubMenu(false); }}>
-              <span>+ Add Custom File</span>
-            </label>
+              {/* Custom Add Trigger */}
+              <label className="popover-option add-custom-btn" onClick={() => { customAudioInputRef.current?.click(); setShowAudioSubMenu(false); }}>
+                <span>+ Add Custom File</span>
+              </label>
 
-            {/* Audio Boost (Sound Boost) Options */}
-            <div style={{ marginTop: '1rem', borderTop: '1px solid var(--border-subtle, rgba(255, 255, 255, 0.1))', paddingTop: '0.75rem' }}>
-              <h4 style={{ marginBottom: '0.4rem', fontSize: '0.8rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-secondary, rgba(255, 255, 255, 0.5))' }}>Sound Boost</h4>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                <label className={`popover-option ${audioBoost === 100 ? 'active' : ''}`} onClick={() => { setAudioBoost(100); setShowAudioSubMenu(false); }}>
-                  <input type="radio" name="audio-boost" checked={audioBoost === 100} readOnly />
-                  <span>Normal (100%)</span>
-                  {audioBoost === 100 && <Check size={14} className="check-icon" />}
-                </label>
-                <label className={`popover-option ${audioBoost === 150 ? 'active' : ''}`} onClick={() => { setAudioBoost(150); setShowAudioSubMenu(false); }}>
-                  <input type="radio" name="audio-boost" checked={audioBoost === 150} readOnly />
-                  <span>Boost 150%</span>
-                  {audioBoost === 150 && <Check size={14} className="check-icon" />}
-                </label>
-                <label className={`popover-option ${audioBoost === 200 ? 'active' : ''}`} onClick={() => { setAudioBoost(200); setShowAudioSubMenu(false); }}>
-                  <input type="radio" name="audio-boost" checked={audioBoost === 200} readOnly />
-                  <span>Boost 200%</span>
-                  {audioBoost === 200 && <Check size={14} className="check-icon" />}
-                </label>
+              {/* Audio Boost (Sound Boost) Options */}
+              <div style={{ marginTop: '1rem', borderTop: '1px solid var(--border-subtle, rgba(255, 255, 255, 0.1))', paddingTop: '0.75rem' }}>
+                <h4 style={{ marginBottom: '0.4rem', fontSize: '0.8rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-secondary, rgba(255, 255, 255, 0.5))' }}>Sound Boost</h4>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                  <label className={`popover-option ${audioBoost === 100 ? 'active' : ''}`} onClick={() => { setAudioBoost(100); setShowAudioSubMenu(false); }}>
+                    <input type="radio" name="audio-boost" checked={audioBoost === 100} readOnly />
+                    <span>Normal (100%)</span>
+                    {audioBoost === 100 && <Check size={14} className="check-icon" />}
+                  </label>
+                  <label className={`popover-option ${audioBoost === 150 ? 'active' : ''}`} onClick={() => { setAudioBoost(150); setShowAudioSubMenu(false); }}>
+                    <input type="radio" name="audio-boost" checked={audioBoost === 150} readOnly />
+                    <span>Boost 150%</span>
+                    {audioBoost === 150 && <Check size={14} className="check-icon" />}
+                  </label>
+                  <label className={`popover-option ${audioBoost === 200 ? 'active' : ''}`} onClick={() => { setAudioBoost(200); setShowAudioSubMenu(false); }}>
+                    <input type="radio" name="audio-boost" checked={audioBoost === 200} readOnly />
+                    <span>Boost 200%</span>
+                    {audioBoost === 200 && <Check size={14} className="check-icon" />}
+                  </label>
+                </div>
               </div>
             </div>
           </div>
-        </div>
+        )}
 
         {/* Subtitles Column */}
+        {effectiveSubVisible && (
         <div className="popover-col">
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid var(--border-subtle, rgba(255, 255, 255, 0.08))', paddingBottom: '0.35rem', marginBottom: '0.6rem', flexShrink: 0 }}>
             <h4 style={{ margin: 0, borderBottom: 'none', paddingBottom: 0 }}>Sub</h4>
@@ -309,7 +339,7 @@ export const AudioSubPopover: React.FC<AudioSubPopoverProps> = ({
             </label>
 
             {/* Scanned/Probed Embedded Tracks */}
-            {subtitleStreams.map((s) => {
+            {!subFileOnly && subtitleStreams.map((s) => {
               const active = selectedSubTrack?.streamIndex === s.index;
               const label = getLangLabel(s.language, `Track #${s.index}`);
               return (
@@ -334,6 +364,8 @@ export const AudioSubPopover: React.FC<AudioSubPopoverProps> = ({
             })}
 
             {/* OpenSubtitles Cloud Section */}
+            {!subFileOnly && (
+            <>
             <div style={{ borderTop: '1px solid rgba(255, 255, 255, 0.08)', margin: '0.5rem 0 0.4rem 0' }}></div>
             
             <div style={{
@@ -677,13 +709,18 @@ export const AudioSubPopover: React.FC<AudioSubPopoverProps> = ({
                 })}
               </div>
             )}
+            </>
+            )}
 
             {/* Custom Add Trigger */}
-            <label className="popover-option add-custom-btn" onClick={() => { customSubInputRef.current?.click(); setShowAudioSubMenu(false); }}>
-              <span>+ Add Custom File</span>
-            </label>
+            {allowSubUpload !== false && (
+              <label className="popover-option add-custom-btn" onClick={() => { customSubInputRef.current?.click(); setShowAudioSubMenu(false); }}>
+                <span>+ Add Custom File</span>
+              </label>
+            )}
           </div>
         </div>
+        )}
 
         {/* Subtitle Cue Transcript Column */}
         {showViewColumn && (

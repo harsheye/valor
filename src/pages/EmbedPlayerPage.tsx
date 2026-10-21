@@ -1,9 +1,10 @@
 import React, { useEffect, useState } from 'react';
 import { RemoteVideoPlayer } from '../components/RemoteVideoPlayer';
-import type { VideoItem } from '../types/media';
+import type { VideoItem, CustomSubtitleTrack } from '../types/media';
 import type { SubtitleSettings } from '../components/SubtitleOverlay';
 import { DEFAULT_CONTROLS_CONFIG } from '../utils/embedProtocol';
 import type { EmbedCommand, EmbedMessageWrapper, ControlsConfig, ThemeConfig } from '../utils/embedProtocol';
+import { parseSubtitles } from '../utils/subtitleParser';
 
 import { 
   getEmbedSubtitlesSync, 
@@ -15,6 +16,61 @@ import {
   saveMediaTimestamp,
   getMediaTimestamp
 } from '../utils/mediaTimestampStorage';
+
+export function parseEmbedControlsFromParams(params: URLSearchParams): ControlsConfig {
+  let config: ControlsConfig = { ...DEFAULT_CONTROLS_CONFIG };
+
+  // 1. If JSON 'controls' param is provided, merge it first
+  const controlsJson = params.get('controls');
+  if (controlsJson) {
+    try {
+      config = { ...config, ...JSON.parse(controlsJson) };
+    } catch (e) {
+      console.warn('Failed to parse embed controls configuration JSON', e);
+    }
+  }
+
+  // 2. Helper to parse boolean from individual query parameters
+  const parseBool = (keys: string[], defaultVal: boolean): boolean => {
+    for (const key of keys) {
+      const val = params.get(key);
+      if (val !== null) {
+        const lower = val.toLowerCase().trim();
+        if (lower === 'false' || lower === '0' || lower === 'hide' || lower === 'off' || lower === 'no' || lower === 'disable') {
+          return false;
+        }
+        if (lower === 'true' || lower === '1' || lower === 'show' || lower === 'on' || lower === 'yes' || lower === 'enable') {
+          return true;
+        }
+      }
+    }
+    return defaultVal;
+  };
+
+  // Direct URL attributes overrides
+  config.time = parseBool(['time', 'showTime', 'timeDisplay'], config.time ?? true);
+  config.bookmarks = parseBool(['bookmarks', 'showBookmarks', 'bookmark'], config.bookmarks ?? true);
+  config.subtitles = parseBool(['subs', 'subtitles', 'showSubs', 'showSubtitles'], config.subtitles ?? true);
+  config.audio = parseBool(['audio', 'showAudio', 'audioControls'], config.audio ?? true);
+  config.audioOnly = parseBool(['audioOnly', 'audio_only', 'audioonly'], config.audioOnly ?? false);
+  config.subFileOnly = parseBool(['subFileOnly', 'onlySubFile', 'allowOnlySubFile'], config.subFileOnly ?? false);
+  config.allowSubUpload = parseBool(['allowSubUpload', 'allowSubFile', 'customSub', 'allowCustomSub'], config.allowSubUpload ?? true);
+
+  // Close / cross / X button: default is FALSE (hidden) in embed player
+  if (params.has('hideClose') || params.has('hideX') || params.has('removeX')) {
+    config.closeButton = false;
+  }
+  config.closeButton = parseBool(['closeButton', 'xButton', 'crossButton', 'showClose', 'showX', 'showCloseButton'], config.closeButton ?? false);
+
+  config.play = parseBool(['play', 'showPlay'], config.play ?? true);
+  config.volume = parseBool(['volume', 'showVolume'], config.volume ?? true);
+  config.fullscreen = parseBool(['fullscreen', 'showFullscreen'], config.fullscreen ?? true);
+  config.speed = parseBool(['speed', 'showSpeed'], config.speed ?? true);
+  config.settings = parseBool(['settings', 'showSettings'], config.settings ?? true);
+  config.pip = parseBool(['pip', 'showPip'], config.pip ?? true);
+
+  return config;
+}
 
 function deriveTitleFromUrl(url: string, explicitTitle?: string | null): string {
   if (explicitTitle && explicitTitle.trim() && explicitTitle !== 'Embedded Video' && explicitTitle !== 'Embedded Media') {
@@ -108,13 +164,7 @@ export const EmbedPlayerPage: React.FC = () => {
 
   const [controls, setControls] = useState<ControlsConfig>(() => {
     const params = new URLSearchParams(window.location.search);
-    try {
-      const controlsParam = params.get('controls');
-      if (controlsParam) return { ...DEFAULT_CONTROLS_CONFIG, ...JSON.parse(controlsParam) };
-    } catch (e) {
-      console.error('Failed to parse embed controls configuration', e);
-    }
-    return DEFAULT_CONTROLS_CONFIG;
+    return parseEmbedControlsFromParams(params);
   });
 
   const [theme, setTheme] = useState<ThemeConfig>(() => {
@@ -173,6 +223,51 @@ export const EmbedPlayerPage: React.FC = () => {
         });
       }
     });
+  }, [video?.url]);
+
+  // Load external subtitle file specified directly in URL attributes (?sub=, ?subtitle=, ?subFile=, ?subUrl=)
+  useEffect(() => {
+    if (!video?.url) return;
+    const params = new URLSearchParams(window.location.search);
+    const subUrl = params.get('sub') || params.get('subtitle') || params.get('subFile') || params.get('subUrl');
+    if (!subUrl) return;
+
+    fetch(subUrl)
+      .then((res) => {
+        if (!res.ok) throw new Error(`HTTP ${res.status} fetching subtitle URL`);
+        return res.text();
+      })
+      .then((text) => {
+        const filename = subUrl.split('/').pop()?.split('?')[0] || 'subtitles.srt';
+        const cues = parseSubtitles(text, filename);
+        if (cues && cues.length > 0) {
+          const ext = filename.split('.').pop()?.toLowerCase();
+          const format = (ext === 'ass' || ext === 'ssa') ? 'ass' : ((ext === 'vtt' || ext === 'webvtt') ? 'vtt' : 'srt');
+          const urlTrack: CustomSubtitleTrack = {
+            id: `url-sub-${Date.now()}`,
+            name: trimSubtitleName(filename),
+            url: subUrl,
+            cues,
+            format: format as any,
+            language: 'External',
+            isExtracted: false
+          };
+          setVideo((prev) => {
+            if (!prev) return prev;
+            const existing = prev.subtitleTracks || [];
+            if (existing.some((t) => t.url === subUrl)) return prev;
+            const nextTracks = [urlTrack, ...existing];
+            saveEmbedSubtitles(prev, nextTracks);
+            return {
+              ...prev,
+              subtitleTracks: nextTracks
+            };
+          });
+        }
+      })
+      .catch((err) => {
+        console.warn('[EmbedPlayer] Failed to load external subtitle from URL query:', err);
+      });
   }, [video?.url]);
 
   // PostMessage Bridge listener
@@ -392,11 +487,18 @@ export const EmbedPlayerPage: React.FC = () => {
             setVideo(newVideo);
           }
         }}
-        showPlayButton={controls.play}
-        showTimeDisplay={true}
-        showPlayBar={controls.play}
-        showVolumeControl={controls.volume}
-        showFullscreen={controls.fullscreen}
+        showPlayButton={controls.play !== false}
+        showTimeDisplay={controls.time !== false}
+        showPlayBar={controls.play !== false}
+        showVolumeControl={controls.volume !== false && controls.audio !== false}
+        showFullscreen={controls.fullscreen !== false}
+        showSubtitleControl={controls.subtitles !== false}
+        showBookmarksControl={controls.bookmarks !== false}
+        showAudioControl={controls.audio !== false}
+        audioOnly={controls.audioOnly === true}
+        subFileOnly={controls.subFileOnly === true}
+        allowSubUpload={controls.allowSubUpload !== false}
+        showCloseButton={controls.closeButton === true}
         subSettings={subSettings}
         onUpdateSubSettings={handleUpdateSubSettings}
         openSubtitlesApiKey={embedSettings.openSubtitlesApiKey || ''}
