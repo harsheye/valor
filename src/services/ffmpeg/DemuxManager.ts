@@ -2,6 +2,7 @@ import { FFmpeg } from '@ffmpeg/ffmpeg';
 import { logger } from '../../utils/logger';
 import type { ByteSource } from '../local/localByteSource';
 import { FFmpegManager } from './FFmpegManager';
+import { remoteMediaAccess } from '../remote/remoteMediaAccess';
 import type { ProbeResult, MediaStreamInfo } from '../pipeline/MediaPipeline';
 
 export class DemuxManager {
@@ -43,7 +44,7 @@ export class DemuxManager {
 
       try {
         await ff.createDir(mountPoint);
-      } catch {}
+      } catch { /* ignore */ }
 
       try {
         await ff.mount('WORKERFS' as any, { files: [cleanFile] }, mountPoint);
@@ -66,17 +67,20 @@ export class DemuxManager {
     const inputPath = await this.getMountedInputPath(ff);
     
     if (!this.isFile(this.videoFileOrSource)) {
-      // remote probe: load first 2MB
-      const source = this.videoFileOrSource as ByteSource;
-      const size = await this.getSizeFallback(source);
-      const bytes = await source.read(0, Math.min(2 * 1024 * 1024, size - 1));
-      await ff.writeFile(inputPath, bytes);
+      const details = await remoteMediaAccess.probeRemoteMedia(
+        ff,
+        this.videoFileOrSource as ByteSource
+      );
+      return {
+        duration: details.duration,
+        streams: details.streams
+      };
     }
 
     this.ffmpegMgr.clearLogs();
     try {
       await ff.exec(['-i', inputPath, '-hide_banner']);
-    } catch {}
+    } catch { /* ignore */ }
 
     const logs = this.ffmpegMgr.getLogs().join('\n');
     return this.parseProbeLogs(logs);
@@ -157,58 +161,21 @@ export class DemuxManager {
     const mountedInputPath = await this.getMountedInputPath(ff);
     const tempOutFile = `slice_${streamIndex}_${startTime}.wav`;
     const isRemoteSource = !this.isFile(this.videoFileOrSource);
-    const inputPath = isRemoteSource
-      ? `remote_input_${this.uniqueId}_${streamIndex}_${Math.floor(startTime * 1000)}_${Math.random().toString(36).substring(2, 7)}.mkv`
-      : mountedInputPath;
-    let ffmpegSeekTime = startTime;
-
     if (isRemoteSource) {
-      // Remote chunk: resolve byte range and write chunk
-      const source = this.videoFileOrSource as ByteSource;
-      const seekList = seekMap || [];
-      
-      let startOffset = 0;
-      let endOffset = 8 * 1024 * 1024;
-      let offsetTime = 0;
-      const fileSize = await this.getSizeFallback(source);
-
-      const matchedStart = seekList.reduce((prev: any, curr: any) => {
-        return curr.time <= startTime ? curr : prev;
-      }, seekList[0]);
-
-      if (matchedStart) {
-        startOffset = matchedStart.offset;
-        offsetTime = matchedStart.time || 0;
-        const targetEndTime = startTime + duration + 30;
-        const matchedEnd = seekList.reduce((prev: any, curr: any) => {
-          return curr.time <= targetEndTime ? curr : prev;
-        }, matchedStart);
-        endOffset = matchedEnd ? matchedEnd.offset + 8 * 1024 * 1024 : startOffset + 24 * 1024 * 1024;
-      } else {
-        // Linear fallback
-        const size = await this.getSizeFallback(source);
-        startOffset = Math.floor((startTime / 3600) * size);
-        endOffset = Math.min(startOffset + 24 * 1024 * 1024, size);
-        offsetTime = startTime;
-      }
-
-      endOffset = Math.min(endOffset, fileSize - 1);
-      ffmpegSeekTime = Math.max(0, startTime - offsetTime);
-
-      // Fetch chunk
-      const headerProbeBytes = await source.read(0, Math.min(2 * 1024 * 1024, fileSize - 1), signal);
-      const headerBytes = this.getMkvHeaderOnly(headerProbeBytes);
-      const chunkBytes = await source.read(startOffset, endOffset, signal);
-
-      const concatenated = new Uint8Array(headerBytes.length + chunkBytes.length);
-      concatenated.set(headerBytes, 0);
-      concatenated.set(chunkBytes, headerBytes.length);
-
-      await ff.writeFile(inputPath, concatenated);
-      console.log(
-        `[DemuxManager] Remote audio slice start=${startTime}s offset=${offsetTime}s ffmpegSeek=${ffmpegSeekTime}s header=${headerBytes.length} bytes=${startOffset}-${endOffset}`
+      return await remoteMediaAccess.extractRemoteAudioToPcmWav(
+        ff,
+        this.videoFileOrSource as ByteSource,
+        streamIndex,
+        startTime,
+        duration,
+        seekMap,
+        undefined,
+        signal
       );
     }
+
+    const inputPath = mountedInputPath;
+    const ffmpegSeekTime = startTime;
 
     try {
       const runSlice = async (seekSeconds: number): Promise<Uint8Array> => {
@@ -248,7 +215,7 @@ export class DemuxManager {
         );
         try {
           await ff.deleteFile(tempOutFile);
-        } catch {}
+        } catch { /* ignore */ }
         outputData = await runSlice(0);
       }
       return outputData;
@@ -258,7 +225,7 @@ export class DemuxManager {
         if (isRemoteSource) {
           await ff.deleteFile(inputPath);
         }
-      } catch {}
+      } catch { /* ignore */ }
     }
   }
 
@@ -271,11 +238,11 @@ export class DemuxManager {
         try {
           await ff.unmount(mountPoint);
           await ff.deleteDir(mountPoint);
-        } catch {}
+        } catch { /* ignore */ }
       } else {
         try {
           await ff.deleteFile(path);
-        } catch {}
+        } catch { /* ignore */ }
       }
     }
   }

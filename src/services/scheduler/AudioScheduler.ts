@@ -28,6 +28,11 @@ export class AudioScheduler {
   }
 
   schedule(packet: AudioPacket, currentTime: number, playbackRate: number): void {
+    // Strictly validate decoded PCM buffer
+    if (!packet || !packet.buffer || !(packet.buffer instanceof AudioBuffer) || packet.buffer.duration <= 0 || packet.buffer.numberOfChannels <= 0) {
+      return;
+    }
+
     // Don't schedule if chunk is already fully played
     if (packet.endTime <= currentTime) return;
 

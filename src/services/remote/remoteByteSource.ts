@@ -110,25 +110,58 @@ export class HttpByteSource implements ByteSource {
   }
 
   async read(start: number, end: number, signal?: AbortSignal): Promise<Uint8Array> {
+    const size = await this.getSize();
+    const clampedEnd = Math.min(end, size - 1);
+    if (start > clampedEnd) {
+      return new Uint8Array(0);
+    }
+    const expectedLength = clampedEnd - start + 1;
+
     if (this.useProxy) {
-      const proxyRes = await proxyFetch(this.url, { headers: { Range: `bytes=${start}-${end}` } }, true);
+      const proxyRes = await proxyFetch(this.url, { headers: { Range: `bytes=${start}-${clampedEnd}` } }, true);
       const binaryString = atob(proxyRes.base64);
-      const bytes = new Uint8Array(binaryString.length);
+      let bytes = new Uint8Array(binaryString.length);
       for (let i = 0; i < binaryString.length; i++) {
-          bytes[i] = binaryString.charCodeAt(i);
+        bytes[i] = binaryString.charCodeAt(i);
+      }
+      if (bytes.byteLength > expectedLength) {
+        if (bytes.byteLength >= size && start > 0) {
+          bytes = bytes.subarray(start, clampedEnd + 1);
+        } else {
+          bytes = bytes.subarray(0, expectedLength);
+        }
       }
       return bytes;
     }
 
     const response = await fetch(this.url, {
-      headers: { Range: `bytes=${start}-${end}` },
+      headers: { Range: `bytes=${start}-${clampedEnd}` },
       signal
     });
-    if (response.status !== 206 && response.status !== 200) {
-      throw new Error(`Failed to fetch range ${start}-${end}, status: ${response.status}`);
+
+    if (response.status === 416) {
+      return new Uint8Array(0);
     }
+
+    if (response.status !== 206 && response.status !== 200) {
+      throw new Error(`Failed to fetch range ${start}-${clampedEnd}, status: ${response.status}`);
+    }
+
     const arrayBuffer = await response.arrayBuffer();
-    return new Uint8Array(arrayBuffer);
+
+    if (response.status === 200) {
+      const fullBytes = new Uint8Array(arrayBuffer);
+      if (start < fullBytes.byteLength) {
+        return fullBytes.slice(start, Math.min(clampedEnd + 1, fullBytes.byteLength));
+      }
+      return new Uint8Array(0);
+    }
+
+    const bytes = new Uint8Array(arrayBuffer);
+    if (bytes.byteLength > expectedLength) {
+      return bytes.slice(0, expectedLength);
+    }
+    return bytes;
   }
 }
 
@@ -204,7 +237,7 @@ export class RemoteDownloadManager implements ByteSource {
 
     const result = new Uint8Array(actualEnd - start + 1);
     let resultOffset = 0;
-    for (const index of chunkIndexes) {
+    for (let index = startChunk; index <= endChunk; index++) {
       const chunkData = this.cache.get(index);
       if (!chunkData) throw new Error(`Remote byte chunk ${index} was not cached after download`);
 
@@ -233,10 +266,14 @@ export class RemoteDownloadManager implements ByteSource {
       this.inFlight.set(index, promise);
     }
 
-    const bytes = await promise;
-    this.cache.set(index, bytes);
-    this.touchLru(index);
-    this.evict(index);
+    try {
+      const bytes = await promise;
+      this.cache.set(index, bytes);
+      this.touchLru(index);
+      this.evict(index);
+    } finally {
+      this.inFlight.delete(index);
+    }
   }
 
   private async downloadChunk(index: number, outerSignal: AbortSignal | undefined, priority: DownloadPriority): Promise<Uint8Array> {
@@ -271,7 +308,6 @@ export class RemoteDownloadManager implements ByteSource {
       } finally {
         outerSignal?.removeEventListener('abort', abortOuter);
         this.activeControllers.delete(controller);
-        this.inFlight.delete(index);
       }
     }
 

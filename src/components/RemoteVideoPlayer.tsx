@@ -25,6 +25,7 @@ import { FFmpegManager } from '../services/ffmpeg/FFmpegManager';
 import { DemuxManager } from '../services/ffmpeg/DemuxManager';
 import { PlaybackController } from '../services/playback/PlaybackController';
 import { logger } from '../utils/logger';
+import { cuesToWebVTT, remoteMediaAccess } from '../services/remote/remoteMediaAccess';
 
 const getAudioBoostMultiplier = (boostPercent: number): number => {
   if (boostPercent <= 100) return 1.0;
@@ -1997,6 +1998,11 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
       } catch (e) {}
     }
     lastSubUrlRef.current = newUrl;
+    if (videoRef.current && videoRef.current.textTracks) {
+      for (let i = 0; i < videoRef.current.textTracks.length; i++) {
+        videoRef.current.textTracks[i].mode = 'hidden';
+      }
+    }
   }, [selectedSubTrack?.url]);
 
   useEffect(() => {
@@ -2060,30 +2066,23 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
           } else {
             // Remote probe
             const source = new HttpByteSource(video.url);
-            const cachedSource = new CachedByteSource(source, 2 * 1024 * 1024, 16);
-            const ext = video.url.split('.').pop()?.split('?')[0] || 'mp4';
-            result = await ffmpegService.probeRemoteHeader(video.url, `.${ext}`, cachedSource);
-            
-            try {
-              const containerType = (result.format || ext).toLowerCase();
-              if (containerType.includes('mkv') || containerType.includes('matroska')) {
-                const mkvInfo = await parseMkv(cachedSource);
-                seekMap = mkvInfo.seekMap || [];
-                timecodeScale = mkvInfo.timecodeScale;
-              } else if (containerType.includes('mp4')) {
-                const mp4Info = await parseMp4(cachedSource);
-                seekMap = mp4Info.tracks[0]?.seekMap?.timeToOffset || [];
-              }
-            } catch (parseErr) {
-              logger.warn('Failed parsing remote container for seekMap:', parseErr);
-            }
+            const downloadMgr = new RemoteDownloadManager(source, 2 * 1024 * 1024, 16);
+            const ff = await ffmpegService.ensureLoaded(video.id);
+            const remoteDetails = await remoteMediaAccess.probeRemoteMedia(ff, downloadMgr);
+            result = {
+              duration: remoteDetails.duration,
+              format: remoteDetails.format,
+              streams: remoteDetails.streams
+            };
+            seekMap = remoteDetails.seekMap || [];
+            timecodeScale = remoteDetails.timecodeScale;
           }
 
           const updatedVideo = {
             ...video,
-            duration: (result.duration && Number(result.duration) > 0) ? result.duration : video.duration,
+            duration: (result.duration && Number(result.duration) > 0) ? String(result.duration) : video.duration,
             format: result.format,
-            streams: result.streams,
+            streams: result.streams as any,
             seekMap: seekMap.length > 0 ? seekMap : undefined,
             timecodeScale
           };
@@ -2484,10 +2483,14 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
           }
           merged.sort((a, b) => a.startTime - b.startTime);
 
+          const vttText = cuesToWebVTT(merged);
+          const vttBlob = new Blob([vttText], { type: 'text/vtt' });
+          const vttBlobUrl = URL.createObjectURL(vttBlob);
+
           const newTrack: CustomSubtitleTrack = {
             id: `remote-sub-${streamIndex}`,
             name: `Subtitles`,
-            url: '',
+            url: vttBlobUrl,
             cues: merged,
             isExtracted: true,
             streamIndex,
@@ -2579,10 +2582,14 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
       }
 
       if (cues && cues.length > 0) {
+        const vttText = cuesToWebVTT(cues);
+        const vttBlob = new Blob([vttText], { type: 'text/vtt' });
+        const vttBlobUrl = URL.createObjectURL(vttBlob);
+
         const newTrack: CustomSubtitleTrack = {
           id: `remote-sub-${streamIndex}`,
           name: `Remote Subtitles`,
-          url: '',
+          url: vttBlobUrl,
           cues,
           isExtracted: true,
           streamIndex,
@@ -4536,7 +4543,18 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
             }
           }}
           playsInline
-        />
+        >
+          {selectedSubTrack?.url && (
+            <track
+              key={selectedSubTrack.id || selectedSubTrack.url}
+              kind="subtitles"
+              src={selectedSubTrack.url}
+              srcLang={selectedSubTrack.language || 'en'}
+              label={selectedSubTrack.name || 'Subtitles'}
+              default
+            />
+          )}
+        </video>
       </div>
 
       {false && activeSubtitleStartOffset}

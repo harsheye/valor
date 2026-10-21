@@ -125,8 +125,12 @@ export class PlaybackController {
 
   async initialize(videoEl: HTMLVideoElement, streamIndex: number | null): Promise<void> {
     this.videoEl = videoEl;
-    this.videoEl.muted = true; // Mute video element - audio is played via AudioContext
-    this.state.activeStreamIndex = typeof streamIndex === 'number' ? streamIndex : -1;
+    if (typeof streamIndex === 'number' && streamIndex >= 0) {
+      this.videoEl.muted = true; // Mute video element when Web Audio alternate track is active
+      this.state.activeStreamIndex = streamIndex;
+    } else {
+      this.state.activeStreamIndex = -1;
+    }
     this.bufferManager.resetFailures();
     
     // 1. Setup new playback generation to initialize abort signals and sessionId correctly
@@ -794,17 +798,23 @@ export class PlaybackController {
     this.scheduler.reset();
 
     if (this.videoEl) {
-      const isPlaying = !this.videoEl.paused;
-      const currentTime = this.videoEl.currentTime;
-      await this.fillBufferWindow(currentTime, 'switchAudioTrack');
-      
-      if (isPlaying && this.videoEl) {
-        const syncedTime = this.videoEl.currentTime;
-        this.playbackQueue.clear();
-        this.hydrateManifestFromCache();
-        this.playbackQueue.update(syncedTime, this.state.playbackRate);
+      if (this.state.activeStreamIndex >= 0) {
+        this.videoEl.muted = true;
+        const isPlaying = !this.videoEl.paused;
+        const currentTime = this.videoEl.currentTime;
+        await this.fillBufferWindow(currentTime, 'switchAudioTrack');
+        
+        if (isPlaying && this.videoEl) {
+          const syncedTime = this.videoEl.currentTime;
+          this.playbackQueue.clear();
+          this.hydrateManifestFromCache();
+          this.playbackQueue.update(syncedTime, this.state.playbackRate);
+        } else {
+          this.hydrateManifestFromCache();
+        }
       } else {
-        this.hydrateManifestFromCache();
+        this.videoEl.muted = false;
+        this.audioScheduler.stopAll();
       }
     }
   }
