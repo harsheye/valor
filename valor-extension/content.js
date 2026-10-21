@@ -61,20 +61,6 @@
     const isLocal = valorEmbedUrl.includes('localhost') || valorEmbedUrl.includes('127.0.0.1');
     if (!isLocal) return; // Do not attempt local port scan if user configured a remote player
 
-    // Check backend heartbeat which reports active servicePort and protocol
-    try {
-      const res = await fetch('http://127.0.0.1:50001/api/heartbeat', { method: 'POST' }).catch(() => null);
-      if (res && res.ok) {
-        const data = await res.json().catch(() => null);
-        if (data && data.servicePort) {
-          const proto = data.protocol || (data.servicePort === 443 ? 'https' : 'http');
-          const portPart = (data.servicePort === 443 || data.servicePort === 80) ? '' : `:${data.servicePort}`;
-          valorEmbedUrl = `${proto}://localhost${portPart}/embed`;
-          return;
-        }
-      }
-    } catch {}
-
     // Check HTTPS on port 443
     try {
       const r443 = await fetch('https://localhost/embed', { method: 'HEAD' }).catch(() => null);

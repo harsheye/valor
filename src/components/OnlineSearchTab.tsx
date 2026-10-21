@@ -66,7 +66,7 @@ export const OnlineSearchTab: React.FC<OnlineSearchTabProps> = ({
         const headers = {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${traktAccessToken}`,
-          'trakt-api-key': 'f2926f0d87d3e789c50a3c276ab6002f5027dec31089fe75792c2836165c7289',
+          'trakt-api-key': 'V4WfZovVxhKMc-KNyfTHgL_KtI84gJLnBHMss-qwu88',
           'trakt-api-version': '2'
         };
 

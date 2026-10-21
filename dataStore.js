@@ -190,6 +190,27 @@ export class DataStore {
           current_path TEXT
       );
 
+      CREATE TABLE IF NOT EXISTS analytics_devices (
+          device_id VARCHAR(128) PRIMARY KEY,
+          first_seen TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+          last_seen TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+          visit_count INT DEFAULT 1,
+          total_duration_seconds INT DEFAULT 0,
+          total_requests INT DEFAULT 1,
+          bytes_transferred BIGINT DEFAULT 0,
+          last_ip VARCHAR(64),
+          ips JSONB DEFAULT '[]'::jsonb,
+          user_agent TEXT,
+          browser VARCHAR(64),
+          os VARCHAR(64),
+          device VARCHAR(64) DEFAULT 'Desktop',
+          user_id VARCHAR(64),
+          profile_name VARCHAR(255),
+          embed_calls_count INT DEFAULT 0,
+          embed_referers JSONB DEFAULT '[]'::jsonb,
+          last_path TEXT
+      );
+
       CREATE TABLE IF NOT EXISTS analytics_traffic_logs (
           id SERIAL PRIMARY KEY,
           session_id VARCHAR(128),
@@ -203,16 +224,59 @@ export class DataStore {
           browser VARCHAR(64),
           os VARCHAR(64),
           user_id VARCHAR(64),
+          device VARCHAR(64) DEFAULT 'Desktop',
+          device_id VARCHAR(128),
+          referer TEXT,
+          is_embed BOOLEAN DEFAULT FALSE,
           created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
       );
 
       CREATE INDEX IF NOT EXISTS idx_analytics_traffic_created ON analytics_traffic_logs(created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_analytics_traffic_device_id ON analytics_traffic_logs(device_id);
+      CREATE INDEX IF NOT EXISTS idx_analytics_devices_last_seen ON analytics_devices(last_seen DESC);
+      CREATE INDEX IF NOT EXISTS idx_analytics_devices_visits ON analytics_devices(visit_count DESC);
       CREATE INDEX IF NOT EXISTS idx_analytics_sessions_last_seen ON analytics_sessions(last_seen DESC);
     `;
     try {
       await this.pgPool.query(initSql);
+      await this.pgPool.query(`ALTER TABLE analytics_traffic_logs ADD COLUMN IF NOT EXISTS device VARCHAR(64) DEFAULT 'Desktop';`).catch(() => {});
+      await this.pgPool.query(`ALTER TABLE analytics_traffic_logs ADD COLUMN IF NOT EXISTS device_id VARCHAR(128);`).catch(() => {});
+      await this.pgPool.query(`ALTER TABLE analytics_traffic_logs ADD COLUMN IF NOT EXISTS referer TEXT;`).catch(() => {});
+      await this.pgPool.query(`ALTER TABLE analytics_traffic_logs ADD COLUMN IF NOT EXISTS is_embed BOOLEAN DEFAULT FALSE;`).catch(() => {});
+      await this.pgPool.query(`CREATE INDEX IF NOT EXISTS idx_analytics_traffic_device_id ON analytics_traffic_logs(device_id);`).catch(() => {});
     } catch (e) {
       console.error('[PostgreSQL] Failed ensuring tables:', e.message);
+    }
+
+    if (this.sqliteDb) {
+      try {
+        this.sqliteDb.exec(`
+          CREATE TABLE IF NOT EXISTS analytics_devices (
+            device_id TEXT PRIMARY KEY,
+            first_seen TEXT DEFAULT (datetime('now')),
+            last_seen TEXT DEFAULT (datetime('now')),
+            visit_count INTEGER DEFAULT 1,
+            total_duration_seconds INTEGER DEFAULT 0,
+            total_requests INTEGER DEFAULT 1,
+            bytes_transferred INTEGER DEFAULT 0,
+            last_ip TEXT,
+            ips TEXT DEFAULT '[]',
+            user_agent TEXT,
+            browser TEXT,
+            os TEXT,
+            device TEXT DEFAULT 'Desktop',
+            user_id TEXT,
+            profile_name TEXT,
+            embed_calls_count INTEGER DEFAULT 0,
+            embed_referers TEXT DEFAULT '[]',
+            last_path TEXT
+          );
+        `);
+        try { this.sqliteDb.exec(`ALTER TABLE analytics_traffic_logs ADD COLUMN device TEXT DEFAULT 'Desktop';`); } catch(e){}
+        try { this.sqliteDb.exec(`ALTER TABLE analytics_traffic_logs ADD COLUMN device_id TEXT;`); } catch(e){}
+        try { this.sqliteDb.exec(`ALTER TABLE analytics_traffic_logs ADD COLUMN referer TEXT;`); } catch(e){}
+        try { this.sqliteDb.exec(`ALTER TABLE analytics_traffic_logs ADD COLUMN is_embed INTEGER DEFAULT 0;`); } catch(e){}
+      } catch (e) {}
     }
   }
 
@@ -751,18 +815,21 @@ export class DataStore {
   async recordRequest(event) {
     const {
       sessionId,
+      deviceId = 'dev_unknown',
       ip,
       userAgent,
       browser,
       os,
-      device,
+      device = 'Desktop',
       path,
       method,
       statusCode,
       bytesTransferred = 0,
       latencyMs = 0,
       userId = null,
-      profileName = null
+      profileName = null,
+      referer = '',
+      isEmbed = false
     } = event;
 
     const now = Date.now();
@@ -780,14 +847,17 @@ export class DataStore {
           pipeline.incrby('valor:stats:total_bytes', bytesTransferred);
         }
         pipeline.pfadd('valor:stats:unique_visitors', sessionId);
+        pipeline.pfadd('valor:stats:unique_devices', deviceId);
 
         // Active Session presence in sorted set (score = timestamp)
         pipeline.zadd('valor:active_sessions', now, sessionId);
+        pipeline.zadd('valor:active_devices', now, deviceId);
 
         // Session hash metadata
         const sessionKey = `valor:session:${sessionId}`;
         pipeline.hset(sessionKey, {
           sessionId,
+          deviceId,
           ip: ip || '127.0.0.1',
           browser: browser || 'Unknown',
           os: os || 'Unknown',
@@ -830,6 +900,9 @@ export class DataStore {
           browser: browser || 'Unknown',
           os: os || 'Unknown',
           device: device || 'Desktop',
+          deviceId,
+          referer: referer || '',
+          isEmbed: Boolean(isEmbed),
           userId: userId || 'Guest'
         });
         pipeline.lpush('valor:recent_traffic_log', logEntry);
@@ -845,9 +918,9 @@ export class DataStore {
     if (this.isPgConnected && this.pgPool) {
       try {
         this.pgPool.query(
-          `INSERT INTO analytics_traffic_logs (session_id, ip, method, path, status_code, latency_ms, bytes_transferred, user_agent, browser, os, user_id)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
-          [sessionId, ip, method, path, statusCode, latencyMs, bytesTransferred, (userAgent || '').slice(0, 500), browser, os, userId]
+          `INSERT INTO analytics_traffic_logs (session_id, ip, method, path, status_code, latency_ms, bytes_transferred, user_agent, browser, os, user_id, device, device_id, referer, is_embed)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)`,
+          [sessionId, ip, method, path, statusCode, latencyMs, bytesTransferred, (userAgent || '').slice(0, 500), browser, os, userId, device || 'Desktop', deviceId, referer || '', Boolean(isEmbed)]
         ).catch(() => {});
 
         this.pgPool.query(
@@ -862,13 +935,63 @@ export class DataStore {
              profile_name = COALESCE($8, analytics_sessions.profile_name)`,
           [sessionId, ip, (userAgent || '').slice(0, 500), browser, os, device, userId, profileName, bytesTransferred, path]
         ).catch(() => {});
+
+        // Visitor Devices Intelligence Upsert
+        const embedCountIncr = isEmbed ? 1 : 0;
+        this.pgPool.query(
+          `INSERT INTO analytics_devices (
+             device_id, first_seen, last_seen, visit_count, total_duration_seconds, total_requests,
+             bytes_transferred, last_ip, ips, user_agent, browser, os, device, user_id, profile_name,
+             embed_calls_count, embed_referers, last_path
+           )
+           VALUES (
+             $1, NOW(), NOW(), 1, 0, 1,
+             $2, $3, jsonb_build_array($3::text), $4, $5, $6, $7, $8, $9,
+             $10, CASE WHEN $11 != '' THEN jsonb_build_array($11::text) ELSE '[]'::jsonb END, $12
+           )
+           ON CONFLICT (device_id) DO UPDATE SET
+             visit_count = CASE 
+               WHEN analytics_devices.last_seen < NOW() - INTERVAL '30 minutes' THEN analytics_devices.visit_count + 1 
+               ELSE analytics_devices.visit_count 
+             END,
+             total_duration_seconds = CASE
+               WHEN analytics_devices.last_seen >= NOW() - INTERVAL '30 minutes' 
+                 THEN analytics_devices.total_duration_seconds + LEAST(60, GREATEST(1, EXTRACT(EPOCH FROM (NOW() - analytics_devices.last_seen))::int))
+               ELSE analytics_devices.total_duration_seconds
+             END,
+             last_seen = NOW(),
+             total_requests = analytics_devices.total_requests + 1,
+             bytes_transferred = analytics_devices.bytes_transferred + $2,
+             last_ip = $3,
+             ips = CASE 
+               WHEN NOT (analytics_devices.ips ? $3) THEN analytics_devices.ips || jsonb_build_array($3::text)
+               ELSE analytics_devices.ips
+             END,
+             user_agent = COALESCE($4, analytics_devices.user_agent),
+             browser = COALESCE($5, analytics_devices.browser),
+             os = COALESCE($6, analytics_devices.os),
+             device = COALESCE($7, analytics_devices.device),
+             user_id = COALESCE($8, analytics_devices.user_id),
+             profile_name = COALESCE($9, analytics_devices.profile_name),
+             embed_calls_count = analytics_devices.embed_calls_count + $10,
+             embed_referers = CASE
+               WHEN $11 != '' AND NOT (analytics_devices.embed_referers ? $11) THEN analytics_devices.embed_referers || jsonb_build_array($11::text)
+               ELSE analytics_devices.embed_referers
+             END,
+             last_path = $12`,
+          [
+            deviceId, bytesTransferred, ip || '127.0.0.1', (userAgent || '').slice(0, 500),
+            browser, os, device || 'Desktop', userId, profileName,
+            embedCountIncr, referer || '', path
+          ]
+        ).catch(() => {});
       } catch (e) {}
     } else if (this.sqliteDb) {
       try {
         this.sqliteDb.prepare(
-          `INSERT INTO analytics_traffic_logs (session_id, ip, method, path, status_code, latency_ms, bytes_transferred, user_agent, browser, os, user_id)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-        ).run(sessionId, ip, method, path, statusCode, latencyMs, bytesTransferred, (userAgent || '').slice(0, 500), browser, os, userId);
+          `INSERT INTO analytics_traffic_logs (session_id, ip, method, path, status_code, latency_ms, bytes_transferred, user_agent, browser, os, user_id, device, device_id, referer, is_embed)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        ).run(sessionId, ip, method, path, statusCode, latencyMs, bytesTransferred, (userAgent || '').slice(0, 500), browser, os, userId, device || 'Desktop', deviceId, referer || '', isEmbed ? 1 : 0);
 
         const existing = this.sqliteDb.prepare('SELECT session_id, total_requests, bytes_transferred FROM analytics_sessions WHERE session_id = ?').get(sessionId);
         if (existing) {
@@ -887,6 +1010,45 @@ export class DataStore {
             `INSERT INTO analytics_sessions (session_id, ip, user_agent, browser, os, device, user_id, profile_name, total_requests, bytes_transferred, current_path)
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)`
           ).run(sessionId, ip, (userAgent || '').slice(0, 500), browser, os, device, userId, profileName, bytesTransferred, path);
+        }
+
+        // SQLite devices upsert
+        const devExist = this.sqliteDb.prepare('SELECT device_id, last_seen, visit_count, total_duration_seconds, total_requests, bytes_transferred, embed_calls_count, embed_referers FROM analytics_devices WHERE device_id = ?').get(deviceId);
+        if (devExist) {
+          let embedRefs = [];
+          try { embedRefs = JSON.parse(devExist.embed_referers || '[]'); } catch(e){}
+          if (referer && !embedRefs.includes(referer)) embedRefs.push(referer);
+
+          this.sqliteDb.prepare(
+            `UPDATE analytics_devices SET
+               last_seen = datetime('now'),
+               total_requests = total_requests + 1,
+               bytes_transferred = bytes_transferred + ?,
+               last_ip = ?,
+               user_agent = COALESCE(?, user_agent),
+               browser = COALESCE(?, browser),
+               os = COALESCE(?, os),
+               device = COALESCE(?, device),
+               user_id = COALESCE(?, user_id),
+               profile_name = COALESCE(?, profile_name),
+               embed_calls_count = embed_calls_count + ?,
+               embed_referers = ?,
+               last_path = ?
+             WHERE device_id = ?`
+          ).run(bytesTransferred, ip, (userAgent || '').slice(0, 500), browser, os, device, userId, profileName, isEmbed ? 1 : 0, JSON.stringify(embedRefs), path, deviceId);
+        } else {
+          const embedRefs = referer ? [referer] : [];
+          this.sqliteDb.prepare(
+            `INSERT INTO analytics_devices (
+               device_id, first_seen, last_seen, visit_count, total_duration_seconds, total_requests,
+               bytes_transferred, last_ip, ips, user_agent, browser, os, device, user_id, profile_name,
+               embed_calls_count, embed_referers, last_path
+             )
+             VALUES (?, datetime('now'), datetime('now'), 1, 0, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+          ).run(
+            deviceId, bytesTransferred, ip, JSON.stringify([ip]), (userAgent || '').slice(0, 500),
+            browser, os, device, userId, profileName, isEmbed ? 1 : 0, JSON.stringify(embedRefs), path
+          );
         }
       } catch (e) {}
     }
@@ -1126,88 +1288,458 @@ export class DataStore {
     };
   }
 
-  async getDetailedAnalytics() {
+  async getDetailedAnalytics(options = {}) {
+    const timeframe = options.timeframe || 'day'; // 'day', 'custom_day', 'week', 'month', 'year', 'months'
     const today = new Date().toISOString().slice(0, 10);
-    const hourlyData = [];
-    const currentHour = new Date().getHours();
+    const targetDate = options.targetDate || options.date || today;
+    const targetMonth = options.targetMonth || options.month || today.slice(0, 7);
 
-    let hourlyRequests = {};
-    let hourlyBytes = {};
-    if (this.isRedisConnected && this.redis) {
+    let activityData = [];
+    let hourlyData = [];
+    let availableDates = [];
+    let thirdPartyStats = {
+      totalRequests: 0,
+      totalBytes: 0,
+      avgLatencyMs: 0,
+      services: [],
+      endpoints: []
+    };
+
+    // 1. Fetch available activity dates
+    if (this.isPgConnected && this.pgPool) {
       try {
-        hourlyRequests = await this.redis.hgetall(`valor:analytics:hourly_requests:${today}`) || {};
-        hourlyBytes = await this.redis.hgetall(`valor:analytics:hourly_bytes:${today}`) || {};
+        const datesRes = await this.pgPool.query(
+          `SELECT to_char(created_at, 'YYYY-MM-DD') as day, count(*)::int as count,
+                  count(case when path like '/api/vlr%' or path like '/api/trakt%' or path like '/api/tmdb%' or path like '%subtitles%' then 1 end)::int as third_party_count
+           FROM analytics_traffic_logs
+           GROUP BY day
+           ORDER BY day DESC
+           LIMIT 60`
+        );
+        availableDates = datesRes.rows;
+      } catch (e) {}
+    } else if (this.sqliteDb) {
+      try {
+        availableDates = this.sqliteDb.prepare(
+          `SELECT strftime('%Y-%m-%d', created_at) as day, count(*) as count,
+                  count(case when path like '/api/vlr%' or path like '/api/trakt%' or path like '/api/tmdb%' or path like '%subtitles%' then 1 end) as third_party_count
+           FROM analytics_traffic_logs
+           GROUP BY day
+           ORDER BY day DESC
+           LIMIT 60`
+        ).all();
       } catch (e) {}
     }
 
-    for (let h = Math.max(0, currentHour - 11); h <= currentHour; h++) {
-      const hStr = h.toString();
-      const hourLabel = `${h.toString().padStart(2, '0')}:00`;
-      const reqs = parseInt(hourlyRequests[hStr] || '0', 10);
-      const bytes = parseInt(hourlyBytes[hStr] || '0', 10);
-      hourlyData.push({
-        hour: hourLabel,
-        requests: reqs,
-        bytes,
-        activeUsers: reqs > 0 ? Math.max(1, Math.ceil(reqs / 6)) : 0
-      });
+    if (availableDates.length === 0) {
+      availableDates = [{ day: today, count: 0, third_party_count: 0 }];
     }
 
+    // 2. Fetch Third-Party API Stats (VLR, Trakt, TMDB, OpenSubtitles)
+    if (this.isPgConnected && this.pgPool) {
+      try {
+        const tpRes = await this.pgPool.query(
+          `SELECT 
+             CASE 
+               WHEN path LIKE '/api/vlr%' THEN 'VLR.gg'
+               WHEN path LIKE '/api/trakt%' THEN 'Trakt.tv'
+               WHEN path LIKE '/api/tmdb%' THEN 'TMDB'
+               WHEN path LIKE '%subtitles%' THEN 'OpenSubtitles'
+               ELSE 'Other 3rd Party'
+             END as service,
+             path,
+             count(*)::int as count,
+             coalesce(sum(bytes_transferred), 0)::bigint as total_bytes,
+             round(avg(latency_ms))::int as avg_latency,
+             max(created_at) as last_called,
+             count(case when status_code >= 400 then 1 end)::int as error_count
+           FROM analytics_traffic_logs
+           WHERE path LIKE '/api/vlr%' OR path LIKE '/api/trakt%' OR path LIKE '/api/tmdb%' OR path LIKE '%subtitles%'
+           GROUP BY service, path
+           ORDER BY count DESC`
+        );
+
+        let totalTpReqs = 0;
+        let totalTpBytes = 0;
+        let weightedLatency = 0;
+        const serviceMap = {};
+
+        tpRes.rows.forEach(r => {
+          const reqs = parseInt(r.count, 10) || 0;
+          const bytes = parseInt(r.total_bytes, 10) || 0;
+          const lat = parseInt(r.avg_latency, 10) || 0;
+          const errs = parseInt(r.error_count, 10) || 0;
+
+          totalTpReqs += reqs;
+          totalTpBytes += bytes;
+          weightedLatency += (lat * reqs);
+
+          if (!serviceMap[r.service]) {
+            serviceMap[r.service] = {
+              name: r.service,
+              requests: 0,
+              bytes: 0,
+              avgLatencyMs: 0,
+              errorCount: 0,
+              lastCalled: r.last_called,
+              status: 'operational'
+            };
+          }
+          serviceMap[r.service].requests += reqs;
+          serviceMap[r.service].bytes += bytes;
+          serviceMap[r.service].errorCount += errs;
+          if (r.last_called && (!serviceMap[r.service].lastCalled || new Date(r.last_called) > new Date(serviceMap[r.service].lastCalled))) {
+            serviceMap[r.service].lastCalled = r.last_called;
+          }
+        });
+
+        Object.values(serviceMap).forEach(s => {
+          const matchingRows = tpRes.rows.filter(r => r.service === s.name);
+          const totalLat = matchingRows.reduce((sum, r) => sum + (parseInt(r.avg_latency, 10) * parseInt(r.count, 10)), 0);
+          s.avgLatencyMs = s.requests > 0 ? Math.round(totalLat / s.requests) : 0;
+        });
+
+        ['VLR.gg', 'Trakt.tv', 'TMDB', 'OpenSubtitles'].forEach(svc => {
+          if (!serviceMap[svc]) {
+            serviceMap[svc] = {
+              name: svc,
+              requests: 0,
+              bytes: 0,
+              avgLatencyMs: 0,
+              errorCount: 0,
+              lastCalled: null,
+              status: 'operational'
+            };
+          }
+        });
+
+        thirdPartyStats = {
+          totalRequests: totalTpReqs,
+          totalBytes: totalTpBytes,
+          avgLatencyMs: totalTpReqs > 0 ? Math.round(weightedLatency / totalTpReqs) : 0,
+          services: Object.values(serviceMap),
+          endpoints: tpRes.rows.map(r => ({
+            service: r.service,
+            path: r.path,
+            requests: parseInt(r.count, 10) || 0,
+            bytes: parseInt(r.total_bytes, 10) || 0,
+            avgLatencyMs: parseInt(r.avg_latency, 10) || 0,
+            errorCount: parseInt(r.error_count, 10) || 0,
+            lastCalled: r.last_called
+          }))
+        };
+      } catch (e) {}
+    }
+
+    // 3. Activity Generation based on timeframe
+    if (timeframe === 'day' || timeframe === 'custom_day') {
+      const dayToQuery = (timeframe === 'custom_day' ? targetDate : today);
+      const hourMap = {};
+
+      if (this.isPgConnected && this.pgPool) {
+        try {
+          const res = await this.pgPool.query(
+            `SELECT extract(hour from created_at)::int as hour_num,
+                    to_char(created_at, 'HH24:00') as hour_label,
+                    count(*)::int as requests,
+                    coalesce(sum(bytes_transferred), 0)::bigint as bytes,
+                    count(distinct session_id)::int as visitors,
+                    count(case when path like '/api/vlr%' or path like '/api/trakt%' or path like '/api/tmdb%' or path like '%subtitles%' then 1 end)::int as third_party_requests
+             FROM analytics_traffic_logs
+             WHERE created_at >= $1::date AND created_at < ($1::date + interval '1 day')
+             GROUP BY hour_num, hour_label
+             ORDER BY hour_num ASC`,
+            [dayToQuery]
+          );
+          res.rows.forEach(r => {
+            hourMap[r.hour_num] = {
+              requests: parseInt(r.requests, 10) || 0,
+              bytes: parseInt(r.bytes, 10) || 0,
+              visitors: parseInt(r.visitors, 10) || 0,
+              thirdPartyRequests: parseInt(r.third_party_requests, 10) || 0
+            };
+          });
+        } catch (e) {}
+      } else if (this.sqliteDb) {
+        try {
+          const rows = this.sqliteDb.prepare(
+            `SELECT cast(strftime('%H', created_at) as integer) as hour_num,
+                    strftime('%H:00', created_at) as hour_label,
+                    count(*) as requests,
+                    coalesce(sum(bytes_transferred), 0) as bytes,
+                    count(distinct session_id) as visitors,
+                    count(case when path like '/api/vlr%' or path like '/api/trakt%' or path like '/api/tmdb%' or path like '%subtitles%' then 1 end) as third_party_requests
+             FROM analytics_traffic_logs
+             WHERE date(created_at) = date(?)
+             GROUP BY hour_num
+             ORDER BY hour_num ASC`
+          ).all(dayToQuery);
+          rows.forEach(r => {
+            hourMap[r.hour_num] = {
+              requests: r.requests || 0,
+              bytes: r.bytes || 0,
+              visitors: r.visitors || 0,
+              thirdPartyRequests: r.third_party_requests || 0
+            };
+          });
+        } catch (e) {}
+      }
+
+      for (let h = 0; h < 24; h++) {
+        const hLabel = `${h.toString().padStart(2, '0')}:00`;
+        const data = hourMap[h] || { requests: 0, bytes: 0, visitors: 0, thirdPartyRequests: 0 };
+        activityData.push({
+          label: hLabel,
+          sublabel: dayToQuery,
+          date: dayToQuery,
+          hour: hLabel,
+          requests: data.requests,
+          bytes: data.bytes,
+          activeUsers: data.visitors > 0 ? data.visitors : (data.requests > 0 ? 1 : 0),
+          thirdPartyRequests: data.thirdPartyRequests
+        });
+      }
+      hourlyData = activityData;
+
+    } else if (timeframe === 'week') {
+      const days = [];
+      const baseDate = new Date(targetDate + 'T12:00:00Z');
+      for (let i = 6; i >= 0; i--) {
+        const d = new Date(baseDate);
+        d.setUTCDate(d.getUTCDate() - i);
+        days.push(d.toISOString().slice(0, 10));
+      }
+
+      const dayMap = {};
+      if (this.isPgConnected && this.pgPool) {
+        try {
+          const res = await this.pgPool.query(
+            `SELECT to_char(created_at, 'YYYY-MM-DD') as day_key,
+                    to_char(created_at, 'Mon DD') as day_label,
+                    to_char(created_at, 'Dy') as weekday,
+                    count(*)::int as requests,
+                    coalesce(sum(bytes_transferred), 0)::bigint as bytes,
+                    count(distinct session_id)::int as visitors,
+                    count(case when path like '/api/vlr%' or path like '/api/trakt%' or path like '/api/tmdb%' or path like '%subtitles%' then 1 end)::int as third_party_requests
+             FROM analytics_traffic_logs
+             WHERE created_at >= ($1::date - interval '6 days') AND created_at < ($1::date + interval '1 day')
+             GROUP BY day_key, day_label, weekday
+             ORDER BY day_key ASC`,
+            [targetDate]
+          );
+          res.rows.forEach(r => {
+            dayMap[r.day_key] = {
+              requests: parseInt(r.requests, 10) || 0,
+              bytes: parseInt(r.bytes, 10) || 0,
+              visitors: parseInt(r.visitors, 10) || 0,
+              thirdPartyRequests: parseInt(r.third_party_requests, 10) || 0
+            };
+          });
+        } catch (e) {}
+      }
+
+      activityData = days.map(dStr => {
+        const dObj = new Date(dStr + 'T12:00:00Z');
+        const monthDay = dObj.toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' });
+        const weekday = dObj.toLocaleDateString('en-US', { weekday: 'short', timeZone: 'UTC' });
+        const data = dayMap[dStr] || { requests: 0, bytes: 0, visitors: 0, thirdPartyRequests: 0 };
+        return {
+          label: monthDay,
+          sublabel: weekday,
+          date: dStr,
+          hour: monthDay,
+          requests: data.requests,
+          bytes: data.bytes,
+          activeUsers: data.visitors,
+          thirdPartyRequests: data.thirdPartyRequests
+        };
+      });
+      hourlyData = activityData;
+
+    } else if (timeframe === 'month') {
+      const days = [];
+      const baseDate = new Date(targetDate + 'T12:00:00Z');
+      for (let i = 29; i >= 0; i--) {
+        const d = new Date(baseDate);
+        d.setUTCDate(d.getUTCDate() - i);
+        days.push(d.toISOString().slice(0, 10));
+      }
+
+      const dayMap = {};
+      if (this.isPgConnected && this.pgPool) {
+        try {
+          const res = await this.pgPool.query(
+            `SELECT to_char(created_at, 'YYYY-MM-DD') as day_key,
+                    count(*)::int as requests,
+                    coalesce(sum(bytes_transferred), 0)::bigint as bytes,
+                    count(distinct session_id)::int as visitors,
+                    count(case when path like '/api/vlr%' or path like '/api/trakt%' or path like '/api/tmdb%' or path like '%subtitles%' then 1 end)::int as third_party_requests
+             FROM analytics_traffic_logs
+             WHERE created_at >= ($1::date - interval '29 days') AND created_at < ($1::date + interval '1 day')
+             GROUP BY day_key
+             ORDER BY day_key ASC`,
+            [targetDate]
+          );
+          res.rows.forEach(r => {
+            dayMap[r.day_key] = {
+              requests: parseInt(r.requests, 10) || 0,
+              bytes: parseInt(r.bytes, 10) || 0,
+              visitors: parseInt(r.visitors, 10) || 0,
+              thirdPartyRequests: parseInt(r.third_party_requests, 10) || 0
+            };
+          });
+        } catch (e) {}
+      }
+
+      activityData = days.map(dStr => {
+        const dObj = new Date(dStr + 'T12:00:00Z');
+        const monthDay = dObj.toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' });
+        const data = dayMap[dStr] || { requests: 0, bytes: 0, visitors: 0, thirdPartyRequests: 0 };
+        return {
+          label: monthDay,
+          sublabel: dStr,
+          date: dStr,
+          hour: monthDay,
+          requests: data.requests,
+          bytes: data.bytes,
+          activeUsers: data.visitors,
+          thirdPartyRequests: data.thirdPartyRequests
+        };
+      });
+      hourlyData = activityData;
+
+    } else if (timeframe === 'year' || timeframe === 'months') {
+      const months = [];
+      const now = new Date();
+      for (let i = 11; i >= 0; i--) {
+        const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+        const mKey = `${d.getFullYear()}-${(d.getMonth() + 1).toString().padStart(2, '0')}`;
+        const mLabel = d.toLocaleDateString('en-US', { month: 'short', year: '2-digit' });
+        months.push({ key: mKey, label: mLabel });
+      }
+
+      const monthMap = {};
+      if (this.isPgConnected && this.pgPool) {
+        try {
+          const res = await this.pgPool.query(
+            `SELECT to_char(created_at, 'YYYY-MM') as month_key,
+                    count(*)::int as requests,
+                    coalesce(sum(bytes_transferred), 0)::bigint as bytes,
+                    count(distinct session_id)::int as visitors,
+                    count(case when path like '/api/vlr%' or path like '/api/trakt%' or path like '/api/tmdb%' or path like '%subtitles%' then 1 end)::int as third_party_requests
+             FROM analytics_traffic_logs
+             WHERE created_at >= (date_trunc('month', CURRENT_DATE) - interval '11 months')
+             GROUP BY month_key
+             ORDER BY month_key ASC`
+          );
+          res.rows.forEach(r => {
+            monthMap[r.month_key] = {
+              requests: parseInt(r.requests, 10) || 0,
+              bytes: parseInt(r.bytes, 10) || 0,
+              visitors: parseInt(r.visitors, 10) || 0,
+              thirdPartyRequests: parseInt(r.third_party_requests, 10) || 0
+            };
+          });
+        } catch (e) {}
+      }
+
+      activityData = months.map(m => {
+        const data = monthMap[m.key] || { requests: 0, bytes: 0, visitors: 0, thirdPartyRequests: 0 };
+        return {
+          label: m.label,
+          sublabel: m.key,
+          date: m.key,
+          hour: m.label,
+          requests: data.requests,
+          bytes: data.bytes,
+          activeUsers: data.visitors,
+          thirdPartyRequests: data.thirdPartyRequests
+        };
+      });
+      hourlyData = activityData;
+    }
+
+    // Period summary
+    let totalPeriodRequests = 0;
+    let totalPeriodBytes = 0;
+    let totalPeriodVisitors = 0;
+    let totalPeriodThirdParty = 0;
+    let peakActivity = { label: 'None', requests: 0 };
+
+    activityData.forEach(item => {
+      totalPeriodRequests += (item.requests || 0);
+      totalPeriodBytes += (item.bytes || 0);
+      totalPeriodVisitors += (item.activeUsers || 0);
+      totalPeriodThirdParty += (item.thirdPartyRequests || 0);
+      if (item.requests > peakActivity.requests) {
+        peakActivity = { label: item.label, requests: item.requests };
+      }
+    });
+
+    const timeframeSummary = {
+      timeframe,
+      targetDate,
+      totalRequests: totalPeriodRequests,
+      totalBytes: totalPeriodBytes,
+      totalVisitors: totalPeriodVisitors,
+      thirdPartyRequests: totalPeriodThirdParty,
+      thirdPartyRatio: totalPeriodRequests > 0 ? ((totalPeriodThirdParty / totalPeriodRequests) * 100).toFixed(1) + '%' : '0%',
+      peakActivity
+    };
+
+    // Breakdowns
     let browsers = {};
     let osList = {};
     let devices = {};
     let topPathsRaw = [];
 
-    if (this.isRedisConnected && this.redis) {
+    if (this.isPgConnected && this.pgPool) {
+      try {
+        const bRes = await this.pgPool.query(`SELECT browser as name, count(*)::int as count FROM analytics_traffic_logs WHERE browser IS NOT NULL AND browser != 'Unknown' GROUP BY browser ORDER BY count DESC LIMIT 8`);
+        bRes.rows.forEach(r => { browsers[r.name] = r.count; });
+
+        const oRes = await this.pgPool.query(`SELECT os as name, count(*)::int as count FROM analytics_traffic_logs WHERE os IS NOT NULL AND os != 'Unknown' GROUP BY os ORDER BY count DESC LIMIT 8`);
+        oRes.rows.forEach(r => { osList[r.name] = r.count; });
+
+        const dRes = await this.pgPool.query(`SELECT COALESCE(device, 'Desktop') as name, count(*)::int as count FROM analytics_traffic_logs GROUP BY name ORDER BY count DESC LIMIT 8`);
+        dRes.rows.forEach(r => { devices[r.name] = r.count; });
+
+        const pRes = await this.pgPool.query(`SELECT path, count(*)::int as count FROM analytics_traffic_logs GROUP BY path ORDER BY count DESC LIMIT 10`);
+        topPathsRaw = pRes.rows;
+      } catch (e) {}
+    }
+
+    if (Object.keys(browsers).length === 0 && this.isRedisConnected && this.redis) {
       try {
         browsers = await this.redis.hgetall('valor:analytics:browsers') || {};
         osList = await this.redis.hgetall('valor:analytics:os') || {};
         devices = await this.redis.hgetall('valor:analytics:devices') || {};
-        topPathsRaw = await this.redis.zrevrange('valor:analytics:paths', 0, 9, 'WITHSCORES') || [];
       } catch (e) {}
     }
 
-    if (Object.keys(browsers).length === 0) browsers = { Brave: 1, Chrome: 1 };
-    if (Object.keys(osList).length === 0) osList = { macOS: 1 };
+    if (Object.keys(browsers).length === 0) browsers = { Chrome: 1, Brave: 1 };
+    if (Object.keys(osList).length === 0) osList = { macOS: 1, Windows: 1 };
     if (Object.keys(devices).length === 0) devices = { Desktop: 1 };
 
     const browserTotal = Object.values(browsers).reduce((sum, v) => sum + parseInt(v, 10), 0) || 1;
     const browserBreakdown = Object.entries(browsers).map(([name, count]) => {
       const num = parseInt(count, 10);
-      return {
-        name,
-        count: num,
-        percentage: Math.round((num / browserTotal) * 100)
-      };
+      return { name, count: num, percentage: Math.round((num / browserTotal) * 100) };
     }).sort((a, b) => b.count - a.count);
 
     const osTotal = Object.values(osList).reduce((sum, v) => sum + parseInt(v, 10), 0) || 1;
     const osBreakdown = Object.entries(osList).map(([name, count]) => {
       const num = parseInt(count, 10);
-      return {
-        name,
-        count: num,
-        percentage: Math.round((num / osTotal) * 100)
-      };
+      return { name, count: num, percentage: Math.round((num / osTotal) * 100) };
     }).sort((a, b) => b.count - a.count);
 
     const deviceTotal = Object.values(devices).reduce((sum, v) => sum + parseInt(v, 10), 0) || 1;
     const deviceBreakdown = Object.entries(devices).map(([name, count]) => {
       const num = parseInt(count, 10);
-      return {
-        name,
-        count: num,
-        percentage: Math.round((num / deviceTotal) * 100)
-      };
+      return { name, count: num, percentage: Math.round((num / deviceTotal) * 100) };
     }).sort((a, b) => b.count - a.count);
 
-    const topPaths = [];
-    for (let i = 0; i < topPathsRaw.length; i += 2) {
-      topPaths.push({
-        path: topPathsRaw[i],
-        count: parseInt(topPathsRaw[i + 1], 10)
-      });
-    }
+    const topPaths = topPathsRaw.length > 0 ? topPathsRaw.map(r => ({ path: r.path, count: parseInt(r.count, 10) })) : [];
 
     const timeSpentBuckets = [
       { label: '< 1 min', count: 0, range: '0 - 60s' },
@@ -1230,7 +1762,13 @@ export class DataStore {
     });
 
     return {
+      timeframe,
+      targetDate,
+      activityData,
       hourlyData,
+      timeframeSummary,
+      availableDates,
+      thirdPartyStats,
       browserBreakdown,
       osBreakdown,
       deviceBreakdown,
@@ -1239,8 +1777,100 @@ export class DataStore {
     };
   }
 
-  async getTrafficLogs(limit = 50) {
-    if (this.isRedisConnected && this.redis) {
+  async getTrafficLogs(options = {}) {
+    const limit = typeof options === 'number' ? options : (parseInt(options.limit, 10) || 150);
+    const date = typeof options === 'object' ? (options.date || null) : null;
+    const category = typeof options === 'object' ? (options.category || null) : null;
+    const provider = typeof options === 'object' ? (options.provider || null) : null;
+    const statusCode = typeof options === 'object' ? (options.statusCode || null) : null;
+    const search = typeof options === 'object' ? (options.search || null) : null;
+    const deviceId = typeof options === 'object' ? (options.deviceId || null) : null;
+    const embedOnly = typeof options === 'object' ? Boolean(options.embedOnly) : false;
+    const referer = typeof options === 'object' ? (options.referer || null) : null;
+
+    if (this.isPgConnected && this.pgPool) {
+      try {
+        let whereClauses = [];
+        let params = [];
+        let idx = 1;
+
+        if (date) {
+          whereClauses.push(`created_at >= $${idx}::date AND created_at < ($${idx}::date + interval '1 day')`);
+          params.push(date);
+          idx++;
+        }
+
+        if (deviceId) {
+          whereClauses.push(`device_id = $${idx}`);
+          params.push(deviceId);
+          idx++;
+        }
+
+        if (embedOnly) {
+          whereClauses.push(`(is_embed = TRUE OR path LIKE '/embed%' OR path LIKE '/api/embed%')`);
+        }
+
+        if (referer) {
+          whereClauses.push(`referer ILIKE $${idx}`);
+          params.push(`%${referer}%`);
+          idx++;
+        }
+
+        if (category === '3rdparty') {
+          whereClauses.push(`(path LIKE '/api/vlr%' OR path LIKE '/api/trakt%' OR path LIKE '/api/tmdb%' OR path LIKE '%subtitles%')`);
+        } else if (category === 'api') {
+          whereClauses.push(`path LIKE '/api/%' AND NOT (path LIKE '/api/vlr%' OR path LIKE '/api/trakt%' OR path LIKE '/api/tmdb%' OR path LIKE '%subtitles%')`);
+        } else if (category === 'stream') {
+          whereClauses.push(`(path LIKE '%.mp4%' OR path LIKE '%.m3u8%' OR path LIKE '%.ts%' OR path LIKE '%/stream%' OR path LIKE '%/local-video-stream%')`);
+        } else if (category === 'static') {
+          whereClauses.push(`(path LIKE '/assets/%' OR path LIKE '/node_modules/%' OR path LIKE '%.js%' OR path LIKE '%.css%' OR path LIKE '%.png%' OR path LIKE '%.svg%')`);
+        }
+
+        if (provider) {
+          const p = provider.toLowerCase();
+          if (p === 'vlr') whereClauses.push(`path LIKE '/api/vlr%'`);
+          else if (p === 'trakt') whereClauses.push(`path LIKE '/api/trakt%'`);
+          else if (p === 'tmdb') whereClauses.push(`path LIKE '/api/tmdb%'`);
+          else if (p === 'opensubtitles' || p === 'subtitles') whereClauses.push(`path LIKE '%subtitles%'`);
+        }
+
+        if (statusCode) {
+          whereClauses.push(`status_code = $${idx}`);
+          params.push(parseInt(statusCode, 10));
+          idx++;
+        }
+
+        if (search) {
+          whereClauses.push(`(path ILIKE $${idx} OR ip ILIKE $${idx} OR browser ILIKE $${idx} OR device_id ILIKE $${idx} OR referer ILIKE $${idx})`);
+          params.push(`%${search}%`);
+          idx++;
+        }
+
+        const whereSql = whereClauses.length > 0 ? `WHERE ${whereClauses.join(' AND ')}` : '';
+        params.push(limit);
+
+        const res = await this.pgPool.query(
+          `SELECT id, created_at as timestamp, ip, method, path, status_code as "statusCode",
+                  latency_ms as "latencyMs", bytes_transferred as bytes, browser, os,
+                  COALESCE(device, 'Desktop') as device, user_id as "userId",
+                  device_id as "deviceId", referer, is_embed as "isEmbed"
+           FROM analytics_traffic_logs
+           ${whereSql}
+           ORDER BY created_at DESC
+           LIMIT $${idx}`,
+          params
+        );
+        return res.rows.map(r => ({
+          ...r,
+          bytes: parseInt(r.bytes, 10) || 0,
+          timestamp: new Date(r.timestamp).getTime()
+        }));
+      } catch (e) {
+        console.error('[PostgreSQL getTrafficLogs error]', e.message);
+      }
+    }
+
+    if (this.isRedisConnected && this.redis && !date && !provider && !category && !deviceId && !embedOnly && !referer) {
       try {
         const rawLogs = await this.redis.lrange('valor:recent_traffic_log', 0, limit - 1);
         if (rawLogs && rawLogs.length > 0) {
@@ -1251,30 +1881,197 @@ export class DataStore {
       } catch (e) {}
     }
 
-    if (this.isPgConnected && this.pgPool) {
+    if (this.sqliteDb) {
       try {
-        const res = await this.pgPool.query(
-          `SELECT id, created_at as timestamp, ip, method, path, status_code as "statusCode", latency_ms as "latencyMs", bytes_transferred as bytes, browser, os, user_id as "userId"
-           FROM analytics_traffic_logs
-           ORDER BY created_at DESC
-           LIMIT $1`,
-          [limit]
-        );
-        return res.rows;
-      } catch (e) {}
-    } else if (this.sqliteDb) {
-      try {
+        let whereClauses = [];
+        let params = [];
+        if (deviceId) { whereClauses.push('device_id = ?'); params.push(deviceId); }
+        if (embedOnly) { whereClauses.push('(is_embed = 1 OR path LIKE \'/embed%\')'); }
+        if (search) { whereClauses.push('(path LIKE ? OR ip LIKE ? OR browser LIKE ? OR device_id LIKE ?)'); params.push(`%${search}%`, `%${search}%`, `%${search}%`, `%${search}%`); }
+        const whereSql = whereClauses.length > 0 ? `WHERE ${whereClauses.join(' AND ')}` : '';
+        params.push(limit);
+
         const rows = this.sqliteDb.prepare(
-          `SELECT id, created_at as timestamp, ip, method, path, status_code as statusCode, latency_ms as latencyMs, bytes_transferred as bytes, browser, os, user_id as userId
+          `SELECT id, created_at as timestamp, ip, method, path, status_code as statusCode,
+                  latency_ms as latencyMs, bytes_transferred as bytes, browser, os,
+                  COALESCE(device, 'Desktop') as device, user_id as userId,
+                  device_id as deviceId, referer, is_embed as isEmbed
            FROM analytics_traffic_logs
+           ${whereSql}
            ORDER BY id DESC
            LIMIT ?`
-        ).all(limit);
+        ).all(...params);
         return rows;
       } catch (e) {}
     }
 
     return [];
+  }
+
+  async getVisitorDevices(options = {}) {
+    const limit = parseInt(options.limit, 10) || 50;
+    const search = options.search || null;
+    const sortBy = options.sortBy || 'last_seen';
+    const filter = options.filter || 'all';
+
+    let devices = [];
+    let totalDevicesCount = 0;
+    let totalEmbedCallsCount = 0;
+    let topEmbedReferrers = [];
+
+    if (this.isPgConnected && this.pgPool) {
+      try {
+        let whereClauses = [];
+        let params = [];
+        let idx = 1;
+
+        if (search) {
+          whereClauses.push(`(device_id ILIKE $${idx} OR last_ip ILIKE $${idx} OR browser ILIKE $${idx} OR os ILIKE $${idx} OR user_agent ILIKE $${idx} OR profile_name ILIKE $${idx})`);
+          params.push(`%${search}%`);
+          idx++;
+        }
+
+        if (filter === 'embeds_only') {
+          whereClauses.push(`embed_calls_count > 0`);
+        } else if (filter === 'mobile') {
+          whereClauses.push(`device = 'Mobile'`);
+        } else if (filter === 'desktop') {
+          whereClauses.push(`device = 'Desktop'`);
+        }
+
+        const whereSql = whereClauses.length > 0 ? `WHERE ${whereClauses.join(' AND ')}` : '';
+
+        let orderCol = 'last_seen DESC';
+        if (sortBy === 'visits') orderCol = 'visit_count DESC, last_seen DESC';
+        else if (sortBy === 'duration') orderCol = 'total_duration_seconds DESC, last_seen DESC';
+        else if (sortBy === 'requests') orderCol = 'total_requests DESC, last_seen DESC';
+        else if (sortBy === 'bytes') orderCol = 'bytes_transferred DESC, last_seen DESC';
+        else if (sortBy === 'embeds') orderCol = 'embed_calls_count DESC, last_seen DESC';
+
+        // Count totals
+        const statsRes = await this.pgPool.query(
+          `SELECT count(*)::int as total_devices,
+                  COALESCE(sum(embed_calls_count), 0)::int as total_embed_calls
+           FROM analytics_devices`
+        ).catch(() => ({ rows: [{ total_devices: 0, total_embed_calls: 0 }] }));
+        if (statsRes.rows[0]) {
+          totalDevicesCount = statsRes.rows[0].total_devices || 0;
+          totalEmbedCallsCount = statsRes.rows[0].total_embed_calls || 0;
+        }
+
+        // Top embed referrers from traffic logs
+        const refRes = await this.pgPool.query(
+          `SELECT referer, count(*)::int as count, max(created_at) as last_seen
+           FROM analytics_traffic_logs
+           WHERE referer IS NOT NULL AND referer != '' AND referer NOT LIKE '%localhost%' AND referer NOT LIKE '%127.0.0.1%'
+           GROUP BY referer
+           ORDER BY count DESC
+           LIMIT 10`
+        ).catch(() => ({ rows: [] }));
+        topEmbedReferrers = refRes.rows;
+
+        params.push(limit);
+        const rowsRes = await this.pgPool.query(
+          `SELECT device_id as "deviceId", first_seen as "firstSeen", last_seen as "lastSeen",
+                  visit_count as "visitCount", total_duration_seconds as "totalDurationSeconds",
+                  total_requests as "totalRequests", bytes_transferred as "bytesTransferred",
+                  last_ip as "lastIp", ips, user_agent as "userAgent", browser, os,
+                  COALESCE(device, 'Desktop') as device, user_id as "userId", profile_name as "profileName",
+                  embed_calls_count as "embedCallsCount", embed_referers as "embedReferers", last_path as "lastPath"
+           FROM analytics_devices
+           ${whereSql}
+           ORDER BY ${orderCol}
+           LIMIT $${idx}`,
+          params
+        );
+
+        devices = rowsRes.rows.map(r => ({
+          ...r,
+          bytesTransferred: parseInt(r.bytesTransferred, 10) || 0,
+          totalDurationSeconds: parseInt(r.totalDurationSeconds, 10) || 0,
+          visitCount: parseInt(r.visitCount, 10) || 1,
+          totalRequests: parseInt(r.totalRequests, 10) || 0,
+          embedCallsCount: parseInt(r.embedCallsCount, 10) || 0,
+          ips: Array.isArray(r.ips) ? r.ips : (typeof r.ips === 'string' ? JSON.parse(r.ips || '[]') : []),
+          embedReferers: Array.isArray(r.embedReferers) ? r.embedReferers : (typeof r.embedReferers === 'string' ? JSON.parse(r.embedReferers || '[]') : [])
+        }));
+      } catch (err) {
+        console.error('[PostgreSQL getVisitorDevices error]', err.message);
+      }
+    } else if (this.sqliteDb) {
+      try {
+        const rows = this.sqliteDb.prepare(
+          `SELECT device_id as deviceId, first_seen as firstSeen, last_seen as lastSeen,
+                  visit_count as visitCount, total_duration_seconds as totalDurationSeconds,
+                  total_requests as totalRequests, bytes_transferred as bytesTransferred,
+                  last_ip as lastIp, ips, user_agent as userAgent, browser, os,
+                  COALESCE(device, 'Desktop') as device, user_id as userId, profile_name as profileName,
+                  embed_calls_count as embedCallsCount, embed_referers as embedReferers, last_path as lastPath
+           FROM analytics_devices
+           ORDER BY last_seen DESC
+           LIMIT ?`
+        ).all(limit);
+        devices = rows.map(r => ({
+          ...r,
+          ips: typeof r.ips === 'string' ? JSON.parse(r.ips || '[]') : r.ips,
+          embedReferers: typeof r.embedReferers === 'string' ? JSON.parse(r.embedReferers || '[]') : r.embedReferers
+        }));
+        totalDevicesCount = devices.length;
+      } catch (e) {}
+    }
+
+    return {
+      devices,
+      totalDevicesCount,
+      totalEmbedCallsCount,
+      topEmbedReferrers
+    };
+  }
+
+  async getDeviceDetail(deviceId) {
+    if (!deviceId) return null;
+    let device = null;
+    let logs = [];
+
+    if (this.isPgConnected && this.pgPool) {
+      try {
+        const dRes = await this.pgPool.query(
+          `SELECT device_id as "deviceId", first_seen as "firstSeen", last_seen as "lastSeen",
+                  visit_count as "visitCount", total_duration_seconds as "totalDurationSeconds",
+                  total_requests as "totalRequests", bytes_transferred as "bytesTransferred",
+                  last_ip as "lastIp", ips, user_agent as "userAgent", browser, os,
+                  COALESCE(device, 'Desktop') as device, user_id as "userId", profile_name as "profileName",
+                  embed_calls_count as "embedCallsCount", embed_referers as "embedReferers", last_path as "lastPath"
+           FROM analytics_devices
+           WHERE device_id = $1`,
+          [deviceId]
+        );
+        if (dRes.rows[0]) {
+          device = dRes.rows[0];
+        }
+
+        const lRes = await this.pgPool.query(
+          `SELECT id, created_at as timestamp, ip, method, path, status_code as "statusCode",
+                  latency_ms as "latencyMs", bytes_transferred as bytes, browser, os,
+                  COALESCE(device, 'Desktop') as device, user_id as "userId",
+                  device_id as "deviceId", referer, is_embed as "isEmbed"
+           FROM analytics_traffic_logs
+           WHERE device_id = $1
+           ORDER BY created_at DESC
+           LIMIT 50`,
+          [deviceId]
+        );
+        logs = lRes.rows.map(r => ({
+          ...r,
+          bytes: parseInt(r.bytes, 10) || 0,
+          timestamp: new Date(r.timestamp).getTime()
+        }));
+      } catch (e) {
+        console.error('[PostgreSQL getDeviceDetail error]', e.message);
+      }
+    }
+
+    return { device, logs };
   }
 
   async terminateSession(sessionId) {

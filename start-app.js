@@ -425,6 +425,64 @@ async function isValidAdminToken(token) {
   return false;
 }
 
+function handleProxyRequest(targetUrl, req, res, redirectCount = 0) {
+  if (redirectCount > 5) {
+    res.statusCode = 508;
+    res.end('Too many redirects');
+    return;
+  }
+  try {
+    const u = new URL(targetUrl);
+    if (u.protocol !== 'http:' && u.protocol !== 'https:') {
+      res.statusCode = 400;
+      res.end('Invalid protocol');
+      return;
+    }
+    const client = u.protocol === 'https:' ? https : http;
+    const headers = {};
+    if (req.headers.range) headers['range'] = req.headers.range;
+    if (req.headers['accept']) headers['accept'] = req.headers['accept'];
+    headers['user-agent'] = req.headers['user-agent'] || 'Mozilla/5.0';
+
+    const proxyReq = client.request(u, {
+      method: req.method === 'HEAD' ? 'HEAD' : 'GET',
+      headers
+    }, (proxyRes) => {
+      if (proxyRes.statusCode >= 300 && proxyRes.statusCode < 400 && proxyRes.headers.location) {
+        const nextUrl = new URL(proxyRes.headers.location, u).toString();
+        proxyReq.destroy();
+        return handleProxyRequest(nextUrl, req, res, redirectCount + 1);
+      }
+      res.statusCode = proxyRes.statusCode;
+      const forwardHeaders = ['content-type', 'content-length', 'content-range', 'accept-ranges', 'last-modified', 'etag'];
+      for (const h of forwardHeaders) {
+        if (proxyRes.headers[h]) {
+          res.setHeader(h, proxyRes.headers[h]);
+        }
+      }
+      proxyRes.pipe(res);
+    });
+
+    proxyReq.on('error', (err) => {
+      if (!res.headersSent) {
+        res.statusCode = 502;
+        res.end(err.message);
+      }
+    });
+
+    req.on('aborted', () => {
+      proxyReq.destroy();
+    });
+
+    proxyReq.end();
+  } catch (err) {
+    if (!res.headersSent) {
+      res.statusCode = 400;
+      res.end('Invalid URL');
+    }
+  }
+}
+
 // 1. Backend API Server (Port 50001)
 const backendServer = http.createServer((req, res) => {
   telemetryMiddleware(req, res);
@@ -454,6 +512,18 @@ const backendServer = http.createServer((req, res) => {
     }
   } catch (e) {
     console.error('[IP check error]', e.message);
+  }
+
+  // CORS Proxy for remote media headers and byte ranges
+  if (pathname === '/api/proxy') {
+    const targetUrl = parsedUrl.searchParams.get('url');
+    if (!targetUrl) {
+      res.statusCode = 400;
+      res.end('Missing url parameter');
+      return;
+    }
+    handleProxyRequest(targetUrl, req, res);
+    return;
   }
 
   // Redirect /embed to active service server port if accessed via backend port
@@ -786,6 +856,14 @@ const backendServer = http.createServer((req, res) => {
     return;
   }
 
+  // Embed Player Presence & Ping
+  if (pathname === '/api/embed/ping' && req.method === 'POST') {
+    res.statusCode = 200;
+    res.setHeader('Content-Type', 'application/json');
+    res.end(JSON.stringify({ success: true, timestamp: Date.now() }));
+    return;
+  }
+
   // Admin Authentication - Login API (Hardcoded Username & Password)
   if (pathname === '/api/admin/auth/login' && req.method === 'POST') {
     getJsonBody(req).then(async (body) => {
@@ -891,7 +969,11 @@ const backendServer = http.createServer((req, res) => {
 
       // Admin Detailed Analytics API
       if (pathname === '/api/admin/analytics' && req.method === 'GET') {
-        dataStore.getDetailedAnalytics().then(analytics => {
+        const timeframe = parsedUrl.searchParams.get('timeframe') || 'day';
+        const targetDate = parsedUrl.searchParams.get('targetDate') || parsedUrl.searchParams.get('date') || null;
+        const targetMonth = parsedUrl.searchParams.get('targetMonth') || parsedUrl.searchParams.get('month') || null;
+
+        dataStore.getDetailedAnalytics({ timeframe, targetDate, targetMonth }).then(analytics => {
           res.statusCode = 200;
           res.setHeader('Content-Type', 'application/json');
           res.end(JSON.stringify(analytics));
@@ -903,10 +985,19 @@ const backendServer = http.createServer((req, res) => {
         return;
       }
 
-      // Admin Traffic Logs API
+      // Admin Traffic Logs API (Supports deep database filters & date scoping)
       if (pathname === '/api/admin/traffic-logs' && req.method === 'GET') {
-        const limit = parseInt(parsedUrl.searchParams.get('limit') || '50', 10);
-        dataStore.getTrafficLogs(limit).then(logs => {
+        const limit = parseInt(parsedUrl.searchParams.get('limit') || '150', 10);
+        const date = parsedUrl.searchParams.get('date') || null;
+        const category = parsedUrl.searchParams.get('category') || null;
+        const provider = parsedUrl.searchParams.get('provider') || null;
+        const statusCode = parsedUrl.searchParams.get('status') || null;
+        const search = parsedUrl.searchParams.get('search') || null;
+        const deviceId = parsedUrl.searchParams.get('deviceId') || null;
+        const embedOnly = parsedUrl.searchParams.get('embedOnly') === 'true';
+        const referer = parsedUrl.searchParams.get('referer') || null;
+
+        dataStore.getTrafficLogs({ limit, date, category, provider, statusCode, search, deviceId, embedOnly, referer }).then(logs => {
           res.statusCode = 200;
           res.setHeader('Content-Type', 'application/json');
           res.end(JSON.stringify(logs));
@@ -914,6 +1005,91 @@ const backendServer = http.createServer((req, res) => {
           res.statusCode = 500;
           res.setHeader('Content-Type', 'application/json');
           res.end(JSON.stringify([]));
+        });
+        return;
+      }
+
+      // Admin Visitor Devices & Intelligence API
+      if (pathname === '/api/admin/devices' && req.method === 'GET') {
+        const search = parsedUrl.searchParams.get('search') || null;
+        const limit = parseInt(parsedUrl.searchParams.get('limit') || '50', 10);
+        const sortBy = parsedUrl.searchParams.get('sortBy') || 'last_seen';
+        const filter = parsedUrl.searchParams.get('filter') || 'all';
+
+        dataStore.getVisitorDevices({ search, limit, sortBy, filter }).then(result => {
+          res.statusCode = 200;
+          res.setHeader('Content-Type', 'application/json');
+          res.end(JSON.stringify(result));
+        }).catch(err => {
+          res.statusCode = 500;
+          res.setHeader('Content-Type', 'application/json');
+          res.end(JSON.stringify({ error: err.message }));
+        });
+        return;
+      }
+
+      // Admin Device Detail & Logs API
+      if (pathname.startsWith('/api/admin/devices/') && req.method === 'GET') {
+        const deviceId = decodeURIComponent(pathname.replace('/api/admin/devices/', '').trim());
+        dataStore.getDeviceDetail(deviceId).then(result => {
+          res.statusCode = 200;
+          res.setHeader('Content-Type', 'application/json');
+          res.end(JSON.stringify(result));
+        }).catch(err => {
+          res.statusCode = 500;
+          res.setHeader('Content-Type', 'application/json');
+          res.end(JSON.stringify({ error: err.message }));
+        });
+        return;
+      }
+
+      // Admin Third-Party API Health & Connectivity Check
+      if (pathname === '/api/admin/third-party/ping' && req.method === 'GET') {
+        const checkProvider = async (name, url, options = {}) => {
+          const t0 = Date.now();
+          try {
+            const controller = new AbortController();
+            const timeout = setTimeout(() => controller.abort(), 4000);
+            const r = await fetch(url, { ...options, signal: controller.signal });
+            clearTimeout(timeout);
+            return {
+              name,
+              status: r.status < 500 ? 'online' : 'degraded',
+              statusCode: r.status,
+              latencyMs: Date.now() - t0,
+              checkedAt: new Date().toISOString()
+            };
+          } catch (e) {
+            return {
+              name,
+              status: 'offline',
+              error: e.message,
+              latencyMs: Date.now() - t0,
+              checkedAt: new Date().toISOString()
+            };
+          }
+        };
+
+        Promise.all([
+          checkProvider('VLR.gg (Esports Scraper)', 'https://www.vlr.gg/matches', {
+            headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' }
+          }),
+          checkProvider('Trakt.tv (Scrobbler & Sync)', 'https://api.trakt.tv/movies/popular?limit=1', {
+            headers: {
+              'Content-Type': 'application/json',
+              'trakt-api-key': 'V4WfZovVxhKMc-KNyfTHgL_KtI84gJLnBHMss-qwu88',
+              'trakt-api-version': '2'
+            }
+          }),
+          checkProvider('TheMovieDB (Metadata & Posters)', 'https://api.themoviedb.org/3/configuration')
+        ]).then(results => {
+          res.statusCode = 200;
+          res.setHeader('Content-Type', 'application/json');
+          res.end(JSON.stringify({ timestamp: Date.now(), providers: results }));
+        }).catch(err => {
+          res.statusCode = 500;
+          res.setHeader('Content-Type', 'application/json');
+          res.end(JSON.stringify({ error: err.message }));
         });
         return;
       }
@@ -1139,10 +1315,10 @@ const backendServer = http.createServer((req, res) => {
     return;
   }
 
-  // Trakt OAuth Code Exchange API
+  // Trakt OAuth Code Exchange API (Supports modern PKCE Flow)
   if (pathname === '/api/trakt/exchange' && req.method === 'POST') {
     getJsonBody(req).then(async (body) => {
-      const { code, redirect_uri, client_secret } = body;
+      const { code, redirect_uri, client_secret, code_verifier } = body;
       if (!code) {
         res.statusCode = 400;
         res.setHeader('Content-Type', 'application/json');
@@ -1153,16 +1329,23 @@ const backendServer = http.createServer((req, res) => {
       try {
         const payload = {
           code: code,
-          client_id: 'f2926f0d87d3e789c50a3c276ab6002f5027dec31089fe75792c2836165c7289',
-          client_secret: client_secret || '',
-          redirect_uri: redirect_uri || 'http://localhost:80',
+          client_id: 'V4WfZovVxhKMc-KNyfTHgL_KtI84gJLnBHMss-qwu88',
+          redirect_uri: (redirect_uri || 'https://player.streamiteasy.xyz').trim().replace(/\/+$/, ''),
           grant_type: 'authorization_code'
         };
+
+        if (code_verifier) {
+          payload.code_verifier = code_verifier;
+        }
+        if (client_secret) {
+          payload.client_secret = client_secret;
+        }
 
         const traktRes = await fetch('https://api.trakt.tv/oauth/token', {
           method: 'POST',
           headers: {
-            'Content-Type': 'application/json'
+            'Content-Type': 'application/json',
+            'User-Agent': 'Valor/1.0'
           },
           body: JSON.stringify(payload)
         });
@@ -1181,6 +1364,146 @@ const backendServer = http.createServer((req, res) => {
         res.statusCode = 500;
         res.setHeader('Content-Type', 'application/json');
         res.end(JSON.stringify({ error: err.message || 'Failed to exchange Trakt token' }));
+      }
+    });
+    return;
+  }
+
+  // Trakt Authenticated User Profile API Proxy
+  if (pathname === '/api/trakt/user' && req.method === 'POST') {
+    getJsonBody(req).then(async (body) => {
+      const { access_token } = body;
+      if (!access_token) {
+        res.statusCode = 400;
+        res.setHeader('Content-Type', 'application/json');
+        res.end(JSON.stringify({ error: 'Missing access token' }));
+        return;
+      }
+
+      try {
+        const traktRes = await fetch('https://api.trakt.tv/users/me?extended=full', {
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${access_token}`,
+            'trakt-api-version': '2',
+            'trakt-api-key': 'V4WfZovVxhKMc-KNyfTHgL_KtI84gJLnBHMss-qwu88',
+            'User-Agent': 'Valor/1.0'
+          }
+        });
+        const data = await traktRes.json();
+        res.statusCode = traktRes.status;
+        res.setHeader('Content-Type', 'application/json');
+        res.end(JSON.stringify(data));
+      } catch (err) {
+        res.statusCode = 500;
+        res.setHeader('Content-Type', 'application/json');
+        res.end(JSON.stringify({ error: err.message || 'Failed to fetch Trakt profile' }));
+      }
+    });
+    return;
+  }
+
+  // Trakt OAuth Device Code Generation API
+  if (pathname === '/api/trakt/device/code' && req.method === 'POST') {
+    getJsonBody(req).then(async () => {
+      try {
+        const traktRes = await fetch('https://api.trakt.tv/oauth/device/code', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'User-Agent': 'Valor/1.0.0',
+            'trakt-api-version': '2',
+            'trakt-api-key': 'V4WfZovVxhKMc-KNyfTHgL_KtI84gJLnBHMss-qwu88'
+          },
+          body: JSON.stringify({
+            client_id: 'V4WfZovVxhKMc-KNyfTHgL_KtI84gJLnBHMss-qwu88'
+          })
+        });
+        const data = await traktRes.json();
+        res.statusCode = traktRes.status;
+        res.setHeader('Content-Type', 'application/json');
+        res.end(JSON.stringify(data));
+      } catch (err) {
+        res.statusCode = 500;
+        res.setHeader('Content-Type', 'application/json');
+        res.end(JSON.stringify({ error: err.message || 'Failed to generate Trakt device code' }));
+      }
+    });
+    return;
+  }
+
+  // Trakt OAuth Device Token Polling API
+  if (pathname === '/api/trakt/device/token' && req.method === 'POST') {
+    getJsonBody(req).then(async (body) => {
+      const { code } = body;
+      if (!code) {
+        res.statusCode = 400;
+        res.setHeader('Content-Type', 'application/json');
+        res.end(JSON.stringify({ error: 'Missing device code' }));
+        return;
+      }
+
+      try {
+        const traktRes = await fetch('https://api.trakt.tv/oauth/device/token', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'User-Agent': 'Valor/1.0.0',
+            'trakt-api-version': '2',
+            'trakt-api-key': 'V4WfZovVxhKMc-KNyfTHgL_KtI84gJLnBHMss-qwu88'
+          },
+          body: JSON.stringify({
+            code,
+            client_id: 'V4WfZovVxhKMc-KNyfTHgL_KtI84gJLnBHMss-qwu88'
+          })
+        });
+        const data = await traktRes.json().catch(() => ({}));
+        res.statusCode = traktRes.status;
+        res.setHeader('Content-Type', 'application/json');
+        res.end(JSON.stringify(data));
+      } catch (err) {
+        res.statusCode = 500;
+        res.setHeader('Content-Type', 'application/json');
+        res.end(JSON.stringify({ error: err.message || 'Failed to poll Trakt device token' }));
+      }
+    });
+    return;
+  }
+
+  // Trakt OAuth Token Refresh API
+  if (pathname === '/api/trakt/refresh' && req.method === 'POST') {
+    getJsonBody(req).then(async (body) => {
+      const { refresh_token } = body;
+      if (!refresh_token) {
+        res.statusCode = 400;
+        res.setHeader('Content-Type', 'application/json');
+        res.end(JSON.stringify({ error: 'Missing refresh token' }));
+        return;
+      }
+
+      try {
+        const traktRes = await fetch('https://api.trakt.tv/oauth/token', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'User-Agent': 'Valor/1.0.0',
+            'trakt-api-version': '2',
+            'trakt-api-key': 'V4WfZovVxhKMc-KNyfTHgL_KtI84gJLnBHMss-qwu88'
+          },
+          body: JSON.stringify({
+            refresh_token,
+            client_id: 'V4WfZovVxhKMc-KNyfTHgL_KtI84gJLnBHMss-qwu88',
+            grant_type: 'refresh_token'
+          })
+        });
+        const data = await traktRes.json();
+        res.statusCode = traktRes.status;
+        res.setHeader('Content-Type', 'application/json');
+        res.end(JSON.stringify(data));
+      } catch (err) {
+        res.statusCode = 500;
+        res.setHeader('Content-Type', 'application/json');
+        res.end(JSON.stringify({ error: err.message || 'Failed to refresh Trakt token' }));
       }
     });
     return;

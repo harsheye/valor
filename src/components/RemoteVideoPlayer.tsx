@@ -4,7 +4,7 @@ import {
   Play, Pause, RotateCcw, RotateCw, Cast, X, 
   MessageSquare, Maximize, Minimize, MonitorPlay,
   Volume2, Volume1, VolumeX, AlertCircle, Lock, Unlock,
-  Layers, Type, Clock, Sliders, SkipForward, Ban, FastForward, Zap, Coffee, ChevronRight, ChevronLeft, Eye, Settings, Bookmark as BookmarkIcon, Activity, Terminal
+  Layers, Type, Clock, Sliders, SkipForward, Ban, FastForward, Zap, Coffee, ChevronRight, ChevronLeft, Eye, Settings, Bookmark as BookmarkIcon, Activity, Terminal, Music
 } from 'lucide-react';
 import { Button } from './ui/button';
 import type { VideoItem, CustomAudioTrack, CustomSubtitleTrack, Bookmark } from '../types/media';
@@ -14,7 +14,7 @@ import { AudioSubPopover } from './AudioSubPopover';
 import { BookmarkPanel } from './BookmarkPanel';
 import { BookmarkModal } from './BookmarkModal';
 import { AudioSyncEngine } from '../services/remote/audioSync';
-import { parseSubtitles, cleanSubtitleText } from '../utils/subtitleParser';
+import { parseSubtitles, cleanSubtitleText, type SubtitleCue } from '../utils/subtitleParser';
 import { parseMkv, parseMp4, extractMkvSubtitles } from '../utils/containerParser';
 import { ffmpegService } from '../services/ffmpeg';
 import { HttpByteSource, CachedByteSource, RemoteDownloadManager } from '../services/remote/remoteByteSource';
@@ -25,7 +25,8 @@ import { FFmpegManager } from '../services/ffmpeg/FFmpegManager';
 import { DemuxManager } from '../services/ffmpeg/DemuxManager';
 import { PlaybackController } from '../services/playback/PlaybackController';
 import { logger } from '../utils/logger';
-import { cuesToWebVTT, remoteMediaAccess } from '../services/remote/remoteMediaAccess';
+import { saveMediaTimestamp, getMediaTimestamp } from '../utils/mediaTimestampStorage';
+import { isWasmSupported } from '../utils/wasmCheck';
 
 const getAudioBoostMultiplier = (boostPercent: number): number => {
   if (boostPercent <= 100) return 1.0;
@@ -38,11 +39,13 @@ const getAudioBoostMultiplier = (boostPercent: number): number => {
   return 1.0;
 };
 import { classifyVideoTitle } from '../utils/libraryClassifier';
+import { syncTraktHistory, syncTraktRating, resolveTraktMetadata } from '../services/traktAuth';
 import { LoadingSpinner, BufferingOverlay } from './LoadingSpinner';
 import { RadialMenu } from './RadialMenu';
 import { ConsoleOverlay } from './ConsoleOverlay';
 import { SpeedPopover } from './SpeedPopover';
 import { EsportsLiveOverlay } from './EsportsLiveOverlay';
+import { trimSubtitleName, saveEmbedSubtitles, getEmbedSubtitlesSync, getEmbedSubtitlesAsync } from '../utils/embedSubtitleStorage';
 
 interface VideoPlayerProps {
   video: VideoItem;
@@ -64,6 +67,13 @@ interface VideoPlayerProps {
   showPlayBar?: boolean;
   showVolumeControl?: boolean;
   showFullscreen?: boolean;
+  showCloseButton?: boolean;
+  showSubtitleControl?: boolean;
+  showBookmarksControl?: boolean;
+  showAudioControl?: boolean;
+  audioOnly?: boolean;
+  subFileOnly?: boolean;
+  allowSubUpload?: boolean;
   subSettings: SubtitleSettings;
   onUpdateSubSettings: (settings: Partial<SubtitleSettings>) => void;
   historySaveInterval?: number;
@@ -177,6 +187,13 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
   showPlayBar: propShowPlayBar = true,
   showVolumeControl: propShowVolumeControl = true,
   showFullscreen: propShowFullscreen = true,
+  showCloseButton: propShowCloseButton,
+  showSubtitleControl = true,
+  showBookmarksControl = true,
+  showAudioControl = true,
+  audioOnly = false,
+  subFileOnly = false,
+  allowSubUpload = true,
   subSettings,
   onUpdateSubSettings,
   historySaveInterval = 5,
@@ -297,17 +314,20 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
 
     if (isDirectHls && videoRef.current) {
       if (Hls.isSupported()) {
+        const storedHlsTime = getMediaTimestamp(video);
+        const startPos = (video.currentTime && video.currentTime > 0) ? video.currentTime : storedHlsTime;
         const hls = new Hls({ 
           autoStartLoad: true,
           liveSyncDurationCount: 3,
           liveMaxLatencyDurationCount: 10,
           lowLatencyMode: true,
           backBufferLength: 60,
-          enableWorker: true
+          enableWorker: true,
+          ...(startPos > 0 ? { startPosition: startPos } : {})
         });
         hlsInstanceRef.current = hls;
         
-        hls.on(Hls.Events.MANIFEST_PARSED, (event, data) => {
+        const syncHlsStreams = () => {
           const newStreams: any[] = [];
           if (hls.audioTracks && hls.audioTracks.length > 0) {
             hls.audioTracks.forEach((t: any, index: number) => {
@@ -319,11 +339,58 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
               newStreams.push({ type: 'subtitle', index, codec: 'webvtt', language: t.lang || t.name });
             });
           }
-          if (newStreams.length > 0 && (!video.streams || video.streams.length === 0)) {
-            // Push streams to the video object if it lacks them
+          if (newStreams.length > 0) {
             onUpdateVideoRef.current?.({
               ...video,
               streams: newStreams
+            });
+          }
+        };
+
+        const hideNativeTracks = () => {
+          if (videoRef.current && videoRef.current.textTracks) {
+            for (let i = 0; i < videoRef.current.textTracks.length; i++) {
+              if (videoRef.current.textTracks[i].mode === 'showing') {
+                videoRef.current.textTracks[i].mode = 'hidden';
+              }
+            }
+          }
+        };
+
+        if (videoRef.current && videoRef.current.textTracks) {
+          videoRef.current.textTracks.onaddtrack = () => {
+            hideNativeTracks();
+          };
+        }
+
+        hls.on(Hls.Events.MANIFEST_PARSED, syncHlsStreams);
+        hls.on(Hls.Events.SUBTITLE_TRACKS_UPDATED, syncHlsStreams);
+        hls.on(Hls.Events.AUDIO_TRACKS_UPDATED, syncHlsStreams);
+        hls.on(Hls.Events.SUBTITLE_TRACK_LOADED, () => {
+          hideNativeTracks();
+        });
+
+        hls.on(Hls.Events.CUES_PARSED, (event, data: any) => {
+          hideNativeTracks();
+          if (data && data.cues && data.cues.length > 0) {
+            const incomingCues: SubtitleCue[] = Array.from(data.cues).map((c: any, i: number) => ({
+              id: `hls-${c.startTime?.toFixed?.(3) || c.startTime}-${c.endTime?.toFixed?.(3) || c.endTime}-${i}`,
+              startTime: c.startTime,
+              endTime: c.endTime,
+              text: (c.text || '').trim()
+            })).filter(c => c.text.length > 0);
+
+            setSelectedSubTrack(prev => {
+              if (!prev || prev.streamIndex === undefined) return prev;
+              const existing = prev.cues || [];
+              const combined = [...existing];
+              for (const cue of incomingCues) {
+                if (!combined.some(e => Math.abs(e.startTime - cue.startTime) < 0.05 && e.text === cue.text)) {
+                  combined.push(cue);
+                }
+              }
+              combined.sort((a, b) => a.startTime - b.startTime);
+              return { ...prev, cues: combined };
             });
           }
         });
@@ -342,6 +409,7 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
                 break;
               default:
                 hls.destroy();
+                hlsInstanceRef.current = null;
                 break;
             }
           }
@@ -349,10 +417,27 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
 
         return () => {
           hls.destroy();
+          hlsInstanceRef.current = null;
         };
       } else if (videoRef.current.canPlayType('application/vnd.apple.mpegurl')) {
         // Fallback for native Safari support
         videoRef.current.src = video.url;
+        const videoEl = videoRef.current;
+        const syncNativeSafariTracks = () => {
+          if (!videoEl.textTracks) return;
+          const newStreams: any[] = [];
+          for (let i = 0; i < videoEl.textTracks.length; i++) {
+            const t = videoEl.textTracks[i];
+            newStreams.push({ type: 'subtitle', index: i, codec: 'webvtt', language: t.language || t.label || `Track ${i}` });
+          }
+          if (newStreams.length > 0) {
+            onUpdateVideoRef.current?.({
+              ...video,
+              streams: newStreams
+            });
+          }
+        };
+        videoEl.textTracks.onaddtrack = syncNativeSafariTracks;
       }
     }
   }, [video.url, video.hlsPlaylist]);
@@ -396,9 +481,20 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
     };
   }, [updateVideoLayout, video.url]);
 
-  const fetchOpenSubtitles = useCallback(async () => {
-    if (!openSubtitlesApiKey) {
-      logger.player('[OpenSubtitles] No API key provided in props.');
+  const fetchOpenSubtitles = useCallback(async (customQuery?: string) => {
+    let resolvedApiKey = openSubtitlesApiKey;
+    if (!resolvedApiKey) {
+      try {
+        const saved = localStorage.getItem('valor_settings');
+        if (saved) {
+          resolvedApiKey = JSON.parse(saved).openSubtitlesApiKey || '';
+        }
+      } catch {}
+    }
+
+    if (!resolvedApiKey) {
+      logger.player('[OpenSubtitles] No API key provided in props or settings.');
+      triggerSwitchToast("OpenSubtitles API key required. Click the key icon to enter one.");
       return;
     }
 
@@ -418,24 +514,51 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
         } catch {}
       }
 
-      const seriesInfo = classifyVideoTitle(video.title);
       let searchUrl = '';
-      if (seriesInfo.type === 'series' && seriesInfo.seriesTitle) {
-        searchUrl = `https://api.opensubtitles.com/api/v1/subtitles?query=${encodeURIComponent(seriesInfo.seriesTitle)}&season_number=${seriesInfo.season || 1}&episode_number=${seriesInfo.episode || 1}&languages=${defaultSubCode}`;
-        logger.player(`[OpenSubtitles] Querying TV Subtitles: "${seriesInfo.seriesTitle}" S${seriesInfo.season}E${seriesInfo.episode} in language: ${defaultSubCode}`);
+      const trimmedQuery = (customQuery || '').trim();
+
+      if (trimmedQuery) {
+        searchUrl = `https://api.opensubtitles.com/api/v1/subtitles?query=${encodeURIComponent(trimmedQuery)}&languages=${defaultSubCode}`;
+        logger.player(`[OpenSubtitles] Querying Custom Query: "${trimmedQuery}" in language: ${defaultSubCode}`);
       } else {
-        const cleanName = video.title.replace(/\.[^/.]+$/, "");
-        searchUrl = `https://api.opensubtitles.com/api/v1/subtitles?query=${encodeURIComponent(cleanName)}&languages=${defaultSubCode}`;
-        logger.player(`[OpenSubtitles] Querying Movie Subtitles: "${cleanName}" in language: ${defaultSubCode}`);
+        let titleToUse = video.title || '';
+        if (titleToUse === 'Embedded Video' || titleToUse === 'Embedded Media' || !titleToUse) {
+          try {
+            const pathname = new URL(video.url).pathname;
+            const segments = pathname.split('/').filter(Boolean);
+            const last = segments.pop() || '';
+            const clean = decodeURIComponent(last).replace(/\.[^/.]+$/, '').trim();
+            if (clean && clean.length > 1 && !/^(video|master|playlist|index|stream|chunk)$/i.test(clean)) {
+              titleToUse = clean;
+            }
+          } catch {}
+        }
+
+        const seriesInfo = classifyVideoTitle(titleToUse);
+        if (seriesInfo.type === 'series' && seriesInfo.seriesTitle) {
+          searchUrl = `https://api.opensubtitles.com/api/v1/subtitles?query=${encodeURIComponent(seriesInfo.seriesTitle)}&season_number=${seriesInfo.season || 1}&episode_number=${seriesInfo.episode || 1}&languages=${defaultSubCode}`;
+          logger.player(`[OpenSubtitles] Querying TV Subtitles: "${seriesInfo.seriesTitle}" S${seriesInfo.season}E${seriesInfo.episode} in language: ${defaultSubCode}`);
+        } else {
+          const cleanName = titleToUse.replace(/\.[^/.]+$/, "");
+          searchUrl = `https://api.opensubtitles.com/api/v1/subtitles?query=${encodeURIComponent(cleanName)}&languages=${defaultSubCode}`;
+          logger.player(`[OpenSubtitles] Querying Movie Subtitles: "${cleanName}" in language: ${defaultSubCode}`);
+        }
       }
       
-      const res = await fetch(searchUrl, {
-        headers: {
-          'Api-Key': openSubtitlesApiKey,
-          'Content-Type': 'application/json',
-          'User-Agent': 'Valor v1.0'
-        }
-      });
+      const headers = {
+        'Api-Key': resolvedApiKey,
+        'Content-Type': 'application/json',
+        'User-Agent': 'Valor v1.0'
+      };
+
+      let res: Response;
+      try {
+        res = await fetch(searchUrl, { headers });
+      } catch (directErr) {
+        logger.warn('[OpenSubtitles] Direct fetch failed, falling back to proxy...', directErr);
+        res = await fetch(`/api/proxy?url=${encodeURIComponent(searchUrl)}`, { headers });
+      }
+
       if (res.ok) {
         const data = await res.json();
         const items = (data.data || []).map((d: any) => {
@@ -450,49 +573,70 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
         }).filter((item: any) => item.fileId);
 
         // Sort items: default language first, then other languages alphabetically
-        const savedSettings = localStorage.getItem('valor_settings');
-        let defaultLang = 'en';
-        if (savedSettings) {
-          try {
-            defaultLang = JSON.parse(savedSettings).defaultSub || 'en';
-          } catch {}
-        }
-        
         items.sort((a: any, b: any) => {
-          if (a.language === defaultLang && b.language !== defaultLang) return -1;
-          if (a.language !== defaultLang && b.language === defaultLang) return 1;
+          if (a.language === defaultSubCode && b.language !== defaultSubCode) return -1;
+          if (a.language !== defaultSubCode && b.language === defaultSubCode) return 1;
           return a.language.localeCompare(b.language);
         });
         
         setOpenSubtitles(items);
         logger.player(`[OpenSubtitles] Found ${items.length} subtitles.`);
+        if (items.length > 0) {
+          triggerSwitchToast(`Found ${items.length} OpenSubtitles`);
+        } else {
+          triggerSwitchToast("No subtitles found. Try custom search.");
+        }
       } else {
         logger.player(`[OpenSubtitles] Search failed: HTTP ${res.status}`);
+        triggerSwitchToast(`OpenSubtitles search failed (${res.status})`);
       }
-    } catch (err) {
+    } catch (err: any) {
       logger.player(`[OpenSubtitles] Search error: ${err}`);
+      triggerSwitchToast(`Search error: ${err?.message || err}`);
     } finally {
       setIsOpenSubLoading(false);
     }
   }, [openSubtitlesApiKey, video.title, video.url]);
 
   const downloadOpenSubtitle = useCallback(async (fileId: number, fileName: string, language: string) => {
-    if (!openSubtitlesApiKey) {
+    let resolvedApiKey = openSubtitlesApiKey;
+    if (!resolvedApiKey) {
+      try {
+        const saved = localStorage.getItem('valor_settings');
+        if (saved) {
+          resolvedApiKey = JSON.parse(saved).openSubtitlesApiKey || '';
+        }
+      } catch {}
+    }
+
+    if (!resolvedApiKey) {
       triggerSwitchToast("OpenSubtitles API Key is required.");
       return;
     }
 
     triggerSwitchToast("Downloading subtitle...");
     try {
-      const res = await fetch('https://api.opensubtitles.com/api/v1/download', {
-        method: 'POST',
-        headers: {
-          'Api-Key': openSubtitlesApiKey,
-          'Content-Type': 'application/json',
-          'User-Agent': 'Valor v1.0'
-        },
-        body: JSON.stringify({ file_id: fileId })
-      });
+      const headers = {
+        'Api-Key': resolvedApiKey,
+        'Content-Type': 'application/json',
+        'User-Agent': 'Valor v1.0'
+      };
+
+      let res: Response;
+      try {
+        res = await fetch('https://api.opensubtitles.com/api/v1/download', {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({ file_id: fileId })
+        });
+      } catch (postErr) {
+        res = await fetch(`/api/proxy?url=${encodeURIComponent('https://api.opensubtitles.com/api/v1/download')}`, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({ file_id: fileId })
+        });
+      }
+
       if (res.ok) {
         const data = await res.json();
         const downloadLink = data.link;
@@ -500,22 +644,32 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
           throw new Error("No download link in response.");
         }
         
-        const fileRes = await fetch(downloadLink);
+        let fileRes: Response;
+        try {
+          fileRes = await fetch(downloadLink);
+        } catch (cdnErr) {
+          fileRes = await fetch(`/api/proxy?url=${encodeURIComponent(downloadLink)}`);
+        }
+
         if (fileRes.ok) {
           const text = await fileRes.text();
           const cues = parseSubtitles(text, fileName);
           const newTrack: CustomSubtitleTrack = {
             id: `opensub-${fileId}`,
-            name: `OpenSubtitles (${language.toUpperCase()}) - ${fileName}`,
+            name: trimSubtitleName(fileName, language),
             url: '',
             cues: cues,
-            isExtracted: false
+            isExtracted: false,
+            language: language.toLowerCase()
           };
           
+          const updatedTracks = [...(video.subtitleTracks || []), newTrack];
           onUpdateVideo((prev: any) => ({
             ...prev,
-            subtitleTracks: [...(prev.subtitleTracks || []), newTrack]
+            subtitleTracks: updatedTracks
           }));
+          saveEmbedSubtitles(video, updatedTracks);
+          userExplicitlyTurnedOffSubRef.current = false;
           handleSelectSubTrack(newTrack);
           triggerSwitchToast("Subtitle loaded successfully!");
         } else {
@@ -529,7 +683,7 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
       logger.player(`[OpenSubtitles] Download error: ${err}`);
       triggerSwitchToast(`Download failed: ${err.message || err}`);
     }
-  }, [openSubtitlesApiKey, onUpdateVideo]);
+  }, [openSubtitlesApiKey, onUpdateVideo, video]);
 
   useEffect(() => {
     setHasFetchedOpenSubtitles(false);
@@ -593,11 +747,11 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
     setPlayerSettings(prev => ({
       hideUIOverlays: prev.hideUIOverlays !== undefined ? prev.hideUIOverlays : !!propHideUIOverlays,
       hideVideoName: prev.hideVideoName !== undefined ? prev.hideVideoName : !!propHideVideoName,
-      showPlayButton: prev.showPlayButton !== undefined ? prev.showPlayButton : (propShowPlayButton !== false),
-      showTimeDisplay: prev.showTimeDisplay !== undefined ? prev.showTimeDisplay : (propShowTimeDisplay !== false),
-      showPlayBar: prev.showPlayBar !== undefined ? prev.showPlayBar : (propShowPlayBar !== false),
-      showVolumeControl: prev.showVolumeControl !== undefined ? prev.showVolumeControl : (propShowVolumeControl !== false),
-      showFullscreen: prev.showFullscreen !== undefined ? prev.showFullscreen : (propShowFullscreen !== false),
+      showPlayButton: isEmbed ? (propShowPlayButton !== false) : (prev.showPlayButton !== undefined ? prev.showPlayButton : (propShowPlayButton !== false)),
+      showTimeDisplay: isEmbed ? (propShowTimeDisplay !== false) : (prev.showTimeDisplay !== undefined ? prev.showTimeDisplay : (propShowTimeDisplay !== false)),
+      showPlayBar: isEmbed ? (propShowPlayBar !== false) : (prev.showPlayBar !== undefined ? prev.showPlayBar : (propShowPlayBar !== false)),
+      showVolumeControl: isEmbed ? (propShowVolumeControl !== false) : (prev.showVolumeControl !== undefined ? prev.showVolumeControl : (propShowVolumeControl !== false)),
+      showFullscreen: isEmbed ? (propShowFullscreen !== false) : (prev.showFullscreen !== undefined ? prev.showFullscreen : (propShowFullscreen !== false)),
       allowUiSkipping: allowUiSkipping !== false,
       blockSeekingCompletely: !!blockSeekingCompletely,
       autoSkipIntroOutro: autoSkipIntroOutro !== false,
@@ -606,7 +760,7 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
       disableAnimations: !!disableAnimations,
       pauseOnFocusChange: !!pauseOnFocusChange
     }));
-  }, [propHideUIOverlays, propHideVideoName, propShowPlayButton, propShowTimeDisplay, propShowPlayBar, propShowVolumeControl, propShowFullscreen, allowUiSkipping, blockSeekingCompletely, autoSkipIntroOutro, autoSkipSexScenes, propLockModeActive, disableAnimations, pauseOnFocusChange]);
+  }, [propHideUIOverlays, propHideVideoName, propShowPlayButton, propShowTimeDisplay, propShowPlayBar, propShowVolumeControl, propShowFullscreen, allowUiSkipping, blockSeekingCompletely, autoSkipIntroOutro, autoSkipSexScenes, propLockModeActive, disableAnimations, pauseOnFocusChange, isEmbed]);
 
   const updatePlayerSetting = (key: keyof typeof playerSettings, value: any) => {
     setPlayerSettings(prev => {
@@ -657,11 +811,12 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
   // Shadow props with reactive state values for settings (booleans for rendering)
   const hideUIOverlays = showUIOverlaysMode !== 'enable' && hoveredSetting !== 'showUIOverlays';
   const hideVideoName = showVideoNameMode !== 'enable' && hoveredSetting !== 'showVideoName';
-  const showPlayButton = showPlayButtonMode === 'enable' || hoveredSetting === 'showPlayButton';
-  const showTimeDisplay = showTimeDisplayMode === 'enable' || hoveredSetting === 'showTimeDisplay';
-  const showPlayBar = showPlayBarMode === 'enable' || hoveredSetting === 'showPlayBar';
-  const showVolumeControl = showVolumeControlMode === 'enable' || hoveredSetting === 'showVolumeControl';
-  const showFullscreen = showFullscreenMode === 'enable' || hoveredSetting === 'showFullscreen';
+  const showPlayButton = isEmbed ? (propShowPlayButton !== false) : (showPlayButtonMode === 'enable' || hoveredSetting === 'showPlayButton');
+  const showTimeDisplay = isEmbed ? (propShowTimeDisplay !== false) : (showTimeDisplayMode === 'enable' || hoveredSetting === 'showTimeDisplay');
+  const showPlayBar = isEmbed ? (propShowPlayBar !== false) : (showPlayBarMode === 'enable' || hoveredSetting === 'showPlayBar');
+  const showVolumeControl = isEmbed ? (propShowVolumeControl !== false) : (showVolumeControlMode === 'enable' || hoveredSetting === 'showVolumeControl');
+  const showFullscreen = isEmbed ? (propShowFullscreen !== false) : (showFullscreenMode === 'enable' || hoveredSetting === 'showFullscreen');
+  const showCloseButton = propShowCloseButton !== undefined ? propShowCloseButton : !isEmbed;
 
   const getHighlightClass = (key: string): string => {
     if (hoveredSetting !== key) return '';
@@ -1051,9 +1206,13 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
     }
     syncBookmarksToServer(updatedBookmarks);
   };
-  const [currentTime, setCurrentTime] = useState(video.currentTime || 0);
+  const [currentTime, setCurrentTime] = useState(() => {
+    if (video.currentTime && video.currentTime > 0) return video.currentTime;
+    return getMediaTimestamp(video);
+  });
   const [resumePromptTime, setResumePromptTime] = useState<number | null>(null);
-  const latestTimeRef = useRef<number>(video.currentTime || 0);
+  const latestTimeRef = useRef<number>(currentTime);
+  const lastStorageSaveTimeRef = useRef<number>(0);
   useEffect(() => {
     latestTimeRef.current = currentTime;
   }, [currentTime]);
@@ -1085,79 +1244,26 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
       if (hasScrobbledTraktRef.current) return;
       hasScrobbledTraktRef.current = true;
 
-      const seriesInfo = classifyVideoTitle(video.title);
-      const isTV = seriesInfo.type === 'series';
-      const tmdbId = tmdbIdRef.current;
-      const nowIso = new Date().toISOString();
-
-      const body: any = {};
-      if (isTV) {
-        if (!tmdbId) {
-          logger.player('Skipping Trakt.tv scrobble: no TMDB ID resolved for series.');
-          return;
-        }
-        body.shows = [
-          {
-            ids: { tmdb: tmdbId },
-            seasons: [
-              {
-                number: seriesInfo.season || 1,
-                episodes: [
-                  {
-                    number: seriesInfo.episode || 1,
-                    watched_at: nowIso
-                  }
-                ]
-              }
-            ]
-          }
-        ];
-      } else {
-        body.movies = [
-          {
-            title: seriesInfo.displayTitle,
-            watched_at: nowIso,
-            ids: tmdbId ? { tmdb: tmdbId } : undefined
-          }
-        ];
-        if (!tmdbId && !seriesInfo.displayTitle) {
-          logger.player('Skipping Trakt.tv scrobble: no TMDB ID or movie title.');
-          return;
-        }
-      }
-
       logger.player(`Scrobbling watch history to Trakt.tv...`);
-      const res = await fetch('https://api.trakt.tv/sync/history', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`,
-          'trakt-api-key': 'f2926f0d87d3e789c50a3c276ab6002f5027dec31089fe75792c2836165c7289',
-          'trakt-api-version': '2'
-        },
-        body: JSON.stringify(body)
-      });
-
-      if (res.ok) {
+      const syncRes = await syncTraktHistory({ ...video, tmdbId: video.tmdbId || tmdbIdRef.current }, token);
+      if (syncRes.ok) {
         logger.player('Successfully scrobbled to Trakt.tv watch history!');
-        try {
-          const resData = await res.json();
-          triggerSwitchToast(`Trakt Scrobble Success: Added ${resData.added?.movies || resData.added?.episodes || 1} item`);
-        } catch {
-          triggerSwitchToast(`Trakt Scrobble Success (Status: ${res.status})`);
+        triggerSwitchToast(syncRes.message);
+        if (syncRes.tmdbId) {
+          tmdbIdRef.current = syncRes.tmdbId;
         }
         onUpdateVideoRef.current((prev: any) => ({
           ...prev,
-          hasScrobbledTrakt: true
+          hasScrobbledTrakt: true,
+          ...(syncRes.tmdbId ? { tmdbId: syncRes.tmdbId } : {})
         }), false, video.id);
-      } else {
-        logger.player(`Trakt.tv scrobble failed with status: ${res.status}`);
-        try {
-          const errText = await res.text();
-          triggerSwitchToast(`Trakt Scrobble Failed: ${res.status} - ${errText.substring(0, 40)}`);
-        } catch {
-          triggerSwitchToast(`Trakt Scrobble Failed (Status: ${res.status})`);
+
+        if (userRating && userRating > 0) {
+          syncTraktRating({ ...video, tmdbId: syncRes.tmdbId || video.tmdbId || tmdbIdRef.current }, userRating, token).catch(() => {});
         }
+      } else {
+        logger.player(`Trakt.tv scrobble failed: ${syncRes.message}`);
+        triggerSwitchToast(syncRes.message);
       }
     } catch (err) {
       console.error('Error scrobbling to Trakt.tv:', err);
@@ -1173,19 +1279,12 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
       const syncFavoritesSetting = parsed.traktSyncFavorites;
       if (!token || !syncFavoritesSetting) return;
 
-      const seriesInfo = classifyVideoTitle(video.title);
-      const isTV = seriesInfo.type === 'series';
-      const tmdbId = tmdbIdRef.current;
-      if (!tmdbId) {
-        logger.player('Skipping Trakt.tv favorites sync: no TMDB ID resolved.');
-        return;
-      }
-
+      const metadata = await resolveTraktMetadata({ ...video, tmdbId: video.tmdbId || tmdbIdRef.current });
       const body: any = {};
-      if (isTV) {
-        body.shows = [{ ids: { tmdb: tmdbId } }];
+      if (metadata.isTV) {
+        body.shows = [{ title: metadata.showTitle, ids: metadata.showIds || (metadata.tmdbId ? { tmdb: metadata.tmdbId } : undefined) }];
       } else {
-        body.movies = [{ ids: { tmdb: tmdbId } }];
+        body.movies = [{ title: metadata.movieTitle, ids: metadata.movieIds || (metadata.tmdbId ? { tmdb: metadata.tmdbId } : undefined) }];
       }
 
       const endpoint = isAdd ? 'favorites' : 'favorites/remove';
@@ -1196,7 +1295,7 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${token}`,
-          'trakt-api-key': 'f2926f0d87d3e789c50a3c276ab6002f5027dec31089fe75792c2836165c7289',
+          'trakt-api-key': 'V4WfZovVxhKMc-KNyfTHgL_KtI84gJLnBHMss-qwu88',
           'trakt-api-version': '2'
         },
         body: JSON.stringify(body)
@@ -1534,6 +1633,7 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
   const [isLocked, setIsLocked] = useState(false);
   const [playbackRate, setPlaybackRate] = useState(1.0);
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [isPseudoFullscreen, setIsPseudoFullscreen] = useState(false);
   const [radialMenuState, setRadialMenuState] = useState<{ visible: boolean; x: number; y: number }>({ visible: false, x: 0, y: 0 });
   const [hoverTime, setHoverTime] = useState<string | null>(null);
   const [hoverPercent, setHoverPercent] = useState(0);
@@ -1598,7 +1698,17 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
 
   // Tracks Selection State
   const [selectedAudioTrack, setSelectedAudioTrack] = useState<CustomAudioTrack | null>(null);
-  const [selectedSubTrack, setSelectedSubTrack] = useState<CustomSubtitleTrack | null>(null);
+  const userExplicitlyTurnedOffSubRef = useRef(false);
+  const [selectedSubTrack, setSelectedSubTrack] = useState<CustomSubtitleTrack | null>(() => {
+    if (video.subtitleTracks && video.subtitleTracks.length > 0) {
+      const tracksWithCues = video.subtitleTracks.filter(t => t.cues && t.cues.length > 0);
+      if (tracksWithCues.length > 0) {
+        return tracksWithCues[tracksWithCues.length - 1];
+      }
+      return video.subtitleTracks[video.subtitleTracks.length - 1];
+    }
+    return null;
+  });
   const [extractingStreamIndex, setExtractingStreamIndex] = useState<number | null>(null);
   const [showAudioSubMenu, setShowAudioSubMenu] = useState(false);
   const [showSpeedMenu, setShowSpeedMenu] = useState(false);
@@ -1770,8 +1880,6 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
   const subAbortControllerRef = useRef<AbortController | null>(null);
   const currentAudioOptionIndexRef = useRef<number>(-1);
   const currentSubOptionIndexRef = useRef<number>(-1);
-  const lastHeartbeatTimeRef = useRef<number>(0);
-  const heartbeatCountRef = useRef<number>(0);
   const audioDebounceTimeoutRef = useRef<any>(null);
   const subDebounceTimeoutRef = useRef<any>(null);
   const hasAutoSelectedRef = useRef(false);
@@ -1810,10 +1918,12 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
 
   useEffect(() => {
     hasAutoSelectedRef.current = false;
-    const resumeTime = video.currentTime || 0;
+    const storedTime = getMediaTimestamp(video);
+    const resumeTime = (video.currentTime && video.currentTime > 0) ? video.currentTime : storedTime;
     activeAudioStartOffsetRef.current = Math.floor(resumeTime / 10) * 10;
     activeSubtitleStartOffsetRef.current = resumeTime;
     setCurrentTime(resumeTime);
+    latestTimeRef.current = resumeTime;
     setResumePromptTime(null);
     setSelectedAudioTrack(null);
     setSelectedSubTrack(null);
@@ -1936,7 +2046,6 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
 
   // Auto probing states
   const [isAutoProbing, setIsAutoProbing] = useState(false);
-  const [useProxyForVideo, setUseProxyForVideo] = useState(false);
   if (false as boolean) {
     console.log(isAutoProbing);
   }
@@ -1951,6 +2060,54 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
     s.type === 'subtitle' && 
     !/dvd_subtitle|dvdsub|pgs|hdmv_pgs|xsub|vobsub/i.test(s.codec || '')
   );
+
+  // Restore cached subtitles from browser storage (localStorage & IndexedDB) if empty or cues missing
+  useEffect(() => {
+    if (!video) return;
+    const hasCues = video.subtitleTracks && video.subtitleTracks.length > 0 && video.subtitleTracks.some(t => t.cues && t.cues.length > 0);
+    if (hasCues) return;
+
+    const syncSubs = getEmbedSubtitlesSync(video);
+    if (syncSubs && syncSubs.length > 0 && syncSubs.some(t => t.cues && t.cues.length > 0)) {
+      onUpdateVideo((prev: any) => ({
+        ...prev,
+        subtitleTracks: syncSubs
+      }));
+      return;
+    }
+
+    getEmbedSubtitlesAsync(video).then((asyncSubs) => {
+      if (asyncSubs && asyncSubs.length > 0 && asyncSubs.some(t => t.cues && t.cues.length > 0)) {
+        onUpdateVideo((prev: any) => {
+          const currentHasCues = prev?.subtitleTracks && prev.subtitleTracks.some((t: any) => t.cues && t.cues.length > 0);
+          if (!currentHasCues) {
+            return { ...prev, subtitleTracks: asyncSubs };
+          }
+          return prev;
+        });
+      }
+    });
+  }, [video?.url, video?.id, video?.localFilePath]);
+
+  // Auto-select subtitle track if downloaded or available and not currently selected
+  useEffect(() => {
+    if (userExplicitlyTurnedOffSubRef.current) return;
+    if (selectedSubTrack) {
+      if ((!selectedSubTrack.cues || selectedSubTrack.cues.length === 0) && subtitleTracks.length > 0) {
+        const matching = subtitleTracks.find(t => t.id === selectedSubTrack.id && t.cues && t.cues.length > 0);
+        if (matching) {
+          setSelectedSubTrack(matching);
+        }
+      }
+      return;
+    }
+
+    if (subtitleTracks && subtitleTracks.length > 0) {
+      const tracksWithCues = subtitleTracks.filter(t => t.cues && t.cues.length > 0);
+      const targetTrack = tracksWithCues.length > 0 ? tracksWithCues[tracksWithCues.length - 1] : subtitleTracks[subtitleTracks.length - 1];
+      handleSelectSubTrack(targetTrack);
+    }
+  }, [subtitleTracks, selectedSubTrack]);
 
   // Clear hover timeouts and reset FFmpeg on unmount or when changing videos
   useEffect(() => {
@@ -1999,11 +2156,6 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
       } catch (e) {}
     }
     lastSubUrlRef.current = newUrl;
-    if (videoRef.current && videoRef.current.textTracks) {
-      for (let i = 0; i < videoRef.current.textTracks.length; i++) {
-        videoRef.current.textTracks[i].mode = 'hidden';
-      }
-    }
   }, [selectedSubTrack?.url]);
 
   useEffect(() => {
@@ -2026,6 +2178,10 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
       if (video.url && video.url.includes('.m3u8')) return;
 
       if ((video.type === 'local' && video.file) || ((video.type === 'url' || video.isRemote) && video.url)) {
+        if (!isWasmSupported()) {
+          logger.player('WebAssembly is not supported in this browser. Skipping FFmpeg probe and using native stream.');
+          return;
+        }
         probingVideoIdRef.current = video.id;
         setIsAutoProbing(true);
 
@@ -2067,33 +2223,37 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
           } else {
             // Remote probe
             const source = new HttpByteSource(video.url);
-            const downloadMgr = new RemoteDownloadManager(source, 2 * 1024 * 1024, 16);
-            const ff = await ffmpegService.ensureLoaded(video.id);
-            const remoteDetails = await remoteMediaAccess.probeRemoteMedia(ff, downloadMgr);
-            result = {
-              duration: remoteDetails.duration,
-              format: remoteDetails.format,
-              streams: remoteDetails.streams
-            };
-            seekMap = remoteDetails.seekMap || [];
-            timecodeScale = remoteDetails.timecodeScale;
+            const cachedSource = new CachedByteSource(source, 2 * 1024 * 1024, 16);
+            const ext = video.url.split('.').pop()?.split('?')[0] || 'mp4';
+            result = await ffmpegService.probeRemoteHeader(video.url, `.${ext}`, cachedSource);
+            
+            try {
+              const containerType = (result.format || ext).toLowerCase();
+              if (containerType.includes('mkv') || containerType.includes('matroska')) {
+                const mkvInfo = await parseMkv(cachedSource);
+                seekMap = mkvInfo.seekMap || [];
+                timecodeScale = mkvInfo.timecodeScale;
+              } else if (containerType.includes('mp4')) {
+                const mp4Info = await parseMp4(cachedSource);
+                seekMap = mp4Info.tracks[0]?.seekMap?.timeToOffset || [];
+              }
+            } catch (parseErr) {
+              logger.warn('Failed parsing remote container for seekMap:', parseErr);
+            }
           }
 
           const updatedVideo = {
             ...video,
-            duration: (result.duration && Number(result.duration) > 0) ? String(result.duration) : video.duration,
+            duration: (result.duration && Number(result.duration) > 0) ? result.duration : video.duration,
             format: result.format,
-            streams: result.streams as any,
+            streams: result.streams,
             seekMap: seekMap.length > 0 ? seekMap : undefined,
             timecodeScale
           };
           onUpdateVideoRef.current(updatedVideo);
-        } catch (err: any) {
+        } catch (err) {
           logger.error('Auto probe streams failed:', err);
           probingVideoIdRef.current = null; // allow retry
-          if (err && err.message && err.message.includes('401 Unauthorized')) {
-            setPlaybackError(err.message);
-          }
         } finally {
           setIsAutoProbing(false);
         }
@@ -2113,7 +2273,7 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
     }
 
     const isDirectHls = video.url.includes('.m3u8') && !video.hlsPlaylist;
-    const hasAlternateAudio = !isDirectHls && (activeAudioStreamIndex !== null || selectedAudioTrack !== null);
+    const hasAlternateAudio = !isDirectHls && (activeAudioStreamIndex !== null || (selectedAudioTrack !== null && (selectedAudioTrack as any).type !== 'original'));
 
     if (videoRef.current) {
       videoRef.current.volume = hasAlternateAudio ? 0 : volume;
@@ -2123,7 +2283,7 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
     if (playbackControllerRef.current) {
       playbackControllerRef.current.setVolume(volume, isMuted);
     }
-  }, [volume, isMuted, saveVolume, activeAudioStreamIndex]);
+  }, [volume, isMuted, saveVolume, activeAudioStreamIndex, selectedAudioTrack]);
 
   // Reset audio boost to normal (100) if volume drops below 1.0
   useEffect(() => {
@@ -2141,15 +2301,6 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
         const shouldUpdate = !video.currentTime || hasSeekedRef.current || videoRef.current.currentTime > 0;
         if (shouldUpdate && !isScrubbingRef.current && !debouncedSeekTimeoutRef.current) {
           setCurrentTime(videoRef.current.currentTime);
-        }
-
-        // Heartbeat ping — adaptive: 1 min for first 5 calls, then 5 min
-        const now = Date.now();
-        const heartbeatInterval = heartbeatCountRef.current < 5 ? 60000 : 300000;
-        if (now - lastHeartbeatTimeRef.current > heartbeatInterval) {
-          lastHeartbeatTimeRef.current = now;
-          heartbeatCountRef.current += 1;
-          fetch('http://127.0.0.1:50001/api/heartbeat', { method: 'POST' }).catch(() => {});
         }
         
         // Update buffered percentage
@@ -2175,7 +2326,6 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
 
   // Live stream detection and sync tracking
   const isLiveStream = Boolean(
-    isDirectHls ||
     duration === Infinity ||
     !isFinite(duration) ||
     (hlsInstanceRef.current && (hlsInstanceRef.current as any).levels?.[0]?.details?.live)
@@ -2487,14 +2637,10 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
           }
           merged.sort((a, b) => a.startTime - b.startTime);
 
-          const vttText = cuesToWebVTT(merged);
-          const vttBlob = new Blob([vttText], { type: 'text/vtt' });
-          const vttBlobUrl = URL.createObjectURL(vttBlob);
-
           const newTrack: CustomSubtitleTrack = {
             id: `remote-sub-${streamIndex}`,
             name: `Subtitles`,
-            url: vttBlobUrl,
+            url: '',
             cues: merged,
             isExtracted: true,
             streamIndex,
@@ -2586,14 +2732,10 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
       }
 
       if (cues && cues.length > 0) {
-        const vttText = cuesToWebVTT(cues);
-        const vttBlob = new Blob([vttText], { type: 'text/vtt' });
-        const vttBlobUrl = URL.createObjectURL(vttBlob);
-
         const newTrack: CustomSubtitleTrack = {
           id: `remote-sub-${streamIndex}`,
           name: `Remote Subtitles`,
-          url: vttBlobUrl,
+          url: '',
           cues,
           isExtracted: true,
           streamIndex,
@@ -2615,11 +2757,6 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
 
   const handleVideoError = () => {
     if (!videoRef.current) return;
-    if (video.isRemote && !useProxyForVideo && video.url && !video.url.startsWith('/api/proxy-media')) {
-      logger.player('[RemoteVideoPlayer] Direct video loading error. Switching video src to backend proxy...');
-      setUseProxyForVideo(true);
-      return;
-    }
     const err = videoRef.current.error;
     let message = 'An unknown playback error occurred.';
     
@@ -2660,6 +2797,7 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
 
     // Suppress parent history state updates while user is actively freehand scrubbing
     if (!isScrubbingRef.current) {
+      saveMediaTimestamp(video, newTime, durationRef.current || videoRef.current.duration, video.title);
       onUpdateVideo({
         ...video,
         currentTime: newTime
@@ -2733,6 +2871,10 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
       }
       return;
     }
+    if (!isWasmSupported()) {
+      triggerSwitchToast('WebAssembly unavailable on this browser. Client stream demuxing disabled.');
+      return;
+    }
     // Guard: if this stream is already active, don't restart the engine
     if (activeAudioStreamIndex === streamIndex && selectedAudioTrack?.streamIndex === streamIndex && selectedAudioTrack?.url) {
       return;
@@ -2763,6 +2905,26 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
         hlsInstanceRef.current.subtitleTrack = streamIndex;
         setActiveSubStreamIndex(streamIndex);
         const label = getLangLabel(language, `Track #${streamIndex}`);
+
+        if (videoRef.current && videoRef.current.textTracks) {
+          for (let i = 0; i < videoRef.current.textTracks.length; i++) {
+            videoRef.current.textTracks[i].mode = 'hidden';
+          }
+        }
+
+        let initialCues: SubtitleCue[] = [];
+        if (videoRef.current && videoRef.current.textTracks) {
+          const track = Array.from(videoRef.current.textTracks).find((t: any, idx) => idx === streamIndex || t.language === language);
+          if (track && track.cues && track.cues.length > 0) {
+            initialCues = Array.from(track.cues).map((c: any, i) => ({
+              id: `hls-${c.startTime?.toFixed?.(3) || c.startTime}-${c.endTime?.toFixed?.(3) || c.endTime}-${i}`,
+              startTime: c.startTime,
+              endTime: c.endTime,
+              text: (c.text || '').trim()
+            })).filter(c => c.text.length > 0);
+          }
+        }
+
         setSelectedSubTrack({
           id: `remote-sub-${streamIndex}`,
           name: `Subtitles (${label})`,
@@ -2770,9 +2932,13 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
           isExtracted: true,
           language: language,
           streamIndex,
-          cues: []
+          cues: initialCues
         });
       }
+      return;
+    }
+    if (!isWasmSupported()) {
+      triggerSwitchToast('WebAssembly unavailable on this browser. Embedded subtitle extraction disabled.');
       return;
     }
     if (subDebounceTimeoutRef.current) {
@@ -3029,21 +3195,118 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
     }
   };
 
-  const toggleFullscreen = () => {
-    if (!containerRef.current) return;
-
-    if (!isFullscreen) {
-      if (containerRef.current.requestFullscreen) {
-        containerRef.current.requestFullscreen();
-      }
-      setIsFullscreen(true);
-    } else {
-      if (document.exitFullscreen) {
-        document.exitFullscreen();
-      }
-      setIsFullscreen(false);
-    }
+  const toggleFullscreen = async () => {
     resetControlsTimeout();
+    const doc: any = document;
+    const isCurrentlyFs = !!(
+      doc.fullscreenElement ||
+      doc.webkitFullscreenElement ||
+      doc.mozFullScreenElement ||
+      doc.msFullscreenElement ||
+      (videoRef.current && (videoRef.current as any).webkitDisplayingFullscreen) ||
+      isPseudoFullscreen
+    );
+
+    if (isCurrentlyFs) {
+      if (isPseudoFullscreen) {
+        setIsPseudoFullscreen(false);
+      }
+      try {
+        if (doc.exitFullscreen) {
+          await doc.exitFullscreen();
+        } else if (doc.webkitExitFullscreen) {
+          await doc.webkitExitFullscreen();
+        } else if (doc.webkitCancelFullScreen) {
+          await doc.webkitCancelFullScreen();
+        } else if (doc.mozCancelFullScreen) {
+          await doc.mozCancelFullScreen();
+        } else if (doc.msExitFullscreen) {
+          await doc.msExitFullscreen();
+        }
+      } catch (err) {
+        logger.player('Exit fullscreen error: ' + err);
+      }
+
+      if (videoRef.current && typeof (videoRef.current as any).webkitExitFullscreen === 'function') {
+        try {
+          (videoRef.current as any).webkitExitFullscreen();
+        } catch (e) {}
+      }
+
+      setIsFullscreen(false);
+
+      if (isEmbed) {
+        try {
+          window.parent.postMessage({
+            source: 'valor-embed-iframe',
+            version: '1.0.0',
+            payload: { type: 'FULLSCREEN_CHANGE', payload: { isFullscreen: false } }
+          }, '*');
+          window.parent.postMessage({ type: 'EXIT_FULLSCREEN' }, '*');
+        } catch (e) {}
+      }
+    } else {
+      let enteredNative = false;
+      const container: any = containerRef.current;
+      const videoEl: any = videoRef.current;
+
+      // 1. Try Element.requestFullscreen (with vendor prefixes) on the container
+      if (container) {
+        try {
+          if (container.requestFullscreen) {
+            await container.requestFullscreen();
+            enteredNative = true;
+          } else if (container.webkitRequestFullscreen) {
+            await container.webkitRequestFullscreen();
+            enteredNative = true;
+          } else if (container.webkitRequestFullScreen) {
+            await container.webkitRequestFullScreen();
+            enteredNative = true;
+          } else if (container.mozRequestFullScreen) {
+            await container.mozRequestFullScreen();
+            enteredNative = true;
+          } else if (container.msRequestFullscreen) {
+            await container.msRequestFullscreen();
+            enteredNative = true;
+          }
+        } catch (err) {
+          logger.player('Container requestFullscreen failed / restricted, attempting fallbacks: ' + err);
+        }
+      }
+
+      // 2. If container fullscreen failed (common on iOS Safari), try native video element fullscreen
+      if (!enteredNative && videoEl) {
+        try {
+          if (typeof videoEl.webkitEnterFullscreen === 'function') {
+            videoEl.webkitEnterFullscreen();
+            enteredNative = true;
+          } else if (typeof videoEl.webkitRequestFullscreen === 'function') {
+            await videoEl.webkitRequestFullscreen();
+            enteredNative = true;
+          }
+        } catch (err) {
+          logger.player('Video webkitEnterFullscreen failed: ' + err);
+        }
+      }
+
+      // 3. If native fullscreen was blocked (e.g. iframe permissions policy or unsupported browser)
+      if (!enteredNative) {
+        setIsPseudoFullscreen(true);
+      }
+
+      setIsFullscreen(true);
+
+      if (isEmbed) {
+        try {
+          window.parent.postMessage({
+            source: 'valor-embed-iframe',
+            version: '1.0.0',
+            payload: { type: 'FULLSCREEN_CHANGE', payload: { isFullscreen: true } }
+          }, '*');
+          window.parent.postMessage({ type: 'REQUEST_FULLSCREEN' }, '*');
+        } catch (e) {}
+      }
+    }
   };
 
   // Picture-in-Picture Support
@@ -3082,11 +3345,46 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
 
   useEffect(() => {
     const handleFullscreenChange = () => {
-      setIsFullscreen(!!document.fullscreenElement);
+      const doc: any = document;
+      const isNativeFs = !!(
+        doc.fullscreenElement ||
+        doc.webkitFullscreenElement ||
+        doc.mozFullScreenElement ||
+        doc.msFullscreenElement ||
+        (videoRef.current && (videoRef.current as any).webkitDisplayingFullscreen)
+      );
+      const fs = isNativeFs || isPseudoFullscreen;
+      setIsFullscreen(fs);
+      if (!isNativeFs && !isPseudoFullscreen) {
+        if (isEmbed) {
+          try {
+            window.parent.postMessage({
+              source: 'valor-embed-iframe',
+              version: '1.0.0',
+              payload: { type: 'FULLSCREEN_CHANGE', payload: { isFullscreen: false } }
+            }, '*');
+          } catch (e) {}
+        }
+      }
     };
-    document.addEventListener('fullscreenchange', handleFullscreenChange);
-    return () => document.removeEventListener('fullscreenchange', handleFullscreenChange);
-  }, []);
+
+    const docEvents = ['fullscreenchange', 'webkitfullscreenchange', 'mozfullscreenchange', 'MSFullscreenChange'];
+    docEvents.forEach(evt => document.addEventListener(evt, handleFullscreenChange));
+
+    const videoEl = videoRef.current;
+    if (videoEl) {
+      videoEl.addEventListener('webkitbeginfullscreen', handleFullscreenChange);
+      videoEl.addEventListener('webkitendfullscreen', handleFullscreenChange);
+    }
+
+    return () => {
+      docEvents.forEach(evt => document.removeEventListener(evt, handleFullscreenChange));
+      if (videoEl) {
+        videoEl.removeEventListener('webkitbeginfullscreen', handleFullscreenChange);
+        videoEl.removeEventListener('webkitendfullscreen', handleFullscreenChange);
+      }
+    };
+  }, [isPseudoFullscreen, isEmbed]);
 
   // Helper to compile subtitle options
   const getSubOptions = () => {
@@ -3114,9 +3412,7 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
   // Helper to compile audio options
   const getAudioOptions = () => {
     const list: any[] = [];
-    if (audioStreams.length === 0 && audioTracks.length === 0) {
-      list.push({ type: 'original', name: 'Original', track: null });
-    }
+    list.push({ type: 'original', name: 'Original (Default)', track: null });
     audioStreams.forEach((s) => {
       const label = getLangLabel(s.language, `Track #${s.index}`);
       list.push({
@@ -3168,12 +3464,17 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
     const targetIdx = track === null ? -1 : (track.streamIndex !== undefined ? track.streamIndex : -1);
     setActiveAudioStreamIndex(targetIdx === -1 ? null : targetIdx);
     
-    if (targetIdx !== -1) {
+    if (isDirectHls && hlsInstanceRef.current && targetIdx !== -1) {
+      hlsInstanceRef.current.audioTrack = targetIdx;
+    } else if (targetIdx !== -1) {
       playbackControllerRef.current?.switchAudioTrack(targetIdx);
     }
     
     if (track === null) {
       syncAudioRef(null, null);
+      if (isDirectHls && hlsInstanceRef.current) {
+        hlsInstanceRef.current.audioTrack = 0;
+      }
     } else if (track.streamIndex !== undefined) {
       syncAudioRef(null, track.streamIndex);
     } else {
@@ -3186,16 +3487,35 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
       clearTimeout(subDebounceTimeoutRef.current);
       subDebounceTimeoutRef.current = null;
     }
+    if (track === null) {
+      userExplicitlyTurnedOffSubRef.current = true;
+    } else {
+      userExplicitlyTurnedOffSubRef.current = false;
+    }
     setSelectedSubTrack(track);
     if (track === null) {
       setActiveSubStreamIndex(null);
       syncSubRef(null, null);
+      if (isDirectHls && hlsInstanceRef.current) {
+        hlsInstanceRef.current.subtitleTrack = -1;
+      }
+      if (videoRef.current && videoRef.current.textTracks) {
+        for (let i = 0; i < videoRef.current.textTracks.length; i++) {
+          videoRef.current.textTracks[i].mode = 'disabled';
+        }
+      }
     } else if (track.streamIndex !== undefined) {
       setActiveSubStreamIndex(track.streamIndex);
       syncSubRef(null, track.streamIndex);
+      if (isDirectHls && hlsInstanceRef.current) {
+        hlsInstanceRef.current.subtitleTrack = track.streamIndex;
+      }
     } else {
       setActiveSubStreamIndex(null);
       syncSubRef(track, null);
+      if (isDirectHls && hlsInstanceRef.current) {
+        hlsInstanceRef.current.subtitleTrack = -1;
+      }
     }
   };
 
@@ -3229,6 +3549,14 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
       setSelectedSubTrack(null);
       setActiveSubStreamIndex(null);
       setIsKeyInitiated(false);
+      if (isDirectHls && hlsInstanceRef.current) {
+        hlsInstanceRef.current.subtitleTrack = -1;
+      }
+      if (videoRef.current && videoRef.current.textTracks) {
+        for (let i = 0; i < videoRef.current.textTracks.length; i++) {
+          videoRef.current.textTracks[i].mode = 'disabled';
+        }
+      }
     } else if (nextOpt.type === 'embedded') {
       handleSelectEmbeddedSubtitle(nextOpt.streamIndex, nextOpt.codec, nextOpt.language, true);
       subDebounceTimeoutRef.current = setTimeout(async () => {
@@ -3276,6 +3604,9 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
       setSelectedAudioTrack(null);
       setActiveAudioStreamIndex(null);
       setIsKeyInitiated(false);
+      if (isDirectHls && hlsInstanceRef.current) {
+        hlsInstanceRef.current.audioTrack = 0;
+      }
     } else if (nextOpt.type === 'embedded') {
       handleSelectEmbeddedAudio(nextOpt.streamIndex, nextOpt.codec, nextOpt.language, true);
       audioDebounceTimeoutRef.current = setTimeout(async () => {
@@ -3460,21 +3791,30 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
 
     if (pressedKey === fullscreenKey) {
       e.preventDefault();
-      if (showFullscreenMode === 'disable') {
+      if (!isEmbed && showFullscreenMode === 'disable') {
         triggerSwitchToast('Fullscreen hotkey is disabled');
         return;
       }
-      if (containerRef.current) {
-        if (!document.fullscreenElement) {
-          containerRef.current.requestFullscreen().catch(console.error);
-        } else {
-          document.exitFullscreen().catch(console.error);
-        }
-      }
+      toggleFullscreen();
     } else if (pressedKey === exitKey) {
       e.preventDefault();
-      if (document.fullscreenElement) {
-        document.exitFullscreen()
+      if (isPseudoFullscreen) {
+        setIsPseudoFullscreen(false);
+        setIsFullscreen(false);
+        if (isEmbed) {
+          try {
+            window.parent.postMessage({
+              source: 'valor-embed-iframe',
+              version: '1.0.0',
+              payload: { type: 'FULLSCREEN_CHANGE', payload: { isFullscreen: false } }
+            }, '*');
+          } catch (e) {}
+        }
+        return;
+      }
+      const doc: any = document;
+      if (doc.fullscreenElement || doc.webkitFullscreenElement) {
+        (doc.exitFullscreen || doc.webkitExitFullscreen).call(doc)
           .then(() => handleExit())
           .catch(() => handleExit());
       } else {
@@ -3696,7 +4036,10 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
 
   // PlaybackController lifecycle hook
   useEffect(() => {
-    if (isDirectHls) {
+    if (isDirectHls || !isWasmSupported()) {
+      if (!isWasmSupported()) {
+        logger.player('WebAssembly is not supported in this browser. Running in pure Native Browser Playback mode.');
+      }
       if (videoRef.current) {
         videoRef.current.play()
           .then(() => setIsPlaying(true))
@@ -3954,6 +4297,7 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
           scrobbleToTrakt();
         }
 
+        saveMediaTimestamp(video, latestTimeRef.current, durationRef.current || (videoRef.current ? videoRef.current.duration : 0), video.title);
         onUpdateVideoRef.current((prev: any) => ({
           ...prev,
           currentTime: latestTimeRef.current,
@@ -3966,6 +4310,24 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
     }, intervalMs);
     return () => clearInterval(interval);
   }, [historySaveInterval]);
+
+  // Persist media playback timestamp on browser reload or unload
+  useEffect(() => {
+    const handleUnload = () => {
+      const time = latestTimeRef.current || (videoRef.current ? videoRef.current.currentTime : 0);
+      const dur = durationRef.current || (videoRef.current ? videoRef.current.duration : 0);
+      if (time > 0) {
+        saveMediaTimestamp(video, time, dur, video.title);
+      }
+    };
+    window.addEventListener('beforeunload', handleUnload);
+    window.addEventListener('pagehide', handleUnload);
+    return () => {
+      handleUnload();
+      window.removeEventListener('beforeunload', handleUnload);
+      window.removeEventListener('pagehide', handleUnload);
+    };
+  }, [video]);
 
   // Auto-select preferred default audio/subtitle streams
   useEffect(() => {
@@ -3991,9 +4353,8 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
           }
         }
 
-        // Always auto-select the first audio track when available (for both local and remote)
-        // Browser native decoding from MKV container is unreliable, so always extract via FFmpeg
-        if (!selectedAudioTrack && audioStreams.length > 0) {
+        // For remote media streams, preserve native audio unless the user has set a preferred audio language
+        if (!video.isRemote && !selectedAudioTrack && audioStreams.length > 0) {
           const firstAudio = audioStreams[0];
           logger.player(`Auto-selecting first audio track: ${firstAudio.language || 'unknown'} (${firstAudio.codec})`);
           handleSelectEmbeddedAudio(firstAudio.index, firstAudio.codec, firstAudio.language);
@@ -4047,18 +4408,21 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
       
       const newTrack: CustomSubtitleTrack = {
         id: `custom-sub-${Date.now()}`,
-        name: file.name.replace(/\.[^/.]+$/, ''),
+        name: trimSubtitleName(file.name.replace(/\.[^/.]+$/, ''), 'custom'),
         url: '',
         cues: cues,
         isExtracted: false,
         language: 'custom'
       };
 
+      const updatedTracks = [...subtitleTracks, newTrack];
       const updatedVideo = {
         ...video,
-        subtitleTracks: [...subtitleTracks, newTrack]
+        subtitleTracks: updatedTracks
       };
       onUpdateVideo(updatedVideo);
+      saveEmbedSubtitles(video, updatedTracks);
+      userExplicitlyTurnedOffSubRef.current = false;
       handleSelectSubTrack(newTrack);
     }
   };
@@ -4342,7 +4706,7 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
   return (
     <div 
       ref={containerRef} 
-      className={`player-container ${controlsVisible ? 'show-cursor' : 'hide-cursor'} ${hideUIOverlays ? 'keyboard-only' : ''} ${disableAnimations ? 'no-animations' : ''} ${hoveredSetting === 'lockModeActive' || hoveredSetting === 'pauseOnFocusChange' || hoveredSetting === 'disableAnimations' ? 'highlight-active' : ''}`}
+      className={`player-container ${controlsVisible ? 'show-cursor' : 'hide-cursor'} ${hideUIOverlays ? 'keyboard-only' : ''} ${disableAnimations ? 'no-animations' : ''} ${hoveredSetting === 'lockModeActive' || hoveredSetting === 'pauseOnFocusChange' || hoveredSetting === 'disableAnimations' ? 'highlight-active' : ''} ${isPseudoFullscreen ? 'pseudo-fullscreen' : ''}`}
       onMouseMove={(e) => {
         if (!isLocked && !showPauseMetadataOverlayRef.current) handleMouseMove(e);
       }}
@@ -4450,10 +4814,51 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
           }
         }}
       >
+        {audioOnly && (
+          <div 
+            className="audio-only-overlay"
+            style={{
+              position: 'absolute',
+              inset: 0,
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'center',
+              justifyContent: 'center',
+              background: 'radial-gradient(circle at center, rgba(30, 41, 59, 0.92) 0%, rgba(11, 15, 25, 0.98) 100%)',
+              zIndex: 2,
+              pointerEvents: 'none'
+            }}
+          >
+            <div 
+              style={{
+                width: '130px',
+                height: '130px',
+                borderRadius: '50%',
+                background: 'linear-gradient(135deg, rgba(255, 62, 62, 0.25), rgba(59, 130, 246, 0.25))',
+                border: '2px solid rgba(255, 255, 255, 0.18)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                boxShadow: isPlaying ? '0 0 35px rgba(59, 130, 246, 0.4)' : 'none',
+                transition: 'all 0.3s ease',
+                marginBottom: '18px'
+              }}
+            >
+              <Music size={52} color={isPlaying ? '#60a5fa' : '#94a3b8'} />
+            </div>
+            <div style={{ fontSize: '18px', fontWeight: 600, color: '#f8fafc', maxWidth: '80%', textAlign: 'center', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginBottom: '8px' }}>
+              {video.title || 'Audio Playback'}
+            </div>
+            <div style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', padding: '3px 10px', borderRadius: '12px', background: 'rgba(255, 255, 255, 0.08)', fontSize: '11px', color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.08em' }}>
+              <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: isPlaying ? '#22c55e' : '#64748b' }}></span>
+              Audio Only
+            </div>
+          </div>
+        )}
         <video
           ref={videoRef}
           onContextMenu={(e) => e.preventDefault()}
-          src={(video.url.includes('.m3u8') && !video.hlsPlaylist && Hls.isSupported()) ? undefined : (useProxyForVideo ? `/api/proxy-media?url=${encodeURIComponent(video.url)}` : video.url)}
+          src={(video.url.includes('.m3u8') && !video.hlsPlaylist && Hls.isSupported()) ? undefined : video.url}
           controls={false}
           crossOrigin={video.playbackMode === 'advanced' ? 'anonymous' : undefined}
           className="main-video-element"
@@ -4461,21 +4866,28 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
             if (videoRef.current) {
               const videoDuration = videoRef.current.duration;
               setDuration(videoDuration);
+
+              // 1. Check site storage for exact saved timestamp
+              const storedTime = getMediaTimestamp(video, videoDuration);
+              const targetResume = (video.currentTime && video.currentTime > 0) ? video.currentTime : storedTime;
+
               const directResumeTime = video.resumeTime || 0;
-              if (directResumeTime > 5 && videoDuration - directResumeTime > 10) {
+              if (!isEmbed && directResumeTime > 5 && videoDuration - directResumeTime > 10 && !targetResume) {
                 setResumePromptTime(directResumeTime);
                 videoRef.current.currentTime = 0;
                 hasSeekedRef.current = true;
                 return;
               }
-              if (video.currentTime && !hasSeekedRef.current) {
-                const remainingTime = videoDuration - video.currentTime;
-                // Lenient resume limits: resume if watched > 5s and remaining > 10s
-                if (video.currentTime > 5 && remainingTime > 10) {
-                  logger.player(`Resume limits met: seeking to ${video.currentTime}s`);
-                  videoRef.current.currentTime = video.currentTime;
+
+              if (targetResume > 0 && !hasSeekedRef.current) {
+                const remainingTime = videoDuration - targetResume;
+                if (remainingTime > 3) {
+                  logger.player(`Resume site storage location met: seeking to ${targetResume}s`);
+                  videoRef.current.currentTime = targetResume;
+                  setCurrentTime(targetResume);
+                  latestTimeRef.current = targetResume;
                 } else {
-                  logger.player(`Resume limits not met (currentTime: ${video.currentTime}s, remaining: ${remainingTime}s). Starting from 0.`);
+                  logger.player(`Resume location too close to end (currentTime: ${targetResume}s, remaining: ${remainingTime}s). Starting from 0.`);
                   videoRef.current.currentTime = 0;
                 }
                 hasSeekedRef.current = true;
@@ -4489,8 +4901,13 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
               if (shouldUpdate && !isScrubbingRef.current && !debouncedSeekTimeoutRef.current) {
                 setCurrentTime(time);
                 latestTimeRef.current = time;
+
+                const now = Date.now();
+                if (now - lastStorageSaveTimeRef.current > 1500 && time > 0) {
+                  lastStorageSaveTimeRef.current = now;
+                  saveMediaTimestamp(video, time, durationRef.current || videoRef.current.duration, video.title);
+                }
               }
-  
             }
           }}
           onPlay={() => setIsPlaying(true)}
@@ -4502,9 +4919,11 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
               return;
             }
             setIsPlaying(false);
+            const timeToSave = latestTimeRef.current;
+            saveMediaTimestamp(video, timeToSave, durationRef.current || videoRef.current?.duration, video.title);
             onUpdateVideoRef.current((prev: any) => ({
               ...prev,
-              currentTime: latestTimeRef.current,
+              currentTime: timeToSave,
               totalTimeWatched: Math.round(totalTimeWatchedRef.current)
             }), false, video.id);
           }}
@@ -4514,6 +4933,7 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
           onSeeking={() => setIsBuffering(true)}
           onError={handleVideoError}
           onEnded={() => {
+            saveMediaTimestamp(video, 0, durationRef.current || duration, video.title, true);
             scrobbleToTrakt();
             if (!ratingPromptedRef.current && !isUndetectedLocalMedia) {
               setShowRatingPrompt(true);
@@ -4552,18 +4972,7 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
             }
           }}
           playsInline
-        >
-          {selectedSubTrack?.url && (
-            <track
-              key={selectedSubTrack.id || selectedSubTrack.url}
-              kind="subtitles"
-              src={selectedSubTrack.url}
-              srcLang={selectedSubTrack.language || 'en'}
-              label={selectedSubTrack.name || 'Subtitles'}
-              default
-            />
-          )}
-        </video>
+        />
       </div>
 
       {false && activeSubtitleStartOffset}
@@ -4925,7 +5334,7 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
                   <OdometerClock date={systemTime} />
                 </div>
               )}
-              {video.isRemote && (
+              {!isEmbed && video.isRemote && (
                 <div className="playback-mode-badge-container">
                   {video.playbackMode === 'advanced' ? (
                     <span className="playback-badge badge-advanced" title="FFmpeg-powered custom stream demuxing enabled">
@@ -4953,9 +5362,11 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
           )}
 
           {/* Close Button */}
-          <button className="close-btn" onClick={handleExit} title="Close">
-            <X size={24} />
-          </button>
+          {showCloseButton && (
+            <button className="close-btn" onClick={handleExit} title="Close">
+              <X size={24} />
+            </button>
+          )}
         </div>
       )}
 
@@ -5064,6 +5475,19 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
                   onClick={() => {
                     setUserRating(star);
                     onUpdateVideo((prev: any) => ({ ...prev, rating: star }));
+                    try {
+                      const savedSettings = localStorage.getItem('valor_settings');
+                      if (savedSettings) {
+                        const parsed = JSON.parse(savedSettings);
+                        if (parsed.traktAccessToken) {
+                          syncTraktRating({ ...video, tmdbId: video.tmdbId || tmdbIdRef.current }, star, parsed.traktAccessToken).then(res => {
+                            if (res.ok) {
+                              triggerSwitchToast(`Trakt Rating: Synced ${star * 2}/10`);
+                            }
+                          }).catch(() => {});
+                        }
+                      }
+                    } catch {}
                     // Show a quick thank you message and then close
                     setTimeout(() => {
                       setShowRatingPrompt(false);
@@ -5401,7 +5825,7 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
               </div>
 
               <div className="bottom-controls-center-group">
-                {!isUndetectedLocalMedia && (
+                {(showSubtitleControl !== false || showAudioControl !== false) && (
                   <div 
                     className="popover-wrapper"
                     onMouseEnter={() => {
@@ -5416,7 +5840,7 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
                   >
                     <button className="audio-sub-trigger-btn">
                       <MessageSquare size={18} />
-                      <span>Audio & Subtitles</span>
+                      <span>{showAudioControl === false ? 'Subtitles' : (showSubtitleControl === false ? 'Audio' : 'Audio & Subtitles')}</span>
                     </button>
                     
                     {showAudioSubMenu && (
@@ -5452,12 +5876,16 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
                         onDownloadOpenSubtitle={downloadOpenSubtitle}
                         hasFetchedOpenSubtitles={hasFetchedOpenSubtitles}
                         onFetchOpenSubtitles={fetchOpenSubtitles}
+                        showAudioControl={showAudioControl !== false}
+                        showSubtitleControl={showSubtitleControl !== false}
+                        subFileOnly={subFileOnly === true}
+                        allowSubUpload={allowSubUpload !== false}
                       />
                     )}
                   </div>
                 )}
 
-                {!isUndetectedLocalMedia && (
+                {!isUndetectedLocalMedia && showBookmarksControl !== false && (
                   <div 
                     className="popover-wrapper"
                     style={{ marginLeft: '50px' }}
@@ -5630,13 +6058,14 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
                   <button 
                     className={`control-btn-fullscreen ${getHighlightClass('showFullscreen')}`} 
                     onClick={toggleFullscreen} 
-                    title="Fullscreen"
+                    title={isFullscreen || isPseudoFullscreen ? "Exit Fullscreen" : "Fullscreen"}
                     style={{
-                      opacity: showFullscreenMode === 'enable' ? 1 : 0.5,
-                      pointerEvents: showFullscreenMode === 'enable' ? 'auto' : 'none'
+                      opacity: isEmbed ? 1 : (showFullscreenMode === 'enable' ? 1 : 0.5),
+                      pointerEvents: isEmbed ? 'auto' : (showFullscreenMode === 'enable' ? 'auto' : 'none'),
+                      cursor: 'pointer'
                     }}
                   >
-                    {isFullscreen ? <Minimize size={22} /> : <Maximize size={22} />}
+                    {isFullscreen || isPseudoFullscreen ? <Minimize size={22} /> : <Maximize size={22} />}
                   </button>
                 )}
               </div>
@@ -6097,6 +6526,18 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
           background-color: var(--player-bg, #000000);
           overflow: hidden;
           user-select: none;
+        }
+        .player-container.pseudo-fullscreen {
+          position: fixed !important;
+          top: 0 !important;
+          left: 0 !important;
+          right: 0 !important;
+          bottom: 0 !important;
+          width: 100vw !important;
+          height: 100vh !important;
+          z-index: 2147483647 !important;
+          border-radius: 0 !important;
+          margin: 0 !important;
         }
         .show-cursor {
           cursor: default;
@@ -7057,7 +7498,10 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
           bottom: 50px;
           left: 50%;
           translate: -50% 0;
-          max-width: 95vw;
+          max-width: calc(100vw - 32px);
+          height: 380px;
+          max-height: min(480px, calc(100vh - 120px));
+          overflow: hidden;
           background: var(--card-bg);
           backdrop-filter: blur(25px);
           -webkit-backdrop-filter: blur(25px);
@@ -7067,6 +7511,9 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
           box-shadow: var(--shadow-xl);
           z-index: 100;
           transition: width 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+          box-sizing: border-box;
+          display: flex;
+          flex-direction: column;
         }
         .audio-sub-popover-center::before {
           content: '';
@@ -7081,15 +7528,17 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
         .popover-cols {
           display: grid;
           gap: 1.25rem;
+          height: 100%;
+          min-height: 0;
+          align-items: stretch;
+          overflow: hidden;
+          box-sizing: border-box;
           transition: grid-template-columns 0.3s ease;
         }
-        @media (max-width: 1024px) {
-          .popover-transcript-col,
-          .popover-style-col {
-            display: none !important;
-          }
+        @media (max-width: 520px) {
           .popover-cols {
-            grid-template-columns: 1fr 1fr !important;
+            display: flex !important;
+            flex-direction: column !important;
           }
         }
         @media (min-width: 1025px) {
@@ -7102,13 +7551,18 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
           padding-left: 1.25rem;
           display: flex;
           flex-direction: column;
-          max-height: 200px;
+          height: 100%;
+          min-height: 0;
+          overflow: hidden;
         }
         .popover-style-col {
           border-left: 1px solid var(--border-subtle);
           padding-left: 1.25rem;
           display: flex;
           flex-direction: column;
+          height: 100%;
+          min-height: 0;
+          overflow: hidden;
         }
         .style-header-row {
           display: flex;
@@ -7143,10 +7597,24 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
           border-color: var(--border-focus);
         }
         .style-customizer {
+          flex: 1 1 auto;
+          min-height: 0;
           display: flex;
           flex-direction: column;
-          gap: 0.75rem;
+          gap: 0.85rem;
           margin-top: 0.5rem;
+          overflow-y: auto;
+          overflow-x: hidden;
+          padding-right: 4px;
+          scrollbar-width: thin;
+          scrollbar-color: rgba(255, 255, 255, 0.2) transparent;
+        }
+        .style-customizer::-webkit-scrollbar {
+          width: 4px;
+        }
+        .style-customizer::-webkit-scrollbar-thumb {
+          background: rgba(255, 255, 255, 0.2);
+          border-radius: 2px;
         }
         .style-font-size-row {
           display: grid;
@@ -7351,8 +7819,10 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
           border-color: var(--player-accent, #e50914);
         }
         .transcript-cues-list {
-          flex: 1;
+          flex: 1 1 auto;
+          min-height: 0;
           overflow-y: auto;
+          overflow-x: hidden;
           display: flex;
           flex-direction: column;
           gap: 0.35rem;
@@ -7405,6 +7875,10 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
         .popover-col {
           display: flex;
           flex-direction: column;
+          height: 100%;
+          min-height: 0;
+          overflow: hidden;
+          box-sizing: border-box;
         }
         .popover-col h4 {
           margin: 0 0 0.6rem 0;
@@ -7413,18 +7887,26 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
           padding-bottom: 0.35rem;
           color: #ffffff;
           font-weight: 600;
+          flex-shrink: 0;
         }
         .popover-options {
+          flex: 1 1 auto;
+          min-height: 0;
           display: flex;
           flex-direction: column;
           gap: 0.4rem;
-          max-height: 140px;
           overflow-y: auto;
+          overflow-x: hidden;
+          padding-right: 4px;
           scrollbar-width: thin;
-          scrollbar-color: rgba(255,255,255,0.1) transparent;
+          scrollbar-color: rgba(255, 255, 255, 0.2) transparent;
         }
         .popover-options::-webkit-scrollbar {
-          display: none; /* Safari and Chrome */
+          width: 4px;
+        }
+        .popover-options::-webkit-scrollbar-thumb {
+          background: rgba(255, 255, 255, 0.2);
+          border-radius: 2px;
         }
         .popover-option {
           display: flex;
@@ -8083,17 +8565,17 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
             id: 'stats', label: 'Console', icon: <Terminal size={24} />, onClick: () => setShowConsoleOverlay(prev => !prev), disabled: false
           });
         }
-        if (config.audioSubs && !isUndetectedLocalMedia) {
+        if (config.audioSubs && (showSubtitleControl !== false || showAudioControl !== false)) {
           rItems.push({
             id: 'audio', label: 'Audio/Subs', icon: <MessageSquare size={24} />, onClick: () => setShowAudioSubMenu(true), disabled: isLocked
           });
         }
         if (config.fullscreen) {
           rItems.push({
-            id: 'fullscreen', label: isFullscreen ? 'Exit Fullscreen' : 'Fullscreen', icon: isFullscreen ? <Minimize size={24} /> : <Maximize size={24} />, onClick: toggleFullscreen, disabled: isLocked
+            id: 'fullscreen', label: (isFullscreen || isPseudoFullscreen) ? 'Exit Fullscreen' : 'Fullscreen', icon: (isFullscreen || isPseudoFullscreen) ? <Minimize size={24} /> : <Maximize size={24} />, onClick: toggleFullscreen, disabled: isLocked
           });
         }
-        if (config.bookmark && !isUndetectedLocalMedia) {
+        if (config.bookmark && !isUndetectedLocalMedia && showBookmarksControl !== false) {
           rItems.push({
             id: 'bookmark', label: 'Bookmark', icon: <BookmarkIcon size={24} />, onClick: () => setShowAddDialog(true), disabled: isLocked
           });

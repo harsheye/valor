@@ -77,3 +77,6 @@ export const ratingThresholdOptions = [
   { value: 5, label: '5 minutes remaining' },
   { value: 10, label: '10 minutes remaining' }
 ];
+
+export const TRAKT_CLIENT_ID = 'V4WfZovVxhKMc-KNyfTHgL_KtI84gJLnBHMss-qwu88';
+

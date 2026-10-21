@@ -230,7 +230,7 @@ export const OnlineEmbedPlayer: React.FC<OnlineEmbedPlayerProps> = ({
           className="online-player-iframe"
           allowFullScreen
           frameBorder="0"
-          allow="autoplay; encrypted-media"
+          allow="autoplay; encrypted-media; fullscreen; picture-in-picture"
           {...{ credentialless: "true" }}
         ></iframe>
       </main>

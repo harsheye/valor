@@ -68,6 +68,7 @@ import { SpinnerSettingsView } from './components/SpinnerSettingsView';
 import { EsportsLiveOverlay } from './components/EsportsLiveOverlay';
 import Calendar02 from './components/creative-tim/blocks/calendar-02';
 import { classifyVideoTitle } from './utils/libraryClassifier';
+import { saveEmbedSubtitles, getEmbedSubtitlesSync } from './utils/embedSubtitleStorage';
 import { 
   Film, UploadCloud, Play, Settings, X, Calendar, List,
   History, Home, Layers, Type, Clock, Sliders, Volume2,
@@ -91,10 +92,22 @@ import { OnlineStreamPage } from './pages/OnlineStreamPage';
 import { SettingsPage } from './pages/SettingsPage';
 import { AdminDashboard } from './pages/AdminDashboard';
 import { 
+  initiateTraktPkceAuth, 
+  exchangeTraktCodeForToken, 
+  fetchTraktUserProfile, 
+  getTraktAuthAction, 
+  clearTraktAuthState, 
+  TRAKT_CLIENT_ID,
+  TRAKT_DEFAULT_REDIRECT_URI,
+  syncTraktHistory,
+  syncTraktRating
+} from './services/traktAuth';
+import { 
   audioOptions, subOptions, calendarStyleOptions, limitOptions, 
   intervalOptions, toastOptions, uiHideTimeoutOptions, fontOptions, 
   storageModeOptions, ratingThresholdOptions 
 } from './utils/constants';
+import { saveMediaTimestamp, getMediaTimestamp } from './utils/mediaTimestampStorage';
 
 
 const NotchedFrame: React.FC<{ children: React.ReactNode; resetAction: React.ReactNode }> = ({ children, resetAction }) => {
@@ -332,7 +345,10 @@ const defaultSettings = {
   overlayShowOverview: true as boolean,
   openSubtitlesApiKey: '' as string,
   traktAccessToken: '' as string,
-  traktRedirectUri: 'http://localhost' as string,
+  traktRefreshToken: '' as string,
+  traktUsername: '' as string,
+  traktAvatar: '' as string,
+  traktRedirectUri: '' as string,
   traktSyncHistory: true as boolean,
   traktSyncFavorites: true as boolean,
   calendarStyle: 'grid' as 'grid' | 'list',
@@ -381,6 +397,9 @@ function App() {
       if (saved) {
         const parsed = JSON.parse(saved);
         if (parsed && typeof parsed === 'object') {
+          if (parsed.traktRedirectUri) {
+            parsed.traktRedirectUri = parsed.traktRedirectUri.trim().replace(/\/+$/, '');
+          }
           return {
             ...baseSettings,
             ...parsed,
@@ -504,7 +523,15 @@ function App() {
 
       const saved = localStorage.getItem('valor_currently_playing');
       const useIdStreamInit = getUseIdStreamFromStorage();
-      return saved ? sanitizeVideoItem(JSON.parse(saved), useIdStreamInit) : null;
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        const storedPos = getMediaTimestamp(parsed);
+        if (storedPos > 0 && (!parsed.currentTime || storedPos > parsed.currentTime)) {
+          parsed.currentTime = storedPos;
+        }
+        return sanitizeVideoItem(parsed, useIdStreamInit);
+      }
+      return null;
     } catch (err) {
       console.error('Failed to parse currently playing video:', err);
       return null;
@@ -604,10 +631,29 @@ function App() {
     if (isPlaybackRestoring) return;
     if (playingVideo) {
       localStorage.setItem('valor_currently_playing', JSON.stringify(playingVideo));
+      if (typeof playingVideo.currentTime === 'number') {
+        saveMediaTimestamp(playingVideo, playingVideo.currentTime, Number(playingVideo.duration) || 0, playingVideo.title);
+      }
     } else {
       localStorage.removeItem('valor_currently_playing');
     }
   }, [playingVideo, isPlaybackRestoring]);
+
+  // Flush media playback position on browser reload / pagehide
+  useEffect(() => {
+    const handleUnload = () => {
+      if (playingVideo && typeof playingVideo.currentTime === 'number') {
+        saveMediaTimestamp(playingVideo, playingVideo.currentTime, Number(playingVideo.duration) || 0, playingVideo.title);
+        localStorage.setItem('valor_currently_playing', JSON.stringify(playingVideo));
+      }
+    };
+    window.addEventListener('beforeunload', handleUnload);
+    window.addEventListener('pagehide', handleUnload);
+    return () => {
+      window.removeEventListener('beforeunload', handleUnload);
+      window.removeEventListener('pagehide', handleUnload);
+    };
+  }, [playingVideo]);
 
   const [settingsTab, setSettingsTab] = useState<'general' | 'hotkeys' | 'subtitle' | 'storage' | 'gridOverlay' | 'api' | 'bookmarks' | 'loader' | 'radialMenu'>('general');
   const [uiOverlaySection, setUiOverlaySection] = useState<'gridOverlay' | 'pauseOverlay'>('gridOverlay');
@@ -685,29 +731,6 @@ function App() {
     console.log(isProcessing, processingStep);
   }
 
-  // Heartbeat to keep the server alive while the app is active and receive commands
-  useEffect(() => {
-    const ping = async () => {
-      try {
-        const res = await fetch(`${BACKEND_ORIGIN}/api/heartbeat`, { method: 'POST' });
-        if (res.ok) {
-          const data = await res.json();
-          if (data && data.playFile) {
-            const localStreamUrl = `${BACKEND_ORIGIN}/local-video-stream?path=${encodeURIComponent(data.playFile)}`;
-            processRemoteUrl(localStreamUrl, true);
-            // Update URL query parameters without reloading the page
-            const newUrl = `${window.location.pathname}?file=${encodeURIComponent(data.playFile)}`;
-            window.history.replaceState({}, '', newUrl);
-          }
-        }
-      } catch (err) {
-        // ignore fetch/parse errors
-      }
-    };
-    ping();
-    const interval = setInterval(ping, 2500);
-    return () => clearInterval(interval);
-  }, []);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -737,81 +760,60 @@ function App() {
 
     const traktCode = params.get('code');
     if (traktCode) {
-      const exchangeTraktCode = async () => {
+      const handleTraktAuthReturn = async () => {
         try {
-          let redirectUri = 'http://localhost:50000';
-          try {
-            const activeUserId = localStorage.getItem('valor_active_user_id') || 'local';
-            const settingsKey = activeUserId === 'local' ? 'valor_settings' : `valor_settings_${activeUserId}`;
-            const savedSettings = localStorage.getItem(settingsKey);
-            if (savedSettings) {
-              const parsed = JSON.parse(savedSettings);
-              if (parsed.traktRedirectUri) {
-                redirectUri = parsed.traktRedirectUri;
-              }
-            }
-          } catch {}
+          const authAction = getTraktAuthAction();
+          const tokenData = await exchangeTraktCodeForToken(traktCode, BACKEND_ORIGIN);
+          const accessToken = tokenData.access_token;
+          const refreshToken = tokenData.refresh_token || '';
 
-          let accessToken = null;
-
-          // 1. Try Backend API exchange endpoint
-          try {
-            const res = await fetch(`${BACKEND_ORIGIN}/api/trakt/exchange`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                code: traktCode,
-                redirect_uri: redirectUri
-              })
-            });
-            if (res.ok) {
-              const data = await res.json();
-              if (data.access_token) accessToken = data.access_token;
-            }
-          } catch (e) {
-            console.warn('Backend Trakt exchange failed, trying client fallback');
-          }
-
-          // 2. Client-side direct Trakt token exchange fallback
           if (!accessToken) {
-            const traktRes = await fetch('https://api.trakt.tv/oauth/token', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                code: traktCode,
-                client_id: 'f2926f0d87d3e789c50a3c276ab6002f5027dec31089fe75792c2836165c7289',
-                redirect_uri: redirectUri,
-                grant_type: 'authorization_code'
-              })
-            });
-            if (traktRes.ok) {
-              const data = await traktRes.json();
-              if (data.access_token) accessToken = data.access_token;
-            }
+            throw new Error('No access token received from Trakt.tv');
           }
 
-          if (accessToken) {
-            setSettings(prev => {
-              const updated = {
-                ...prev,
-                traktAccessToken: accessToken
-              };
-              saveSettingsToStorage(updated);
-              return updated;
-            });
-            addToast('Successfully connected to Trakt.tv!', 'success');
-          } else {
-            throw new Error('Failed to exchange code for access token');
+          let traktProfile = null;
+          try {
+            traktProfile = await fetchTraktUserProfile(accessToken, BACKEND_ORIGIN);
+          } catch (profileErr) {
+            console.warn('[Trakt PKCE] Could not fetch user profile details:', profileErr);
           }
-        } catch (err) {
-          console.error('Error exchanging Trakt auth code:', err);
-          addToast('Failed to connect to Trakt.tv.', 'error');
+
+          const username = traktProfile?.username || '';
+          const avatar = traktProfile?.avatarUrl || '';
+
+          setSettings(prev => {
+            const updated = {
+              ...prev,
+              traktAccessToken: accessToken,
+              traktRefreshToken: refreshToken,
+              traktUsername: username || prev.traktUsername || '',
+              traktAvatar: avatar || prev.traktAvatar || ''
+            };
+            saveSettingsToStorage(updated);
+            return updated;
+          });
+
+          if (authAction === 'login' && username) {
+            setIsAuthModalOpen(false);
+            addToast(`Welcome, @${username}! Signed in via Trakt.tv.`, 'success');
+          } else {
+            addToast(
+              username
+                ? `Successfully connected to Trakt.tv as @${username}!`
+                : 'Successfully connected to Trakt.tv!',
+              'success'
+            );
+          }
+        } catch (err: any) {
+          console.error('[Trakt PKCE] Error handling Trakt auth return:', err);
+          addToast(`Trakt Auth Error: ${err.message || 'Failed to authenticate'}`, 'error');
         } finally {
+          clearTraktAuthState();
           const cleanUrl = window.location.pathname + window.location.hash;
           window.history.replaceState({}, document.title, cleanUrl);
         }
       };
-      exchangeTraktCode();
+      handleTraktAuthReturn();
     }
   }, []);
 
@@ -1262,46 +1264,19 @@ function App() {
     }]);
   }, []);
 
-  // Real-time Telemetry Heartbeat (Active User Presence Tracking in Redis & PostgreSQL)
-  useEffect(() => {
-    let sessionId = localStorage.getItem('valor_session_id');
-    if (!sessionId) {
-      sessionId = `sess_${Math.random().toString(36).substring(2, 10)}_${Date.now().toString(36)}`;
-      localStorage.setItem('valor_session_id', sessionId);
-    }
-
-    const sendTelemetryHeartbeat = () => {
-      const activeProfileName = availableProfiles.find(p => p.userId === settings.userId)?.name || settings.profileName || 'Default Profile';
-      fetch('/api/telemetry/heartbeat', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Valor-Session': sessionId || '',
-          'X-Valor-User-Id': settings.userId || 'local',
-          'X-Valor-Profile-Name': encodeURIComponent(activeProfileName)
-        },
-        body: JSON.stringify({
-          sessionId,
-          userId: settings.userId || 'local',
-          profileName: activeProfileName,
-          currentPath: `/${activeTab}`,
-          pageTitle: `Valor - ${activeTab.toUpperCase()}`,
-          isIdle: document.hidden
-        })
-      }).catch(() => {});
-    };
-
-    sendTelemetryHeartbeat();
-    const heartbeatInterval = setInterval(sendTelemetryHeartbeat, 15000);
-    return () => clearInterval(heartbeatInterval);
-  }, [activeTab, settings.userId, settings.profileName, availableProfiles]);
-
   useEffect(() => {
     (window as any)._onShowMediaDetails = (video: VideoItem) => {
       handleOpenMediaDetails(video);
     };
     (window as any)._onRateCalendarVideo = (video: VideoItem, rating: number) => {
       handleUpdateVideo((prev) => ({ ...prev, rating }), false, video.id, true);
+      if (settings.traktAccessToken) {
+        syncTraktRating(video, rating, settings.traktAccessToken).then((res) => {
+          if (res.ok) {
+            addToast(`Trakt Rating: Synced ${rating <= 5 ? rating * 2 : rating}/10`, 'success');
+          }
+        }).catch(() => {});
+      }
     };
     (window as any)._onDeleteCalendarVideo = (video: VideoItem) => {
       const mockEvent = { stopPropagation: () => {} } as any;
@@ -1622,13 +1597,22 @@ function App() {
               const matched = loadedHistory.find(h => h.id === videoObj.id || h.title === videoObj.title);
               if (matched) {
                 const useIdStream = (loadedSettings?.storageMode === 'file' || settings.storageMode === 'file');
+                const storedPos = getMediaTimestamp(videoObj);
+                const resolvedTime = (storedPos > 0 && (!videoObj.currentTime || storedPos > videoObj.currentTime))
+                  ? storedPos
+                  : (videoObj.currentTime !== undefined ? videoObj.currentTime : matched.currentTime);
                 const merged = {
                   ...videoObj,
                   ...matched,
                   file: videoObj.file || matched.file,
-                  currentTime: videoObj.currentTime !== undefined ? videoObj.currentTime : matched.currentTime
+                  currentTime: resolvedTime
                 };
                 videoObj = sanitizeVideoItem(merged, useIdStream);
+              } else {
+                const storedPos = getMediaTimestamp(videoObj);
+                if (storedPos > 0 && (!videoObj.currentTime || storedPos > videoObj.currentTime)) {
+                  videoObj = { ...videoObj, currentTime: storedPos };
+                }
               }
               
               // If it's a local file and still using a blob URL (no localFilePath), try to recover from IndexedDB handle
@@ -1936,6 +1920,13 @@ function App() {
         const activeIds = targetVideos.map(v => v.id);
         cleanupFileHandles(activeIds).catch(err => console.warn('[IndexedDB Cleanup] Failed:', err));
 
+        // Ensure subtitle tracks with cues are backed up into browser storage
+        targetVideos.forEach(v => {
+          if (v.subtitleTracks && v.subtitleTracks.some(t => t.cues && t.cues.length > 0)) {
+            saveEmbedSubtitles(v, v.subtitleTracks);
+          }
+        });
+
         const serialized = targetVideos.map(v => ({
           id: v.id,
           title: v.title,
@@ -2072,6 +2063,10 @@ function App() {
             targetVideo = (updatedVideoOrUpdater as Function)(current);
           }
         }
+      }
+
+      if (targetVideo && targetVideo.subtitleTracks && targetVideo.subtitleTracks.some(t => t.cues && t.cues.length > 0)) {
+        saveEmbedSubtitles(targetVideo, targetVideo.subtitleTracks);
       }
 
       let nextVideos: VideoItem[];
@@ -2420,6 +2415,14 @@ function App() {
     }
 
     try {
+      const hasCues = video.subtitleTracks && video.subtitleTracks.some(t => t.cues && t.cues.length > 0);
+      if (!hasCues) {
+        const cachedSubs = getEmbedSubtitlesSync(video);
+        if (cachedSubs && cachedSubs.length > 0) {
+          video = { ...video, subtitleTracks: cachedSubs };
+        }
+      }
+
       if (video.type === 'url') {
         setVideos(prev => mergeOrAddVideo(prev, video));
         setPlayingVideo(video);
@@ -2557,150 +2560,30 @@ function App() {
         return;
       }
 
-      const seriesInfo = classifyVideoTitle(video.title);
-      const isTV = seriesInfo.type === 'series';
-      
-      let tmdbId = video.tmdbId;
+      const historyResult = await syncTraktHistory(video, token);
+      if (historyResult.ok) {
+        handleUpdateVideo((prev) => ({
+          ...prev,
+          hasScrobbledTrakt: true,
+          ...(historyResult.tmdbId ? { tmdbId: historyResult.tmdbId } : {})
+        }), false, video.id, true);
 
-      if (!tmdbId) {
-        const tmdbToken = "eyJhbGciOiJIUzI1NiJ9.eyJhdWQiOiJlMzQwMGRhZWZjODJjNTJlZDEyYzk1MWU1ZWFmYmVhYyIsIm5iZiI6MTc4MzU0MTI2OS44NzUsInN1YiI6IjZhNGVhZTE1MzFhOWUyYmNhZjBmY2RlMiIsInNjb3BlcyI6WyJhcGlfcmVhZCJdLCJ2ZXJzaW9uIjoxfQ.GT6_b6NSJwjYCXlbaCi_djq09ug0rKDxY9iouqVrYWY";
-        let searchUrl = "";
-        if (isTV && seriesInfo.seriesTitle) {
-          searchUrl = `https://api.themoviedb.org/3/search/tv?query=${encodeURIComponent(seriesInfo.seriesTitle)}&include_adult=false`;
-        } else {
-          searchUrl = `https://api.themoviedb.org/3/search/movie?query=${encodeURIComponent(seriesInfo.displayTitle || video.title)}&include_adult=false`;
-        }
-
-        const searchRes = await fetch(searchUrl, {
-          headers: {
-            'Authorization': `Bearer ${tmdbToken}`,
-            'accept': 'application/json'
-          }
-        });
-
-        if (searchRes.ok) {
-          const searchData = await searchRes.json();
-          if (searchData.results && searchData.results.length > 0) {
-            tmdbId = searchData.results[0].id;
-            handleUpdateVideo((prev) => ({ ...prev, tmdbId }), false, video.id, true);
-          }
-        }
-      }
-
-      const nowIso = new Date().toISOString();
-      const body: any = {};
-      if (isTV) {
-        if (!tmdbId) {
-          addToast("Trakt Sync: No TMDB ID resolved for series", "error");
-          return;
-        }
-        body.shows = [
-          {
-            ids: { tmdb: tmdbId },
-            seasons: [
-              {
-                number: seriesInfo.season || 1,
-                episodes: [
-                  {
-                    number: seriesInfo.episode || 1,
-                    watched_at: nowIso
-                  }
-                ]
-              }
-            ]
-          }
-        ];
-      } else {
-        body.movies = [
-          {
-            title: seriesInfo.displayTitle || video.title,
-            watched_at: nowIso,
-            ids: tmdbId ? { tmdb: tmdbId } : undefined
-          }
-        ];
-        if (!tmdbId && !seriesInfo.displayTitle) {
-          addToast("Trakt Sync: No title or TMDB ID resolved", "error");
-          return;
-        }
-      }
-
-      const res = await fetch('https://api.trakt.tv/sync/history', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`,
-          'trakt-api-key': 'f2926f0d87d3e789c50a3c276ab6002f5027dec31089fe75792c2836165c7289',
-          'trakt-api-version': '2'
-        },
-        body: JSON.stringify(body)
-      });
-
-      if (res.ok) {
-        const resData = await res.json();
-        let syncMessage = `Trakt Sync: Added ${resData.added?.movies || resData.added?.episodes || 1} item to history`;
-        handleUpdateVideo((prev) => ({ ...prev, hasScrobbledTrakt: true }), false, video.id, true);
+        let finalMessage = historyResult.message;
 
         // Sync rating to Trakt if present
         const userRating = video.rating;
         if (userRating && userRating > 0) {
-          const ratingBody: any = {};
-          if (isTV) {
-            ratingBody.shows = [
-              {
-                ids: { tmdb: tmdbId },
-                seasons: [
-                  {
-                    number: seriesInfo.season || 1,
-                    episodes: [
-                      {
-                        number: seriesInfo.episode || 1,
-                        rating: userRating * 2,
-                        rated_at: nowIso
-                      }
-                    ]
-                  }
-                ]
-              }
-            ];
+          const ratingResult = await syncTraktRating(video, userRating, token);
+          if (ratingResult.ok) {
+            finalMessage += ` & Rated (${userRating <= 5 ? userRating * 2 : userRating}/10)`;
           } else {
-            ratingBody.movies = [
-              {
-                title: seriesInfo.displayTitle || video.title,
-                rating: userRating * 2,
-                rated_at: nowIso,
-                ids: tmdbId ? { tmdb: tmdbId } : undefined
-              }
-            ];
-          }
-
-          console.log(`[Trakt Rating Sync] Syncing rating (${userRating * 2}/10) to Trakt.tv...`);
-          try {
-            const ratingRes = await fetch('https://api.trakt.tv/sync/ratings', {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${token}`,
-                'trakt-api-key': 'f2926f0d87d3e789c50a3c276ab6002f5027dec31089fe75792c2836165c7289',
-                'trakt-api-version': '2'
-              },
-              body: JSON.stringify(ratingBody)
-            });
-
-            if (ratingRes.ok) {
-              console.log('[Trakt Rating Sync] Successfully synced rating to Trakt.tv!');
-              syncMessage += ` & Rated ${userRating * 2}/10`;
-            } else {
-              console.warn(`[Trakt Rating Sync] Trakt.tv rating sync failed with status: ${ratingRes.status}`);
-            }
-          } catch (ratingErr) {
-            console.error('[Trakt Rating Sync] Error syncing rating:', ratingErr);
+            console.warn(`[Trakt Rating Sync] ${ratingResult.message}`);
           }
         }
-        
-        addToast(syncMessage, "success");
+
+        addToast(finalMessage, "success");
       } else {
-        const errText = await res.text();
-        addToast(`Trakt Sync Failed: ${res.status} - ${errText.substring(0, 40)}`, "error");
+        addToast(historyResult.message, "error");
       }
     } catch (err) {
       console.error(err);
@@ -3113,6 +2996,9 @@ function App() {
           }
         };
         setSettings(updated);
+        try {
+          localStorage.setItem('valor_sub_settings', JSON.stringify(updated.subSettings));
+        } catch {}
         saveSettingsToStorage(updated);
       },
       onUpdateSettings: (updatedSettings: any) => {
@@ -3722,6 +3608,54 @@ function App() {
                     }} />
                   )}
                 </button>
+              </div>
+            )}
+
+            {/* Trakt.tv PKCE Sign-In Option */}
+            {!selectedProfileForLogin && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '4px' }}>
+                <button
+                  type="button"
+                  onClick={() => initiateTraktPkceAuth({ isLoginAction: true, redirectUri: settings.traktRedirectUri || TRAKT_DEFAULT_REDIRECT_URI })}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: '10px',
+                    width: '100%',
+                    background: 'linear-gradient(135deg, rgba(237, 28, 36, 0.18) 0%, rgba(185, 28, 28, 0.22) 100%)',
+                    border: '1px solid rgba(237, 28, 36, 0.4)',
+                    color: '#ff4d4f',
+                    padding: '10px 14px',
+                    borderRadius: '10px',
+                    fontSize: '0.84rem',
+                    fontWeight: 700,
+                    cursor: 'pointer',
+                    boxShadow: '0 4px 14px rgba(237, 28, 36, 0.12)',
+                    transition: 'all 0.2s ease',
+                    fontFamily: 'Outfit, sans-serif'
+                  }}
+                  onMouseEnter={e => {
+                    e.currentTarget.style.background = 'linear-gradient(135deg, rgba(237, 28, 36, 0.3) 0%, rgba(185, 28, 28, 0.35) 100%)';
+                    e.currentTarget.style.borderColor = 'rgba(237, 28, 36, 0.65)';
+                  }}
+                  onMouseLeave={e => {
+                    e.currentTarget.style.background = 'linear-gradient(135deg, rgba(237, 28, 36, 0.18) 0%, rgba(185, 28, 28, 0.22) 100%)';
+                    e.currentTarget.style.borderColor = 'rgba(237, 28, 36, 0.4)';
+                  }}
+                >
+                  <span style={{ display: 'inline-block', width: '8px', height: '8px', borderRadius: '50%', background: '#ed1c24', boxShadow: '0 0 8px #ed1c24' }}></span>
+                  <span>Continue with Trakt.tv</span>
+                  <span style={{ fontSize: '0.62rem', background: 'rgba(34, 197, 94, 0.16)', color: '#22c55e', border: '1px solid rgba(34, 197, 94, 0.28)', padding: '1px 5px', borderRadius: '4px', marginLeft: 'auto' }}>
+                    PKCE S256
+                  </span>
+                </button>
+
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', margin: '2px 0' }}>
+                  <div style={{ flex: 1, height: '1px', background: 'rgba(255, 255, 255, 0.08)' }} />
+                  <span style={{ fontSize: '0.68rem', color: 'rgba(255, 255, 255, 0.35)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>or with credentials</span>
+                  <div style={{ flex: 1, height: '1px', background: 'rgba(255, 255, 255, 0.08)' }} />
+                </div>
               </div>
             )}
 

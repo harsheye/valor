@@ -298,8 +298,8 @@ paths:
 
   /api/trakt/exchange:
     post:
-      summary: Trakt Token Exchange Proxy
-      description: Exchanges Trakt OAuth code for an Access Token securely on the backend.
+      summary: Trakt PKCE Token Exchange Proxy
+      description: Exchanges Trakt OAuth authorization code and PKCE code_verifier for an Access Token securely without requiring client_secret.
       requestBody:
         required: true
         content:
@@ -312,9 +312,12 @@ paths:
                 code:
                   type: string
                   example: 92c011e4b6df9ff6f52fca5f185a846b36d7c0827e9793781260bae16ead4ecd
+                code_verifier:
+                  type: string
+                  example: dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk
                 redirect_uri:
                   type: string
-                  example: http://localhost:50000
+                  example: https://localhost
       responses:
         '200':
           description: Access token payload
@@ -329,6 +332,29 @@ paths:
                   token_type:
                     type: string
                     example: Bearer
+                  refresh_token:
+                    type: string
+                    example: ref789...
+
+  /api/trakt/user:
+    post:
+      summary: Fetch Trakt User Profile
+      description: Fetches full profile details for the authenticated Trakt user via Bearer access token.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - access_token
+              properties:
+                access_token:
+                  type: string
+      responses:
+        '200':
+          description: User profile details
+
 
   /api/log:
     post:

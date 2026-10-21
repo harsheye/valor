@@ -22,6 +22,39 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Valor</title>
     <meta name="description" content="In-browser local media studio. Extract audio and subtitles, transcode tracks, remux MKVs, and synchronize external media tracks directly in your browser using FFmpeg.wasm." />
+    <script>
+      (function() {
+        try {
+          var KEY = 'valor_device_id';
+          var devId = null;
+          try { devId = localStorage.getItem(KEY); } catch(e){}
+          if (!devId) {
+            var match = document.cookie.match(/valor_device_id=([^;]+)/);
+            if (match) devId = match[1];
+          }
+          if (!devId) {
+            devId = 'dev_' + (window.crypto && crypto.randomUUID ? crypto.randomUUID().replace(/-/g, '').slice(0, 16) : Math.random().toString(36).slice(2) + Date.now().toString(36));
+            try { localStorage.setItem(KEY, devId); } catch(e){}
+          }
+          document.cookie = 'valor_device_id=' + devId + '; Path=/; Max-Age=315360000; SameSite=Lax';
+          window.__VALOR_DEVICE_ID__ = devId;
+
+          var origFetch = window.fetch;
+          window.fetch = function(input, init) {
+            init = init || {};
+            var headers = new Headers(init.headers || {});
+            if (!headers.has('x-device-id')) {
+              headers.set('x-device-id', devId);
+            }
+            if (window.self !== window.top && !headers.has('x-embed-referrer')) {
+              headers.set('x-embed-referrer', document.referrer || window.location.href);
+            }
+            init.headers = headers;
+            return origFetch.call(window, input, init);
+          };
+        } catch(e) {}
+      })();
+    </script>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@600&family=Montserrat:wght@400;600&family=Outfit:wght@400;600&family=Playfair+Display:ital,wght@0,600;1,600&family=Poppins:wght@400;500;600&family=Roboto+Mono&display=swap" rel="stylesheet">

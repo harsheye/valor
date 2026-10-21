@@ -18,7 +18,7 @@ interface SubtitleOverlayProps {
   cues: SubtitleCue[];
   currentTime: number;
   settings: SubtitleSettings;
-  controlsVisible: boolean;
+  controlsVisible?: boolean;
   menuVisible?: boolean;
 }
 
@@ -26,19 +26,38 @@ export const SubtitleOverlay: React.FC<SubtitleOverlayProps> = ({
   cues,
   currentTime,
   settings,
-  controlsVisible,
+  controlsVisible: _controlsVisible,
   menuVisible = false,
 }) => {
+  const safeSettings: SubtitleSettings = settings ? {
+    ...settings,
+    fontSize: settings.fontSize || 'medium',
+    color: settings.color || 'white',
+    backdrop: settings.backdrop || 'shadow',
+    fontFamily: settings.fontFamily || 'sans-serif',
+    fontStyle: settings.fontStyle || 'normal',
+  } : {
+    fontSize: 'medium',
+    color: 'white',
+    backdrop: 'shadow',
+    fontFamily: 'sans-serif',
+    fontStyle: 'normal'
+  };
+
   // Find all active cues for the current playback time, filtering out empty/whitespace ones
-  const activeCues = cues.filter(
+  const activeCues = (cues || []).filter(
     (cue) => currentTime >= cue.startTime && currentTime <= cue.endTime && cue.text && cue.text.trim() !== ''
   );
 
   // Deduplicate overlapping cues with the same text to prevent collision
   const uniqueActiveCues = Array.from(new Map(activeCues.map(c => [c.text.trim(), c])).values());
 
+  if (uniqueActiveCues.length === 0) {
+    return null;
+  }
+
   // Format newlines into line breaks for each active cue, wrapped in individual block elements
-  const formattedText = uniqueActiveCues.length > 0 ? uniqueActiveCues.map((cue, cueIdx) => (
+  const formattedText = uniqueActiveCues.map((cue, cueIdx) => (
     <div key={cue.id || cueIdx} className="subtitle-line-group" style={{ marginTop: cueIdx > 0 ? '0.5rem' : 0 }}>
       {cue.text.split('\n').map((line, lineIdx) => (
         <React.Fragment key={lineIdx}>
@@ -47,29 +66,29 @@ export const SubtitleOverlay: React.FC<SubtitleOverlayProps> = ({
         </React.Fragment>
       ))}
     </div>
-  )) : null;
+  ));
 
   let selectedFont = '"Poppins", system-ui, sans-serif';
-  if (settings.fontFamily === 'poppins') selectedFont = '"Poppins", system-ui, sans-serif';
-  else if (settings.fontFamily === 'montserrat') selectedFont = '"Montserrat", sans-serif';
-  else if (settings.fontFamily === 'outfit') selectedFont = '"Outfit", sans-serif';
-  else if (settings.fontFamily === 'cinzel') selectedFont = '"Cinzel", serif';
-  else if (settings.fontFamily === 'serif') selectedFont = '"Playfair Display", Georgia, serif';
-  else if (settings.fontFamily === 'monospace') selectedFont = '"Roboto Mono", Courier New, monospace';
-  else if (settings.fontFamily === 'sans-serif') selectedFont = '"Poppins", system-ui, sans-serif';
+  if (safeSettings.fontFamily === 'poppins') selectedFont = '"Poppins", system-ui, sans-serif';
+  else if (safeSettings.fontFamily === 'montserrat') selectedFont = '"Montserrat", sans-serif';
+  else if (safeSettings.fontFamily === 'outfit') selectedFont = '"Outfit", sans-serif';
+  else if (safeSettings.fontFamily === 'cinzel') selectedFont = '"Cinzel", serif';
+  else if (safeSettings.fontFamily === 'serif') selectedFont = '"Playfair Display", Georgia, serif';
+  else if (safeSettings.fontFamily === 'monospace') selectedFont = '"Roboto Mono", Courier New, monospace';
+  else if (safeSettings.fontFamily === 'sans-serif') selectedFont = '"Poppins", system-ui, sans-serif';
 
   const fontStyleStyles: React.CSSProperties = {
     fontFamily: selectedFont,
-    fontWeight: settings.fontStyle === 'bold' ? 700 : 500,
-    fontStyle: settings.fontStyle === 'italic' ? 'italic' : 'normal',
+    fontWeight: safeSettings.fontStyle === 'bold' ? 700 : 500,
+    fontStyle: safeSettings.fontStyle === 'italic' ? 'italic' : 'normal',
   };
 
-  if (settings.customTextColor) {
-    fontStyleStyles.color = settings.customTextColor;
+  if (safeSettings.customTextColor) {
+    fontStyleStyles.color = safeSettings.customTextColor;
   }
-  if (settings.customBgColor) {
-    fontStyleStyles.backgroundColor = settings.customBgColor;
-    if (settings.customBgColor !== 'transparent') {
+  if (safeSettings.customBgColor) {
+    fontStyleStyles.backgroundColor = safeSettings.customBgColor;
+    if (safeSettings.customBgColor !== 'transparent') {
       fontStyleStyles.padding = '0.45rem 1.2rem';
       fontStyleStyles.borderRadius = '6px';
       fontStyleStyles.boxShadow = '0 8px 20px rgba(0,0,0,0.4)';
@@ -78,13 +97,13 @@ export const SubtitleOverlay: React.FC<SubtitleOverlayProps> = ({
       fontStyleStyles.textShadow = '0px 2px 4px rgba(0,0,0,0.9), -1px -1px 0px rgba(0,0,0,0.9), 1px -1px 0px rgba(0,0,0,0.9), -1px 1px 0px rgba(0,0,0,0.9), 1px 1px 0px rgba(0,0,0,0.9)';
     }
   }
-  if (settings.customSize && settings.customSize > 0) {
-    fontStyleStyles.fontSize = `${(settings.customSize / 100) * 1.65}rem`;
+  if (safeSettings.customSize && safeSettings.customSize > 0) {
+    fontStyleStyles.fontSize = `${(safeSettings.customSize / 100) * 1.65}rem`;
   }
 
-  const isCustomColor = !!settings.customTextColor;
-  const isCustomBg = !!settings.customBgColor;
-  const isCustomSize = !!settings.customSize && settings.customSize > 0;
+  const isCustomColor = !!safeSettings.customTextColor;
+  const isCustomBg = !!safeSettings.customBgColor;
+  const isCustomSize = !!safeSettings.customSize && safeSettings.customSize > 0;
 
   return (
     <div 
@@ -92,7 +111,7 @@ export const SubtitleOverlay: React.FC<SubtitleOverlayProps> = ({
       style={menuVisible ? { top: '10%', bottom: 'auto' } : undefined}
     >
       <div 
-        className={`subtitle-text ${isCustomSize ? '' : `font-${settings.fontSize}`} ${isCustomColor ? '' : `color-${settings.color}`} ${isCustomBg ? '' : `backdrop-${settings.backdrop}`}`}
+        className={`subtitle-text ${isCustomSize ? '' : `font-${safeSettings.fontSize}`} ${isCustomColor ? '' : `color-${safeSettings.color}`} ${isCustomBg ? '' : `backdrop-${safeSettings.backdrop}`}`}
         style={fontStyleStyles}
       >
         {formattedText}
