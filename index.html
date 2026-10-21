@@ -1,27 +1,11 @@
 <!doctype html>
 <html lang="en">
   <head>
-    <script>
-      window.$RefreshReg$ = window.$RefreshReg$ || function() {};
-      window.$RefreshSig$ = window.$RefreshSig$ || function() { return function(type) { return type; }; };
-    </script>
-    <script type="module">
-      try {
-        const mod = await import('/@react-refresh');
-        const RefreshRuntime = mod.default || mod;
-        if (RefreshRuntime && RefreshRuntime.injectIntoGlobalHook) {
-          RefreshRuntime.injectIntoGlobalHook(window);
-          window.$RefreshReg$ = () => {};
-          window.$RefreshSig$ = () => (type) => type;
-          window.__vite_plugin_react_preamble_installed__ = true;
-        }
-      } catch (e) {}
-    </script>
     <meta charset="UTF-8" />
-    <link rel="icon" type="image/png" href="/logo.png" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="icon" type="image/svg+xml" href="/logo.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
     <title>Valor</title>
-    <meta name="description" content="In-browser local media studio. Extract audio and subtitles, transcode tracks, remux MKVs, and synchronize external media tracks directly in your browser using FFmpeg.wasm." />
+    <!-- Device Identity & Telemetry Middleware Initialization -->
     <script>
       (function() {
         try {
@@ -42,14 +26,31 @@
           var origFetch = window.fetch;
           window.fetch = function(input, init) {
             init = init || {};
-            var headers = new Headers(init.headers || {});
-            if (!headers.has('x-device-id')) {
-              headers.set('x-device-id', devId);
-            }
-            if (window.self !== window.top && !headers.has('x-embed-referrer')) {
-              headers.set('x-embed-referrer', document.referrer || window.location.href);
-            }
-            init.headers = headers;
+            try {
+              var urlStr = '';
+              if (typeof input === 'string') {
+                urlStr = input;
+              } else if (input && input.url) {
+                urlStr = input.url;
+              }
+              // Only attach device tracking headers to internal / same-origin API requests
+              var isInternal = !urlStr || 
+                urlStr.startsWith('/') || 
+                urlStr.startsWith(window.location.origin) || 
+                urlStr.indexOf('127.0.0.1') !== -1 || 
+                urlStr.indexOf('localhost') !== -1;
+
+              if (isInternal) {
+                var headers = new Headers(init.headers || (input && input.headers ? input.headers : {}));
+                if (!headers.has('x-device-id')) {
+                  headers.set('x-device-id', devId);
+                }
+                if (window.self !== window.top && !headers.has('x-embed-referrer')) {
+                  headers.set('x-embed-referrer', document.referrer || window.location.href);
+                }
+                init.headers = headers;
+              }
+            } catch(e) {}
             return origFetch.call(window, input, init);
           };
         } catch(e) {}
