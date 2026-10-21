@@ -48,11 +48,24 @@ import {
   Pause,
   Compass,
   Share2,
-  Flame
+  Flame,
+  Send,
+  MapPin,
+  Download,
+  Power,
+  ShieldAlert,
+  Film
 } from 'lucide-react';
+
+import { VisitedDevicesTab } from '../components/admin/VisitedDevicesTab';
+import { OpenSessionsTab } from '../components/admin/OpenSessionsTab';
+import { WebhooksTab } from '../components/admin/WebhooksTab';
+import { DeviceDetailModal } from '../components/admin/DeviceDetailModal';
+import { SaaSTrendCharts } from '../components/admin/SaaSTrendCharts';
 
 interface ActiveUser {
   sessionId: string;
+  deviceId?: string;
   ip: string;
   browser: string;
   os: string;
@@ -63,8 +76,17 @@ interface ActiveUser {
   durationSeconds: number;
   bytesTransferred: number;
   totalRequests: number;
-  status: 'online' | 'idle';
+  status: 'online' | 'idle' | 'streaming';
   lastSeen?: string;
+  firstSeen?: string;
+  country?: string;
+  countryCode?: string;
+  city?: string;
+  region?: string;
+  isp?: string;
+  reverseDns?: string;
+  flag?: string;
+  isMyDevice?: boolean;
 }
 
 interface AdminOverview {
@@ -188,6 +210,17 @@ interface VisitorDevice {
   embedCallsCount: number;
   embedReferers: string[];
   lastPath?: string;
+  country?: string;
+  countryCode?: string;
+  city?: string;
+  region?: string;
+  isp?: string;
+  org?: string;
+  lat?: number | string;
+  lon?: number | string;
+  reverseDns?: string;
+  flag?: string;
+  isMyDevice?: boolean;
 }
 
 interface VisitorDevicesResponse {
@@ -213,6 +246,40 @@ interface TrafficLog {
   deviceId?: string;
   referer?: string;
   isEmbed?: boolean;
+  country?: string;
+  countryCode?: string;
+  city?: string;
+  region?: string;
+  isp?: string;
+  reverseDns?: string;
+  flag?: string;
+  isMyDevice?: boolean;
+}
+
+interface Webhook {
+  id: string;
+  name: string;
+  url: string;
+  secret?: string;
+  events: string[];
+  enabled: boolean;
+  createdAt: string;
+  lastTriggered?: string | null;
+  totalDeliveries: number;
+  failedDeliveries: number;
+}
+
+interface WebhookDelivery {
+  id: string;
+  webhookId: string;
+  webhookName: string;
+  event: string;
+  status: 'success' | 'failed';
+  statusCode: number;
+  latencyMs: number;
+  payload: string;
+  responseBody?: string;
+  createdAt: string;
 }
 
 interface UserAccount {
@@ -325,11 +392,13 @@ export const AdminDashboard: React.FC = () => {
   const [loginSubmitting, setLoginSubmitting] = useState<boolean>(false);
 
   // Tab & Data State
-  const [activeTab, setActiveTab] = useState<'overview' | 'traffic' | 'devices' | 'thirdparty' | 'sessions' | 'users'>('overview');
+  const [activeTab, setActiveTab] = useState<'overview' | 'devices' | 'sessions' | 'traffic' | 'webhooks' | 'thirdparty' | 'users'>('overview');
   const [overview, setOverview] = useState<AdminOverview | null>(null);
   const [analytics, setAnalytics] = useState<DetailedAnalytics | null>(null);
   const [trafficLogs, setTrafficLogs] = useState<TrafficLog[]>([]);
   const [usersList, setUsersList] = useState<UserAccount[]>([]);
+  const [webhooksList, setWebhooksList] = useState<Webhook[]>([]);
+  const [webhookDeliveries, setWebhookDeliveries] = useState<WebhookDelivery[]>([]);
 
   // Visitor Devices Directory & Intelligence State
   const [devicesList, setDevicesList] = useState<VisitorDevice[]>([]);
@@ -338,14 +407,16 @@ export const AdminDashboard: React.FC = () => {
   const [topEmbedReferrers, setTopEmbedReferrers] = useState<{ referer: string; count: number; last_seen?: string }[]>([]);
   const [deviceSearchQuery, setDeviceSearchQuery] = useState<string>('');
   const [deviceSortBy, setDeviceSortBy] = useState<'last_seen' | 'visits' | 'duration' | 'requests' | 'bytes' | 'embeds'>('last_seen');
-  const [deviceFilter, setDeviceFilter] = useState<'all' | 'embeds_only' | 'mobile' | 'desktop'>('all');
+  const [deviceFilter, setDeviceFilter] = useState<'all' | 'external_only' | 'my_device' | 'embeds_only' | 'mobile' | 'desktop' | 'tablet'>('all');
   const [selectedDeviceDetail, setSelectedDeviceDetail] = useState<VisitorDevice | null>(null);
   const [selectedDeviceLogs, setSelectedDeviceLogs] = useState<TrafficLog[]>([]);
   const [deviceDetailLoading, setDeviceDetailLoading] = useState<boolean>(false);
+  const [adminCallerIp, setAdminCallerIp] = useState<string>('');
   
   const [loading, setLoading] = useState<boolean>(true);
   const [refreshing, setRefreshing] = useState<boolean>(false);
-  const [autoRefreshInterval, setAutoRefreshInterval] = useState<number>(5); // 0 = off
+  const [isLiveStreamConnected, setIsLiveStreamConnected] = useState<boolean>(false);
+  const [autoRefreshInterval, setAutoRefreshInterval] = useState<number>(0); // 0 = Live Webhook Stream Mode (No polling refreshes)
   const [isStreamPaused, setIsStreamPaused] = useState<boolean>(false);
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [terminatingSessionId, setTerminatingSessionId] = useState<string | null>(null);
@@ -513,7 +584,7 @@ export const AdminDashboard: React.FC = () => {
         devicesUrl += `&search=${encodeURIComponent(deviceSearchQuery.trim())}`;
       }
 
-      const [overviewRes, analyticsRes, logsRes, usersRes, devicesRes] = await Promise.all([
+      const [overviewRes, analyticsRes, logsRes, usersRes, devicesRes, webhooksRes, deliveriesRes] = await Promise.all([
         fetch('/api/admin/overview', { headers: authHeaders }).then(r => {
           if (r.status === 401) { setIsAuthenticated(false); throw new Error('Unauthorized'); }
           return r.json();
@@ -533,11 +604,20 @@ export const AdminDashboard: React.FC = () => {
         fetch(devicesUrl, { headers: authHeaders }).then(r => {
           if (r.status === 401) { setIsAuthenticated(false); throw new Error('Unauthorized'); }
           return r.json();
+        }).catch(() => null),
+        fetch('/api/admin/webhooks', { headers: authHeaders }).then(r => {
+          if (r.status === 401) { setIsAuthenticated(false); throw new Error('Unauthorized'); }
+          return r.json();
+        }).catch(() => null),
+        fetch('/api/admin/webhooks/deliveries', { headers: authHeaders }).then(r => {
+          if (r.status === 401) { setIsAuthenticated(false); throw new Error('Unauthorized'); }
+          return r.json();
         }).catch(() => null)
       ]);
 
       if (overviewRes && !overviewRes.error) {
         setOverview(overviewRes);
+        if (overviewRes.adminIp) setAdminCallerIp(overviewRes.adminIp);
       }
       if (analyticsRes && !analyticsRes.error) {
         setAnalytics(analyticsRes);
@@ -553,6 +633,13 @@ export const AdminDashboard: React.FC = () => {
         setTotalDevicesCount(devicesRes.totalDevicesCount || 0);
         setTotalEmbedCallsCount(devicesRes.totalEmbedCallsCount || 0);
         setTopEmbedReferrers(devicesRes.topEmbedReferrers || []);
+        if (devicesRes.adminIp) setAdminCallerIp(devicesRes.adminIp);
+      }
+      if (webhooksRes && !webhooksRes.error) {
+        setWebhooksList(webhooksRes.webhooks || []);
+      }
+      if (deliveriesRes && !deliveriesRes.error) {
+        setWebhookDeliveries(deliveriesRes.deliveries || []);
       }
     } catch (err: any) {
       if (err.message === 'Unauthorized') {
@@ -648,7 +735,96 @@ export const AdminDashboard: React.FC = () => {
     }
   }, [isAuthenticated, fetchData]);
 
-  // Auto-refresh interval (pauses when stream is paused)
+  // Real-Time Server-Sent Events / Live Webhook Push Stream (Zero API Polling)
+  useEffect(() => {
+    if (!isAuthenticated || !adminToken) return;
+
+    let eventSource: EventSource | null = null;
+    let reconnectTimeout: any = null;
+
+    const connectLiveStream = () => {
+      try {
+        eventSource = new EventSource(`/api/admin/live-stream?token=${encodeURIComponent(adminToken)}`);
+
+        eventSource.onopen = () => {
+          setIsLiveStreamConnected(true);
+        };
+
+        eventSource.onmessage = (event) => {
+          if (!event.data) return;
+          try {
+            const parsed = JSON.parse(event.data);
+            if (parsed.type === 'connected') {
+              setIsLiveStreamConnected(true);
+              if (parsed.adminIp) setAdminCallerIp(parsed.adminIp);
+            } else if (parsed.type === 'traffic_log' && parsed.data) {
+              const newLog = parsed.data;
+              setTrafficLogs(prev => {
+                if (prev.some(l => l.id === newLog.id)) return prev;
+                return [newLog, ...prev.slice(0, 249)];
+              });
+            } else if (parsed.type === 'session_update' && parsed.data) {
+              const sUpdate = parsed.data;
+              setOverview(prev => {
+                if (!prev) return prev;
+                const existingIdx = prev.activeUsers.findIndex(u => u.sessionId === sUpdate.sessionId);
+                let updatedUsers: ActiveUser[];
+                if (existingIdx >= 0) {
+                  updatedUsers = [...prev.activeUsers];
+                  updatedUsers[existingIdx] = { ...updatedUsers[existingIdx], ...sUpdate };
+                } else {
+                  updatedUsers = [sUpdate, ...prev.activeUsers];
+                }
+                return {
+                  ...prev,
+                  activeUsersCount: updatedUsers.length,
+                  activeUsers: updatedUsers
+                };
+              });
+            } else if (parsed.type === 'device_update' && parsed.data) {
+              const dUpdate = parsed.data;
+              setDevicesList(prev => {
+                const existingIdx = prev.findIndex(d => d.deviceId === dUpdate.deviceId);
+                if (existingIdx >= 0) {
+                  const updated = [...prev];
+                  updated[existingIdx] = {
+                    ...updated[existingIdx],
+                    ...dUpdate,
+                    totalRequests: (updated[existingIdx].totalRequests || 0) + 1,
+                    lastSeen: new Date().toISOString()
+                  };
+                  return updated;
+                } else {
+                  return [dUpdate, ...prev];
+                }
+              });
+            } else if (parsed.type === 'webhook_delivery' && parsed.data) {
+              const delivery = parsed.data;
+              setWebhookDeliveries(prev => [delivery, ...prev.slice(0, 99)]);
+            }
+          } catch (e) {}
+        };
+
+        eventSource.onerror = () => {
+          setIsLiveStreamConnected(false);
+          eventSource?.close();
+          reconnectTimeout = setTimeout(connectLiveStream, 3500);
+        };
+      } catch (err) {
+        setIsLiveStreamConnected(false);
+      }
+    };
+
+    connectLiveStream();
+
+    return () => {
+      if (eventSource) eventSource.close();
+      if (reconnectTimeout) clearTimeout(reconnectTimeout);
+      setIsLiveStreamConnected(false);
+    };
+  }, [isAuthenticated, adminToken]);
+
+  // Optional polling interval (disabled by default in favor of zero-polling live stream)
   useEffect(() => {
     if (!isAuthenticated || autoRefreshInterval <= 0 || isStreamPaused) return;
     const interval = setInterval(() => {
@@ -688,6 +864,118 @@ export const AdminDashboard: React.FC = () => {
       showToast(`Error: ${e.message}`);
     } finally {
       setTerminatingSessionId(null);
+    }
+  };
+
+  const handleFilterSessionLogs = (sessionId: string) => {
+    setTrafficSearchQuery(sessionId);
+    setActiveTab('traffic');
+    showToast(`Filtering traffic logs for session ${sessionId.slice(0, 16)}...`);
+  };
+
+  const handleBlockIp = async (ip: string) => {
+    if (!ip || !adminToken) return;
+    const confirmBlock = window.confirm(`Are you sure you want to block IP address "${ip}"? Any subsequent requests from this IP will be rejected.`);
+    if (!confirmBlock) return;
+    try {
+      const res = await fetch('/api/admin/block-ip', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-admin-token': adminToken
+        },
+        body: JSON.stringify({ ip, reason: 'Manual block by admin from dashboard' })
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        showToast(`🛡️ IP ${ip} blocked successfully.`);
+      } else {
+        showToast(`Failed to block IP: ${data.error || 'Server error'}`);
+      }
+    } catch (e: any) {
+      showToast(`Block IP error: ${e.message}`);
+    }
+  };
+
+  const handleCreateWebhook = async (data: { name: string; url: string; secret?: string; events: string[]; enabled: boolean }) => {
+    if (!adminToken) return;
+    try {
+      const res = await fetch('/api/admin/webhooks', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-admin-token': adminToken
+        },
+        body: JSON.stringify(data)
+      });
+      const resData = await res.json();
+      if (res.ok && resData.webhook) {
+        setWebhooksList(prev => [resData.webhook, ...prev]);
+        showToast(`Webhook "${resData.webhook.name}" registered successfully.`);
+      } else {
+        showToast(`Failed to create webhook: ${resData.error || 'Server error'}`);
+      }
+    } catch (e: any) {
+      showToast(`Webhook creation error: ${e.message}`);
+    }
+  };
+
+  const handleUpdateWebhook = async (id: string, data: any) => {
+    if (!adminToken) return;
+    try {
+      const res = await fetch(`/api/admin/webhooks/${encodeURIComponent(id)}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-admin-token': adminToken
+        },
+        body: JSON.stringify(data)
+      });
+      const resData = await res.json();
+      if (res.ok && resData.webhook) {
+        setWebhooksList(prev => prev.map(w => w.id === id ? resData.webhook : w));
+        showToast('Webhook updated.');
+      } else {
+        showToast(`Failed to update webhook: ${resData.error || 'Server error'}`);
+      }
+    } catch (e: any) {
+      showToast(`Update error: ${e.message}`);
+    }
+  };
+
+  const handleDeleteWebhook = async (id: string) => {
+    if (!adminToken) return;
+    try {
+      const res = await fetch(`/api/admin/webhooks/${encodeURIComponent(id)}`, {
+        method: 'DELETE',
+        headers: { 'x-admin-token': adminToken }
+      });
+      const resData = await res.json();
+      if (res.ok && resData.success) {
+        setWebhooksList(prev => prev.filter(w => w.id !== id));
+        showToast('Webhook deleted.');
+      } else {
+        showToast(`Failed to delete webhook: ${resData.error || 'Server error'}`);
+      }
+    } catch (e: any) {
+      showToast(`Delete error: ${e.message}`);
+    }
+  };
+
+  const handleTestWebhook = async (id: string) => {
+    if (!adminToken) return { success: false, error: 'Unauthorized' };
+    try {
+      const res = await fetch(`/api/admin/webhooks/${encodeURIComponent(id)}/test`, {
+        method: 'POST',
+        headers: { 'x-admin-token': adminToken }
+      });
+      const data = await res.json();
+      if (data.delivery) {
+        setWebhookDeliveries(prev => [data.delivery, ...prev]);
+      }
+      return data;
+    } catch (e: any) {
+      return { success: false, error: e.message };
     }
   };
 
@@ -1277,6 +1565,29 @@ export const AdminDashboard: React.FC = () => {
 
         {/* Header Right Actions */}
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+          {/* Live Webhook Push Stream Indicator */}
+          <div style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: '6px',
+            backgroundColor: isLiveStreamConnected ? 'rgba(34, 197, 94, 0.12)' : 'rgba(234, 179, 8, 0.12)',
+            border: isLiveStreamConnected ? '1px solid rgba(34, 197, 94, 0.3)' : '1px solid rgba(234, 179, 8, 0.3)',
+            borderRadius: '20px',
+            padding: '4px 10px',
+            fontSize: '0.74rem',
+            fontWeight: 600,
+            color: isLiveStreamConnected ? '#4ade80' : '#facc15'
+          }}>
+            <span style={{
+              width: '7px',
+              height: '7px',
+              borderRadius: '50%',
+              backgroundColor: isLiveStreamConnected ? '#22c55e' : '#eab308',
+              boxShadow: isLiveStreamConnected ? '0 0 8px #22c55e' : 'none'
+            }} />
+            <span>{isLiveStreamConnected ? 'Live Webhook Stream' : 'Connecting Stream...'}</span>
+          </div>
+
           {/* Admin User Chip */}
           <div style={{
             display: 'flex',
@@ -1290,10 +1601,10 @@ export const AdminDashboard: React.FC = () => {
             color: 'var(--text-muted, #94a3b8)'
           }}>
             <Shield size={13} color="var(--accent-color, #38bdf8)" />
-            <span>Admin</span>
+            <span>Admin {adminCallerIp ? `(${adminCallerIp})` : ''}</span>
           </div>
 
-          {/* Auto Refresh Selector */}
+          {/* Stream / Polling Selector */}
           <div style={{
             display: 'flex',
             alignItems: 'center',
@@ -1304,12 +1615,11 @@ export const AdminDashboard: React.FC = () => {
             border: '1px solid var(--border-color, rgba(255, 255, 255, 0.08))',
             fontSize: '0.75rem'
           }}>
-            <span style={{ color: 'var(--text-muted, #94a3b8)', paddingLeft: '4px', fontSize: '0.72rem' }}>Refresh:</span>
+            <span style={{ color: 'var(--text-muted, #94a3b8)', paddingLeft: '4px', fontSize: '0.72rem' }}>Mode:</span>
             {[
-              { label: '3s', val: 3 },
-              { label: '5s', val: 5 },
-              { label: '15s', val: 15 },
-              { label: 'Off', val: 0 }
+              { label: '⚡ Push (No Poll)', val: 0 },
+              { label: '5s Poll', val: 5 },
+              { label: '15s Poll', val: 15 }
             ].map(item => (
               <button
                 key={item.label}
@@ -1318,7 +1628,7 @@ export const AdminDashboard: React.FC = () => {
                   background: autoRefreshInterval === item.val ? 'var(--accent-color, #38bdf8)' : 'transparent',
                   color: autoRefreshInterval === item.val ? '#000' : 'var(--text-muted, #94a3b8)',
                   border: 'none',
-                  padding: '2px 6px',
+                  padding: '2px 8px',
                   borderRadius: '4px',
                   cursor: 'pointer',
                   fontWeight: 600,
@@ -1416,10 +1726,22 @@ export const AdminDashboard: React.FC = () => {
             badge: totalEmbedCallsCount ? `${totalEmbedCallsCount} embeds` : undefined
           },
           { 
+            id: 'sessions', 
+            label: `Open Sessions (${overview?.activeUsersCount ?? 0})`, 
+            icon: Users,
+            badge: overview?.activeUsersCount ? `${overview.activeUsersCount} live` : undefined
+          },
+          { 
             id: 'traffic', 
             label: 'Traffic Feed', 
             icon: Radio,
             badge: isStreamPaused ? 'Paused' : undefined
+          },
+          { 
+            id: 'webhooks', 
+            label: `Webhooks (${webhooksList.length})`, 
+            icon: Send,
+            badge: webhooksList.filter(w => w.enabled).length ? `${webhooksList.filter(w => w.enabled).length} live` : undefined
           },
           { 
             id: 'thirdparty', 
@@ -1427,7 +1749,6 @@ export const AdminDashboard: React.FC = () => {
             icon: Zap,
             highlight: Boolean(analytics?.thirdPartyStats?.totalRequests && analytics.thirdPartyStats.totalRequests > 0)
           },
-          { id: 'sessions', label: `Active Users (${overview?.activeUsersCount ?? 0})`, icon: Users },
           { id: 'users', label: `Registered Accounts (${usersList.length})`, icon: Database },
         ].map(tab => {
           const Icon = tab.icon;
@@ -2197,7 +2518,43 @@ export const AdminDashboard: React.FC = () => {
               </div>
             </div>
           </div>
+
+          {/* SaaS Trend Charts (Area Graph, Top Geographies, Platform Breakdown, Status Codes) */}
+          <SaaSTrendCharts 
+            activityData={activeTimelineData || []}
+            timeframe={activityTimeframe}
+            browserBreakdown={analytics?.browserBreakdown || []}
+            osBreakdown={analytics?.osBreakdown || []}
+            deviceBreakdown={analytics?.deviceBreakdown || []}
+            devicesList={devicesList}
+            trafficLogs={trafficLogs}
+          />
         </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* TAB: VISITED DEVICES & INTELLIGENCE */}
+      {/* ========================================================================= */}
+      {activeTab === 'devices' && (
+        <VisitedDevicesTab
+          devicesList={devicesList}
+          totalDevicesCount={totalDevicesCount}
+          totalEmbedCallsCount={totalEmbedCallsCount}
+          topEmbedReferrers={topEmbedReferrers}
+          searchQuery={deviceSearchQuery}
+          onSearchChange={setDeviceSearchQuery}
+          sortBy={deviceSortBy}
+          onSortChange={setDeviceSortBy}
+          filter={deviceFilter}
+          onFilterChange={setDeviceFilter}
+          onInspectDevice={handleInspectDevice}
+          onFilterDeviceTraffic={handleFilterByDevice}
+          onBlockIp={handleBlockIp}
+          onRefresh={() => fetchData(true)}
+          refreshing={refreshing}
+          copiedId={copiedId}
+          onCopy={handleCopy}
+        />
       )}
 
       {/* ========================================================================= */}
@@ -2655,203 +3012,20 @@ export const AdminDashboard: React.FC = () => {
       )}
 
       {/* ========================================================================= */}
-      {/* TAB 2: ACTIVE SESSIONS (FOCUSED, NO CLUTTER) */}
+      {/* TAB: OPEN SESSIONS & LIVE VISITORS */}
       {/* ========================================================================= */}
       {activeTab === 'sessions' && (
-        <div style={{
-          backgroundColor: 'var(--surface, #1e293b)',
-          border: '1px solid var(--border-color, rgba(255, 255, 255, 0.08))',
-          borderRadius: '12px',
-          overflow: 'hidden'
-        }}>
-          {/* Header & Search */}
-          <div style={{
-            padding: '1.15rem 1.5rem',
-            borderBottom: '1px solid var(--border-color, rgba(255, 255, 255, 0.08))',
-            display: 'flex',
-            justifyContent: 'space-between',
-            alignItems: 'center',
-            flexWrap: 'wrap',
-            gap: '12px'
-          }}>
-            <div>
-              <h3 style={{ margin: 0, fontSize: '1rem', fontWeight: 600 }}>Active Connected Sessions</h3>
-              <p style={{ margin: '2px 0 0', color: 'var(--text-muted, #94a3b8)', fontSize: '0.75rem' }}>
-                Real-time sessions tracked in Redis sorted sets with IP and duration
-              </p>
-            </div>
-
-            {/* Quick Search */}
-            <div style={{ position: 'relative', width: '240px' }}>
-              <input
-                type="text"
-                placeholder="Search user, IP, path..."
-                value={userSearchQuery}
-                onChange={e => setUserSearchQuery(e.target.value)}
-                style={{
-                  width: '100%',
-                  padding: '6px 10px 6px 30px',
-                  borderRadius: '6px',
-                  border: '1px solid var(--border-color, rgba(255, 255, 255, 0.1))',
-                  backgroundColor: 'rgba(0, 0, 0, 0.2)',
-                  color: 'var(--text-primary)',
-                  fontSize: '0.78rem',
-                  outline: 'none',
-                  boxSizing: 'border-box'
-                }}
-              />
-              <Search size={14} color="var(--text-muted, #94a3b8)" style={{ position: 'absolute', left: '9px', top: '50%', transform: 'translateY(-50%)' }} />
-            </div>
-          </div>
-
-          <div style={{ overflowX: 'auto' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.82rem' }}>
-              <thead>
-                <tr style={{
-                  backgroundColor: 'rgba(255, 255, 255, 0.02)',
-                  color: 'var(--text-muted, #94a3b8)',
-                  borderBottom: '1px solid var(--border-color, rgba(255, 255, 255, 0.06))',
-                  fontSize: '0.72rem',
-                  textTransform: 'uppercase',
-                  letterSpacing: '0.04em'
-                }}>
-                  <th style={{ padding: '10px 14px' }}>Status</th>
-                  <th style={{ padding: '10px 14px' }}>Session Fingerprint</th>
-                  <th style={{ padding: '10px 14px' }}>User / Profile</th>
-                  <th style={{ padding: '10px 14px' }}>Device & Client</th>
-                  <th style={{ padding: '10px 14px' }}>IP Address</th>
-                  <th style={{ padding: '10px 14px' }}>Current Location</th>
-                  <th style={{ padding: '10px 14px' }}>Time Spent</th>
-                  <th style={{ padding: '10px 14px' }}>Data Transferred</th>
-                  <th style={{ padding: '10px 14px', textAlign: 'right' }}>Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filteredActiveUsers && filteredActiveUsers.length > 0 ? (
-                  filteredActiveUsers.map((user) => {
-                    const isTerminating = terminatingSessionId === user.sessionId;
-                    return (
-                      <tr key={user.sessionId} style={{
-                        borderBottom: '1px solid var(--border-color, rgba(255, 255, 255, 0.04))',
-                        transition: 'background-color 0.15s ease'
-                      }}>
-                        {/* Status */}
-                        <td style={{ padding: '10px 14px' }}>
-                          <span style={{
-                            display: 'inline-flex',
-                            alignItems: 'center',
-                            gap: '5px',
-                            padding: '2px 7px',
-                            borderRadius: '10px',
-                            fontSize: '0.7rem',
-                            fontWeight: 600,
-                            backgroundColor: user.status === 'online' ? 'rgba(34, 197, 94, 0.12)' : 'rgba(234, 179, 8, 0.12)',
-                            color: user.status === 'online' ? '#4ade80' : '#facc15'
-                          }}>
-                            <span style={{
-                              width: '5px',
-                              height: '5px',
-                              borderRadius: '50%',
-                              backgroundColor: user.status === 'online' ? '#22c55e' : '#eab308'
-                            }} />
-                            {user.status === 'online' ? 'Online' : 'Idle'}
-                          </span>
-                        </td>
-
-                        {/* Session ID */}
-                        <td style={{ padding: '10px 14px' }}>
-                          <code style={{
-                            padding: '2px 5px',
-                            borderRadius: '4px',
-                            backgroundColor: 'rgba(255, 255, 255, 0.04)',
-                            fontSize: '0.75rem',
-                            color: '#94a3b8'
-                          }}>
-                            {user.sessionId.slice(0, 16)}...
-                          </code>
-                        </td>
-
-                        {/* User / Profile */}
-                        <td style={{ padding: '10px 14px' }}>
-                          <div style={{ fontWeight: 600 }}>{user.profileName || 'Guest User'}</div>
-                          <div style={{ fontSize: '0.7rem', color: 'var(--text-muted, #94a3b8)' }}>ID: {user.userId || 'Guest'}</div>
-                        </td>
-
-                        {/* Client & Device */}
-                        <td style={{ padding: '10px 14px' }}>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                            {user.device === 'Mobile' ? <Smartphone size={13} /> : user.device === 'Tablet' ? <Tablet size={13} /> : <Monitor size={13} />}
-                            <span>{user.browser}</span>
-                            <span style={{ color: 'var(--text-muted, #94a3b8)' }}>• {user.os}</span>
-                          </div>
-                        </td>
-
-                        {/* IP Address */}
-                        <td style={{ padding: '10px 14px', color: 'var(--text-muted, #94a3b8)', fontFamily: 'monospace' }}>
-                          {user.ip}
-                        </td>
-
-                        {/* Current Location */}
-                        <td style={{ padding: '10px 14px' }}>
-                          <span style={{
-                            padding: '2px 6px',
-                            borderRadius: '4px',
-                            backgroundColor: 'rgba(56, 189, 248, 0.08)',
-                            color: 'var(--accent-color, #38bdf8)',
-                            fontSize: '0.72rem'
-                          }}>
-                            {user.currentPath || '/'}
-                          </span>
-                        </td>
-
-                        {/* Time Spent */}
-                        <td style={{ padding: '10px 14px', fontWeight: 600 }}>
-                          {formatDuration(user.durationSeconds)}
-                        </td>
-
-                        {/* Data Transferred */}
-                        <td style={{ padding: '10px 14px', color: '#c084fc', fontWeight: 600 }}>
-                          {formatBytes(user.bytesTransferred)}
-                        </td>
-
-                        {/* Terminate Action */}
-                        <td style={{ padding: '10px 14px', textAlign: 'right' }}>
-                          <button
-                            onClick={() => handleTerminateSession(user.sessionId)}
-                            disabled={isTerminating}
-                            title="Terminate session and evict from Redis"
-                            style={{
-                              backgroundColor: 'rgba(239, 68, 68, 0.08)',
-                              color: '#f87171',
-                              border: '1px solid rgba(239, 68, 68, 0.2)',
-                              borderRadius: '5px',
-                              padding: '4px 8px',
-                              cursor: isTerminating ? 'not-allowed' : 'pointer',
-                              fontSize: '0.72rem',
-                              fontWeight: 500,
-                              display: 'inline-flex',
-                              alignItems: 'center',
-                              gap: '4px'
-                            }}
-                          >
-                            <Trash2 size={11} />
-                            <span>{isTerminating ? 'Ending...' : 'Terminate'}</span>
-                          </button>
-                        </td>
-                      </tr>
-                    );
-                  })
-                ) : (
-                  <tr>
-                    <td colSpan={9} style={{ padding: '2.5rem', textAlign: 'center', color: 'var(--text-muted, #94a3b8)' }}>
-                      No active sessions matching criteria.
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-        </div>
+        <OpenSessionsTab
+          sessions={overview?.activeUsers || []}
+          onTerminateSession={handleTerminateSession}
+          onFilterSessionLogs={handleFilterSessionLogs}
+          onFilterDeviceTraffic={handleFilterByDevice}
+          onBlockIp={handleBlockIp}
+          onRefresh={() => fetchData(true)}
+          refreshing={refreshing}
+          copiedId={copiedId}
+          onCopy={handleCopy}
+        />
       )}
 
       {/* ========================================================================= */}
@@ -3989,6 +4163,40 @@ export const AdminDashboard: React.FC = () => {
             </table>
           </div>
         </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* TAB: WEBHOOKS CONSOLE & DISPATCH AUDIT */}
+      {/* ========================================================================= */}
+      {activeTab === 'webhooks' && (
+        <WebhooksTab
+          webhooks={webhooksList}
+          deliveries={webhookDeliveries}
+          onCreateWebhook={handleCreateWebhook}
+          onUpdateWebhook={handleUpdateWebhook}
+          onDeleteWebhook={handleDeleteWebhook}
+          onTestWebhook={handleTestWebhook}
+          onRefresh={() => fetchData(true)}
+          refreshing={refreshing}
+          copiedId={copiedId}
+          onCopy={handleCopy}
+        />
+      )}
+
+      {/* ========================================================================= */}
+      {/* MODAL: VISITOR DEVICE DOSSIER & INTELLIGENCE INSPECTION */}
+      {/* ========================================================================= */}
+      {selectedDeviceDetail && (
+        <DeviceDetailModal
+          device={selectedDeviceDetail}
+          logs={selectedDeviceLogs}
+          loading={deviceDetailLoading}
+          onClose={() => setSelectedDeviceDetail(null)}
+          onFilterDeviceLogs={handleFilterByDevice}
+          onBlockIp={handleBlockIp}
+          onCopy={handleCopy}
+          copiedId={copiedId}
+        />
       )}
     </div>
   );

@@ -117,6 +117,13 @@ export function createReverseProxyTelemetry(dataStore) {
     const userAgent = req.headers['user-agent'] || 'Unknown';
     const { browser, os, device } = parseUserAgent(userAgent);
 
+    // Immediate security rejection for administratively blocked IPs
+    if (dataStore && dataStore._blockedIpsCache && dataStore._blockedIpsCache.has(ip)) {
+      res.writeHead(403, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Access Denied', message: 'Your IP address has been administratively blocked.' }));
+      return;
+    }
+
     // Parse or generate Session ID
     let sessionId = req.headers['x-valor-session'];
     const cookieHeader = req.headers.cookie || '';
@@ -134,30 +141,15 @@ export function createReverseProxyTelemetry(dataStore) {
       sessionId = `sess_${hash}`;
     }
 
-    // Parse or generate Device ID (persistent across all sessions, tabs, and visits)
-    let deviceId = req.headers['x-device-id'] || req.headers['x-valor-device-id'];
-    if (!deviceId && cookieHeader) {
-      const devMatch = cookieHeader.match(/valor_device_id=([^;]+)/);
-      if (devMatch) {
-        deviceId = devMatch[1];
-      }
-    }
+    // 1 IP = 1 Device: Canonical persistent Device ID anchored directly to client IP address
+    const cleanIp = normalizeIp(ip);
+    const deviceId = `dev_${crypto.createHash('md5').update(cleanIp).digest('hex').substring(0, 16)}`;
 
     let parsedUrl;
     try {
       parsedUrl = new URL(req.url, 'http://localhost');
-      if (!deviceId) {
-        deviceId = parsedUrl.searchParams.get('device_id') || parsedUrl.searchParams.get('deviceId');
-      }
     } catch (e) {
       parsedUrl = { pathname: req.url || '/', searchParams: new URLSearchParams() };
-    }
-
-    if (!deviceId) {
-      // Stable persistent device fingerprint hash (IP subnet + UA + Accept-Language)
-      const rawFp = `${ip}|${userAgent}|${req.headers['accept-language'] || ''}`;
-      const fpHash = crypto.createHash('sha256').update(rawFp).digest('hex').substring(0, 18);
-      deviceId = `dev_${fpHash}`;
     }
 
     // Set response headers and cookie so browser maintains its device identity

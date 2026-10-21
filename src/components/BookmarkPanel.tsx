@@ -126,6 +126,11 @@ export const BookmarkPanel: React.FC<BookmarkPanelProps> = ({ bookmarks, onJump,
                       {bm.category === 'Funny' && '😂 '}
                       {bm.category === 'Hot Scene' && '🔥 '}
                       {bm.category === 'Outro' && '🏁 '}
+                      {bm.category === 'Intro' && '⏩ '}
+                      {(bm.category === 'Preview' || bm.category === 'Recap') && '⏱️ '}
+                      {bm.category === 'Nudity' && '🔞 '}
+                      {bm.category === 'Sex' && '❤️‍🔥 '}
+                      {bm.category === 'Gore' && '🩸 '}
                       {bm.title || bm.label || 'Untitled Bookmark'}
                     </span>
                     {bm.favorite && <Heart size={14} fill="var(--accent-color, #e50914)" color="var(--accent-color, #e50914)" style={{ flexShrink: 0 }} />}
@@ -135,12 +140,12 @@ export const BookmarkPanel: React.FC<BookmarkPanelProps> = ({ bookmarks, onJump,
                       let color = '#34d399'; // green
                       let bg = 'rgba(52, 211, 153, 0.12)';
                       
-                      if ((createdBy as string) === 'theintrodb' || (createdBy as string) === 'tidb' || bm.id.startsWith('api-')) {
-                        label = 'TheIntroDB';
+                      if ((createdBy as string) === 'theintrodb' || (createdBy as string) === 'tidb' || bm.id.startsWith('introdb-') || bm.id.startsWith('api-')) {
+                        label = 'IntroDB (In Our DB)';
                         color = '#60a5fa'; // blue
                         bg = 'rgba(96, 165, 250, 0.12)';
-                      } else if (createdBy === 'system' || bm.id.startsWith('bm-intro-') || bm.id.startsWith('bm-outro-') || bm.isIntro || bm.isOutro) {
-                        label = 'System';
+                      } else if (createdBy === 'database' || createdBy === 'system' || bm.id.startsWith('bm-intro-') || bm.id.startsWith('bm-outro-')) {
+                        label = 'Our Database';
                         color = '#c084fc'; // purple
                         bg = 'rgba(192, 132, 252, 0.12)';
                       } else if (createdBy === 'manual') {

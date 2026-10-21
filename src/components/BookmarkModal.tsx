@@ -22,12 +22,13 @@ export const BookmarkModal: React.FC<BookmarkModalProps> = ({
   onClose 
 }) => {
   const [newBookmarkLabel, setNewBookmarkLabel] = useState(initialBookmark?.title || initialBookmark?.label || '');
-  const [bookmarkType, setBookmarkType] = useState<'nudity' | 'sex' | 'gore' | 'intro' | 'outro' | 'custom'>(
+  const [bookmarkType, setBookmarkType] = useState<'nudity' | 'sex' | 'gore' | 'intro' | 'outro' | 'preview' | 'custom'>(
     initialBookmark?.category === 'Nudity' ? 'nudity' : 
     initialBookmark?.category === 'Sex' ? 'sex' : 
     initialBookmark?.category === 'Gore' ? 'gore' : 
     initialBookmark?.category === 'Intro' ? 'intro' : 
-    initialBookmark?.category === 'Outro' ? 'outro' : 'custom'
+    initialBookmark?.category === 'Outro' ? 'outro' : 
+    (initialBookmark?.category === 'Preview' || initialBookmark?.category === 'Recap') ? 'preview' : 'custom'
   );
   
   const [showAdjustTimes, setShowAdjustTimes] = useState(false);
@@ -80,12 +81,16 @@ export const BookmarkModal: React.FC<BookmarkModalProps> = ({
     if (bookmarkType === 'gore') finalCategory = 'Gore';
     if (bookmarkType === 'intro') finalCategory = 'Intro';
     if (bookmarkType === 'outro') finalCategory = 'Outro';
+    if (bookmarkType === 'preview') finalCategory = 'Preview';
 
     onSave({
       title: newBookmarkLabel || finalCategory || 'Untitled Bookmark',
       label: newBookmarkLabel || finalCategory || 'Untitled Bookmark',
       description: '',
       category: finalCategory,
+      isIntro: bookmarkType === 'intro' || bookmarkType === 'preview',
+      isOutro: bookmarkType === 'outro',
+      skipEnabled: bookmarkType === 'intro' || bookmarkType === 'outro' || bookmarkType === 'preview' || bookmarkType === 'nudity' || bookmarkType === 'sex',
       favorite: initialBookmark?.favorite || false,
       thumbnail: thumbnail,
       time: newBookmarkTime,
@@ -96,15 +101,16 @@ export const BookmarkModal: React.FC<BookmarkModalProps> = ({
   };
 
   const presets = [
+    { value: 'intro', label: 'Intro' },
+    { value: 'outro', label: 'Outro' },
+    { value: 'preview', label: 'Preview / Recap' },
     { value: 'nudity', label: 'Nudity' },
     { value: 'sex', label: 'Sex' },
     { value: 'gore', label: 'Gore' },
-    { value: 'intro', label: 'Intro' },
-    { value: 'outro', label: 'Outro' },
     { value: 'custom', label: 'Custom' }
   ];
 
-  const handlePresetSelect = (val: 'nudity' | 'sex' | 'gore' | 'intro' | 'outro' | 'custom') => {
+  const handlePresetSelect = (val: 'nudity' | 'sex' | 'gore' | 'intro' | 'outro' | 'preview' | 'custom') => {
     setBookmarkType(val);
     const matchedLabel = presets.find(p => p.value === val)?.label || 'Custom';
     setNewBookmarkLabel(matchedLabel);
