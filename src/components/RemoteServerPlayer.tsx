@@ -1572,6 +1572,90 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
   const [activeSubStreamIndex, setActiveSubStreamIndex] = useState<number | null>(null);
   const [playbackError, setPlaybackError] = useState<string | null>(null);
 
+  const sessionIdRef = useRef<string>(Math.random().toString(36).substring(2, 10));
+  const altAudioRef = useRef<HTMLAudioElement | null>(null);
+  const [showIdentifyModal, setShowIdentifyModal] = useState(false);
+  const [authModalState, setAuthModalState] = useState<{
+    isOpen: boolean;
+    initialUsername: string;
+    errorMessage: string | null;
+    isLoading: boolean;
+  }>({
+    isOpen: false,
+    initialUsername: '',
+    errorMessage: null,
+    isLoading: false
+  });
+
+  const getProxiedVideoUrl = useCallback((rawUrl: string): string => {
+    if (!rawUrl) return '';
+    if (rawUrl.startsWith('/api/proxy-media')) return rawUrl;
+    const creds = (video as any).auth || getSavedCredentials(rawUrl);
+    let proxyUrl = `/api/proxy-media?url=${encodeURIComponent(rawUrl)}&sessionId=${sessionIdRef.current}`;
+    if (video.duration) {
+      proxyUrl += `&duration=${encodeURIComponent(video.duration.toString())}`;
+    }
+    if (creds?.username) {
+      proxyUrl += `&user=${encodeURIComponent(creds.username)}`;
+      if (creds.password) proxyUrl += `&pass=${encodeURIComponent(creds.password)}`;
+    }
+    return proxyUrl;
+  }, [video]);
+
+  const runRemoteProbe = useCallback(async (targetUrl: string, authOverride?: { username: string; password?: string }) => {
+    if (!targetUrl) return;
+    try {
+      const creds = authOverride || (video as any).auth || getSavedCredentials(targetUrl);
+      const res = await fetch('/api/remote/probe', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          url: targetUrl,
+          auth: creds ? { username: creds.username, password: creds.password } : undefined
+        })
+      });
+
+      if (res.status === 401) {
+        setAuthModalState({
+          isOpen: true,
+          initialUsername: creds?.username || '',
+          errorMessage: 'Authentication required. Please enter username and password.',
+          isLoading: false
+        });
+        return;
+      }
+
+      if (res.ok) {
+        const probeData = await res.json();
+        const allStreams: any[] = [];
+        if (probeData.videoStreams) probeData.videoStreams.forEach((v: any) => allStreams.push({ ...v, type: 'video' }));
+        if (probeData.audioStreams) probeData.audioStreams.forEach((a: any) => allStreams.push({ ...a, type: 'audio' }));
+        if (probeData.subtitleStreams) probeData.subtitleStreams.forEach((s: any) => allStreams.push({ ...s, type: 'subtitle' }));
+
+        if (probeData.duration && !duration) {
+          setDuration(probeData.duration);
+        }
+
+        onUpdateVideo({
+          ...video,
+          streams: allStreams,
+          duration: probeData.duration ? String(probeData.duration) : video.duration
+        });
+
+        if (probeData.audioStreams && probeData.audioStreams.length > 0 && activeAudioStreamIndex === null) {
+          setActiveAudioStreamIndex(probeData.audioStreams[0].index);
+        }
+      }
+    } catch (err) {
+      console.warn('[RemoteServerPlayer] Probe error:', err);
+    }
+  }, [video, duration, onUpdateVideo, activeAudioStreamIndex]);
+
+  useEffect(() => {
+    runRemoteProbe(video.url);
+  }, [video.url]);
+
+
   const [audioBoost, setAudioBoost] = useState<number>(100);
 
   // Refs for Web Audio API audio boost
