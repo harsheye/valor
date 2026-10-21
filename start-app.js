@@ -682,30 +682,20 @@ const backendServer = http.createServer(async (req, res) => {
           return;
         }
 
-        const tmdbReq = https.request(targetUrl, {
+        const tmdbRes = await fetch(targetUrl, {
           method: 'GET',
           headers: {
             'Authorization': `Bearer ${TMDB_BEARER}`,
             'Accept': 'application/json',
-            'User-Agent': 'Valor/1.0'
-          }
-        }, (tmdbRes) => {
-          res.statusCode = tmdbRes.statusCode || 200;
-          res.setHeader('Content-Type', tmdbRes.headers['content-type'] || 'application/json');
-          res.setHeader('Access-Control-Allow-Origin', '*');
-          tmdbRes.pipe(res);
-        });
-
-        tmdbReq.on('error', (err) => {
-          console.error('[TMDB Proxy Error]', err.message);
-          if (!res.headersSent) {
-            res.statusCode = 502;
-            res.setHeader('Content-Type', 'application/json');
-            res.end(JSON.stringify({ error: 'TMDB fetch failed', message: err.message }));
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
           }
         });
 
-        tmdbReq.end();
+        res.statusCode = tmdbRes.status;
+        res.setHeader('Content-Type', tmdbRes.headers.get('content-type') || 'application/json');
+        res.setHeader('Access-Control-Allow-Origin', '*');
+        const data = await tmdbRes.arrayBuffer();
+        res.end(Buffer.from(data));
       } catch (err) {
         if (!res.headersSent) {
           res.statusCode = 500;
