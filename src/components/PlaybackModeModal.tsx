@@ -1,6 +1,5 @@
 import React, { useState } from 'react';
 import { Tv, Zap, X, Film } from 'lucide-react';
-import { Button } from './ui/button';
 
 export interface PlaybackModeModalProps {
   isOpen: boolean;
@@ -28,8 +27,8 @@ export const PlaybackModeModal: React.FC<PlaybackModeModalProps> = ({
         position: 'fixed',
         inset: 0,
         zIndex: 99999,
-        backgroundColor: 'rgba(0, 0, 0, 0.8)',
-        backdropFilter: 'blur(8px)',
+        background: 'var(--overlay-bg, rgba(0, 0, 0, 0.75))',
+        backdropFilter: 'var(--glass-blur, blur(16px))',
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
@@ -45,14 +44,15 @@ export const PlaybackModeModal: React.FC<PlaybackModeModalProps> = ({
         style={{
           width: '100%',
           maxWidth: '420px',
-          backgroundColor: '#0f172a',
-          border: '1px solid rgba(255, 255, 255, 0.12)',
+          backgroundColor: 'var(--card-bg, #161622)',
+          border: '1px solid var(--border-color, rgba(255, 255, 255, 0.1))',
           borderRadius: '16px',
-          boxShadow: '0 20px 45px rgba(0, 0, 0, 0.6), 0 0 30px rgba(139, 92, 246, 0.15)',
+          boxShadow: 'var(--shadow-xl, 0 20px 45px rgba(0, 0, 0, 0.6))',
           overflow: 'hidden',
           display: 'flex',
           flexDirection: 'column',
-          color: '#f8fafc',
+          color: 'var(--text-primary, #ffffff)',
+          fontFamily: 'var(--font-sans)',
           userSelect: 'none',
           padding: '24px'
         }}
@@ -61,17 +61,17 @@ export const PlaybackModeModal: React.FC<PlaybackModeModalProps> = ({
         <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: '16px' }}>
           <div>
             <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '4px' }}>
-              <Film size={16} color="#a78bfa" />
-              <span style={{ fontSize: '12px', fontWeight: 700, color: '#a78bfa', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+              <Film size={16} color="var(--accent-color, #e50914)" />
+              <span style={{ fontSize: '11px', fontWeight: 700, color: 'var(--accent-color, #e50914)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
                 Playback Engine
               </span>
             </div>
-            <h3 style={{ fontSize: '18px', fontWeight: 700, margin: 0, color: '#ffffff' }}>
+            <h3 style={{ fontSize: '18px', fontWeight: 700, margin: 0, color: 'var(--text-primary, #ffffff)' }}>
               Choose Playback Mode
             </h3>
             <p style={{
               fontSize: '12px',
-              color: '#94a3b8',
+              color: 'var(--text-muted, #9ca3af)',
               margin: '4px 0 0 0',
               overflow: 'hidden',
               textOverflow: 'ellipsis',
@@ -88,7 +88,7 @@ export const PlaybackModeModal: React.FC<PlaybackModeModalProps> = ({
               style={{
                 background: 'transparent',
                 border: 'none',
-                color: '#94a3b8',
+                color: 'var(--text-muted, #9ca3af)',
                 cursor: 'pointer',
                 padding: '4px',
                 borderRadius: '6px'
@@ -111,43 +111,42 @@ export const PlaybackModeModal: React.FC<PlaybackModeModalProps> = ({
               gap: '14px',
               padding: '14px 16px',
               borderRadius: '12px',
-              border: '1px solid rgba(139, 92, 246, 0.4)',
-              background: 'linear-gradient(135deg, rgba(139, 92, 246, 0.25), rgba(15, 23, 42, 0.8))',
+              border: '1px solid var(--border-color, rgba(255, 255, 255, 0.1))',
+              background: 'var(--surface, #12121a)',
               cursor: 'pointer',
-              color: '#ffffff',
+              color: 'var(--text-primary, #ffffff)',
               textAlign: 'left',
-              transition: 'all 0.15s ease',
-              boxShadow: '0 4px 12px rgba(139, 92, 246, 0.15)'
+              transition: 'all 0.15s ease'
             }}
             onMouseEnter={e => {
-              e.currentTarget.style.background = 'linear-gradient(135deg, rgba(139, 92, 246, 0.4), rgba(30, 41, 59, 0.9))';
-              e.currentTarget.style.borderColor = '#8b5cf6';
+              e.currentTarget.style.background = 'var(--card-hover-bg, #222234)';
+              e.currentTarget.style.borderColor = 'var(--accent-color, #e50914)';
               e.currentTarget.style.transform = 'translateY(-1px)';
             }}
             onMouseLeave={e => {
-              e.currentTarget.style.background = 'linear-gradient(135deg, rgba(139, 92, 246, 0.25), rgba(15, 23, 42, 0.8))';
-              e.currentTarget.style.borderColor = 'rgba(139, 92, 246, 0.4)';
+              e.currentTarget.style.background = 'var(--surface, #12121a)';
+              e.currentTarget.style.borderColor = 'var(--border-color, rgba(255, 255, 255, 0.1))';
               e.currentTarget.style.transform = 'translateY(0)';
             }}
           >
             <div style={{
-              width: '38px',
-              height: '38px',
+              width: '40px',
+              height: '40px',
               borderRadius: '10px',
-              background: 'rgba(139, 92, 246, 0.3)',
+              background: 'var(--accent-glow, rgba(229, 9, 20, 0.25))',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
-              color: '#c4b5fd',
+              color: 'var(--accent-color, #e50914)',
               flexShrink: 0
             }}>
               <Tv size={20} />
             </div>
             <div>
-              <div style={{ fontSize: '14px', fontWeight: 700, color: '#f8fafc' }}>
+              <div style={{ fontSize: '14px', fontWeight: 700, color: 'var(--text-primary, #ffffff)' }}>
                 Movies & TV Shows
               </div>
-              <div style={{ fontSize: '11px', color: '#cbd5e1', marginTop: '2px' }}>
+              <div style={{ fontSize: '12px', color: 'var(--text-muted, #9ca3af)', marginTop: '2px' }}>
                 Server decoding for AC3/DTS audio & subtitles
               </div>
             </div>
@@ -162,42 +161,43 @@ export const PlaybackModeModal: React.FC<PlaybackModeModalProps> = ({
               gap: '14px',
               padding: '14px 16px',
               borderRadius: '12px',
-              border: '1px solid rgba(255, 255, 255, 0.1)',
-              background: 'rgba(30, 41, 59, 0.5)',
+              border: '1px solid var(--border-color, rgba(255, 255, 255, 0.1))',
+              background: 'var(--surface, #12121a)',
               cursor: 'pointer',
-              color: '#ffffff',
+              color: 'var(--text-primary, #ffffff)',
               textAlign: 'left',
               transition: 'all 0.15s ease'
             }}
             onMouseEnter={e => {
-              e.currentTarget.style.background = 'rgba(30, 41, 59, 0.85)';
-              e.currentTarget.style.borderColor = 'rgba(6, 182, 212, 0.5)';
+              e.currentTarget.style.background = 'var(--card-hover-bg, #222234)';
+              e.currentTarget.style.borderColor = 'var(--border-focus, rgba(255, 255, 255, 0.25))';
               e.currentTarget.style.transform = 'translateY(-1px)';
             }}
             onMouseLeave={e => {
-              e.currentTarget.style.background = 'rgba(30, 41, 59, 0.5)';
-              e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.1)';
+              e.currentTarget.style.background = 'var(--surface, #12121a)';
+              e.currentTarget.style.borderColor = 'var(--border-color, rgba(255, 255, 255, 0.1))';
               e.currentTarget.style.transform = 'translateY(0)';
             }}
           >
             <div style={{
-              width: '38px',
-              height: '38px',
+              width: '40px',
+              height: '40px',
               borderRadius: '10px',
-              background: 'rgba(6, 182, 212, 0.2)',
+              background: 'var(--surface-elevated, #161622)',
+              border: '1px solid var(--border-color, rgba(255, 255, 255, 0.1))',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
-              color: '#22d3ee',
+              color: 'var(--text-secondary, #d1d5db)',
               flexShrink: 0
             }}>
               <Zap size={20} />
             </div>
             <div>
-              <div style={{ fontSize: '14px', fontWeight: 700, color: '#f8fafc' }}>
+              <div style={{ fontSize: '14px', fontWeight: 700, color: 'var(--text-primary, #ffffff)' }}>
                 Simple Videos & Clips
               </div>
-              <div style={{ fontSize: '11px', color: '#94a3b8', marginTop: '2px' }}>
+              <div style={{ fontSize: '12px', color: 'var(--text-muted, #9ca3af)', marginTop: '2px' }}>
                 Fast direct HTML5 playback for MP4/WebM
               </div>
             </div>
@@ -210,9 +210,9 @@ export const PlaybackModeModal: React.FC<PlaybackModeModalProps> = ({
             type="checkbox"
             checked={rememberChoice}
             onChange={e => setRememberChoice(e.target.checked)}
-            style={{ accentColor: '#8b5cf6', width: '15px', height: '15px', cursor: 'pointer' }}
+            style={{ accentColor: 'var(--accent-color, #e50914)', width: '15px', height: '15px', cursor: 'pointer' }}
           />
-          <span style={{ fontSize: '12px', color: '#94a3b8' }}>
+          <span style={{ fontSize: '12px', color: 'var(--text-muted, #9ca3af)' }}>
             Remember choice for unrecognized videos
           </span>
         </label>

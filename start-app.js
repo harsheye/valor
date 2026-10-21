@@ -476,6 +476,7 @@ function handleProxyRequest(targetUrl, req, res, redirectCount = 0) {
     const headers = {};
     if (req.headers.range) headers['range'] = req.headers.range;
     if (req.headers['accept']) headers['accept'] = req.headers['accept'];
+    if (req.headers['authorization']) headers['authorization'] = req.headers['authorization'];
     headers['user-agent'] = req.headers['user-agent'] || 'Mozilla/5.0';
 
     const proxyReq = client.request(u, {
@@ -656,7 +657,18 @@ const backendServer = http.createServer(async (req, res) => {
           return;
         }
 
-        const cleanPath = tmdbPath.startsWith('/') ? tmdbPath.slice(1) : tmdbPath;
+        let cleanPath = tmdbPath.startsWith('/') ? tmdbPath.slice(1) : tmdbPath;
+        const extraParams = new URLSearchParams();
+        for (const [key, val] of parsedUrl.searchParams.entries()) {
+          if (key !== 'path' && key !== 'endpoint') {
+            extraParams.append(key, val);
+          }
+        }
+        const extraQuery = extraParams.toString();
+        if (extraQuery) {
+          cleanPath += (cleanPath.includes('?') ? '&' : '?') + extraQuery;
+        }
+
         const targetUrl = `https://api.themoviedb.org/3/${cleanPath}`;
         const TMDB_BEARER = "eyJhbGciOiJIUzI1NiJ9.eyJhdWQiOiJlMzQwMGRhZWZjODJjNTJlZDEyYzk1MWU1ZWFmYmVhYyIsIm5iZiI6MTc4MzU0MTI2OS44NzUsInN1YiI6IjZhNGVhZTE1MzFhOWUyYmNhZjBmY2RlMiIsInNjb3BlcyI6WyJhcGlfcmVhZCJdLCJ2ZXJzaW9uIjoxfQ.GT6_b6NSJwjYCXlbaCi_djq09ug0rKDxY9iouqVrYWY";
 

@@ -8227,6 +8227,8 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
             }
           }}
           onToast={msg => triggerSwitchToast(msg)}
+          videoId={video.id}
+          userId={userId}
         />
       )}
     </div>

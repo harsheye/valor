@@ -13,6 +13,42 @@ export interface MediaIdentifyModalProps {
   onClose: () => void;
   onApplyBookmarks: (bookmarks: Bookmark[], mediaInfo: { title: string; tmdbId?: number; imdbId?: string; season?: number; episode?: number; overview?: string; imageUrl?: string; releaseDate?: string; rating?: number }) => void;
   onToast?: (msg: string) => void;
+  videoId?: string;
+  userId?: string;
+}
+
+/**
+ * Fetch from TMDB using backend proxy (/api/tmdb-proxy) to eliminate CORS preflight issues on client origins.
+ */
+async function fetchTmdbApi(endpointPath: string): Promise<any> {
+  const cleanEndpoint = endpointPath.startsWith('/') ? endpointPath.slice(1) : endpointPath;
+  const proxyEndpoints = [
+    `/api/tmdb-proxy?endpoint=${encodeURIComponent(cleanEndpoint)}`,
+    `http://127.0.0.1:50001/api/tmdb-proxy?endpoint=${encodeURIComponent(cleanEndpoint)}`
+  ];
+
+  for (const url of proxyEndpoints) {
+    try {
+      const res = await fetch(url);
+      if (res.ok) {
+        return await res.json();
+      }
+    } catch {}
+  }
+
+  // Fallback: direct TMDB API request
+  const directUrl = `https://api.themoviedb.org/3/${cleanEndpoint}`;
+  const directRes = await fetch(directUrl, {
+    headers: {
+      'Authorization': `Bearer ${TMDB_TOKEN}`,
+      'Accept': 'application/json'
+    }
+  });
+
+  if (!directRes.ok) {
+    throw new Error(`TMDB query failed with status ${directRes.status}`);
+  }
+  return await directRes.json();
 }
 
 export const MediaIdentifyModal: React.FC<MediaIdentifyModalProps> = ({
@@ -21,9 +57,10 @@ export const MediaIdentifyModal: React.FC<MediaIdentifyModalProps> = ({
   duration,
   onClose,
   onApplyBookmarks,
-  onToast
+  onToast,
+  videoId,
+  userId
 }) => {
-  
   const isHashOrUrl = (str: string) => {
     if (!str) return true;
     const clean = str.trim();
@@ -58,23 +95,11 @@ export const MediaIdentifyModal: React.FC<MediaIdentifyModalProps> = ({
     setStatusMsg('Searching IMDB / TMDB...');
 
     try {
-      // 1. Search TMDB for Show or Movie
+      // 1. Search TMDB for Show or Movie via backend proxy (Zero CORS error)
       const cleanQuery = mediaTitle.trim();
       const endpoint = isTvShow ? 'search/tv' : 'search/movie';
-      const searchUrl = `https://api.themoviedb.org/3/${endpoint}?query=${encodeURIComponent(cleanQuery)}&include_adult=false`;
+      const searchData = await fetchTmdbApi(`${endpoint}?query=${encodeURIComponent(cleanQuery)}&include_adult=false`);
 
-      const searchRes = await fetch(searchUrl, {
-        headers: {
-          'Authorization': `Bearer ${TMDB_TOKEN}`,
-          'accept': 'application/json'
-        }
-      });
-
-      if (!searchRes.ok) {
-        throw new Error(`TMDB search returned status ${searchRes.status}`);
-      }
-
-      const searchData = await searchRes.json();
       if (!searchData.results || searchData.results.length === 0) {
         throw new Error(`No match found on TMDB/IMDB for "${cleanQuery}".`);
       }
@@ -88,18 +113,9 @@ export const MediaIdentifyModal: React.FC<MediaIdentifyModalProps> = ({
       // 2. Fetch external IDs to get IMDB ID (e.g. tt1234567)
       let imdbId: string | undefined = undefined;
       try {
-        const extUrl = `https://api.themoviedb.org/3/${isTvShow ? 'tv' : 'movie'}/${tmdbId}/external_ids`;
-        const extRes = await fetch(extUrl, {
-          headers: {
-            'Authorization': `Bearer ${TMDB_TOKEN}`,
-            'accept': 'application/json'
-          }
-        });
-        if (extRes.ok) {
-          const extData = await extRes.json();
-          if (extData.imdb_id) {
-            imdbId = extData.imdb_id;
-          }
+        const extData = await fetchTmdbApi(`${isTvShow ? 'tv' : 'movie'}/${tmdbId}/external_ids`);
+        if (extData && extData.imdb_id) {
+          imdbId = extData.imdb_id;
         }
       } catch (extErr) {
         console.warn('[MediaIdentifyModal] External IDs lookup error:', extErr);
@@ -128,10 +144,10 @@ export const MediaIdentifyModal: React.FC<MediaIdentifyModalProps> = ({
         }
       } catch {}
 
-      let introDbRes = await fetch(introDbUrl, { headers: introHeaders });
+      let introDbRes = await fetch(introDbUrl, { headers: introHeaders }).catch(() => null);
 
       // Fallback to IMDB query if TMDB query returned 404 and IMDB ID exists
-      if (!introDbRes.ok && imdbId) {
+      if ((!introDbRes || !introDbRes.ok) && imdbId) {
         let imdbIntroUrl = `https://api.theintrodb.org/v3/media?imdb_id=${imdbId}`;
         if (isTvShow) {
           imdbIntroUrl += `&season=${season}&episode=${episode}`;
@@ -139,26 +155,29 @@ export const MediaIdentifyModal: React.FC<MediaIdentifyModalProps> = ({
         if (durationMs > 0) {
           imdbIntroUrl += `&duration_ms=${durationMs}`;
         }
-        const fallbackRes = await fetch(imdbIntroUrl, { headers: introHeaders });
-        if (fallbackRes.ok) {
+        const fallbackRes = await fetch(imdbIntroUrl, { headers: introHeaders }).catch(() => null);
+        if (fallbackRes && fallbackRes.ok) {
           introDbRes = fallbackRes;
         }
       }
 
       const newBookmarks: Bookmark[] = [];
       const msToSec = (ms?: number | null) => (ms ? Math.round(ms / 1000) : 0);
+      let introDbData: any = null;
 
-      if (introDbRes.ok) {
-        const introData = await introDbRes.json();
+      if (introDbRes && introDbRes.ok) {
+        introDbData = await introDbRes.json();
 
         // Intros
-        if (introData.intro && Array.isArray(introData.intro)) {
-          introData.intro.forEach((item: any, idx: number) => {
+        if (introDbData.intro && Array.isArray(introDbData.intro)) {
+          introDbData.intro.forEach((item: any, idx: number) => {
             newBookmarks.push({
               id: `theintrodb-intro-${idx}`,
               time: msToSec(item.start_ms),
               endTime: msToSec(item.end_ms),
+              startTime: msToSec(item.start_ms),
               label: 'Intro',
+              category: 'Intro',
               isIntro: true,
               isOutro: false,
               skipEnabled: true,
@@ -167,14 +186,16 @@ export const MediaIdentifyModal: React.FC<MediaIdentifyModalProps> = ({
           });
         }
 
-        // Recaps
-        if (introData.recap && Array.isArray(introData.recap)) {
-          introData.recap.forEach((item: any, idx: number) => {
+        // Recaps / Previews
+        if (introDbData.recap && Array.isArray(introDbData.recap)) {
+          introDbData.recap.forEach((item: any, idx: number) => {
             newBookmarks.push({
               id: `theintrodb-recap-${idx}`,
               time: msToSec(item.start_ms),
               endTime: msToSec(item.end_ms),
-              label: 'Recap',
+              startTime: msToSec(item.start_ms),
+              label: 'Preview / Recap',
+              category: 'Preview',
               isIntro: true,
               isOutro: false,
               skipEnabled: true,
@@ -183,20 +204,41 @@ export const MediaIdentifyModal: React.FC<MediaIdentifyModalProps> = ({
           });
         }
 
-        // Credits
-        if (introData.credits && Array.isArray(introData.credits)) {
-          introData.credits.forEach((item: any, idx: number) => {
+        // Credits / Outros
+        if (introDbData.credits && Array.isArray(introDbData.credits)) {
+          introDbData.credits.forEach((item: any, idx: number) => {
             newBookmarks.push({
               id: `theintrodb-credits-${idx}`,
               time: msToSec(item.start_ms),
               endTime: msToSec(item.end_ms),
-              label: 'Credits/Outro',
+              startTime: msToSec(item.start_ms),
+              label: 'Credits / Outro',
+              category: 'Outro',
               isIntro: false,
               isOutro: true,
               skipEnabled: true,
               createdBy: 'theintrodb'
             });
           });
+        }
+
+        // Auto-cache discovered IntroDB timestamps into server database
+        if (newBookmarks.length > 0 && introDbData) {
+          try {
+            fetch('/api/timestamps/save-introdb', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                tmdbId,
+                season: isTvShow ? season : null,
+                episode: isTvShow ? episode : null,
+                videoId: videoId || String(tmdbId),
+                mediaName: resolvedTitle,
+                introDbData,
+                userId: userId || 'theintrodb'
+              })
+            }).catch(saveErr => console.warn('[IntroDB Cache] Auto-save failed:', saveErr));
+          } catch {}
         }
       }
 
@@ -236,8 +278,8 @@ export const MediaIdentifyModal: React.FC<MediaIdentifyModalProps> = ({
         position: 'fixed',
         inset: 0,
         zIndex: 99999,
-        backgroundColor: 'rgba(0, 0, 0, 0.8)',
-        backdropFilter: 'blur(8px)',
+        background: 'var(--overlay-bg, rgba(0, 0, 0, 0.75))',
+        backdropFilter: 'var(--glass-blur, blur(16px))',
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
@@ -253,14 +295,15 @@ export const MediaIdentifyModal: React.FC<MediaIdentifyModalProps> = ({
         style={{
           width: '100%',
           maxWidth: '440px',
-          backgroundColor: '#0f172a',
-          border: '1px solid rgba(255, 255, 255, 0.12)',
+          backgroundColor: 'var(--card-bg, #161622)',
+          border: '1px solid var(--border-color, rgba(255, 255, 255, 0.1))',
           borderRadius: '16px',
-          boxShadow: '0 20px 45px rgba(0, 0, 0, 0.7), 0 0 30px rgba(59, 130, 246, 0.15)',
+          boxShadow: 'var(--shadow-xl, 0 20px 45px rgba(0, 0, 0, 0.7))',
           overflow: 'hidden',
           display: 'flex',
           flexDirection: 'column',
-          color: '#f8fafc',
+          color: 'var(--text-primary, #ffffff)',
+          fontFamily: 'var(--font-sans)',
           userSelect: 'none',
           padding: '24px'
         }}
@@ -269,15 +312,15 @@ export const MediaIdentifyModal: React.FC<MediaIdentifyModalProps> = ({
         <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: '16px' }}>
           <div>
             <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '4px' }}>
-              <Sparkles size={16} color="#60a5fa" />
-              <span style={{ fontSize: '11px', fontWeight: 700, color: '#60a5fa', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+              <Sparkles size={16} color="var(--accent-color, #e50914)" />
+              <span style={{ fontSize: '11px', fontWeight: 700, color: 'var(--accent-color, #e50914)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
                 TheIntroDB Skip Sync
               </span>
             </div>
-            <h3 style={{ fontSize: '18px', fontWeight: 700, margin: 0, color: '#ffffff' }}>
+            <h3 style={{ fontSize: '18px', fontWeight: 700, margin: 0, color: 'var(--text-primary, #ffffff)' }}>
               Identify Media
             </h3>
-            <p style={{ fontSize: '12px', color: '#94a3b8', margin: '4px 0 0 0' }}>
+            <p style={{ fontSize: '12px', color: 'var(--text-muted, #9ca3af)', margin: '4px 0 0 0' }}>
               Enter media name to resolve IMDB ID and fetch intro skip markers.
             </p>
           </div>
@@ -287,7 +330,7 @@ export const MediaIdentifyModal: React.FC<MediaIdentifyModalProps> = ({
             style={{
               background: 'transparent',
               border: 'none',
-              color: '#94a3b8',
+              color: 'var(--text-muted, #9ca3af)',
               cursor: 'pointer',
               padding: '4px',
               borderRadius: '6px'
@@ -302,7 +345,7 @@ export const MediaIdentifyModal: React.FC<MediaIdentifyModalProps> = ({
         <div style={{ display: 'flex', flexDirection: 'column', gap: '14px', marginBottom: '18px' }}>
           {/* Media Name Input */}
           <div>
-            <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: '#cbd5e1', marginBottom: '6px' }}>
+            <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary, #d1d5db)', marginBottom: '6px' }}>
               Media / Show Name
             </label>
             <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
@@ -316,11 +359,11 @@ export const MediaIdentifyModal: React.FC<MediaIdentifyModalProps> = ({
                 placeholder="e.g. Breaking Bad, Stranger Things, Dune"
                 style={{
                   width: '100%',
-                  background: 'rgba(30, 41, 59, 0.8)',
-                  border: '1px solid rgba(255, 255, 255, 0.15)',
+                  background: 'var(--surface, #12121a)',
+                  border: '1px solid var(--border-color, rgba(255, 255, 255, 0.1))',
                   borderRadius: '10px',
                   padding: '10px 14px',
-                  color: '#ffffff',
+                  color: 'var(--text-primary, #ffffff)',
                   fontSize: '14px',
                   outline: 'none',
                   boxSizing: 'border-box'
@@ -339,16 +382,17 @@ export const MediaIdentifyModal: React.FC<MediaIdentifyModalProps> = ({
                 flex: 1,
                 padding: '9px 12px',
                 borderRadius: '8px',
-                border: isTvShow ? '1px solid #8b5cf6' : '1px solid rgba(255, 255, 255, 0.1)',
-                background: isTvShow ? 'rgba(139, 92, 246, 0.2)' : 'rgba(30, 41, 59, 0.4)',
-                color: isTvShow ? '#c4b5fd' : '#94a3b8',
+                border: isTvShow ? '1px solid var(--accent-color, #e50914)' : '1px solid var(--border-color, rgba(255, 255, 255, 0.1))',
+                background: isTvShow ? 'var(--accent-glow, rgba(229, 9, 20, 0.25))' : 'var(--surface, #12121a)',
+                color: isTvShow ? 'var(--accent-color, #e50914)' : 'var(--text-secondary, #d1d5db)',
                 fontWeight: 600,
                 fontSize: '12px',
                 cursor: 'pointer',
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
-                gap: '6px'
+                gap: '6px',
+                transition: 'all 0.15s ease'
               }}
             >
               <Tv size={14} /> TV Show / Series
@@ -360,16 +404,17 @@ export const MediaIdentifyModal: React.FC<MediaIdentifyModalProps> = ({
                 flex: 1,
                 padding: '9px 12px',
                 borderRadius: '8px',
-                border: !isTvShow ? '1px solid #06b6d4' : '1px solid rgba(255, 255, 255, 0.1)',
-                background: !isTvShow ? 'rgba(6, 182, 212, 0.2)' : 'rgba(30, 41, 59, 0.4)',
-                color: !isTvShow ? '#22d3ee' : '#94a3b8',
+                border: !isTvShow ? '1px solid var(--accent-color, #e50914)' : '1px solid var(--border-color, rgba(255, 255, 255, 0.1))',
+                background: !isTvShow ? 'var(--accent-glow, rgba(229, 9, 20, 0.25))' : 'var(--surface, #12121a)',
+                color: !isTvShow ? 'var(--accent-color, #e50914)' : 'var(--text-secondary, #d1d5db)',
                 fontWeight: 600,
                 fontSize: '12px',
                 cursor: 'pointer',
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
-                gap: '6px'
+                gap: '6px',
+                transition: 'all 0.15s ease'
               }}
             >
               <Film size={14} /> Movie / Cinema
@@ -380,7 +425,7 @@ export const MediaIdentifyModal: React.FC<MediaIdentifyModalProps> = ({
           {isTvShow && (
             <div style={{ display: 'flex', gap: '10px' }}>
               <div style={{ flex: 1 }}>
-                <label style={{ display: 'block', fontSize: '11px', color: '#94a3b8', marginBottom: '4px' }}>
+                <label style={{ display: 'block', fontSize: '11px', color: 'var(--text-muted, #9ca3af)', marginBottom: '4px' }}>
                   Season
                 </label>
                 <input
@@ -390,11 +435,11 @@ export const MediaIdentifyModal: React.FC<MediaIdentifyModalProps> = ({
                   onChange={e => setSeason(Math.max(1, parseInt(e.target.value, 10) || 1))}
                   style={{
                     width: '100%',
-                    background: 'rgba(30, 41, 59, 0.8)',
-                    border: '1px solid rgba(255, 255, 255, 0.15)',
+                    background: 'var(--surface, #12121a)',
+                    border: '1px solid var(--border-color, rgba(255, 255, 255, 0.1))',
                     borderRadius: '8px',
                     padding: '8px 12px',
-                    color: '#ffffff',
+                    color: 'var(--text-primary, #ffffff)',
                     fontSize: '13px',
                     outline: 'none',
                     boxSizing: 'border-box'
@@ -402,7 +447,7 @@ export const MediaIdentifyModal: React.FC<MediaIdentifyModalProps> = ({
                 />
               </div>
               <div style={{ flex: 1 }}>
-                <label style={{ display: 'block', fontSize: '11px', color: '#94a3b8', marginBottom: '4px' }}>
+                <label style={{ display: 'block', fontSize: '11px', color: 'var(--text-muted, #9ca3af)', marginBottom: '4px' }}>
                   Episode
                 </label>
                 <input
@@ -412,11 +457,11 @@ export const MediaIdentifyModal: React.FC<MediaIdentifyModalProps> = ({
                   onChange={e => setEpisode(Math.max(1, parseInt(e.target.value, 10) || 1))}
                   style={{
                     width: '100%',
-                    background: 'rgba(30, 41, 59, 0.8)',
-                    border: '1px solid rgba(255, 255, 255, 0.15)',
+                    background: 'var(--surface, #12121a)',
+                    border: '1px solid var(--border-color, rgba(255, 255, 255, 0.1))',
                     borderRadius: '8px',
                     padding: '8px 12px',
-                    color: '#ffffff',
+                    color: 'var(--text-primary, #ffffff)',
                     fontSize: '13px',
                     outline: 'none',
                     boxSizing: 'border-box'
@@ -428,14 +473,14 @@ export const MediaIdentifyModal: React.FC<MediaIdentifyModalProps> = ({
 
           {/* Status / Error Message */}
           {statusMsg && (
-            <div style={{ fontSize: '12px', color: '#60a5fa', display: 'flex', alignItems: 'center', gap: '6px' }}>
+            <div style={{ fontSize: '12px', color: 'var(--accent-color, #e50914)', display: 'flex', alignItems: 'center', gap: '6px' }}>
               <Loader2 size={13} className="animate-spin" />
               <span>{statusMsg}</span>
             </div>
           )}
 
           {errorMsg && (
-            <div style={{ fontSize: '12px', color: '#f87171', display: 'flex', alignItems: 'center', gap: '6px' }}>
+            <div style={{ fontSize: '12px', color: 'var(--danger, #ef4444)', display: 'flex', alignItems: 'center', gap: '6px' }}>
               <AlertCircle size={14} />
               <span>{errorMsg}</span>
             </div>
@@ -448,7 +493,7 @@ export const MediaIdentifyModal: React.FC<MediaIdentifyModalProps> = ({
             variant="ghost"
             onClick={onClose}
             disabled={isLoading}
-            style={{ color: '#94a3b8', padding: '8px 14px' }}
+            style={{ color: 'var(--text-muted, #9ca3af)', padding: '8px 14px' }}
           >
             Cancel
           </Button>
@@ -456,17 +501,18 @@ export const MediaIdentifyModal: React.FC<MediaIdentifyModalProps> = ({
             onClick={handleSearchAndFetch}
             disabled={isLoading}
             style={{
-              background: 'linear-gradient(135deg, #3b82f6, #2563eb)',
+              background: 'var(--accent-color, #e50914)',
               color: '#ffffff',
               fontWeight: 700,
               fontSize: '13px',
               padding: '9px 18px',
-              borderRadius: '10px',
+              borderRadius: '8px',
               border: 'none',
               cursor: 'pointer',
               display: 'flex',
               alignItems: 'center',
-              gap: '6px'
+              gap: '6px',
+              transition: 'background-color 0.15s ease'
             }}
           >
             {isLoading ? <Loader2 size={15} className="animate-spin" /> : <Search size={15} />}
