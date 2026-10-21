@@ -53,6 +53,13 @@ export interface ControlsConfig {
   download: boolean;
   screenshot: boolean;
   chapters: boolean;
+  time?: boolean;
+  bookmarks?: boolean;
+  audio?: boolean;
+  audioOnly?: boolean;
+  subFileOnly?: boolean;
+  allowSubUpload?: boolean;
+  closeButton?: boolean;
 }
 
 export const DEFAULT_CONTROLS_CONFIG: ControlsConfig = {
@@ -68,7 +75,14 @@ export const DEFAULT_CONTROLS_CONFIG: ControlsConfig = {
   pip: true,
   download: true,
   screenshot: true,
-  chapters: true
+  chapters: true,
+  time: true,
+  bookmarks: true,
+  audio: true,
+  audioOnly: false,
+  subFileOnly: false,
+  allowSubUpload: true,
+  closeButton: false // Default to hidden X button in embed player
 };
 
 // Theme configuration for custom branding
