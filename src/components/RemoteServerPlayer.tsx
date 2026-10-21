@@ -211,12 +211,8 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
     file: isFile(rawVideo.file) ? rawVideo.file : undefined
   }), [rawVideo]);
 
-  const isUndetectedLocalMedia = useMemo(() => {
-    if (video.type === 'online_movie' || video.type === 'online_tv' || video.type === 'online_anime') {
-      return false;
-    }
-    return classifyVideoTitle(video.title).type === 'unknown';
-  }, [video.title, video.type]);
+  // In RemoteServerPlayer (Movies & TV), always enable Audio & Sub popover and Bookmarks tab
+  const isUndetectedLocalMedia = false;
 
   const [resolvedFile, setResolvedFile] = useState<File | Blob | null>(() => {
     return isFile(rawVideo.file) ? rawVideo.file : null;
@@ -1575,6 +1571,17 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
   const sessionIdRef = useRef<string>(Math.random().toString(36).substring(2, 10));
   const altAudioRef = useRef<HTMLAudioElement | null>(null);
   const [showIdentifyModal, setShowIdentifyModal] = useState(false);
+
+  const hasPromptedMediaNameRef = useRef(false);
+  useEffect(() => {
+    if (!hasPromptedMediaNameRef.current) {
+      hasPromptedMediaNameRef.current = true;
+      if (!video.tmdbId) {
+        setShowIdentifyModal(true);
+      }
+    }
+  }, [video.tmdbId]);
+
   const [authModalState, setAuthModalState] = useState<{
     isOpen: boolean;
     initialUsername: string;
@@ -4977,82 +4984,7 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
                   textShadow: '0 0 5px rgba(0, 255, 204, 0.4)',
                   letterSpacing: '1px'
                 }}>
-                  {onSwitchMode && (
-              <button
-                onClick={() => {
-                  if (videoRef.current) {
-                    onUpdateVideo({
-                      ...video,
-                      currentTime: videoRef.current.currentTime,
-                      duration: duration ? String(duration) : video.duration
-                    }, false);
-                  }
-                  onSwitchMode('simple');
-                }}
-                style={{
-                  background: 'rgba(6, 182, 212, 0.2)',
-                  border: '1px solid rgba(6, 182, 212, 0.4)',
-                  color: '#22d3ee',
-                  padding: '6px 13px',
-                  borderRadius: '20px',
-                  fontSize: '12px',
-                  fontWeight: 700,
-                  cursor: 'pointer',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '6px'
-                }}
-                title="Switch to Simple HTML5 Player"
-              >
-                <Zap size={13} />
-                Simple Media
-              </button>
-            )}
-            <button
-              onClick={() => setShowIdentifyModal(true)}
-              style={{
-                background: 'rgba(59, 130, 246, 0.2)',
-                border: '1px solid rgba(59, 130, 246, 0.4)',
-                color: '#93c5fd',
-                padding: '6px 13px',
-                borderRadius: '20px',
-                fontSize: '12px',
-                fontWeight: 700,
-                cursor: 'pointer',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '6px'
-              }}
-              title="Search IMDB to fetch Intro & Outro skip markers"
-            >
-              <Zap size={13} color="#60a5fa" />
-              Sync IntroDB
-            </button>
-            <OdometerClock date={systemTime} />
-                </div>
-              )}
-              {video.isRemote && (
-                <div className="playback-mode-badge-container">
-                  {video.playbackMode === 'advanced' ? (
-                    <span className="playback-badge badge-advanced" title="FFmpeg-powered custom stream demuxing enabled">
-                      <span className="badge-dot"></span> Playback Mode: Advanced
-                    </span>
-                  ) : (
-                    <div className="native-badge-wrapper">
-                      <span 
-                        className="playback-badge badge-native"
-                      >
-                        <span className="badge-dot"></span> Playback Mode: Native Browser
-                        <span className="tooltip-text">Advanced metadata access is unavailable because the remote server blocks cross-origin byte access.</span>
-                      </span>
-                      <button 
-                        className="btn-enable-advanced" 
-                        onClick={() => triggerSwitchToast("Advanced Mode via proxy is a future feature. Currently playing in Native Mode.")}
-                      >
-                        Enable Advanced Mode
-                      </button>
-                    </div>
-                  )}
+                  <OdometerClock date={systemTime} />
                 </div>
               )}
             </div>
@@ -8250,10 +8182,23 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
                 ...video,
                 title: mediaInfo.title || video.title,
                 tmdbId: mediaInfo.tmdbId,
+                imdbId: mediaInfo.imdbId,
                 bookmarks: updated
               }, false);
               return updated;
             });
+
+            if (mediaInfo.title) {
+              setMediaDetails({
+                title: mediaInfo.title,
+                overview: mediaInfo.overview || '',
+                imageUrl: mediaInfo.imageUrl || '',
+                releaseDate: mediaInfo.releaseDate || '',
+                rating: mediaInfo.rating,
+                season: mediaInfo.season,
+                episode: mediaInfo.episode
+              });
+            }
           }}
           onToast={msg => triggerSwitchToast(msg)}
         />

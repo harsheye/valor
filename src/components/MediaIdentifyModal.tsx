@@ -11,7 +11,7 @@ export interface MediaIdentifyModalProps {
   videoTitle: string;
   duration: number;
   onClose: () => void;
-  onApplyBookmarks: (bookmarks: Bookmark[], mediaInfo: { title: string; tmdbId?: number; imdbId?: string; season?: number; episode?: number }) => void;
+  onApplyBookmarks: (bookmarks: Bookmark[], mediaInfo: { title: string; tmdbId?: number; imdbId?: string; season?: number; episode?: number; overview?: string; imageUrl?: string; releaseDate?: string; rating?: number }) => void;
   onToast?: (msg: string) => void;
 }
 
@@ -23,8 +23,20 @@ export const MediaIdentifyModal: React.FC<MediaIdentifyModalProps> = ({
   onApplyBookmarks,
   onToast
 }) => {
+  
+  const isHashOrUrl = (str: string) => {
+    if (!str) return true;
+    const clean = str.trim();
+    if (/^[a-zA-Z0-9_\-\+=\/]{18,}$/.test(clean)) return true;
+    if (/^(stream|video|master|index|chunk|playlist|file|media|remote|untitled|embedded video)/i.test(clean)) return true;
+    return false;
+  };
+
   const initialClassified = classifyVideoTitle(videoTitle || '');
-  const [mediaTitle, setMediaTitle] = useState(() => initialClassified.seriesTitle || initialClassified.displayTitle || videoTitle || '');
+  const [mediaTitle, setMediaTitle] = useState(() => {
+    if (isHashOrUrl(videoTitle)) return '';
+    return initialClassified.seriesTitle || initialClassified.displayTitle || videoTitle || '';
+  });
   const [isTvShow, setIsTvShow] = useState<boolean>(() => initialClassified.type === 'series');
   const [season, setSeason] = useState<number>(() => initialClassified.season || 1);
   const [episode, setEpisode] = useState<number>(() => initialClassified.episode || 1);
@@ -194,12 +206,17 @@ export const MediaIdentifyModal: React.FC<MediaIdentifyModalProps> = ({
         : `Identified as "${resolvedTitle}" (${imdbId || `TMDB #${tmdbId}`}). No introdb entries yet.`;
 
       onToast?.(successToast);
+      const mediaImg = topResult.poster_path ? `https://image.tmdb.org/t/p/w500${topResult.poster_path}` : (topResult.backdrop_path ? `https://image.tmdb.org/t/p/w500${topResult.backdrop_path}` : '');
       onApplyBookmarks(newBookmarks, {
         title: resolvedTitle,
         tmdbId,
         imdbId,
         season: isTvShow ? season : undefined,
-        episode: isTvShow ? episode : undefined
+        episode: isTvShow ? episode : undefined,
+        overview: topResult.overview || '',
+        imageUrl: mediaImg,
+        releaseDate: topResult.release_date || topResult.first_air_date || '',
+        rating: topResult.vote_average
       });
 
       onClose();
