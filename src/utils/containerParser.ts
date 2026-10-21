@@ -395,7 +395,7 @@ function buildMp4SeekMap(
   };
 }
 
-class EbmlReader {
+export class EbmlReader {
   public data: Uint8Array;
   public offset = 0;
 

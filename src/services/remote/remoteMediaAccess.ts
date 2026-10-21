@@ -1,7 +1,7 @@
 import { FFmpeg } from '@ffmpeg/ffmpeg';
 import type { ByteSource } from '../local/localByteSource';
 import type { ProbeResult, MediaStreamInfo } from '../pipeline/MediaPipeline';
-import { probeContainer, parseMkv, parseMp4, extractMkvSubtitles } from '../../utils/containerParser';
+import { probeContainer, parseMkv, parseMp4, extractMkvSubtitles, EbmlReader } from '../../utils/containerParser';
 import type { SubtitleCue } from '../../utils/subtitleParser';
 import { logger } from '../../utils/logger';
 
@@ -280,9 +280,8 @@ export class RemoteMediaAccess {
       0x01, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff // Unknown length VINT
     ]);
 
-    // Extract Info and Tracks elements (skip original Segment header vint)
+    // Extract Info and Tracks elements ONLY (omit SeekHead and Cues to prevent WASM OOM seeking)
     let payloadStart = ebmlHeaderEnd > 0 ? ebmlHeaderEnd + 4 : 0;
-    // Skip original segment vint
     if (ebmlHeaderEnd > 0 && payloadStart < headerBytes.length) {
       const firstByte = headerBytes[payloadStart];
       let mask = 0x80;
@@ -294,9 +293,46 @@ export class RemoteMediaAccess {
       payloadStart += Math.min(vintLen, 8);
     }
 
-    const infoAndTracksBytes = payloadStart < headerEnd
-      ? headerBytes.subarray(payloadStart, headerEnd)
-      : new Uint8Array(0);
+    const segmentChildrenData = headerBytes.subarray(payloadStart, headerEnd);
+    const cr = new EbmlReader(segmentChildrenData);
+    const selectedElements: Uint8Array[] = [];
+
+    while (cr.hasMore(4)) {
+      const elemStart = cr.offset;
+      let id: number;
+      let elemSize: number;
+      try {
+        id = cr.readId();
+        const vint = cr.readVint();
+        elemSize = vint.value;
+      } catch {
+        break;
+      }
+
+      if (id === 0x1F43B675) {
+        break;
+      }
+
+      if (elemSize < 0 || cr.offset + elemSize > segmentChildrenData.length) {
+        break;
+      }
+
+      const totalLen = (cr.offset - elemStart) + elemSize;
+      if (id === 0x1549A966 || id === 0x1654AE6B) {
+        selectedElements.push(segmentChildrenData.subarray(elemStart, elemStart + totalLen));
+      }
+      // SeekHead (0x114D9B74), Cues (0x1C53BB6B) are strictly omitted!
+
+      cr.skip(elemSize);
+    }
+
+    const infoAndTracksLength = selectedElements.reduce((acc, el) => acc + el.length, 0);
+    const infoAndTracksBytes = new Uint8Array(infoAndTracksLength);
+    let off = 0;
+    for (const el of selectedElements) {
+      infoAndTracksBytes.set(el, off);
+      off += el.length;
+    }
 
     // 3. Resolve target cluster offset and cluster timestamp
     let clusterOffset = firstClusterOffset || (clusterTagPos !== -1 ? clusterTagPos : 0);
@@ -310,17 +346,54 @@ export class RemoteMediaAccess {
         clusterOffset = matched.offset;
         clusterTimeSec = matched.time;
       }
-    } else if (startTime > 0) {
-      // Linear estimate fallback if no seekMap
-      const estimatedFraction = Math.min(0.95, startTime / (size / (1024 * 1024)));
-      clusterOffset = Math.floor(estimatedFraction * size);
-      clusterTimeSec = startTime;
     }
 
     // 4. Fetch the cluster payload (enough bytes to decode duration + extra buffer)
-    const clusterFetchSize = Math.max(4 * 1024 * 1024, Math.min(12 * 1024 * 1024, duration * 350 * 1024));
+    const clusterFetchSize = Math.max(4 * 1024 * 1024, Math.min(10 * 1024 * 1024, duration * 350 * 1024));
     const clusterEnd = Math.min(clusterOffset + clusterFetchSize - 1, size - 1);
-    const clusterBytes = await source.read(clusterOffset, clusterEnd, signal);
+    let clusterBytes = await source.read(clusterOffset, clusterEnd, signal);
+
+    // Ensure clusterBytes begins with 0x1F 0x43 0xB6 0x75
+    let clusterSyncIdx = -1;
+    for (let i = 0; i <= clusterBytes.length - 4; i++) {
+      if (
+        clusterBytes[i] === 0x1f &&
+        clusterBytes[i + 1] === 0x43 &&
+        clusterBytes[i + 2] === 0xb6 &&
+        clusterBytes[i + 3] === 0x75
+      ) {
+        clusterSyncIdx = i;
+        break;
+      }
+    }
+
+    if (clusterSyncIdx > 0) {
+      clusterBytes = clusterBytes.subarray(clusterSyncIdx);
+      clusterOffset += clusterSyncIdx;
+    }
+
+    // Parse actual Cluster timecode from the cluster payload
+    let actualClusterTimeSec = clusterTimeSec;
+    try {
+      const clusterReader = new EbmlReader(clusterBytes);
+      if (clusterReader.hasMore(4)) {
+        const id = clusterReader.readId();
+        if (id === 0x1F43B675) {
+          clusterReader.readVint();
+          while (clusterReader.hasMore(2)) {
+            const childId = clusterReader.readId();
+            const childSize = clusterReader.readVint().value;
+            if (childId === 0xE7) {
+              const tc = clusterReader.readUint(childSize);
+              actualClusterTimeSec = (tc * 1000000) / 1000000000;
+              break;
+            } else {
+              clusterReader.skip(childSize);
+            }
+          }
+        }
+      }
+    } catch { /* ignore */ }
 
     // 5. Assemble the self-contained streaming container
     const totalLength =
@@ -343,7 +416,7 @@ export class RemoteMediaAccess {
 
     segment.set(clusterBytes, offset);
 
-    return { segmentBytes: segment, clusterTimeSec };
+    return { segmentBytes: segment, clusterTimeSec: actualClusterTimeSec };
   }
 
   /**
@@ -383,6 +456,9 @@ export class RemoteMediaAccess {
     try {
       const runFFmpeg = async (seekSec: number): Promise<Uint8Array> => {
         const args = [
+          '-fflags', '+ignidx',
+          '-probesize', '2000000',
+          '-analyzeduration', '2000000',
           '-ss', seekSec.toFixed(3),
           '-accurate_seek',
           '-i', tempInFile,
