@@ -36,9 +36,17 @@ export class HttpByteSource implements ByteSource {
   private url: string;
   private size: number | null = null;
   private useProxy = false;
+  private useBackendProxy = false;
 
   constructor(url: string) {
     this.url = url;
+  }
+
+  private getRequestUrl(): string {
+    if (this.useBackendProxy) {
+      return `/api/proxy-media?url=${encodeURIComponent(this.url)}`;
+    }
+    return this.url;
   }
 
   async getSize(): Promise<number> {
@@ -46,46 +54,66 @@ export class HttpByteSource implements ByteSource {
 
     let lastError: any = null;
 
-    try {
-      const response = await fetch(this.url, { method: 'HEAD' });
-      if (response.status !== 200 && response.status !== 206) {
-        throw new Error(`HEAD request failed with status: ${response.status}`);
-      }
-      const length = response.headers.get('Content-Length');
-      if (length) {
-        this.size = parseInt(length, 10);
-        return this.size;
-      }
-    } catch (e) {
-      console.warn('HEAD request failed, falling back to GET Range bytes=0-0:', e);
-      lastError = e;
-    }
-
-    try {
-      const response = await fetch(this.url, {
-        headers: { Range: 'bytes=0-0' }
-      });
-      if (response.status !== 200 && response.status !== 206) {
-        throw new Error(`GET range request failed with status: ${response.status}`);
-      }
+    const parseSizeFromResponse = (response: Response): number | null => {
       const range = response.headers.get('Content-Range');
       if (range) {
         const parts = range.split('/');
         if (parts.length > 1) {
-          this.size = parseInt(parts[1], 10);
-          return this.size;
+          const parsed = parseInt(parts[1], 10);
+          if (!isNaN(parsed) && parsed > 0) return parsed;
         }
       }
       const length = response.headers.get('Content-Length');
       if (length) {
-        this.size = parseInt(length, 10);
-        return this.size;
+        const parsed = parseInt(length, 10);
+        if (!isNaN(parsed) && parsed > 0) return parsed;
       }
-    } catch (err) {
-      console.warn('Direct fetch failed. Trying proxy fallback...', err);
+      return null;
+    };
+
+    // 1. Direct HEAD request
+    try {
+      const response = await fetch(this.getRequestUrl(), { method: 'HEAD' });
+      if (response.status === 401) {
+        throw new Error('Remote media requires authentication (401 Unauthorized: Basic realm="Restricted")');
+      }
+      if (response.status === 200 || response.status === 206) {
+        const sz = parseSizeFromResponse(response);
+        if (sz !== null) {
+          this.size = sz;
+          return this.size;
+        }
+      }
+    } catch (e: any) {
+      if (e.message && e.message.includes('401 Unauthorized')) throw e;
+      lastError = e;
+    }
+
+    // 2. Direct GET Range bytes=0-0
+    try {
+      const response = await fetch(this.getRequestUrl(), {
+        headers: { Range: 'bytes=0-0' }
+      });
+      if (response.status === 401) {
+        throw new Error('Remote media requires authentication (401 Unauthorized: Basic realm="Restricted")');
+      }
+      if (response.status === 200 || response.status === 206) {
+        const sz = parseSizeFromResponse(response);
+        if (sz !== null) {
+          this.size = sz;
+          return this.size;
+        }
+      }
+    } catch (err: any) {
+      if (err.message && err.message.includes('401 Unauthorized')) throw err;
+      lastError = err;
+    }
+
+    // 3. Fallback: Extension iframe proxy if running inside extension frame
+    if (typeof window !== 'undefined' && window !== window.parent) {
       try {
         const proxyRes = await proxyFetch(this.url, { headers: { Range: 'bytes=0-0' } }, false);
-        this.useProxy = true; // remember to use proxy for reads
+        this.useProxy = true;
         const range = proxyRes.headers['content-range'];
         if (range) {
           const parts = range.split('/');
@@ -100,13 +128,37 @@ export class HttpByteSource implements ByteSource {
           return this.size;
         }
       } catch (proxyErr) {
-        console.error('Proxy fallback failed as well:', proxyErr);
-        throw proxyErr;
+        console.warn('Iframe proxy fallback failed:', proxyErr);
       }
-      throw err || lastError;
     }
-    
-    throw new Error('Could not determine remote file size');
+
+    // 4. Fallback: Local Backend Media Proxy
+    if (!this.useBackendProxy) {
+      try {
+        console.log('[HttpByteSource] Direct fetch/CORS blocked. Trying local backend media proxy fallback...');
+        this.useBackendProxy = true;
+        const backendUrl = this.getRequestUrl();
+        const response = await fetch(backendUrl, {
+          headers: { Range: 'bytes=0-0' }
+        });
+        if (response.status === 401) {
+          const auth = response.headers.get('www-authenticate') || 'Restricted';
+          throw new Error(`Remote media server requires authentication (401 Unauthorized: ${auth}). If this stream requires a login or token, check your source credentials.`);
+        }
+        if (response.status === 200 || response.status === 206) {
+          const sz = parseSizeFromResponse(response);
+          if (sz !== null) {
+            this.size = sz;
+            return this.size;
+          }
+        }
+      } catch (backendErr) {
+        console.error('[HttpByteSource] Backend media proxy failed:', backendErr);
+        throw backendErr;
+      }
+    }
+
+    throw lastError || new Error('Could not determine remote file size');
   }
 
   async read(start: number, end: number, signal?: AbortSignal): Promise<Uint8Array> {
@@ -134,13 +186,30 @@ export class HttpByteSource implements ByteSource {
       return bytes;
     }
 
-    const response = await fetch(this.url, {
-      headers: { Range: `bytes=${start}-${clampedEnd}` },
-      signal
-    });
+    let response: Response;
+    try {
+      response = await fetch(this.getRequestUrl(), {
+        headers: { Range: `bytes=${start}-${clampedEnd}` },
+        signal
+      });
+    } catch (fetchErr) {
+      if (!this.useBackendProxy) {
+        this.useBackendProxy = true;
+        response = await fetch(this.getRequestUrl(), {
+          headers: { Range: `bytes=${start}-${clampedEnd}` },
+          signal
+        });
+      } else {
+        throw fetchErr;
+      }
+    }
 
     if (response.status === 416) {
       return new Uint8Array(0);
+    }
+
+    if (response.status === 401) {
+      throw new Error('Remote media requires authentication (401 Unauthorized: Restricted)');
     }
 
     if (response.status !== 206 && response.status !== 200) {

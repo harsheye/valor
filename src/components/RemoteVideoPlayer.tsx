@@ -1936,6 +1936,7 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
 
   // Auto probing states
   const [isAutoProbing, setIsAutoProbing] = useState(false);
+  const [useProxyForVideo, setUseProxyForVideo] = useState(false);
   if (false as boolean) {
     console.log(isAutoProbing);
   }
@@ -2087,9 +2088,12 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
             timecodeScale
           };
           onUpdateVideoRef.current(updatedVideo);
-        } catch (err) {
+        } catch (err: any) {
           logger.error('Auto probe streams failed:', err);
           probingVideoIdRef.current = null; // allow retry
+          if (err && err.message && err.message.includes('401 Unauthorized')) {
+            setPlaybackError(err.message);
+          }
         } finally {
           setIsAutoProbing(false);
         }
@@ -2611,6 +2615,11 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
 
   const handleVideoError = () => {
     if (!videoRef.current) return;
+    if (video.isRemote && !useProxyForVideo && video.url && !video.url.startsWith('/api/proxy-media')) {
+      logger.player('[RemoteVideoPlayer] Direct video loading error. Switching video src to backend proxy...');
+      setUseProxyForVideo(true);
+      return;
+    }
     const err = videoRef.current.error;
     let message = 'An unknown playback error occurred.';
     
@@ -4444,7 +4453,7 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
         <video
           ref={videoRef}
           onContextMenu={(e) => e.preventDefault()}
-          src={(video.url.includes('.m3u8') && !video.hlsPlaylist && Hls.isSupported()) ? undefined : video.url}
+          src={(video.url.includes('.m3u8') && !video.hlsPlaylist && Hls.isSupported()) ? undefined : (useProxyForVideo ? `/api/proxy-media?url=${encodeURIComponent(video.url)}` : video.url)}
           controls={false}
           crossOrigin={video.playbackMode === 'advanced' ? 'anonymous' : undefined}
           className="main-video-element"

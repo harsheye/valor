@@ -2108,6 +2108,96 @@ const backendServer = http.createServer((req, res) => {
     return;
   }
 
+  // Remote media proxy endpoint with Range and CORS bypass support
+  if (pathname === '/api/proxy-media') {
+    const rawTargetUrl = parsedUrl.searchParams.get('url');
+    if (!rawTargetUrl) {
+      res.statusCode = 400;
+      res.setHeader('Content-Type', 'application/json');
+      res.end(JSON.stringify({ error: 'Missing url parameter' }));
+      return;
+    }
+
+    try {
+      const targetUrl = new URL(rawTargetUrl);
+      const isHttps = targetUrl.protocol === 'https:';
+      const client = isHttps ? https : http;
+
+      const outgoingHeaders = {
+        'User-Agent': req.headers['user-agent'] || 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': '*/*',
+        'Accept-Encoding': 'identity'
+      };
+
+      if (req.headers['range']) {
+        outgoingHeaders['Range'] = req.headers['range'];
+      }
+
+      if (req.headers['authorization']) {
+        outgoingHeaders['Authorization'] = req.headers['authorization'];
+      } else if (targetUrl.username || targetUrl.password) {
+        const creds = Buffer.from(`${decodeURIComponent(targetUrl.username)}:${decodeURIComponent(targetUrl.password)}`).toString('base64');
+        outgoingHeaders['Authorization'] = `Basic ${creds}`;
+      }
+
+      const proxyReq = client.request(targetUrl, {
+        method: req.method,
+        headers: outgoingHeaders,
+        rejectUnauthorized: false
+      }, (proxyRes) => {
+        res.statusCode = proxyRes.statusCode || 200;
+
+        const forwardHeaders = [
+          'content-type',
+          'content-length',
+          'content-range',
+          'accept-ranges',
+          'etag',
+          'last-modified',
+          'www-authenticate'
+        ];
+
+        for (const h of forwardHeaders) {
+          if (proxyRes.headers[h]) {
+            res.setHeader(h, proxyRes.headers[h]);
+          }
+        }
+
+        res.setHeader('Accept-Ranges', 'bytes');
+        res.setHeader('Access-Control-Allow-Origin', '*');
+        res.setHeader('Access-Control-Allow-Headers', '*');
+        res.setHeader('Access-Control-Expose-Headers', 'Content-Range, Content-Length, Accept-Ranges, Content-Type, WWW-Authenticate');
+
+        proxyRes.pipe(res);
+      });
+
+      proxyReq.on('error', (err) => {
+        console.error('[Proxy Media Error]', err.message);
+        if (!res.headersSent) {
+          res.statusCode = 502;
+          res.setHeader('Content-Type', 'application/json');
+          res.end(JSON.stringify({ error: 'Proxy request failed', message: err.message }));
+        }
+      });
+
+      req.on('close', () => {
+        proxyReq.destroy();
+      });
+
+      if (req.method !== 'GET' && req.method !== 'HEAD') {
+        req.pipe(proxyReq);
+      } else {
+        proxyReq.end();
+      }
+      return;
+    } catch (err) {
+      res.statusCode = 400;
+      res.setHeader('Content-Type', 'application/json');
+      res.end(JSON.stringify({ error: 'Invalid URL', message: err.message }));
+      return;
+    }
+  }
+
   res.statusCode = 404;
   res.end('Not found');
 });
