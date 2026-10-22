@@ -2301,15 +2301,15 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
         // Ensures Video, Audio, and Subtitle packets are ALL cached and ready for the current timeframe before playing
         const bufferedAhead = Math.max(0, currentBufferEnd - currentPlayhead);
         const effectiveDuration = durationRef.current || duration || 0;
-        const isNearEnd = effectiveDuration > 0 && (effectiveDuration - currentPlayhead < 1.5);
+        const isNearEnd = effectiveDuration > 0 && (effectiveDuration - currentPlayhead < 2.5);
 
-        const isAudioReady = !playbackControllerRef.current || playbackControllerRef.current.hasAudioCoverage(currentPlayhead, currentPlayhead + 0.3);
+        const isAudioReady = isNearEnd || !playbackControllerRef.current || playbackControllerRef.current.hasAudioCoverage(currentPlayhead, currentPlayhead + 1.5);
         const isSubReady = extractingStreamIndex === null;
 
         if (isPlayingRef.current) {
           // 1. Starvation / Missing Packets: Pause video and wait for all packets to cache
           if (!isWaitingForSyncRef.current) {
-            const videoStarving = !isNearEnd && bufferedAhead < 0.4;
+            const videoStarving = !isNearEnd && bufferedAhead < 1.0;
             const audioMissing = !isAudioReady;
             const subMissing = !isSubReady;
 
@@ -2319,18 +2319,25 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
               if (!videoRef.current.paused) {
                 videoRef.current.pause();
               }
+              if (playbackControllerRef.current) {
+                playbackControllerRef.current.pauseAudioOnly();
+              }
             }
           } else {
-            // 2. Resume Barrier: require >= 2.5s video buffer ahead (or near end), audio coverage, and subtitle ready
+            // 2. Resume Barrier: require >= 2.5s video buffer ahead (or near end), audio coverage >= 2.0s, and subtitle ready
             const videoReady = isNearEnd || bufferedAhead >= 2.5;
-            const audioReady = !playbackControllerRef.current || playbackControllerRef.current.hasAudioCoverage(currentPlayhead, currentPlayhead + 1.5);
+            const audioReady = isNearEnd || !playbackControllerRef.current || playbackControllerRef.current.hasAudioCoverage(currentPlayhead, currentPlayhead + 2.0);
             const subReady = isSubReady;
 
             if (videoReady && audioReady && subReady) {
               isWaitingForSyncRef.current = false;
               setIsBuffering(false);
               if (videoRef.current.paused) {
-                videoRef.current.play().catch(() => {});
+                if (playbackControllerRef.current) {
+                  playbackControllerRef.current.play().catch(() => {});
+                } else {
+                  videoRef.current.play().catch(() => {});
+                }
               }
             }
           }
@@ -2783,11 +2790,7 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
     const triggerError = (msg?: string) => {
       let message = msg || 'An unknown playback error occurred.';
       if (!msg) {
-        if (video.probingError) {
-          message = video.probingError.startsWith('File URL not supported by the source')
-            ? video.probingError
-            : `File URL not supported by the source: ${video.probingError}`;
-        } else if (err) {
+        if (err) {
           switch (err.code) {
             case 1:
               message = 'Playback was aborted by the user or browser.';
@@ -2804,6 +2807,10 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
                 : 'The video format or codecs are not supported by your browser.';
               break;
           }
+        } else if (video.probingError) {
+          message = video.probingError.startsWith('File URL not supported by the source')
+            ? video.probingError
+            : `File URL not supported by the source: ${video.probingError}`;
         } else if (video.isRemote) {
           message = 'File URL not supported by the source, or a network connection failure occurred.';
         }
@@ -2812,9 +2819,9 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
       setPlaybackError(message);
     };
 
-    // If remote, verify if 401 basic authentication is required before displaying fatal error overlay
+    // If remote, verify if 401 basic authentication or 404 is returned before displaying error overlay
     if (video.isRemote) {
-      fetch(getProxiedVideoUrl(video.url), { method: 'HEAD' }).then(res => {
+      fetch(getProxiedVideoUrl(video.url), { method: 'HEAD' }).then(async res => {
         if (res.status === 401) {
           setAuthModalState({
             isOpen: true,
@@ -2823,6 +2830,28 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
             isLoading: false
           });
           return;
+        }
+        if (res.status === 404) {
+          triggerError('The remote media was not found on the server (HTTP 404 Not Found). The file may have been moved, renamed, or the URL path is incorrect.');
+          return;
+        }
+        if (res.status === 403) {
+          triggerError('Access forbidden (HTTP 403 Forbidden). The storage server rejected the request.');
+          return;
+        }
+        if (res.status >= 500) {
+          try {
+            const errRes = await fetch(getProxiedVideoUrl(video.url), { headers: { Range: 'bytes=0-15' } });
+            const json = await errRes.json().catch(() => null);
+            if (json?.message?.includes('404') || json?.error === 'NOT_FOUND') {
+              triggerError('The remote media was not found on the server (HTTP 404 Not Found). Please verify the file URL.');
+              return;
+            }
+            if (json?.message) {
+              triggerError(`Remote stream error: ${json.message}`);
+              return;
+            }
+          } catch {}
         }
         triggerError();
       }).catch(() => {
@@ -2988,12 +3017,41 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
       setIsBuffering(false);
     } else {
       isPlayingRef.current = true;
-      if (playbackControllerRef.current) {
-        playbackControllerRef.current.play().catch(console.error);
-      } else {
-        videoRef.current.play().catch(console.error);
-      }
       setIsPlaying(true);
+
+      const currentPlayhead = videoRef.current ? videoRef.current.currentTime : 0;
+      let currentBufferEnd = 0;
+      if (videoRef.current && videoRef.current.buffered.length > 0) {
+        const buffered = videoRef.current.buffered;
+        for (let i = 0; i < buffered.length; i++) {
+          if (buffered.start(i) <= currentPlayhead + 0.15 && buffered.end(i) >= currentPlayhead) {
+            currentBufferEnd = buffered.end(i);
+            break;
+          }
+        }
+      }
+      const bufferedAhead = Math.max(0, currentBufferEnd - currentPlayhead);
+      const effectiveDuration = durationRef.current || duration || 0;
+      const isNearEnd = effectiveDuration > 0 && (effectiveDuration - currentPlayhead < 2.5);
+      const videoReady = isNearEnd || bufferedAhead >= 2.5;
+      const audioReady = isNearEnd || !playbackControllerRef.current || playbackControllerRef.current.hasAudioCoverage(currentPlayhead, currentPlayhead + 2.0);
+      const subReady = extractingStreamIndex === null;
+
+      if (!videoReady || !audioReady || !subReady) {
+        isWaitingForSyncRef.current = true;
+        setIsBuffering(true);
+        if (playbackControllerRef.current) {
+          playbackControllerRef.current.play().catch(console.error);
+        }
+      } else {
+        isWaitingForSyncRef.current = false;
+        setIsBuffering(false);
+        if (playbackControllerRef.current) {
+          playbackControllerRef.current.play().catch(console.error);
+        } else {
+          videoRef.current.play().catch(console.error);
+        }
+      }
     }
     resetControlsTimeout();
   };
@@ -8156,6 +8214,14 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
             } else {
               clearCredentials(video.url);
             }
+
+            // Clear probingError on video state
+            onUpdateVideo({
+              ...video,
+              auth: creds,
+              probingError: undefined
+            });
+
             await runRemoteProbe(video.url, creds);
 
             // 1. Invalidate stale unauthenticated session on backend & player

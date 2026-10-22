@@ -618,7 +618,7 @@ export const SimpleRemotePlayer: React.FC<SimpleRemotePlayerProps> = ({
         onCanPlay={() => setIsBuffering(false)}
         onError={() => {
           setIsBuffering(false);
-          // Check for 401 auth required
+          // Check for 401 auth required, 404 not found, or 403 forbidden
           fetch(getProxiedUrl(video.url), { method: 'HEAD' }).then(res => {
             if (res.status === 401) {
               setAuthModalState({
@@ -627,6 +627,10 @@ export const SimpleRemotePlayer: React.FC<SimpleRemotePlayerProps> = ({
                 errorMessage: null,
                 isLoading: false
               });
+            } else if (res.status === 404) {
+              triggerToast("Media not found (HTTP 404). Please verify URL.");
+            } else if (res.status === 403) {
+              triggerToast("Access forbidden (HTTP 403).");
             } else {
               triggerToast("Playback error occurred.");
             }
@@ -874,7 +878,8 @@ export const SimpleRemotePlayer: React.FC<SimpleRemotePlayerProps> = ({
           sessionIdRef.current = Math.random().toString(36).substring(2, 10);
           onUpdateVideo({
             ...video,
-            auth: creds
+            auth: creds,
+            probingError: undefined
           });
           if (videoRef.current) {
             videoRef.current.src = getProxiedUrl(video.url);

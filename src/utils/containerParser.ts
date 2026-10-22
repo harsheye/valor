@@ -784,7 +784,10 @@ export async function extractMkvSubtitles(
                 cr.skip(childSize);
               }
             }
-          } catch (e) {
+          } catch (e: any) {
+            if (signal?.aborted || e?.name === 'AbortError' || String(e?.message || e).toLowerCase().includes('abort')) {
+              return cues;
+            }
             console.warn('[extractMkvSubtitles] Failed to parse cluster timecode:', e);
           }
           const clusterTimeSec = (clusterTimecode * timecodeScale) / 1000000000;
@@ -933,8 +936,9 @@ export async function extractMkvSubtitles(
 
       currentOffset += sub.headerSize + sub.size;
     } catch (err: any) {
-      if (signal?.aborted || err?.name === 'AbortError' || (typeof err?.message === 'string' && err.message.toLowerCase().includes('abort'))) {
-        break;
+      const errMsg = String(err?.message || err).toLowerCase();
+      if (signal?.aborted || err?.name === 'AbortError' || errMsg.includes('abort')) {
+        return cues;
       }
       console.warn('[extractMkvSubtitles] Parsing error at offset', currentOffset, err);
       // Attempt to resynchronize by searching for the next Cluster ID (0x1F43B675)

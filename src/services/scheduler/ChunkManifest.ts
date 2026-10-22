@@ -26,8 +26,8 @@ export class ChunkManifest {
     PLAYING: ['PLAYED', 'EVICTABLE', 'EMPTY'],
     PLAYED: ['EVICTABLE', 'EMPTY', 'CACHED'],
     EVICTABLE: ['REMOVED', 'EMPTY'],
-    FAILED: ['COOLDOWN', 'EMPTY'],
-    COOLDOWN: ['EMPTY', 'FETCHING'],
+    FAILED: ['COOLDOWN', 'EMPTY', 'FAILED'],
+    COOLDOWN: ['EMPTY', 'FETCHING', 'FAILED', 'COOLDOWN'],
     REMOVED: ['EMPTY']
   };
 

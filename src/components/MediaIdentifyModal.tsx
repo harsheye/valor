@@ -260,6 +260,7 @@ export const MediaIdentifyModal: React.FC<MediaIdentifyModalProps> = ({
     if (onSubmitName) {
       onSubmitName(cleanQuery, isTvShow, season, episode);
       onClose();
+      handleSearchAndFetchInBackground(cleanQuery, isTvShow, season, episode);
       return;
     }
 

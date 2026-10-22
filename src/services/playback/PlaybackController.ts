@@ -264,6 +264,11 @@ export class PlaybackController {
   };
 
   private onPauseEvent = () => {
+    // If paused because of internal buffering stall, stop audio output without cancelling state
+    if (this.state.isBuffering) {
+      this.pauseAudioOnly();
+      return;
+    }
     
     // If focus loss auto-pause is disabled, and the browser background throttles/pauses
     // the silent video element, we override it and resume immediately.
@@ -401,6 +406,9 @@ export class PlaybackController {
           logger.buffer(`controller=${this.instanceId} underrun stall at ${currentTime.toFixed(2)}s: waiting for audio packet`);
           this.videoEl.pause();
         }
+        this.audioScheduler.stopAll();
+        this.playbackQueue.clear();
+        this.hydrateManifestFromCache();
         this.state.isBuffering = true;
         this.onBufferingChange?.(true);
         this.fillBufferWindow(currentTime, 'underrun-stall', this.session.playbackGeneration, true, true).catch(console.error);
@@ -409,20 +417,22 @@ export class PlaybackController {
     }
 
     // Drift detection & continuous micro-rate correction loop
-    const audioPlayhead = this.audioScheduler.getCurrentPlayhead();
-    const drift = this.timeline.getDrift(currentTime, audioPlayhead);
-    if (drift !== null) {
-      if (this.timeline.checkDrift(currentTime, audioPlayhead)) {
-        console.warn(`[PlaybackController-${this.instanceId}] Audio-Video sync drift detected: Video=${currentTime.toFixed(3)}s, Audio=${audioPlayhead?.toFixed(3)}s (drift: ${(drift * 1000).toFixed(1)}ms). Re-syncing scheduler...`);
-        this.audioScheduler.stopAll();
-        this.playbackQueue.clear();
-        this.hydrateManifestFromCache();
-      } else if (Math.abs(drift) > 0.015) {
-        // Smoothly adjust audio playback rate to converge drift to 0 without audible gaps
-        this.audioScheduler.adjustRateForDrift(drift, this.state.playbackRate);
-      } else {
-        // Within 15ms lip-sync tolerance: restore normal rate
-        this.audioScheduler.updatePlaybackRate(this.state.playbackRate);
+    if (!this.videoEl.paused && !this.state.isBuffering) {
+      const audioPlayhead = this.audioScheduler.getCurrentPlayhead();
+      const drift = this.timeline.getDrift(currentTime, audioPlayhead);
+      if (drift !== null) {
+        if (this.timeline.checkDrift(currentTime, audioPlayhead)) {
+          console.warn(`[PlaybackController-${this.instanceId}] Audio-Video sync drift detected: Video=${currentTime.toFixed(3)}s, Audio=${audioPlayhead?.toFixed(3)}s (drift: ${(drift * 1000).toFixed(1)}ms). Re-syncing scheduler...`);
+          this.audioScheduler.stopAll();
+          this.playbackQueue.clear();
+          this.hydrateManifestFromCache();
+        } else if (Math.abs(drift) > 0.015) {
+          // Smoothly adjust audio playback rate to converge drift to 0 without audible gaps
+          this.audioScheduler.adjustRateForDrift(drift, this.state.playbackRate);
+        } else {
+          // Within 15ms lip-sync tolerance: restore normal rate
+          this.audioScheduler.updatePlaybackRate(this.state.playbackRate);
+        }
       }
     }
 
@@ -568,10 +578,10 @@ export class PlaybackController {
           this.playbackQueue.update(this.videoEl.currentTime, this.state.playbackRate);
         }
 
-        // If video element was stalled waiting for audio, resume once 1.5s is cached
+        // If video element was stalled waiting for audio, resume once 2.0s is cached
         if (this.state.isPlaying && this.videoEl && this.videoEl.paused && !this.session.maintenanceFrozen) {
           const curTime = this.videoEl.currentTime;
-          if (this.hasAudioCoverage(curTime, curTime + 1.5)) {
+          if (this.hasAudioCoverage(curTime, curTime + 2.0)) {
             logger.playback(`controller=${this.instanceId} audio buffer ready at ${curTime.toFixed(2)}s. Resuming playback.`);
             this.playbackQueue.update(curTime, this.state.playbackRate);
             this.videoEl.play().catch(console.error);
@@ -581,6 +591,21 @@ export class PlaybackController {
         }
       } catch (err: any) {
         const errMsg = (err?.message || String(err)).toLowerCase();
+        const isAbort = signal.aborted || 
+                        this.session.abortController.signal.aborted ||
+                        err?.name === 'AbortError' || 
+                        errMsg.includes('signal is aborted') || 
+                        errMsg.includes('aborted without reason') ||
+                        errMsg.includes('the user aborted a request');
+
+        if (isAbort) {
+          const currentState = this.manifest.getState(target);
+          if (currentState === 'RESERVED' || currentState === 'FETCHING') {
+            this.manifest.transitionTo(target, 'EMPTY');
+          }
+          return;
+        }
+
         const isFileAccessError = errMsg.includes('filereadersync') || 
                                   errMsg.includes('could not be found') || 
                                   errMsg.includes('notfounderror') ||
@@ -593,13 +618,11 @@ export class PlaybackController {
 
         const isDead = errMsg.includes('memory access') || 
                        errMsg.includes('bounds') || 
-                       errMsg.includes('aborted') || 
+                       errMsg.includes('runtimeerror: abort') || 
+                       errMsg.includes('program aborted') || 
                        errMsg.includes('out of memory') || 
-                       errMsg.includes('not found') ||
-                       errMsg.includes('runtimeerror') ||
-                       errMsg.includes('wasm') ||
-                       errMsg.includes('oom') ||
-                       errMsg.includes('null function');
+                       errMsg.includes('null function') ||
+                       errMsg.includes('unreachable executed');
         if (isDead) {
           const workerIndex = Math.floor(target / 10) % this.decodeWorkers.length;
           console.warn(`[PlaybackController-${this.instanceId}] Worker ${workerIndex} for chunk ${target} died. Attempting restart...`);
@@ -608,8 +631,11 @@ export class PlaybackController {
 
         console.warn(`[PlaybackController-${this.instanceId}] Buffering chunk ${target} failed: ${err?.message || err}`);
         
-        this.manifest.transitionTo(target, 'FAILED');
-        this.manifest.transitionTo(target, 'COOLDOWN');
+        const currentState = this.manifest.getState(target);
+        if (currentState !== 'FAILED' && currentState !== 'COOLDOWN') {
+          this.manifest.transitionTo(target, 'FAILED');
+          this.manifest.transitionTo(target, 'COOLDOWN');
+        }
 
         // Self-healing: Reset to EMPTY after 8 seconds cooldown
         const targetSession = this.session.sessionId;
@@ -659,9 +685,10 @@ export class PlaybackController {
       if (this.session.abortController.signal.aborted || generation !== this.session.playbackGeneration) return;
 
       if (this.state.activeStreamIndex !== -1 && typeof this.state.activeStreamIndex === 'number') {
-        if (!this.hasAudioCoverage(currentTime, currentTime + 0.3)) {
+        if (!this.hasAudioCoverage(currentTime, currentTime + 1.5)) {
           this.state.isBuffering = true;
           this.onBufferingChange?.(true);
+          void this.fillBufferWindow(currentTime, 'play-background', generation);
           return;
         }
       }
@@ -723,6 +750,11 @@ export class PlaybackController {
     }
   }
 
+  pauseAudioOnly(): void {
+    this.playbackQueue.clear();
+    this.audioScheduler.stopAll();
+  }
+
   pause(): void {
     if (this.session.abortController.signal.aborted) return;
     if (this.session.isTransitioningState) return;
@@ -730,11 +762,7 @@ export class PlaybackController {
     this.state.isPlaying = false;
 
     try {
-      
-      // Cancel current playback generation & downloads immediately
-      this.startNewPlaybackGeneration('pause');
-
-      if (this.videoEl) {
+      if (this.videoEl && !this.videoEl.paused) {
         this.videoEl.pause();
       }
       this.stopHeartbeat();

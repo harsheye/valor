@@ -3160,7 +3160,7 @@ export class DataStore {
           if (s !== null && ep !== null && s !== 0) {
             sqliteRows = this.sqliteDb.prepare('SELECT * FROM bookmarks WHERE tmdbId = ? AND season = ? AND episode = ? ORDER BY time ASC').all(tId, s, ep);
           } else {
-            sqliteRows = this.sqliteDb.prepare('SELECT * FROM bookmarks WHERE tmdbId = ? AND (season IS NULL OR season = 0 OR season = "") ORDER BY time ASC').all(tId);
+            sqliteRows = this.sqliteDb.prepare("SELECT * FROM bookmarks WHERE tmdbId = ? AND (season IS NULL OR season = 0 OR season = '') ORDER BY time ASC").all(tId);
           }
         } else if (videoId) {
           sqliteRows = this.sqliteDb.prepare('SELECT * FROM bookmarks WHERE videoId = ? ORDER BY time ASC').all(videoId);

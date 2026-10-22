@@ -6,6 +6,13 @@ import { extractLocalSubtitleSegment } from '../local/ffmpegLocal';
 import { extractRemoteSubtitleSegment } from '../remote/ffmpegRemote';
 import { parseSubtitles } from '../../utils/subtitleParser';
 
+function isAbortError(err: any, signal?: AbortSignal): boolean {
+  if (signal?.aborted) return true;
+  if (err?.name === 'AbortError') return true;
+  const msg = (err?.message || String(err)).toLowerCase();
+  return msg.includes('abort') || msg.includes('canceled') || msg.includes('cancelled');
+}
+
 export class BufferManager {
   private packetCache = new PacketCache(60, 120);
   private subtitleCache = new Map<string, any[]>(); // keyed by streamIndex_offsetTime
@@ -114,7 +121,9 @@ export class BufferManager {
           return packet;
         })
         .catch((err) => {
-          this.markFailed(key);
+          if (!isAbortError(err, signal)) {
+            this.markFailed(key);
+          }
           throw err;
         })
         .finally(() => {
@@ -180,7 +189,9 @@ export class BufferManager {
         return parsedCues;
       })()
       .catch((err) => {
-        this.markFailed(key);
+        if (!isAbortError(err, signal)) {
+          this.markFailed(key);
+        }
         throw err;
       })
       .finally(() => {

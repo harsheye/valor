@@ -112,8 +112,6 @@ export function identifyMediaClassification(
 ): 'cinema' | 'personal' | 'unknown' {
   // 1. Explicit cinema indicators
   if (isCinemaProp || (video as any).isCinema === true) return 'cinema';
-  if ((video as any).playbackMode === 'server') return 'cinema';
-  if ((video as any).playbackMode === 'simple') return 'personal';
 
   // 2. Resolved database IDs imply cinema media (TMDB, Trakt, IMDB, AniList)
   if (video.tmdbId || video.traktId || video.imdbId || video.anilistId) {
@@ -200,26 +198,21 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = (props) => {
       return 'server';
     }
 
-    const rawMode = (currentVideo as any).playbackMode;
-    if (rawMode === 'simple' || rawMode === 'server') {
-      return rawMode;
-    }
-
-    // 3. Successfully identified as cinema -> auto-select server player without asking
-    if (classification === 'cinema') {
-      return 'server';
-    }
-
-    // 4. Successfully identified as personal video -> auto-select simple player without asking
-    if (classification === 'personal') {
-      return 'simple';
-    }
-
-    // 5. Check if user previously saved preference for this specific video
+    // 3. Check if user previously saved preference for this specific video
     const key = currentVideo.id || currentVideo.url;
     const savedForVideo = localStorage.getItem(`valor_remote_mode_${key}`);
     if (savedForVideo === 'simple' || savedForVideo === 'server') {
       return savedForVideo;
+    }
+
+    // 4. Successfully identified as cinema -> auto-select server player without asking
+    if (classification === 'cinema') {
+      return 'server';
+    }
+
+    // 5. Successfully identified as personal video -> auto-select simple player without asking
+    if (classification === 'personal') {
+      return 'simple';
     }
 
     // 6. Unable to identify -> prompt user with player selector
@@ -353,6 +346,21 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = (props) => {
           onSubmitName={handleNameSubmitted}
           isTvHint={pendingMode === 'server'}
           submitLabel="Enter"
+          onApplyBookmarks={(bookmarks, mediaInfo) => {
+            const updatedVideo: VideoItem = {
+              ...currentVideo,
+              ...(mediaInfo.title ? { title: mediaInfo.title } : {}),
+              ...(mediaInfo.tmdbId ? { tmdbId: mediaInfo.tmdbId } : {}),
+              ...(mediaInfo.imdbId ? { imdbId: mediaInfo.imdbId } : {}),
+              ...(mediaInfo.season ? { season: mediaInfo.season } : {}),
+              ...(mediaInfo.episode ? { episode: mediaInfo.episode } : {}),
+              ...(mediaInfo.imageUrl ? { posterUrl: mediaInfo.imageUrl } : {}),
+              ...(mediaInfo.rating ? { rating: mediaInfo.rating } : {}),
+              ...(bookmarks && bookmarks.length > 0 ? { bookmarks } : {})
+            };
+            setCurrentVideo(updatedVideo);
+            onUpdateVideo(updatedVideo, false);
+          }}
         />
       </div>
     );

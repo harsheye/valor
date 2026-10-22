@@ -311,6 +311,7 @@ export class RemoteAudioCacheService {
       '-reconnect_at_eof', '1',
       '-reconnect_streamed', '1',
       '-reconnect_delay_max', '5',
+      '-rw_timeout', '10000000',
       '-headers', headerLines,
       '-i', targetUrlStr,
       '-map', `0:${sIdx}`,
