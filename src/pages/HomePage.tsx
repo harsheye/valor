@@ -51,6 +51,7 @@ export const HomePage: React.FC<HomePageProps> = ({
   storageMode = 'localstorage',
   onToggleStorageMode,
   userId = 'local',
+  isProcessing = false,
 }) => {
   const sortedVideos = React.useMemo(() => {
     return [...videos].sort((a, b) => {
