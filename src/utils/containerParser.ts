@@ -820,9 +820,14 @@ export async function extractMkvSubtitles(
 
   let currentOffset = startOffset;
   let clusterTimecode = 0;
+  let iterations = 0;
 
   while (currentOffset < endOffset) {
     if (signal?.aborted) break;
+    if (++iterations > 2000) {
+      console.warn('[extractMkvSubtitles] Max safety iterations reached (2000), stopping block scan');
+      break;
+    }
 
     try {
       const sub = await readIdAndSize(source, currentOffset, signal);

@@ -419,6 +419,7 @@ export class CachedByteSource implements ByteSource {
   private chunkSize: number;
   private cacheLimit: number;
   private cache: Map<number, Uint8Array> = new Map();
+  private inFlight: Map<number, Promise<Uint8Array>> = new Map();
   private lruList: number[] = [];
   private activeChunks: Map<number, number> = new Map();
 
@@ -459,13 +460,26 @@ export class CachedByteSource implements ByteSource {
 
       await Promise.all(
         chunksToRead.map(async (chunk) => {
-          if (!this.cache.has(chunk.index)) {
-            const chunkData = await this.source.read(chunk.startByte, chunk.endByte, signal);
-            this.cache.set(chunk.index, chunkData);
-            this.updateLru(chunk.index, startChunk);
-          } else {
+          if (this.cache.has(chunk.index)) {
             this.touchLru(chunk.index);
+            return;
           }
+
+          let fetchPromise = this.inFlight.get(chunk.index);
+          if (!fetchPromise) {
+            fetchPromise = this.source.read(chunk.startByte, chunk.endByte, signal)
+              .then((chunkData) => {
+                this.cache.set(chunk.index, chunkData);
+                this.updateLru(chunk.index, startChunk);
+                return chunkData;
+              })
+              .finally(() => {
+                this.inFlight.delete(chunk.index);
+              });
+            this.inFlight.set(chunk.index, fetchPromise);
+          }
+
+          await fetchPromise;
         })
       );
 

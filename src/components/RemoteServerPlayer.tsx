@@ -2459,6 +2459,49 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
     setExtractingStreamIndex(streamIndex);
     
     try {
+      // For remote videos, use high-speed backend subtitle extraction in a single request!
+      // This prevents thousands of tiny client-side byte range requests from flooding the browser.
+      if (video.isRemote) {
+        try {
+          const creds = (video as any).auth || getSavedCredentials(video.url);
+          const params = new URLSearchParams({
+            url: video.url,
+            streamIndex: String(streamIndex)
+          });
+          if (creds?.username) {
+            params.set('user', creds.username);
+            if (creds.password) {
+              params.set('pass', creds.password);
+            }
+          }
+
+          const res = await fetch(`/api/remote/subtitle-packet?${params.toString()}`, { signal });
+          if (res.ok) {
+            const vttText = await res.text();
+            const parsedCues = parseSubtitles(vttText, 'subtitles.vtt');
+            if (parsedCues.length > 0) {
+              const subStream = subtitleStreams.find(s => s.index === streamIndex);
+              const label = getLangLabel(subStream?.language, `Track #${streamIndex}`);
+              const newTrack: CustomSubtitleTrack = {
+                id: `remote-sub-${streamIndex}`,
+                name: `Subtitles (${label})`,
+                url: '',
+                cues: parsedCues,
+                isExtracted: true,
+                streamIndex,
+                format: 'vtt'
+              };
+              setSelectedSubTrack(newTrack);
+              setExtractingStreamIndex(null);
+              return;
+            }
+          }
+        } catch (backendSubErr: any) {
+          if (signal.aborted) return;
+          logger.warn('[RemoteServerPlayer] Backend subtitle packet failed, falling back to local demux:', backendSubErr);
+        }
+      }
+
       let cues: any[] = [];
       let format: 'srt' | 'vtt' | 'ass' = 'srt';
 
