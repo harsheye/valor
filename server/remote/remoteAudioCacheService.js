@@ -27,10 +27,12 @@ export class RemoteAudioCacheService {
 
     /** @type {Map<string, Promise<Buffer>>} */
     this.inFlightChunks = new Map();
-    /** @type {Map<string, Promise<string>>} */
+    /** @type {Map<string, Promise<{ vttContent: string, isFullTrack: boolean }>>} */
     this.inFlightSubs = new Map();
     /** @type {Map<string, { process: import('child_process').ChildProcess, promise: Promise<void> }>} */
     this.activeStreamExtractions = new Map();
+    /** @type {Map<string, { process: import('child_process').ChildProcess, promise: Promise<void> }>} */
+    this.activeSubExtractions = new Map();
   }
 
   /**
@@ -368,37 +370,136 @@ export class RemoteAudioCacheService {
   }
 
   /**
-   * Extracts and caches a full subtitle track converted to WebVTT.
+   * Downloads the complete subtitle track in the background using FFmpeg WebVTT conversion.
+   */
+  async triggerBackgroundSubtitleExtraction(rawUrl, streamIndex = 0, auth, customHeaders) {
+    const sIdx = parseInt(streamIndex, 10) || 0;
+    const { targetUrlStr, headerLines, urlHash } = await this.buildTarget(rawUrl, auth, customHeaders);
+
+    const fullPath = path.join(this.subsDir, `${urlHash}_s${sIdx}.vtt`);
+    const doneMarkerPath = path.join(this.subsDir, `${urlHash}_s${sIdx}.done`);
+    const tempPath = path.join(this.subsDir, `${urlHash}_s${sIdx}.tmp.vtt`);
+
+    if (fs.existsSync(doneMarkerPath) && fs.existsSync(fullPath)) {
+      return;
+    }
+
+    const subKey = `${urlHash}_s${sIdx}`;
+    if (this.activeSubExtractions.has(subKey)) {
+      return;
+    }
+
+    const args = [
+      '-v', 'error',
+      '-reconnect', '1',
+      '-reconnect_at_eof', '1',
+      '-reconnect_streamed', '1',
+      '-reconnect_delay_max', '5',
+      '-rw_timeout', '10000000',
+      '-headers', headerLines,
+      '-i', targetUrlStr,
+      '-map', `0:${sIdx}`,
+      '-c:s', 'webvtt',
+      '-f', 'webvtt',
+      '-y',
+      tempPath
+    ];
+
+    console.log(`[RemoteAudioCache] Starting background full subtitle extraction for ${subKey}...`);
+    const child = spawn(ffmpegInstaller.path, args, { stdio: ['ignore', 'ignore', 'pipe'] });
+
+    let stderr = '';
+    child.stderr.on('data', chunk => {
+      stderr += chunk.toString();
+    });
+
+    const promise = new Promise((resolve) => {
+      child.on('close', code => {
+        this.activeSubExtractions.delete(subKey);
+        if (code === 0 && fs.existsSync(tempPath) && fs.statSync(tempPath).size > 10) {
+          try {
+            fs.renameSync(tempPath, fullPath);
+            fs.writeFileSync(doneMarkerPath, 'OK');
+            console.log(`[RemoteAudioCache] Full subtitle track ready in cache: ${subKey}.vtt (${fs.statSync(fullPath).size} bytes)`);
+          } catch (e) {
+            console.warn('[RemoteAudioCache] Failed to finalize subtitle file:', e.message);
+          }
+        } else {
+          try {
+            if (fs.existsSync(tempPath)) fs.unlinkSync(tempPath);
+          } catch {}
+          console.warn(`[RemoteAudioCache] Background subtitle extraction finished with code ${code}: ${stderr}`);
+        }
+        resolve();
+      });
+
+      child.on('error', err => {
+        this.activeSubExtractions.delete(subKey);
+        console.warn('[RemoteAudioCache] Background subtitle extraction error:', err.message);
+        resolve();
+      });
+    });
+
+    this.activeSubExtractions.set(subKey, { process: child, promise });
+  }
+
+  /**
+   * Extracts or retrieves cached subtitle track / chunk converted to WebVTT.
    * @param {object} params
    * @param {string} params.url
-   * @param {number} params.streamIndex
+   * @param {number} [params.streamIndex]
+   * @param {number} [params.startTime]
+   * @param {number} [params.duration]
    * @param {object} [params.auth]
    * @param {object} [params.headers]
-   * @returns {Promise<string>} WebVTT content
+   * @returns {Promise<{ vttContent: string, isFullTrack: boolean }>}
    */
-  async getSubtitleTrack({ url, streamIndex = 0, auth, headers }) {
+  async getSubtitleTrack({ url, streamIndex = 0, startTime, duration, auth, headers }) {
     const sIdx = parseInt(streamIndex, 10) || 0;
     const { targetUrlStr, headerLines, urlHash } = await this.buildTarget(url, auth, headers);
 
-    const subKey = `${urlHash}_s${sIdx}`;
-    const subPath = path.join(this.subsDir, `${subKey}.vtt`);
+    const fullPath = path.join(this.subsDir, `${urlHash}_s${sIdx}.vtt`);
+    const doneMarkerPath = path.join(this.subsDir, `${urlHash}_s${sIdx}.done`);
 
-    // 1. Check disk cache
-    if (fs.existsSync(subPath)) {
+    // 1. Check if complete subtitle track is already done in cache
+    if (fs.existsSync(doneMarkerPath) && fs.existsSync(fullPath)) {
       try {
-        const stats = fs.statSync(subPath);
+        const stats = fs.statSync(fullPath);
         if (stats.size > 0) {
-          return fs.readFileSync(subPath, 'utf8');
+          return { vttContent: fs.readFileSync(fullPath, 'utf8'), isFullTrack: true };
         }
       } catch {}
     }
 
-    // 2. Check in-flight requests
-    if (this.inFlightSubs.has(subKey)) {
-      return this.inFlightSubs.get(subKey);
+    // 2. Trigger background full subtitle extraction
+    this.triggerBackgroundSubtitleExtraction(url, sIdx, auth, headers);
+
+    // 3. Sliced extraction for fast playback response (< 500ms)
+    const isChunked = startTime !== undefined || duration !== undefined;
+    const parsedStart = Math.max(0, parseFloat(startTime) || 0);
+    const parsedDur = Math.max(10, parseFloat(duration) || 300);
+
+    const chunkKey = isChunked 
+      ? `${urlHash}_s${sIdx}_t${parsedStart.toFixed(2)}_d${parsedDur.toFixed(2)}`
+      : `${urlHash}_s${sIdx}_init`;
+    const chunkPath = path.join(this.subsDir, `${chunkKey}.vtt`);
+
+    // Check disk cache for this chunk
+    if (fs.existsSync(chunkPath)) {
+      try {
+        const stats = fs.statSync(chunkPath);
+        if (stats.size > 0) {
+          return { vttContent: fs.readFileSync(chunkPath, 'utf8'), isFullTrack: false };
+        }
+      } catch {}
     }
 
-    // 3. Extract via FFmpeg
+    // Check in-flight requests
+    if (this.inFlightSubs.has(chunkKey)) {
+      return this.inFlightSubs.get(chunkKey);
+    }
+
+    // Extract via FFmpeg with -copyts -ss for accurate media timestamps
     const subPromise = (async () => {
       const args = [
         '-v', 'error',
@@ -408,7 +509,11 @@ export class RemoteAudioCacheService {
         '-reconnect_delay_max', '5',
         '-rw_timeout', '10000000',
         '-headers', headerLines,
+        '-copyts',
+        '-ss', parsedStart.toFixed(3),
+        '-accurate_seek',
         '-i', targetUrlStr,
+        '-to', (parsedStart + parsedDur).toFixed(3),
         '-map', `0:${sIdx}`,
         '-c:s', 'webvtt',
         '-f', 'webvtt',
@@ -417,7 +522,7 @@ export class RemoteAudioCacheService {
 
       return new Promise((resolve, reject) => {
         const child = spawn(ffmpegInstaller.path, args, { stdio: ['ignore', 'pipe', 'pipe'] });
-        const killTimer = setTimeout(() => { try { child.kill('SIGKILL'); } catch {} }, 15000);
+        const killTimer = setTimeout(() => { try { child.kill('SIGKILL'); } catch {} }, 25000);
         let stdout = '';
         let stderr = '';
 
@@ -431,7 +536,7 @@ export class RemoteAudioCacheService {
 
         child.on('close', code => {
           clearTimeout(killTimer);
-          if (code !== 0 && !stdout.includes('WEBVTT')) {
+          if (code !== 0) {
             const lower = stderr.toLowerCase();
             if (lower.includes('401') || lower.includes('unauthorized')) {
               const err = new Error('Remote media requires authentication (401 Unauthorized)');
@@ -447,23 +552,53 @@ export class RemoteAudioCacheService {
           }
 
           try {
-            fs.writeFileSync(subPath, finalVtt, 'utf8');
+            fs.writeFileSync(chunkPath, finalVtt, 'utf8');
           } catch (writeErr) {
-            console.warn('[RemoteAudioCache] Failed to write subtitle cache:', writeErr.message);
+            console.warn('[RemoteAudioCache] Failed to write subtitle chunk cache:', writeErr.message);
           }
 
-          resolve(finalVtt);
+          // Asynchronously pre-fetch next chunk
+          this.prefetchSubtitleChunk({
+            url,
+            streamIndex: sIdx,
+            startTime: parsedStart + parsedDur,
+            duration: parsedDur,
+            auth,
+            headers
+          }).catch(() => {});
+
+          resolve({ vttContent: finalVtt, isFullTrack: false });
         });
 
         child.on('error', reject);
       });
     })();
 
-    this.inFlightSubs.set(subKey, subPromise);
+    this.inFlightSubs.set(chunkKey, subPromise);
     try {
       return await subPromise;
     } finally {
-      this.inFlightSubs.delete(subKey);
+      this.inFlightSubs.delete(chunkKey);
     }
+  }
+
+  /**
+   * Prefetches a subtitle chunk in the background if not already cached.
+   */
+  async prefetchSubtitleChunk(params) {
+    const { url, streamIndex = 0, startTime = 0, duration = 300, auth, headers } = params;
+    const parsedStart = Math.max(0, parseFloat(startTime) || 0);
+    const parsedDur = Math.max(10, parseFloat(duration) || 300);
+    const sIdx = parseInt(streamIndex, 10) || 0;
+
+    const { urlHash } = await this.buildTarget(url, auth, headers);
+    const chunkKey = `${urlHash}_s${sIdx}_t${parsedStart.toFixed(2)}_d${parsedDur.toFixed(2)}`;
+    const chunkPath = path.join(this.subsDir, `${chunkKey}.vtt`);
+
+    if (fs.existsSync(chunkPath) || this.inFlightSubs.has(chunkKey)) {
+      return;
+    }
+
+    this.getSubtitleTrack(params).catch(() => {});
   }
 }

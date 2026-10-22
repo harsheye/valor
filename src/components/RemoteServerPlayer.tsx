@@ -2044,7 +2044,7 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
         }
       }
 
-      if (activeSubStreamIndex !== null && selectedSubTrack && selectedSubTrack.streamIndex === activeSubStreamIndex && (selectedSubTrack.url || selectedSubTrack.cues.length > 0)) {
+      if (activeSubStreamIndex !== null && selectedSubTrack && selectedSubTrack.streamIndex === activeSubStreamIndex && !(selectedSubTrack as any)?.isFullTrack) {
         if (currentTime - activeSubtitleStartOffsetRef.current > subDuration - 10) {
           logger.player(`Playback crossed subtitle chunk boundary. Loading next subtitles at ${currentTime}s.`);
           loadSubtitleChunk(currentTime, activeSubStreamIndex);
@@ -2501,6 +2501,13 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
       return;
     }
 
+    // If the full subtitle track is already loaded for this stream, no further chunk loading is needed.
+    if (
+      selectedSubTrack
+      && selectedSubTrack.streamIndex === streamIndex
+      && (selectedSubTrack as any).isFullTrack
+    ) return;
+
     // The playback clock updates continuously. Advance the window before any
     // async work so the boundary effect cannot launch the same fetch every frame.
     const inFlight = subtitleLoadInFlightRef.current;
@@ -2526,14 +2533,17 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
     setExtractingStreamIndex(streamIndex);
     
     try {
-      // For remote videos, use high-speed backend subtitle extraction in a single request!
+      // For remote videos, use high-speed backend subtitle extraction via time-sliced chunks!
       // This prevents thousands of tiny client-side byte range requests from flooding the browser.
       if (video.isRemote) {
         try {
           const creds = (video as any).auth || getSavedCredentials(video.url);
+          const chunkDuration = 300;
           const params = new URLSearchParams({
             url: video.url,
-            streamIndex: String(streamIndex)
+            streamIndex: String(streamIndex),
+            startTime: String(time),
+            duration: String(chunkDuration)
           });
           if (creds?.username) {
             params.set('user', creds.username);
@@ -2544,24 +2554,43 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
 
           const res = await fetch(`/api/remote/subtitle-packet?${params.toString()}`, { signal });
           if (res.ok) {
+            const isFullTrack = res.headers.get('x-full-track') === 'true';
             const vttText = await res.text();
             if (signal.aborted || subAbortControllerRef.current !== currentController) return;
             const parsedCues = parseSubtitles(vttText, 'subtitles.vtt');
-            if (parsedCues.length > 0) {
-              const subStream = subtitleStreams.find(s => s.index === streamIndex);
-              const label = getLangLabel(subStream?.language, `Track #${streamIndex}`);
+            const subStream = subtitleStreams.find(s => s.index === streamIndex);
+            const label = getLangLabel(subStream?.language, `Track #${streamIndex}`);
+
+            setSelectedSubTrack(prev => {
+              const isSameTrack = prev && prev.streamIndex === streamIndex;
+              let merged: any[] = [];
+
+              if (isFullTrack || !isSameTrack) {
+                merged = parsedCues;
+              } else {
+                merged = [...(prev?.cues || [])];
+                for (const cue of parsedCues) {
+                  const duplicate = merged.find(c => Math.abs(c.startTime - cue.startTime) < 0.1 && c.text === cue.text);
+                  if (!duplicate) {
+                    merged.push(cue);
+                  }
+                }
+              }
+              merged.sort((a, b) => a.startTime - b.startTime);
+
               const newTrack: CustomSubtitleTrack = {
                 id: `remote-sub-${streamIndex}`,
                 name: `Subtitles (${label})`,
                 url: '',
-                cues: parsedCues,
+                cues: merged,
                 isExtracted: true,
                 streamIndex,
                 format: 'vtt'
               };
-              setSelectedSubTrack(newTrack);
-              return;
-            }
+              (newTrack as any).isFullTrack = isFullTrack;
+              return newTrack;
+            });
+            return;
           }
         } catch (backendSubErr: any) {
           if (signal.aborted) return;
@@ -2926,8 +2955,8 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
         }
       } else {
         const isRemote = video.isRemote;
-        const subDuration = isRemote ? (isMkv ? 300 : 60) : 300;
-        if (newTime < activeSubtitleStartOffsetRef.current || newTime > activeSubtitleStartOffsetRef.current + subDuration - 5) {
+        const subDuration = isRemote ? 300 : (isMkv ? 300 : 60);
+        if (!(selectedSubTrack as any)?.isFullTrack && (newTime < activeSubtitleStartOffsetRef.current || newTime > activeSubtitleStartOffsetRef.current + subDuration - 5)) {
           needLoad = true;
         }
       }
@@ -4610,7 +4639,7 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
   return (
     <div 
       ref={containerRef} 
-      className={`player-container ${controlsVisible ? 'show-cursor' : 'hide-cursor'} ${hideUIOverlays ? 'keyboard-only' : ''} ${disableAnimations ? 'no-animations' : ''} ${hoveredSetting === 'lockModeActive' || hoveredSetting === 'pauseOnFocusChange' || hoveredSetting === 'disableAnimations' ? 'highlight-active' : ''} ${isPseudoFullscreen ? 'pseudo-fullscreen' : ''}`}
+      className={`player-container ${(controlsVisible || showPauseMetadataOverlay) ? 'show-cursor' : 'hide-cursor'} ${hideUIOverlays ? 'keyboard-only' : ''} ${disableAnimations ? 'no-animations' : ''} ${hoveredSetting === 'lockModeActive' || hoveredSetting === 'pauseOnFocusChange' || hoveredSetting === 'disableAnimations' ? 'highlight-active' : ''} ${isPseudoFullscreen ? 'pseudo-fullscreen' : ''}`}
       onMouseMove={(e) => {
         if (!isLocked && !showPauseMetadataOverlayRef.current) handleMouseMove(e);
       }}

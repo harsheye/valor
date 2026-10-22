@@ -228,13 +228,17 @@ export async function handleStreamRoute(req, res, parsedUrl, sessionManager) {
 
     try {
       const streamIndex = parseInt(parsedUrl.searchParams.get('streamIndex') || '0', 10);
+      const startTime = parsedUrl.searchParams.has('startTime') ? parseFloat(parsedUrl.searchParams.get('startTime')) : undefined;
+      const duration = parsedUrl.searchParams.has('duration') ? parseFloat(parsedUrl.searchParams.get('duration')) : undefined;
       const user = parsedUrl.searchParams.get('user');
       const pass = parsedUrl.searchParams.get('pass');
       const auth = user ? { username: user, password: pass || '' } : undefined;
 
-      const vttContent = await audioCacheService.getSubtitleTrack({
+      const { vttContent, isFullTrack } = await audioCacheService.getSubtitleTrack({
         url: rawUrl,
         streamIndex,
+        startTime,
+        duration,
         auth,
         headers: req.headers['authorization'] ? { Authorization: req.headers['authorization'] } : {}
       });
@@ -242,6 +246,9 @@ export async function handleStreamRoute(req, res, parsedUrl, sessionManager) {
       res.statusCode = 200;
       res.setHeader('Content-Type', 'text/vtt; charset=utf-8');
       res.setHeader('Content-Length', Buffer.byteLength(vttContent, 'utf8'));
+      if (isFullTrack) {
+        res.setHeader('X-Full-Track', 'true');
+      }
       res.setHeader('Cache-Control', 'public, max-age=86400');
       res.end(vttContent);
       return true;

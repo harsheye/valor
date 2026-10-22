@@ -558,7 +558,7 @@ export const SimpleRemotePlayer: React.FC<SimpleRemotePlayerProps> = ({
         alignItems: 'center',
         justifyContent: 'center',
         overflow: 'hidden',
-        cursor: controlsVisible ? 'default' : 'none',
+        cursor: (controlsVisible || showPauseMetadataOverlay) ? 'default' : 'none',
         fontFamily: 'var(--font-sans)'
       }}
       onMouseMove={resetControlsTimeout}

@@ -4945,7 +4945,7 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
   return (
     <div 
       ref={containerRef} 
-      className={`player-container ${controlsVisible ? 'show-cursor' : 'hide-cursor'} ${hideUIOverlays ? 'keyboard-only' : ''} ${disableAnimations ? 'no-animations' : ''} ${hoveredSetting === 'lockModeActive' || hoveredSetting === 'pauseOnFocusChange' || hoveredSetting === 'disableAnimations' ? 'highlight-active' : ''} ${isPseudoFullscreen ? 'pseudo-fullscreen' : ''}`}
+      className={`player-container ${(controlsVisible || showPauseMetadataOverlay) ? 'show-cursor' : 'hide-cursor'} ${hideUIOverlays ? 'keyboard-only' : ''} ${disableAnimations ? 'no-animations' : ''} ${hoveredSetting === 'lockModeActive' || hoveredSetting === 'pauseOnFocusChange' || hoveredSetting === 'disableAnimations' ? 'highlight-active' : ''} ${isPseudoFullscreen ? 'pseudo-fullscreen' : ''}`}
       onMouseMove={(e) => {
         if (!isLocked && !showPauseMetadataOverlayRef.current) handleMouseMove(e);
       }}
@@ -5274,7 +5274,8 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
                   ? 'linear-gradient(to right, rgba(0,0,0,0.92) 0%, rgba(0,0,0,0.74) 28%, rgba(0,0,0,0.32) 58%, transparent 78%)'
                   : 'linear-gradient(to left, rgba(0,0,0,0.92) 0%, rgba(0,0,0,0.74) 28%, rgba(0,0,0,0.32) 58%, transparent 78%)',
                 zIndex: 45,
-                pointerEvents: 'none'
+                pointerEvents: 'none',
+                cursor: 'default'
               }}
             />
           )}
@@ -5310,6 +5311,7 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
               maxWidth: videoLayout.width > 0 ? `${Math.min(videoLayout.width * 0.44, 520)}px` : '42%',
               textShadow: '0 2px 8px rgba(0, 0, 0, 0.95), 0 0 20px rgba(0, 0, 0, 0.5)',
               pointerEvents: 'none',
+              cursor: 'default',
               fontFamily: "'Inter', sans-serif",
               alignItems: overlayPosition.includes('right') ? 'flex-end' : 'flex-start',
               textAlign: overlayPosition.includes('right') ? 'right' : 'left'
