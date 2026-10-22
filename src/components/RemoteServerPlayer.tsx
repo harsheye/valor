@@ -2452,8 +2452,9 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
     if (subAbortControllerRef.current) {
       subAbortControllerRef.current.abort();
     }
-    subAbortControllerRef.current = new AbortController();
-    const signal = subAbortControllerRef.current.signal;
+    const currentController = new AbortController();
+    subAbortControllerRef.current = currentController;
+    const signal = currentController.signal;
 
     setExtractingStreamIndex(streamIndex);
     
@@ -2686,6 +2687,7 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
 
   const handleVideoError = () => {
     if (!videoRef.current) return;
+    if (authModalState.isOpen) return;
     const err = videoRef.current.error;
 
     if (video.type === 'local' && video.url && video.url.startsWith('blob:') && (err?.code === 4 || !video.file)) {
@@ -2695,37 +2697,58 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
       }
     }
 
-    let message = 'An unknown playback error occurred.';
-    
-    if (video.probingError) {
-      message = video.probingError.startsWith('File URL not supported by the source')
-        ? video.probingError
-        : `File URL not supported by the source: ${video.probingError}`;
-    } else if (err) {
-      switch (err.code) {
-        case 1: // MEDIA_ERR_ABORTED
-          message = 'Playback was aborted by the user or browser.';
-          break;
-        case 2: // MEDIA_ERR_NETWORK
-          message = 'A network error occurred while downloading the video.';
-          break;
-        case 3: // MEDIA_ERR_DECODE
-          message = 'The video playback was aborted due to a corruption problem or because the video used features your browser did not support.';
-          break;
-        case 4: // MEDIA_ERR_SRC_NOT_SUPPORTED
-          if (video.isRemote) {
-            message = 'File URL not supported by the source, or the format/codecs are not supported by your browser.';
-          } else {
-            message = 'The video format or codecs are not supported by your browser.';
+    const triggerError = (msg?: string) => {
+      let message = msg || 'An unknown playback error occurred.';
+      if (!msg) {
+        if (video.probingError) {
+          message = video.probingError.startsWith('File URL not supported by the source')
+            ? video.probingError
+            : `File URL not supported by the source: ${video.probingError}`;
+        } else if (err) {
+          switch (err.code) {
+            case 1:
+              message = 'Playback was aborted by the user or browser.';
+              break;
+            case 2:
+              message = 'A network error occurred while downloading the video.';
+              break;
+            case 3:
+              message = 'The video playback was aborted due to a corruption problem or because the video used features your browser did not support.';
+              break;
+            case 4:
+              message = video.isRemote
+                ? 'File URL not supported by the source, or the format/codecs are not supported by your browser.'
+                : 'The video format or codecs are not supported by your browser.';
+              break;
           }
-          break;
+        } else if (video.isRemote) {
+          message = 'File URL not supported by the source, or a network connection failure occurred.';
+        }
       }
-    } else if (video.isRemote) {
-      message = 'File URL not supported by the source, or a network connection failure occurred.';
+      logger.error(`Playback error code: ${err?.code || 'unknown'} message: ${message}`);
+      setPlaybackError(message);
+    };
+
+    // If remote, verify if 401 basic authentication is required before displaying fatal error overlay
+    if (video.isRemote) {
+      fetch(getProxiedVideoUrl(video.url), { method: 'HEAD' }).then(res => {
+        if (res.status === 401) {
+          setAuthModalState({
+            isOpen: true,
+            initialUsername: '',
+            errorMessage: 'Authentication required. Please enter username and password to access this media.',
+            isLoading: false
+          });
+          return;
+        }
+        triggerError();
+      }).catch(() => {
+        triggerError();
+      });
+      return;
     }
-    
-    logger.error(`Playback error code: ${err?.code || 'unknown'} message: ${message}`);
-    setPlaybackError(message);
+
+    triggerError();
   };
 
   const handleVideoSeeked = async () => {

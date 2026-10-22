@@ -927,7 +927,10 @@ export async function extractMkvSubtitles(
       }
 
       currentOffset += sub.headerSize + sub.size;
-    } catch (err) {
+    } catch (err: any) {
+      if (signal?.aborted || err?.name === 'AbortError' || (typeof err?.message === 'string' && err.message.toLowerCase().includes('abort'))) {
+        break;
+      }
       console.warn('[extractMkvSubtitles] Parsing error at offset', currentOffset, err);
       // Attempt to resynchronize by searching for the next Cluster ID (0x1F43B675)
       let found = false;
@@ -937,23 +940,30 @@ export async function extractMkvSubtitles(
       const bufferSize = 64 * 1024;
       while (scan < scanLimit) {
         if (signal?.aborted) break;
-        const readEnd = Math.min(scan + bufferSize - 1, scanLimit);
-        const bytes = await source.read(scan, readEnd, signal);
-        if (bytes.length < 4) break;
-        
-        let matchIdx = -1;
-        for (let i = 0; i < bytes.length - 3; i++) {
-          if (bytes[i] === 0x1F && bytes[i+1] === 0x43 && bytes[i+2] === 0xB6 && bytes[i+3] === 0x75) {
-            matchIdx = i;
+        try {
+          const readEnd = Math.min(scan + bufferSize - 1, scanLimit);
+          const bytes = await source.read(scan, readEnd, signal);
+          if (bytes.length < 4) break;
+          
+          let matchIdx = -1;
+          for (let i = 0; i < bytes.length - 3; i++) {
+            if (bytes[i] === 0x1F && bytes[i+1] === 0x43 && bytes[i+2] === 0xB6 && bytes[i+3] === 0x75) {
+              matchIdx = i;
+              break;
+            }
+          }
+          if (matchIdx !== -1) {
+            currentOffset = scan + matchIdx;
+            found = true;
             break;
           }
+          scan += bytes.length - 3;
+        } catch (scanErr: any) {
+          if (signal?.aborted || scanErr?.name === 'AbortError' || (typeof scanErr?.message === 'string' && scanErr.message.toLowerCase().includes('abort'))) {
+            break;
+          }
+          scan += bufferSize;
         }
-        if (matchIdx !== -1) {
-          currentOffset = scan + matchIdx;
-          found = true;
-          break;
-        }
-        scan += bytes.length - 3;
       }
       if (!found) {
         break;

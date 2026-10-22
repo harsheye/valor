@@ -223,7 +223,7 @@ export const AudioSubPopover: React.FC<AudioSubPopoverProps> = ({
                 const active = selectedAudioTrack?.streamIndex === s.index;
                 const label = getLangLabel(s.language, `Track #${s.index}`);
                 return (
-                  <label key={`embed-aud-${s.index}`} className={`popover-option ${active ? 'active' : ''}`} onClick={() => { handleSelectEmbeddedAudio(s.index, s.codec, s.language); setShowAudioSubMenu(false); }}>
+                  <label key={`embed-aud-${s.index}`} className={`popover-option ${active ? 'active' : ''}`} onClick={(e) => { e.preventDefault(); e.stopPropagation(); if (active) return; handleSelectEmbeddedAudio(s.index, s.codec, s.language); setShowAudioSubMenu(false); }}>
                     <input type="radio" name="audio-lang" checked={active} readOnly />
                     <span>{label}</span>
                     {active && <Check size={14} className="check-icon" />}
@@ -332,7 +332,7 @@ export const AudioSubPopover: React.FC<AudioSubPopoverProps> = ({
           </div>
           <div className="popover-options">
             {/* Off */}
-            <label className={`popover-option ${selectedSubTrack === null ? 'active' : ''}`} onClick={() => { setSelectedSubTrack(null); setActiveSubStreamIndex(null); if (!showViewColumn && !showStyleColumn) setShowAudioSubMenu(false); }}>
+            <label className={`popover-option ${selectedSubTrack === null ? 'active' : ''}`} onClick={(e) => { e.preventDefault(); e.stopPropagation(); setSelectedSubTrack(null); setActiveSubStreamIndex(null); if (!showViewColumn && !showStyleColumn) setShowAudioSubMenu(false); }}>
               <input type="radio" name="sub-lang" checked={selectedSubTrack === null} readOnly />
               <span>Off</span>
               {selectedSubTrack === null && <Check size={14} className="check-icon" />}
@@ -343,7 +343,7 @@ export const AudioSubPopover: React.FC<AudioSubPopoverProps> = ({
               const active = selectedSubTrack?.streamIndex === s.index;
               const label = getLangLabel(s.language, `Track #${s.index}`);
               return (
-                <label key={`embed-sub-${s.index}`} className={`popover-option ${active ? 'active' : ''}`} onClick={() => { handleSelectEmbeddedSubtitle(s.index, s.codec, s.language); if (!showViewColumn && !showStyleColumn) setShowAudioSubMenu(false); }}>
+                <label key={`embed-sub-${s.index}`} className={`popover-option ${active ? 'active' : ''}`} onClick={(e) => { e.preventDefault(); e.stopPropagation(); if (active) return; handleSelectEmbeddedSubtitle(s.index, s.codec, s.language); if (!showViewColumn && !showStyleColumn) setShowAudioSubMenu(false); }}>
                   <input type="radio" name="sub-lang" checked={active} readOnly />
                   <span>{label}</span>
                   {active && <Check size={14} className="check-icon" />}
@@ -355,7 +355,7 @@ export const AudioSubPopover: React.FC<AudioSubPopoverProps> = ({
             {subtitleTracks.map((track) => {
               const active = selectedSubTrack?.id === track.id;
               return (
-                <label key={track.id} className={`popover-option ${active ? 'active' : ''}`} onClick={() => { setSelectedSubTrack(track); if (!showViewColumn && !showStyleColumn) setShowAudioSubMenu(false); }}>
+                <label key={track.id} className={`popover-option ${active ? 'active' : ''}`} onClick={(e) => { e.preventDefault(); e.stopPropagation(); if (active) return; setSelectedSubTrack(track); if (!showViewColumn && !showStyleColumn) setShowAudioSubMenu(false); }}>
                   <input type="radio" name="sub-lang" checked={active} readOnly />
                   <span>{trimSubtitleName(track.name, track.language)}</span>
                   {active && <Check size={14} className="check-icon" />}

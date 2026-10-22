@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { 
-  UploadCloud, Play, Sparkles, Film, 
+  UploadCloud, Play, Sparkles, Film, Loader2, 
   ExternalLink, Clock, Radio, CheckCircle2, Shield, Zap 
 } from 'lucide-react';
 import type { VideoItem } from '../types/media';
@@ -27,6 +27,7 @@ interface HomePageProps {
   storageMode?: string;
   onToggleStorageMode?: (mode: 'server' | 'local') => void;
   userId?: string;
+  isProcessing?: boolean;
 }
 
 export const HomePage: React.FC<HomePageProps> = ({
@@ -477,6 +478,7 @@ export const HomePage: React.FC<HomePageProps> = ({
                 placeholder="Enter Stream URL (HLS / m3u8 / MP4) or file path..." 
                 value={videoUrl}
                 onChange={(e) => setVideoUrl(e.target.value)}
+                disabled={isProcessing}
                 style={{
                   flex: 1,
                   padding: '12px 16px',
@@ -491,6 +493,7 @@ export const HomePage: React.FC<HomePageProps> = ({
               />
               <button 
                 type="submit" 
+                disabled={isProcessing}
                 style={{
                   padding: '12px 24px',
                   background: 'var(--accent-color, #e50914)',
@@ -499,15 +502,26 @@ export const HomePage: React.FC<HomePageProps> = ({
                   borderRadius: '8px',
                   fontWeight: 700,
                   fontSize: '0.9rem',
-                  cursor: 'pointer',
+                  cursor: isProcessing ? 'not-allowed' : 'pointer',
                   display: 'flex',
                   alignItems: 'center',
                   gap: '8px',
-                  boxShadow: '0 4px 14px rgba(229, 9, 20, 0.35)'
+                  boxShadow: '0 4px 14px rgba(229, 9, 20, 0.35)',
+                  opacity: isProcessing ? 0.8 : 1,
+                  transition: 'all 0.2s ease'
                 }}
               >
-                <Play size={15} fill="currentColor" stroke="none" />
-                <span>Play</span>
+                {isProcessing ? (
+                  <>
+                    <Loader2 size={15} className="animate-spin" />
+                    <span>Connecting...</span>
+                  </>
+                ) : (
+                  <>
+                    <Play size={15} fill="currentColor" stroke="none" />
+                    <span>Play</span>
+                  </>
+                )}
               </button>
             </div>
           </form>

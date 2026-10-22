@@ -672,6 +672,7 @@ function App() {
   const [hoveredHotkey, setHoveredHotkey] = useState<string | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const [processingStep, setProcessingStep] = useState('');
+  const [processingUrl, setProcessingUrl] = useState('');
 
   const renderMockPreviewButton = (key: string) => {
     const iconSize = 14;
@@ -2600,6 +2601,7 @@ function App() {
 
   const processRemoteUrl = async (url: string, isLocalFile = false) => {
     setIsProcessing(true);
+    setProcessingUrl(url);
     setProcessingStep('Validating security protocols...');
     
     let localPathVal: string | undefined = undefined;
@@ -2635,9 +2637,9 @@ function App() {
       }
 
       setProcessingStep('Checking connection capabilities...');
-      const parserAvailable = await detectUrlCapabilities(url);
+      const capabilities = await detectUrlCapabilities(url);
       
-      if (!parserAvailable) {
+      if (!capabilities.supported) {
         let rawTitle = localPathVal ? (localPathVal.split(/[/\\]/).pop() || localPathVal) : (url.substring(url.lastIndexOf('/') + 1) || 'Remote Stream');
         let title = rawTitle.replace(/\.[^/.]+$/, '');
         const parsedInfo = classifyVideoTitle(title);
@@ -2668,8 +2670,8 @@ function App() {
           containerType: 'unknown',
           audioTracks: match ? match.audioTracks : [],
           subtitleTracks: match ? match.subtitleTracks : [],
-          playbackMode: 'native',
-          probingError: 'The remote server blocks cross-origin byte access (CORS).',
+          playbackMode: isLocalFile ? 'native' : 'server',
+          probingError: capabilities.authRequired ? undefined : 'The remote server blocks cross-origin byte access (CORS).',
           localFilePath: localPathVal,
           currentTime: 0,
           resumeTime: getResumeTimeFromMatch(match),
@@ -2872,6 +2874,7 @@ function App() {
     } finally {
       setIsProcessing(false);
       setProcessingStep('');
+      setProcessingUrl('');
     }
   };
 
@@ -3139,6 +3142,7 @@ function App() {
             <>
               {activeTab === 'home' && (
                 <HomePage
+                  isProcessing={isProcessing}
                   videos={videos}
                   isDragActive={isDragActive}
                   handleDrag={handleDrag}
@@ -3241,6 +3245,18 @@ function App() {
         setActiveTab={setActiveTab}
         setSelectedActor={setSelectedActor}
         setSelectedDetailsMedia={setSelectedDetailsMedia}
+      />
+
+      {/* Fullscreen Stream Loading Transition Overlay */}
+      <StreamLoadingOverlay
+        isOpen={isProcessing}
+        step={processingStep}
+        url={processingUrl}
+        onCancel={() => {
+          setIsProcessing(false);
+          setProcessingStep('');
+          setProcessingUrl('');
+        }}
       />
 
       {/* Reset settings confirmation modal */}

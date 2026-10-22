@@ -1,6 +1,7 @@
 import { createServer as createViteServer } from 'vite';
 import http from 'http';
 import https from 'https';
+import dns from 'dns';
 import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
@@ -11,6 +12,10 @@ import { createReverseProxyTelemetry, parseUserAgent } from './analyticsTracker.
 import { RemoteSessionManager } from './server/remote/remoteSessionManager.js';
 import { handleStreamRoute } from './server/remote/streamController.js';
 import { SessionMediaManager } from './server/remote/sessionMediaManager.js';
+
+try {
+  dns.setDefaultResultOrder('ipv4first');
+} catch {}
 
 process.on('uncaughtException', (err) => {
   console.error('[Server Uncaught Exception]', err?.stack || err?.message || err);

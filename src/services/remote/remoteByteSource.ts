@@ -539,7 +539,13 @@ export class CachedByteSource implements ByteSource {
   }
 }
 
-export async function detectUrlCapabilities(url: string): Promise<boolean> {
+export interface UrlCapabilitiesResult {
+  supported: boolean;
+  statusCode?: number;
+  authRequired?: boolean;
+}
+
+export async function detectUrlCapabilities(url: string): Promise<UrlCapabilitiesResult> {
   const controller = new AbortController();
   const id = setTimeout(() => controller.abort(), 4000);
 
@@ -549,7 +555,7 @@ export async function detectUrlCapabilities(url: string): Promise<boolean> {
     if (parsedUrl.protocol !== 'http:' && parsedUrl.protocol !== 'https:') {
       console.warn('URL capability detection rejected: Unsupported protocol:', parsedUrl.protocol);
       clearTimeout(id);
-      return false;
+      return { supported: false };
     }
 
     const isCross = typeof window !== 'undefined' && parsedUrl.origin !== window.location.origin;
@@ -563,11 +569,14 @@ export async function detectUrlCapabilities(url: string): Promise<boolean> {
         signal: controller.signal
       });
       clearTimeout(id);
+      if (res.status === 401) {
+        return { supported: false, statusCode: 401, authRequired: true };
+      }
       if (res.status === 200 || res.status === 206) {
         const buffer = await res.arrayBuffer();
-        return buffer.byteLength > 0;
+        return { supported: buffer.byteLength > 0, statusCode: res.status };
       }
-      return false;
+      return { supported: false, statusCode: res.status };
     }
 
     const response = await fetch(url, {
@@ -575,11 +584,14 @@ export async function detectUrlCapabilities(url: string): Promise<boolean> {
       signal: controller.signal
     });
     clearTimeout(id);
+    if (response.status === 401) {
+      return { supported: false, statusCode: 401, authRequired: true };
+    }
     if (response.status === 200 || response.status === 206) {
       const buffer = await response.arrayBuffer();
-      return buffer.byteLength > 0;
+      return { supported: buffer.byteLength > 0, statusCode: response.status };
     }
-    return false;
+    return { supported: false, statusCode: response.status };
   } catch (e) {
     clearTimeout(id);
     try {
@@ -591,11 +603,15 @@ export async function detectUrlCapabilities(url: string): Promise<boolean> {
         signal: proxyController.signal
       });
       clearTimeout(pId);
+      if (res.status === 401) {
+        return { supported: false, statusCode: 401, authRequired: true };
+      }
       if (res.status === 200 || res.status === 206) {
         const buffer = await res.arrayBuffer();
-        return buffer.byteLength > 0;
+        return { supported: buffer.byteLength > 0, statusCode: res.status };
       }
+      return { supported: false, statusCode: res.status };
     } catch (err) {}
-    return false;
+    return { supported: false };
   }
 }
