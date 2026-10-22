@@ -183,44 +183,11 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = (props) => {
   const isNameUnrecognizable = !effectiveTitle;
   const classification = identifyMediaClassification(currentVideo, isCinema);
 
-  // Playback mode determination:
-  // - Only ask for the player selector if and only if we are unable to identify whether the media is cinema or personal video.
-  // - If successfully identified, do NOT show the player selector!
-  // - If media name is unrecognizable, do NOT send user to player first: ask player selector first, then ask name.
-  const [playbackMode, setPlaybackMode] = useState<'simple' | 'server' | null>(() => {
-    // 1. If media name is unrecognizable, do not bypass into player
-    if (isNameUnrecognizable) {
-      return null;
-    }
+  // Play remote media via server rendering and packet forwarding directly
+  const [playbackMode, setPlaybackMode] = useState<'simple' | 'server'>('server');
 
-    // 2. Explicit cinema override
-    if (isCinema || (currentVideo as any).isCinema) {
-      return 'server';
-    }
-
-    // 3. Check if user previously saved preference for this specific video
-    const key = currentVideo.id || currentVideo.url;
-    const savedForVideo = localStorage.getItem(`valor_remote_mode_${key}`);
-    if (savedForVideo === 'simple' || savedForVideo === 'server') {
-      return savedForVideo;
-    }
-
-    // 4. Successfully identified as cinema -> auto-select server player without asking
-    if (classification === 'cinema') {
-      return 'server';
-    }
-
-    // 5. Successfully identified as personal video -> auto-select simple player without asking
-    if (classification === 'personal') {
-      return 'simple';
-    }
-
-    // 6. Unable to identify -> prompt user with player selector
-    return null;
-  });
-
-  // Player selector modal open state (only open if mode cannot be determined)
-  const [isSelectorOpen, setIsSelectorOpen] = useState<boolean>(() => playbackMode === null);
+  // Player selector modal open state (closed - bypassed for direct playback)
+  const [isSelectorOpen, setIsSelectorOpen] = useState<boolean>(false);
 
   // Name prompt modal open state
   const [isNameModalOpen, setIsNameModalOpen] = useState<boolean>(false);

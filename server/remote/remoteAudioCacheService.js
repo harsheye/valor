@@ -65,7 +65,9 @@ export class RemoteAudioCacheService {
       .map(([k, v]) => `${k}: ${v}`)
       .join('\r\n') + '\r\n';
 
-    const urlHash = crypto.createHash('md5').update(validated.origin + validated.pathname).digest('hex').slice(0, 16);
+    // Include the full source URL and request headers so signed URLs, query-based
+    // resources, and authenticated variants cannot share cached audio/subtitles.
+    const urlHash = crypto.createHash('sha256').update(targetUrlStr + '\n' + headerLines).digest('hex').slice(0, 24);
 
     return { validated, targetUrlStr, headerLines, urlHash };
   }
@@ -136,7 +138,7 @@ export class RemoteAudioCacheService {
 
     const { targetUrlStr, headerLines, urlHash } = await this.buildTarget(url, auth, headers);
 
-    const chunkKey = `${urlHash}_s${sIdx}_t${parsedStart.toFixed(2)}_d${parsedDur.toFixed(2)}`;
+    const chunkKey = `${urlHash}_s${sIdx}_t${parsedStart.toFixed(2)}_d${parsedDur.toFixed(2)}_v2`;
     const chunkPath = path.join(this.chunkCacheDir, `${chunkKey}.wav`);
 
     // 1. Check disk cache
@@ -164,12 +166,15 @@ export class RemoteAudioCacheService {
 
       let args;
       if (hasLocalStream) {
-        // Fast local slice (10-30ms)
+        // Fast local slice (10-30ms) with sample-accurate seeking and zero timestamp offset
         args = [
           '-v', 'error',
           '-ss', parsedStart.toFixed(3),
+          '-accurate_seek',
           '-i', streamPath,
+          '-ss', '0',
           '-t', parsedDur.toFixed(3),
+          '-avoid_negative_ts', 'make_zero',
           '-acodec', 'pcm_s16le',
           '-ac', '2',
           '-ar', '44100',
@@ -180,7 +185,7 @@ export class RemoteAudioCacheService {
         // Trigger background download of full audio stream if not yet started
         this.triggerBackgroundExtraction(url, sIdx, auth, headers);
 
-        // Slice directly from remote URL using exact parameters and reconnect flags
+        // Slice directly from remote URL using exact parameters, accurate seek and reconnect flags
         args = [
           '-v', 'error',
           '-reconnect', '1',
@@ -190,10 +195,13 @@ export class RemoteAudioCacheService {
           '-rw_timeout', '10000000',
           '-headers', headerLines,
           '-ss', parsedStart.toFixed(3),
+          '-accurate_seek',
           '-i', targetUrlStr,
+          '-ss', '0',
           '-t', parsedDur.toFixed(3),
           '-map', `0:${sIdx}`,
           '-vn',
+          '-avoid_negative_ts', 'make_zero',
           '-acodec', 'pcm_s16le',
           '-ac', '2',
           '-ar', '44100',
@@ -274,7 +282,7 @@ export class RemoteAudioCacheService {
     const sIdx = parseInt(streamIndex, 10) || 0;
 
     const { targetUrlStr, urlHash } = await this.buildTarget(url, auth, headers);
-    const chunkKey = `${urlHash}_s${sIdx}_t${parsedStart.toFixed(2)}_d${parsedDur.toFixed(2)}`;
+    const chunkKey = `${urlHash}_s${sIdx}_t${parsedStart.toFixed(2)}_d${parsedDur.toFixed(2)}_v2`;
     const chunkPath = path.join(this.chunkCacheDir, `${chunkKey}.wav`);
 
     if (fs.existsSync(chunkPath) || this.inFlightChunks.has(chunkKey)) {

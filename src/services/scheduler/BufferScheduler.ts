@@ -3,10 +3,10 @@ import type { TimeRange } from '../cache/PacketCache';
 import { ChunkManifest } from './ChunkManifest';
 
 export class BufferScheduler {
-  private readonly lowWaterMark = 30;   // seconds (keep 30s minimum buffer)
-  private readonly highWaterMark = 60;  // seconds (buffer up to 60s ahead)
+  private readonly lowWaterMark = 90;   // seconds (begin refilling before the 120s cache gets low)
+  private readonly highWaterMark = 120; // seconds (fill the frontend cache window)
   private readonly chunkSize = 10;      // seconds
-  private isBufferingState = true;      // Start true to buffer 60s initially
+  private isBufferingState = true;      // Start true to fill the frontend cache window
 
   constructor(private cache: PacketCache, private manifest: ChunkManifest) {}
 

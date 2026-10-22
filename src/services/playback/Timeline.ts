@@ -14,12 +14,12 @@ export class Timeline {
 
   /**
    * Check if there is significant drift between video currentTime and AudioContext playhead
-   * Returns true if drift is > 100ms (significant enough to require a hard resync)
+   * Returns true if drift is > 150ms (significant enough to require a hard resync)
    */
   public checkDrift(currentTime: number, audioPlayhead: number | null): boolean {
     const drift = this.getDrift(currentTime, audioPlayhead);
     if (drift !== null) {
-      return Math.abs(drift) > 0.10;
+      return Math.abs(drift) > 0.15;
     }
     return false;
   }

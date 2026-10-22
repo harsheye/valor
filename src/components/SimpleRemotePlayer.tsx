@@ -226,7 +226,7 @@ export const SimpleRemotePlayer: React.FC<SimpleRemotePlayerProps> = ({
 
   // Handle Pause Screen Timer (Show after 10s of continuous pause)
   useEffect(() => {
-    if (!isPlaying) {
+    if (!isPlaying && !isBuffering) {
       setShowPauseMetadataOverlay(false);
       pauseOverlayTimerRef.current = setTimeout(() => {
         setShowPauseMetadataOverlay(true);
@@ -240,7 +240,7 @@ export const SimpleRemotePlayer: React.FC<SimpleRemotePlayerProps> = ({
     return () => {
       if (pauseOverlayTimerRef.current) clearTimeout(pauseOverlayTimerRef.current);
     };
-  }, [isPlaying, resetControlsTimeout]);
+  }, [isPlaying, isBuffering, resetControlsTimeout]);
 
   // Play / Pause toggle
   const togglePlay = useCallback(() => {
@@ -612,7 +612,7 @@ export const SimpleRemotePlayer: React.FC<SimpleRemotePlayerProps> = ({
           }
         }}
         onPlay={() => setIsPlaying(true)}
-        onPause={() => setIsPlaying(false)}
+        onPause={() => { setIsPlaying(false); setIsBuffering(false); }}
         onWaiting={() => setIsBuffering(true)}
         onPlaying={() => setIsBuffering(false)}
         onCanPlay={() => setIsBuffering(false)}
@@ -681,10 +681,11 @@ export const SimpleRemotePlayer: React.FC<SimpleRemotePlayerProps> = ({
 
       {/* Netflix-style Paused Details Overlay */}
       <PauseDetailsOverlay
-        visible={showPauseMetadataOverlay && !isPlaying}
+        visible={showPauseMetadataOverlay && !isPlaying && !isBuffering}
         mediaDetails={mediaDetails}
         videoTitle={video.title}
         duration={duration}
+        isBuffering={isBuffering}
       />
 
       {/* Floating Skip Intro / Outro Button */}

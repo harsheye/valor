@@ -43,9 +43,9 @@ Valor is a cutting-edge, high-performance local and remote media player and stre
    ```bash
    npm start
    ```
-   * By default, the server binds to `0.0.0.0:50000` (service / UI) and `127.0.0.1:50001` (backend API).
+   * By default, the server binds to `0.0.0.0:80` (service / UI) and `127.0.0.1:50001` (backend API).
    * Customize via environment variables:
-     - `PORT` or `PORT_SERVICE`: Public port (default: `50000`)
+     - `PORT` or `PORT_SERVICE`: Public port (default: `80`)
      - `PORT_BACKEND`: Backend API port (default: `50001`)
      - `HOST`: Listening host (default: `0.0.0.0`)
 

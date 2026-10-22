@@ -21,7 +21,6 @@ export class BufferManager {
   private isBuffering = false;
 
   private readonly COOLDOWN_MS = 8000;
-  private readonly MAX_RETRIES = 3;
 
   constructor(
     private packetReader: PacketReader,
@@ -40,16 +39,24 @@ export class BufferManager {
     const record = this.failedFills.get(key);
     if (!record) return false;
 
-    if (record.count >= this.MAX_RETRIES) {
-      return true;
-    }
+    // Repeated failures back off, but never permanently blacklist a chunk.
+    // A permanent block can leave an audio gap that keeps playback buffering forever.
+    const retryDelay = Math.min(
+      this.COOLDOWN_MS * (2 ** Math.max(0, record.count - 1)),
+      60000
+    );
+    return Date.now() - record.lastTime < retryDelay;
+  }
 
-    const elapsed = Date.now() - record.lastTime;
-    if (elapsed < this.COOLDOWN_MS) {
-      return true;
-    }
+  getRetryDelayMs(key: string): number {
+    const record = this.failedFills.get(key);
+    if (!record) return this.COOLDOWN_MS;
 
-    return false;
+    const retryDelay = Math.min(
+      this.COOLDOWN_MS * (2 ** Math.max(0, record.count - 1)),
+      60000
+    );
+    return Math.max(0, retryDelay - (Date.now() - record.lastTime));
   }
 
   markFailed(key: string): void {
@@ -57,7 +64,7 @@ export class BufferManager {
     record.count += 1;
     record.lastTime = Date.now();
     this.failedFills.set(key, record);
-    console.warn(`[BufferManager] Key ${key} failed. Attempt count: ${record.count}/${this.MAX_RETRIES}`);
+    console.warn(`[BufferManager] Key ${key} failed. Attempt count: ${record.count}; retry delay: ${Math.min(this.COOLDOWN_MS * (2 ** Math.max(0, record.count - 1)), 60000)}ms`);
   }
 
   resetFailures(): void {
@@ -73,7 +80,7 @@ export class BufferManager {
     this.onBufferingChange = cb;
   }
 
-  private setBuffering(state: boolean): void {
+  public setBuffering(state: boolean): void {
     if (this.isBuffering === state) return;
     this.isBuffering = state;
     if (this.onBufferingChange) {

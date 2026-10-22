@@ -24,6 +24,7 @@ export interface PauseDetailsOverlayProps {
   overlayShowOverview?: boolean;
   videoLayout?: { top: number; left: number; width: number; height: number };
   onLogoError?: () => void;
+  isBuffering?: boolean;
 }
 
 export const PauseDetailsOverlay: React.FC<PauseDetailsOverlayProps> = ({
@@ -36,9 +37,10 @@ export const PauseDetailsOverlay: React.FC<PauseDetailsOverlayProps> = ({
   overlayShowRating = true,
   overlayShowOverview = true,
   videoLayout = { top: 0, left: 0, width: 0, height: 0 },
-  onLogoError
+  onLogoError,
+  isBuffering = false
 }) => {
-  if (!visible || !mediaDetails) return null;
+  if (!visible || !mediaDetails || isBuffering) return null;
 
   const formatRuntime = (secs: number) => {
     if (!secs || isNaN(secs)) return '1h 45m';

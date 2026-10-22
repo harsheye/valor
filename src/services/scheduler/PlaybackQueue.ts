@@ -13,8 +13,9 @@ export class PlaybackQueue {
   ) {}
 
   update(currentTime: number, playbackRate: number): void {
-    // Reschedule any cached packets that fall within the upcoming 50-second window and are not yet scheduled
-    const highWaterTarget = currentTime + 50;
+    // Schedule cached packets for the current chunk and immediate next chunk (~12s window)
+    // to prevent fixed Web Audio timeline cementing far into the future which creates drift
+    const highWaterTarget = currentTime + 12;
     const cachedPackets = this.cache.getEntries()
       .filter(({ packet }) => packet.endTime > currentTime && packet.startTime < highWaterTarget)
       .sort((a, b) => {

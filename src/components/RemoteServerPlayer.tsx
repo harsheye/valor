@@ -1676,7 +1676,10 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
   }
   const [activeAudioStartOffset, setActiveAudioStartOffset] = useState(0);
   const [activeSubtitleStartOffset, setActiveSubtitleStartOffset] = useState(0);
-  const [activeAudioStreamIndex, setActiveAudioStreamIndex] = useState<number | null>(null);
+  const [activeAudioStreamIndex, setActiveAudioStreamIndex] = useState<number | null>(() => {
+    const existingAudio = (video.streams || []).find((s: any) => s.type === 'audio');
+    return existingAudio !== undefined ? existingAudio.index : 0;
+  });
   const [activeSubStreamIndex, setActiveSubStreamIndex] = useState<number | null>(null);
   const [playbackError, setPlaybackError] = useState<string | null>(null);
 
@@ -1745,6 +1748,15 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
 
         if (probeData.duration && !duration) {
           setDuration(probeData.duration);
+        }
+
+        // Auto-select primary audio stream for server packet rendering & forwarding
+        const defaultAudio = probeData.audioStreams?.[0];
+        if (defaultAudio !== undefined && (activeAudioStreamIndex === null || activeAudioStreamIndex === undefined)) {
+          setActiveAudioStreamIndex(defaultAudio.index);
+          if (playbackControllerRef.current && (playbackControllerRef.current.state.activeStreamIndex === -1 || playbackControllerRef.current.state.activeStreamIndex === null)) {
+            playbackControllerRef.current.switchAudioTrack(defaultAudio.index);
+          }
         }
 
         onUpdateVideo({
@@ -1919,6 +1931,7 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
   const cachedSourceRef = useRef<CachedByteSource | null>(null);
   const audioAbortControllerRef = useRef<AbortController | null>(null);
   const subAbortControllerRef = useRef<AbortController | null>(null);
+  const subtitleLoadInFlightRef = useRef<{ streamIndex: number; time: number; controller: AbortController } | null>(null);
   const currentAudioOptionIndexRef = useRef<number>(-1);
   const currentSubOptionIndexRef = useRef<number>(-1);
   const audioDebounceTimeoutRef = useRef<any>(null);
@@ -2298,46 +2311,39 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
         }
 
         // Timeframe Synchronization Barrier:
-        // Ensures Video, Audio, and Subtitle packets are ALL cached and ready for the current timeframe before playing
+        // Keeps video, server audio packet rendering, and subtitles synchronized without starvation flap
         const bufferedAhead = Math.max(0, currentBufferEnd - currentPlayhead);
         const effectiveDuration = durationRef.current || duration || 0;
         const isNearEnd = effectiveDuration > 0 && (effectiveDuration - currentPlayhead < 2.5);
 
-        const isAudioReady = isNearEnd || !playbackControllerRef.current || playbackControllerRef.current.hasAudioCoverage(currentPlayhead, currentPlayhead + 1.5);
-        const isSubReady = extractingStreamIndex === null;
+        // Genuine starvation check while playing: buffer is almost exhausted (< 0.25s) or element is not ready
+        const isVideoStarving = !isNearEnd && (bufferedAhead < 0.25 && videoRef.current.readyState < 3);
+        const isAudioStarving = !isNearEnd && playbackControllerRef.current !== null && !playbackControllerRef.current.hasAudioCoverage(currentPlayhead, currentPlayhead + 0.25);
 
         if (isPlayingRef.current) {
-          // 1. Starvation / Missing Packets: Pause video and wait for all packets to cache
           if (!isWaitingForSyncRef.current) {
-            const videoStarving = !isNearEnd && bufferedAhead < 1.0;
-            const audioMissing = !isAudioReady;
-            const subMissing = !isSubReady;
-
-            if (videoStarving || audioMissing || subMissing) {
+            if (isVideoStarving || isAudioStarving) {
               isWaitingForSyncRef.current = true;
               setIsBuffering(true);
+              if (playbackControllerRef.current) {
+                playbackControllerRef.current.pauseForBuffering();
+              }
               if (!videoRef.current.paused) {
                 videoRef.current.pause();
               }
-              if (playbackControllerRef.current) {
-                playbackControllerRef.current.pauseAudioOnly();
-              }
             }
           } else {
-            // 2. Resume Barrier: require >= 2.5s video buffer ahead (or near end), audio coverage >= 2.0s, and subtitle ready
-            const videoReady = isNearEnd || bufferedAhead >= 2.5;
-            const audioReady = isNearEnd || !playbackControllerRef.current || playbackControllerRef.current.hasAudioCoverage(currentPlayhead, currentPlayhead + 2.0);
-            const subReady = isSubReady;
-
-            if (videoReady && audioReady && subReady) {
+            // Hysteresis resume condition: require healthy buffer before resuming
+            const videoReadyToResume = isNearEnd || bufferedAhead >= 1.5 || videoRef.current.readyState >= 3;
+            const audioReadyToResume = isNearEnd || !playbackControllerRef.current || playbackControllerRef.current.hasAudioCoverage(currentPlayhead, currentPlayhead + 1.2);
+            if (videoReadyToResume && audioReadyToResume) {
               isWaitingForSyncRef.current = false;
               setIsBuffering(false);
               if (videoRef.current.paused) {
-                if (playbackControllerRef.current) {
-                  playbackControllerRef.current.play().catch(() => {});
-                } else {
-                  videoRef.current.play().catch(() => {});
-                }
+                videoRef.current.play().catch(() => {});
+              }
+              if (playbackControllerRef.current) {
+                playbackControllerRef.current.play().catch(() => {});
               }
             }
           }
@@ -2355,7 +2361,7 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
       clearTimeout(pauseOverlayTimerRef.current);
       pauseOverlayTimerRef.current = null;
     }
-    if (!isPlaying) {
+    if (!isPlaying && !isBuffering) {
       showPauseMetadataOverlayRef.current = false;
       setShowPauseMetadataOverlay(false);
       pauseOverlayTimerRef.current = setTimeout(() => {
@@ -2364,10 +2370,10 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
         setShowControls(false);
       }, 10000);
     }
-  }, [isPlaying]);
+  }, [isPlaying, isBuffering]);
 
   useEffect(() => {
-    if (!isPlaying) {
+    if (!isPlaying && !isBuffering) {
       showPauseMetadataOverlayRef.current = false;
       setShowPauseMetadataOverlay(false);
       pauseOverlayTimerRef.current = setTimeout(() => {
@@ -2390,7 +2396,7 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
         pauseOverlayTimerRef.current = null;
       }
     };
-  }, [isPlaying]);
+  }, [isPlaying, isBuffering]);
 
   // Controls Auto-Hide
   const resetControlsTimeout = () => {
@@ -2495,12 +2501,26 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
       return;
     }
 
-    // Seek optimization: abort any active remote fetches
+    // The playback clock updates continuously. Advance the window before any
+    // async work so the boundary effect cannot launch the same fetch every frame.
+    const inFlight = subtitleLoadInFlightRef.current;
+    if (
+      inFlight
+      && !inFlight.controller.signal.aborted
+      && inFlight.streamIndex === streamIndex
+      && Math.abs(inFlight.time - time) < 10
+    ) return;
+
+    activeSubtitleStartOffsetRef.current = time;
+    setActiveSubtitleStartOffset(time);
+
+    // A real seek or a different subtitle window replaces the previous fetch.
     if (subAbortControllerRef.current) {
       subAbortControllerRef.current.abort();
     }
     const currentController = new AbortController();
     subAbortControllerRef.current = currentController;
+    subtitleLoadInFlightRef.current = { streamIndex, time, controller: currentController };
     const signal = currentController.signal;
 
     setExtractingStreamIndex(streamIndex);
@@ -2525,6 +2545,7 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
           const res = await fetch(`/api/remote/subtitle-packet?${params.toString()}`, { signal });
           if (res.ok) {
             const vttText = await res.text();
+            if (signal.aborted || subAbortControllerRef.current !== currentController) return;
             const parsedCues = parseSubtitles(vttText, 'subtitles.vtt');
             if (parsedCues.length > 0) {
               const subStream = subtitleStreams.find(s => s.index === streamIndex);
@@ -2539,7 +2560,6 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
                 format: 'vtt'
               };
               setSelectedSubTrack(newTrack);
-              setExtractingStreamIndex(null);
               return;
             }
           }
@@ -2770,8 +2790,12 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
         }
       }
     } finally {
-      setExtractingStreamIndex(null);
-      setIsKeyInitiated(false);
+      if (subAbortControllerRef.current === currentController) {
+        subAbortControllerRef.current = null;
+        subtitleLoadInFlightRef.current = null;
+        setExtractingStreamIndex(null);
+        setIsKeyInitiated(false);
+      }
     }
   };
 
@@ -2878,10 +2902,10 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
       });
     }
 
-    // Sync PlaybackController playhead on seek
-    if (playbackControllerRef.current) {
+    // Sync PlaybackController playhead on seek (avoiding re-entrant seek loop)
+    if (playbackControllerRef.current && !playbackControllerRef.current.session.isTransitioningState) {
       const ctrlTime = playbackControllerRef.current.getCurrentTime();
-      if (Math.abs(ctrlTime - newTime) > 0.2) {
+      if (Math.abs(ctrlTime - newTime) > 0.4) {
         logger.player(`Seek detected to ${newTime}s in player. Updating playback controller...`);
         activeAudioStartOffsetRef.current = Math.floor(newTime / 10) * 10;
         playbackControllerRef.current.seek(newTime).catch(console.error);
@@ -3695,15 +3719,7 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
         triggerSwitchToast('Playback hotkeys are disabled');
         return;
       }
-      if (videoRef.current) {
-        if (videoRef.current.paused) {
-          videoRef.current.play().catch(console.error);
-          triggerHudFlash('play');
-        } else {
-          videoRef.current.pause();
-          triggerHudFlash('pause');
-        }
-      }
+      togglePlay();
     } else if (pressedKey === rewindKey) {
       e.preventDefault();
       if (showPlayBarMode === 'disable') {
@@ -4840,12 +4856,23 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
           }}
           onPlay={() => setIsPlaying(true)}
           onPause={() => {
+            if (isWaitingForSyncRef.current || playbackControllerRef.current?.state.isBuffering) {
+              isWaitingForSyncRef.current = true;
+              setIsBuffering(true);
+              return;
+            }
             // If focus loss auto-pause is disabled and this pause was triggered by browser 
             // background tab throttling, ignore it — don't update UI state.
             if (!pauseOnFocusChangeRef.current && document.visibilityState === 'hidden') {
               return;
             }
             setIsPlaying(false);
+            isPlayingRef.current = false;
+            isWaitingForSyncRef.current = false;
+            setIsBuffering(false);
+            if (playbackControllerRef.current) {
+              playbackControllerRef.current.pause();
+            }
             const timeToSave = latestTimeRef.current;
             saveMediaTimestamp(video, timeToSave, durationRef.current || videoRef.current?.duration, video.title);
             onUpdateVideoRef.current((prev: any) => ({
@@ -4854,8 +4881,14 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
               totalTimeWatched: Math.round(totalTimeWatchedRef.current)
             }), false, video.id);
           }}
-          onWaiting={() => setIsBuffering(true)}
-          onPlaying={() => setIsBuffering(false)}
+          onWaiting={() => {
+            isWaitingForSyncRef.current = true;
+            setIsBuffering(true);
+            playbackControllerRef.current?.pauseForBuffering();
+          }}
+          onPlaying={() => {
+            if (!isWaitingForSyncRef.current) setIsBuffering(false);
+          }}
           onSeeked={handleVideoSeeked}
           onSeeking={() => { isWaitingForSyncRef.current = true; setIsBuffering(true); }}
           onError={handleVideoError}
@@ -4915,7 +4948,7 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
       )}
 
       {/* Paused Metadata Overlay Card (Appears after 10s of continuous pause in Netflix style) */}
-      {showPauseMetadataOverlay && !isPlaying && mediaDetails && getOverlayDataFromTmdb !== false && !hideUIOverlays && !isLocked && !showAudioSubMenu && (
+      {showPauseMetadataOverlay && !isPlaying && !isBuffering && mediaDetails && getOverlayDataFromTmdb !== false && !hideUIOverlays && !isLocked && !showAudioSubMenu && (
         <PauseDetailsOverlay
           visible={true}
           mediaDetails={mediaDetails}
@@ -4929,6 +4962,7 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
           onLogoError={() => {
             setMediaDetails(prev => prev ? { ...prev, logoUrl: undefined } : prev);
           }}
+          isBuffering={isBuffering}
         />
       )}
 

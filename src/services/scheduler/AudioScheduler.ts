@@ -15,12 +15,20 @@ export class AudioScheduler {
   constructor(private audioCtx: AudioContext, private gainNode: GainNode) {}
 
   getCurrentPlayhead(): number | null {
-    if (this.audioCtx.state === 'suspended') return null;
+    if (this.audioCtx.state === 'suspended' || this.activeNodes.length === 0) return null;
     const now = this.audioCtx.currentTime;
 
     for (const node of this.activeNodes) {
       if (now >= node.audioStartTime && now < node.audioEndTime) {
         const elapsed = now - node.audioStartTime;
+        return node.startTime + node.playOffset + (elapsed * node.playbackRate);
+      }
+    }
+
+    // Boundary tolerance: if now is within 80ms of a scheduled node boundary, project from that node
+    for (const node of this.activeNodes) {
+      if (Math.abs(now - node.audioStartTime) < 0.08 || Math.abs(now - node.audioEndTime) < 0.08) {
+        const elapsed = Math.max(0, Math.min(node.audioEndTime - node.audioStartTime, now - node.audioStartTime));
         return node.startTime + node.playOffset + (elapsed * node.playbackRate);
       }
     }
@@ -122,19 +130,29 @@ export class AudioScheduler {
   }
 
   updatePlaybackRate(rate: number): void {
+    const now = this.audioCtx.currentTime;
     for (const active of this.activeNodes) {
       try {
+        const oldRate = active.playbackRate;
         active.playbackRate = rate;
         active.node.playbackRate.value = rate;
+
+        // Recalculate projected audioEndTime based on remaining buffer and new rate
+        if (active.node.buffer) {
+          const playedSoFar = Math.max(0, now - active.audioStartTime);
+          const remainingBufferSec = Math.max(0, active.node.buffer.duration - active.playOffset - (playedSoFar * oldRate));
+          active.audioEndTime = now + (remainingBufferSec / rate);
+        }
       } catch {}
     }
   }
 
   adjustRateForDrift(drift: number, baseRate: number): void {
     // drift = videoTime - audioTime
-    // If drift > 0 (video ahead): speed audio up subtly (+1.5%) to close the gap
-    // If drift < 0 (audio ahead): slow audio down subtly (-1.5%) to let video catch up
-    const factor = drift > 0 ? 1.015 : 0.985;
+    // If drift > 0 (video ahead): speed audio up (+1% to +3%) to close the gap
+    // If drift < 0 (audio ahead): slow audio down (-1% to -3%) to let video catch up
+    const clampedDrift = Math.max(-0.15, Math.min(0.15, drift));
+    const factor = 1 + (clampedDrift * 0.18); // Proportional convergence factor
     const adjustedRate = baseRate * factor;
     this.updatePlaybackRate(adjustedRate);
   }

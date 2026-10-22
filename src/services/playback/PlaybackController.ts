@@ -75,6 +75,7 @@ export class PlaybackController {
   // launch the same FFmpeg extraction twice.
   private initializedGeneration: number | null = null;
   private lastSchedulerRunTime = 0;
+  private lastHardResyncTime = 0;
 
   public state = new PlaybackState();
   public session = new PlaybackSession();
@@ -372,6 +373,9 @@ export class PlaybackController {
     if (this.session.abortController.signal.aborted) return;
     if (this.session.maintenanceFrozen) return;
     if (!this.videoEl) return;
+    if ((this.videoEl.paused || !this.state.isPlaying) && callerName !== 'seek' && callerName !== 'init') {
+      return;
+    }
 
     const now = Date.now();
     if (callerName === 'timeupdate') {
@@ -402,6 +406,8 @@ export class PlaybackController {
     if (this.state.activeStreamIndex !== -1 && this.state.activeStreamIndex !== null && typeof this.state.activeStreamIndex === 'number') {
       const hasCoverage = this.hasAudioCoverage(currentTime, currentTime + 0.3);
       if (!hasCoverage) {
+        this.state.isBuffering = true;
+        this.onBufferingChange?.(true);
         if (!this.videoEl.paused) {
           logger.buffer(`controller=${this.instanceId} underrun stall at ${currentTime.toFixed(2)}s: waiting for audio packet`);
           this.videoEl.pause();
@@ -409,8 +415,6 @@ export class PlaybackController {
         this.audioScheduler.stopAll();
         this.playbackQueue.clear();
         this.hydrateManifestFromCache();
-        this.state.isBuffering = true;
-        this.onBufferingChange?.(true);
         this.fillBufferWindow(currentTime, 'underrun-stall', this.session.playbackGeneration, true, true).catch(console.error);
         return;
       }
@@ -422,10 +426,14 @@ export class PlaybackController {
       const drift = this.timeline.getDrift(currentTime, audioPlayhead);
       if (drift !== null) {
         if (this.timeline.checkDrift(currentTime, audioPlayhead)) {
-          console.warn(`[PlaybackController-${this.instanceId}] Audio-Video sync drift detected: Video=${currentTime.toFixed(3)}s, Audio=${audioPlayhead?.toFixed(3)}s (drift: ${(drift * 1000).toFixed(1)}ms). Re-syncing scheduler...`);
-          this.audioScheduler.stopAll();
-          this.playbackQueue.clear();
-          this.hydrateManifestFromCache();
+          if (now - this.lastHardResyncTime > 1200) {
+            this.lastHardResyncTime = now;
+            console.warn(`[PlaybackController-${this.instanceId}] Audio-Video sync drift detected: Video=${currentTime.toFixed(3)}s, Audio=${audioPlayhead?.toFixed(3)}s (drift: ${(drift * 1000).toFixed(1)}ms). Re-syncing scheduler...`);
+            this.audioScheduler.stopAll();
+            this.playbackQueue.clear();
+            this.hydrateManifestFromCache();
+            this.playbackQueue.update(currentTime, this.state.playbackRate);
+          }
         } else if (Math.abs(drift) > 0.015) {
           // Smoothly adjust audio playback rate to converge drift to 0 without audible gaps
           this.audioScheduler.adjustRateForDrift(drift, this.state.playbackRate);
@@ -462,6 +470,18 @@ export class PlaybackController {
     if (this.state.activeStreamIndex === -1 || this.state.activeStreamIndex === null || typeof this.state.activeStreamIndex !== 'number') return;
     if (generation !== this.session.playbackGeneration) return;
     if (this.session.maintenanceFrozen && callerName !== 'seek' && callerName !== 'playSyncedFromCurrentTime' && callerName !== 'play' && callerName !== 'switchAudioTrack') return;
+    // Startup, seek, and underrun recovery must be allowed to fetch the chunk
+    // that playback is waiting for while the video element is paused.
+    const canBufferWhilePaused = callerName === 'seek'
+      || callerName === 'init'
+      || callerName === 'initialize-first-chunk'
+      || callerName === 'play-first-chunk'
+      || callerName === 'play-background'
+      || callerName === 'switchAudioTrack'
+      || callerName === 'underrun-stall';
+    if ((!this.state.isPlaying || (this.videoEl && this.videoEl.paused)) && !canBufferWhilePaused) {
+      return;
+    }
 
     const signal = this.session.chunkAbortController.signal;
     const currentChunk = Math.floor(currentTime / 10) * 10;
@@ -630,6 +650,15 @@ export class PlaybackController {
         }
 
         console.warn(`[PlaybackController-${this.instanceId}] Buffering chunk ${target} failed: ${err?.message || err}`);
+
+        if (
+          this.state.isPlaying
+          && this.videoEl
+          && !this.hasAudioCoverage(this.videoEl.currentTime, this.videoEl.currentTime + 0.1)
+        ) {
+          this.state.isBuffering = true;
+          this.onBufferingChange?.(true);
+        }
         
         const currentState = this.manifest.getState(target);
         if (currentState !== 'FAILED' && currentState !== 'COOLDOWN') {
@@ -637,13 +666,29 @@ export class PlaybackController {
           this.manifest.transitionTo(target, 'COOLDOWN');
         }
 
-        // Self-healing: Reset to EMPTY after 8 seconds cooldown
+        // Retry failed audio after its backoff. If this chunk is near the
+        // current playhead, playback may be paused waiting for it, so no
+        // heartbeat/timeupdate will arrive to request it again.
         const targetSession = this.session.sessionId;
+        const retryDelay = this.bufferManager.getRetryDelayMs(key);
         setTimeout(() => {
-          if (this.session.sessionId === targetSession && this.manifest.getState(target) === 'COOLDOWN') {
+          if (
+            this.session.sessionId !== targetSession
+            || generation !== this.session.playbackGeneration
+            || !this.state.isPlaying
+            || !this.videoEl
+          ) return;
+
+          if (this.manifest.getState(target) === 'COOLDOWN') {
             this.manifest.transitionTo(target, 'EMPTY');
           }
-        }, 8000);
+
+          const currentTime = this.videoEl.currentTime;
+          if (target >= currentTime - 10 && target <= currentTime + 20) {
+            logger.buffer(`retrying failed audio chunk ${target}s after ${retryDelay}ms backoff`);
+            this.fillBufferWindow(target, 'underrun-stall', generation, true, true).catch(console.error);
+          }
+        }, retryDelay + 50);
       } finally {
         this.fetchingKeys.delete(target);
         this.reservedTargets.delete(target);
@@ -696,6 +741,8 @@ export class PlaybackController {
       // 2. Play the video element
       await this.videoEl.play();
       if (this.session.abortController.signal.aborted || generation !== this.session.playbackGeneration) return;
+      this.state.isBuffering = false;
+      this.onBufferingChange?.(false);
 
       // 3. Once video element is active, fetch the real playhead and schedule audio
       const syncedTime = this.videoEl.currentTime;
@@ -755,6 +802,12 @@ export class PlaybackController {
     this.audioScheduler.stopAll();
   }
 
+  pauseForBuffering(): void {
+    this.state.isBuffering = true;
+    this.onBufferingChange?.(true);
+    this.pauseAudioOnly();
+  }
+
   pause(): void {
     if (this.session.abortController.signal.aborted) return;
     if (this.session.isTransitioningState) return;
@@ -768,8 +821,17 @@ export class PlaybackController {
       this.stopHeartbeat();
       this.playbackQueue.clear();
       this.audioScheduler.stopAll();
-      // Keep AudioContext running to avoid browser user-gesture restrictions on resume
-      // this.audioScheduler.suspend().catch(console.error);
+
+      // Immediately abort and pause all background loading and buffering
+      this.session.chunkAbortController.abort();
+      this.session.chunkAbortController = new AbortController();
+      this.bufferManager.clearActiveFills();
+      this.bufferManager.setBuffering(false);
+      this.reservedTargets.clear();
+      this.fetchingKeys.clear();
+      if (this.onBufferingChange) {
+        this.onBufferingChange(false);
+      }
     } finally {
       this.session.isTransitioningState = false;
     }
@@ -793,7 +855,7 @@ export class PlaybackController {
     this.audioScheduler.stopAll();
 
     try {
-      if (this.videoEl) {
+      if (this.videoEl && Math.abs(this.videoEl.currentTime - time) > 0.05) {
         this.videoEl.currentTime = time;
       }
 

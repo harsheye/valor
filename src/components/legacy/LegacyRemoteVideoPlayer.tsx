@@ -2552,7 +2552,7 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
       clearTimeout(pauseOverlayTimerRef.current);
       pauseOverlayTimerRef.current = null;
     }
-    if (!isPlaying) {
+    if (!isPlaying && !isBuffering) {
       showPauseMetadataOverlayRef.current = false;
       setShowPauseMetadataOverlay(false);
       pauseOverlayTimerRef.current = setTimeout(() => {
@@ -2561,10 +2561,10 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
         setShowControls(false);
       }, 10000);
     }
-  }, [isPlaying]);
+  }, [isPlaying, isBuffering]);
 
   useEffect(() => {
-    if (!isPlaying) {
+    if (!isPlaying && !isBuffering) {
       showPauseMetadataOverlayRef.current = false;
       setShowPauseMetadataOverlay(false);
       pauseOverlayTimerRef.current = setTimeout(() => {
@@ -2587,7 +2587,7 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
         pauseOverlayTimerRef.current = null;
       }
     };
-  }, [isPlaying]);
+  }, [isPlaying, isBuffering]);
 
   // Controls Auto-Hide
   const resetControlsTimeout = () => {
@@ -4075,15 +4075,7 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
         triggerSwitchToast('Playback hotkeys are disabled');
         return;
       }
-      if (videoRef.current) {
-        if (videoRef.current.paused) {
-          videoRef.current.play().catch(console.error);
-          triggerHudFlash('play');
-        } else {
-          videoRef.current.pause();
-          triggerHudFlash('pause');
-        }
-      }
+      togglePlay();
     } else if (pressedKey === rewindKey) {
       e.preventDefault();
       if (showPlayBarMode === 'disable') {
@@ -5178,6 +5170,10 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
               return;
             }
             setIsPlaying(false);
+            setIsBuffering(false);
+            if (playbackControllerRef.current) {
+              playbackControllerRef.current.pause();
+            }
             const timeToSave = latestTimeRef.current;
             saveMediaTimestamp(video, timeToSave, durationRef.current || videoRef.current?.duration, video.title);
             onUpdateVideoRef.current((prev: any) => ({
@@ -5263,7 +5259,7 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
       )}
 
       {/* Paused Metadata Overlay Card (Appears after 10s of continuous pause in Netflix style) */}
-      {showPauseMetadataOverlay && !isPlaying && mediaDetails && getOverlayDataFromTmdb !== false && !hideUIOverlays && !isLocked && !showAudioSubMenu && (
+      {showPauseMetadataOverlay && !isPlaying && !isBuffering && mediaDetails && getOverlayDataFromTmdb !== false && !hideUIOverlays && !isLocked && !showAudioSubMenu && (
         <>
           {/* Dark gradient scrim — adapts direction based on overlay position */}
           {overlayShowBackground && (

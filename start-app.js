@@ -5,7 +5,7 @@ import dns from 'dns';
 import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
-import { spawn, execSync } from 'child_process';
+import { spawn } from 'child_process';
 import { DatabaseSync } from 'node:sqlite';
 import { DataStore } from './dataStore.js';
 import { createReverseProxyTelemetry, parseUserAgent } from './analyticsTracker.js';
@@ -72,57 +72,6 @@ const remoteSessionManager = new RemoteSessionManager(dataDir);
 const sessionMediaManager = new SessionMediaManager(dataDir);
 if (!fs.existsSync(dataDir)) {
   fs.mkdirSync(dataDir, { recursive: true });
-}
-
-function getOrCreateSslCert() {
-  const sslDir = path.join(dataDir, 'ssl');
-  if (!fs.existsSync(sslDir)) {
-    fs.mkdirSync(sslDir, { recursive: true });
-  }
-  const certPath = path.join(sslDir, 'cert.pem');
-  const keyPath = path.join(sslDir, 'key.pem');
-
-  if (fs.existsSync(certPath) && fs.existsSync(keyPath)) {
-    return {
-      cert: fs.readFileSync(certPath),
-      key: fs.readFileSync(keyPath)
-    };
-  }
-
-  console.log('[SSL] Generating self-signed TLS/SSL certificate with SAN (localhost, 127.0.0.1, ::1)...');
-  const confPath = path.join(sslDir, 'openssl.cnf');
-  const confContent = `[req]
-default_bits = 2048
-prompt = no
-default_md = sha256
-distinguished_name = dn
-x509_extensions = v3_req
-
-[dn]
-CN = localhost
-
-[v3_req]
-subjectAltName = @alt_names
-
-[alt_names]
-DNS.1 = localhost
-DNS.2 = *.localhost
-IP.1 = 127.0.0.1
-IP.2 = ::1
-`;
-  fs.writeFileSync(confPath, confContent);
-
-  try {
-    execSync(`openssl req -x509 -newkey rsa:2048 -nodes -sha256 -subj '/CN=localhost' -keyout "${keyPath}" -out "${certPath}" -days 3650 -config "${confPath}"`, { stdio: 'pipe' });
-    console.log('[SSL] SSL certificate and key generated successfully in .valor_data/ssl');
-    return {
-      cert: fs.readFileSync(certPath),
-      key: fs.readFileSync(keyPath)
-    };
-  } catch (err) {
-    console.error('[SSL] Failed to generate SSL certificate via openssl:', err.message);
-    return null;
-  }
 }
 
 // Initialize SQLite database
@@ -395,7 +344,7 @@ console.info = (...args) => handleLog('INFO', originalInfo, colors.info, args);
 console.warn = (...args) => handleLog('WARN', originalWarn, colors.warn, args);
 console.error = (...args) => handleLog('ERROR', originalError, colors.error, args);
 
-const PORT_SERVICE = parseInt(process.env.PORT || process.env.PORT_SERVICE || '443', 10);
+const PORT_SERVICE = parseInt(process.env.PORT || process.env.PORT_SERVICE || '80', 10);
 const PORT_BACKEND = parseInt(process.env.PORT_BACKEND || '50001', 10);
 
 const getJsonBody = (req) => new Promise((resolve) => {
@@ -663,8 +612,8 @@ const backendServer = http.createServer(async (req, res) => {
   // Redirect /embed to active service server port if accessed via backend port
   if (pathname === '/embed' || pathname.startsWith('/embed/')) {
     const hostName = req.headers.host ? req.headers.host.split(':')[0] : 'localhost';
-    const portPart = PORT_SERVICE === 443 ? '' : `:${PORT_SERVICE}`;
-    const target = `https://${hostName}${portPart}${req.url}`;
+    const portPart = PORT_SERVICE === 80 ? '' : `:${PORT_SERVICE}`;
+    const target = `http://${hostName}${portPart}${req.url}`;
     res.writeHead(302, { 'Location': target });
     res.end();
     return;
@@ -848,7 +797,7 @@ const backendServer = http.createServer(async (req, res) => {
     const responseData = { 
       status: 'ok', 
       servicePort: PORT_SERVICE,
-      protocol: 'https'
+      protocol: 'http'
     };
     if (pendingPlayFile) {
       responseData.playFile = pendingPlayFile;
@@ -871,7 +820,7 @@ const backendServer = http.createServer(async (req, res) => {
       pendingPlayFile = file;
     } else {
       if (shouldOpen) {
-        const baseUrl = PORT_SERVICE === 443 ? 'https://localhost/' : `https://localhost:${PORT_SERVICE}/`;
+        const baseUrl = PORT_SERVICE === 80 ? 'http://localhost/' : `http://localhost:${PORT_SERVICE}/`;
         const openUrl = file 
           ? `${baseUrl}?file=${encodeURIComponent(file)}`
           : baseUrl;
@@ -2991,7 +2940,6 @@ async function start() {
   
   if (!backendOnly) {
     try {
-      const sslConfig = getOrCreateSslCert();
       viteServer = await createViteServer({
         mode: 'development',
         plugins: [
@@ -3001,7 +2949,7 @@ async function start() {
               server.middlewares.use((req, res, next) => {
                 if (req.url && req.url.startsWith('/node_modules/.vite/deps/')) {
                   try {
-                    const parsedUrl = new URL(req.url, `https://${req.headers.host || 'localhost'}`);
+                    const parsedUrl = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
                     if (parsedUrl.searchParams.has('v')) {
                       parsedUrl.searchParams.delete('v');
                       req.url = parsedUrl.pathname + (parsedUrl.search ? parsedUrl.search : '');
@@ -3018,7 +2966,6 @@ async function start() {
           port: PORT_SERVICE,
           strictPort: true,
           host: HOST,
-          https: sslConfig || true,
           allowedHosts: true,
           open: false,
           headers: {
@@ -3030,8 +2977,8 @@ async function start() {
       viteServer.middlewares.use((req, res, next) => {
         if (req.url && req.url.startsWith('/api/play')) {
           try {
-            const portPart = PORT_SERVICE === 443 ? '' : `:${PORT_SERVICE}`;
-            const parsedUrl = new URL(req.url, `https://localhost${portPart}`);
+            const portPart = PORT_SERVICE === 80 ? '' : `:${PORT_SERVICE}`;
+            const parsedUrl = new URL(req.url, `http://localhost${portPart}`);
             const file = parsedUrl.searchParams.get('file');
             if (file) {
               console.log(`[Server] Active tab detected (via Service Server). Queueing file for playback: ${file}`);
@@ -3046,13 +2993,13 @@ async function start() {
       });
       await viteServer.listen();
       success = true;
-      const displayUrl = PORT_SERVICE === 443 ? `https://${HOST}` : `https://${HOST}:${PORT_SERVICE}`;
-      console.log(`[Server] Valor service server (HTTPS) is running on ${displayUrl}`);
+      const displayUrl = PORT_SERVICE === 80 ? `http://${HOST}` : `http://${HOST}:${PORT_SERVICE}`;
+      console.log(`[Server] Valor service server (HTTP) is running on ${displayUrl}`);
     } catch (err) {
       if (err.code === 'EADDRINUSE' || (err.message && err.message.includes('already in use'))) {
         console.warn(`[Server] Port ${PORT_SERVICE} is already in use.`);
         console.warn(`[Server] Valor is ALREADY running in the background (via launchd)!`);
-        const displayUrl = PORT_SERVICE === 443 ? 'https://localhost' : `https://localhost:${PORT_SERVICE}`;
+        const displayUrl = PORT_SERVICE === 80 ? 'http://localhost' : `http://localhost:${PORT_SERVICE}`;
         console.warn(`[Server] You do not need to run 'npm start'. The app is live at: ${displayUrl}`);
         process.exit(0);
       }
@@ -3067,7 +3014,7 @@ async function start() {
       if (err.code === 'EADDRINUSE') {
         console.warn(`[Server] Port ${PORT_BACKEND} is already in use.`);
         console.warn(`[Server] Valor is ALREADY running in the background (via launchd)!`);
-        const displayUrl = PORT_SERVICE === 443 ? 'https://localhost' : `https://localhost:${PORT_SERVICE}`;
+        const displayUrl = PORT_SERVICE === 80 ? 'http://localhost' : `http://localhost:${PORT_SERVICE}`;
         console.warn(`[Server] You do not need to run 'npm start'. The app is live at: ${displayUrl}`);
         process.exit(0);
       }
@@ -3087,7 +3034,7 @@ async function start() {
         }
 
         if (shouldOpen) {
-          const baseUrl = PORT_SERVICE === 443 ? 'https://localhost/' : `https://localhost:${PORT_SERVICE}/`;
+          const baseUrl = PORT_SERVICE === 80 ? 'http://localhost/' : `http://localhost:${PORT_SERVICE}/`;
           const openUrl = resolvedFilePath 
             ? `${baseUrl}?file=${encodeURIComponent(resolvedFilePath)}`
             : baseUrl;

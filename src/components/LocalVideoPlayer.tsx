@@ -2132,7 +2132,7 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
       clearTimeout(pauseOverlayTimerRef.current);
       pauseOverlayTimerRef.current = null;
     }
-    if (!isPlaying) {
+    if (!isPlaying && !isBuffering) {
       showPauseMetadataOverlayRef.current = false;
       setShowPauseMetadataOverlay(false);
       pauseOverlayTimerRef.current = setTimeout(() => {
@@ -2141,10 +2141,10 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
         setShowControls(false);
       }, 10000);
     }
-  }, [isPlaying]);
+  }, [isPlaying, isBuffering]);
 
   useEffect(() => {
-    if (!isPlaying) {
+    if (!isPlaying && !isBuffering) {
       showPauseMetadataOverlayRef.current = false;
       setShowPauseMetadataOverlay(false);
       pauseOverlayTimerRef.current = setTimeout(() => {
@@ -2167,7 +2167,7 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
         pauseOverlayTimerRef.current = null;
       }
     };
-  }, [isPlaying]);
+  }, [isPlaying, isBuffering]);
 
   // Controls Auto-Hide
   const resetControlsTimeout = () => {
@@ -2697,6 +2697,7 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
         videoRef.current.pause();
       }
       setIsPlaying(false);
+      setIsBuffering(false);
     } else {
       if (playbackControllerRef.current) {
         playbackControllerRef.current.play().catch(console.error);
@@ -3347,15 +3348,7 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
         triggerSwitchToast('Playback hotkeys are disabled');
         return;
       }
-      if (videoRef.current) {
-        if (videoRef.current.paused) {
-          videoRef.current.play().catch(console.error);
-          triggerHudFlash('play');
-        } else {
-          videoRef.current.pause();
-          triggerHudFlash('pause');
-        }
-      }
+      togglePlay();
     } else if (pressedKey === rewindKey) {
       e.preventDefault();
       if (showPlayBarMode === 'disable') {
@@ -4494,10 +4487,13 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
             // If focus loss auto-pause is disabled and this pause was triggered by browser 
             // background tab throttling, ignore it — don't update UI state.
             if (!pauseOnFocusChangeRef.current && document.visibilityState === 'hidden') {
-              console.log('[LocalVideoPlayer] Ignoring browser background throttle onPause event');
               return;
             }
             setIsPlaying(false);
+            setIsBuffering(false);
+            if (playbackControllerRef.current) {
+              playbackControllerRef.current.pause();
+            }
             const timeToSave = latestTimeRef.current;
             saveMediaTimestamp(video, timeToSave, durationRef.current || videoRef.current?.duration, video.title);
             onUpdateVideoRef.current((prev: any) => ({
@@ -4567,7 +4563,7 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
       )}
 
       {/* Paused Metadata Overlay Card (Appears after 10s of continuous pause in Netflix style) */}
-      {showPauseMetadataOverlay && !isPlaying && mediaDetails && getOverlayDataFromTmdb !== false && !hideUIOverlays && !isLocked && !showAudioSubMenu && (
+      {showPauseMetadataOverlay && !isPlaying && !isBuffering && mediaDetails && getOverlayDataFromTmdb !== false && !hideUIOverlays && !isLocked && !showAudioSubMenu && (
         <>
           {/* Dark gradient scrim — adapts direction based on overlay position */}
           {overlayShowBackground && (
