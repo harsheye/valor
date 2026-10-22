@@ -143,13 +143,11 @@ export class PlaybackController {
 
     this.ff = await this.ffmpegMgr.load();
     if (this.session.abortController.signal.aborted || generation !== this.session.playbackGeneration) {
-      console.log(`[PlaybackController-${this.instanceId}] Init aborted during ffmpeg load.`);
       return;
     }
 
       await this.demuxMgr.getMountedInputPath(this.ff);
     if (this.session.abortController.signal.aborted || generation !== this.session.playbackGeneration) {
-      console.log(`[PlaybackController-${this.instanceId}] Init aborted during demux mount.`);
       return;
     }
 
@@ -255,17 +253,14 @@ export class PlaybackController {
   };
 
   private onPlayEvent = () => {
-    console.log(`[PlaybackController-${this.instanceId}] Native play event detected.`);
     this.play().catch(console.error);
   };
 
   private onPauseEvent = () => {
-    console.log(`[PlaybackController-${this.instanceId}] Native pause event detected. pauseOnFocusChange=${this.pauseOnFocusChange} visibilityState=${document.visibilityState} isPlaying=${this.state.isPlaying}`);
     
     // If focus loss auto-pause is disabled, and the browser background throttles/pauses
     // the silent video element, we override it and resume immediately.
     if (!this.pauseOnFocusChange && document.visibilityState === 'hidden' && this.state.isPlaying) {
-      console.log(`[PlaybackController-${this.instanceId}] Ignoring browser background throttle pause — resuming playback.`);
       if (this.videoEl) {
         this.videoEl.play().catch(err => {
           console.warn('[PlaybackController] Failed to override background pause:', err);
@@ -338,13 +333,11 @@ export class PlaybackController {
   beginSeekTransaction(reason = 'external'): number {
     this.session.maintenanceFrozen = true;
     this.stopHeartbeat();
-    console.log(`[PlaybackController-${this.instanceId}] Seek transaction started (${reason}).`);
     return this.session.playbackGeneration;
   }
 
   endSeekTransaction(reason = 'external'): void {
     this.session.maintenanceFrozen = false;
-    console.log(`[PlaybackController-${this.instanceId}] Seek transaction ended (${reason}).`);
   }
 
   private hydrateManifestFromCache(): void {
@@ -420,7 +413,6 @@ export class PlaybackController {
       if (this.heartbeatTickCount % 20 === 0) {
         const bufferedRanges = this.bufferManager.getCache().getAllPackets()
           .map(p => `${p.startTime}-${p.endTime.toFixed(1)}`).join(', ');
-        console.log(`[PlaybackController-${this.instanceId}] Video Time: ${currentTime.toFixed(2)}, AudioContext Time: ${this.audioCtx.currentTime.toFixed(2)}, Queue Size: ${this.playbackQueue.getQueueSize()}, Buffered: [${bufferedRanges || 'none'}]`);
       }
     }
 
@@ -539,7 +531,6 @@ export class PlaybackController {
 
         // Discard result if session changed during async await
         if (this.session.sessionId !== activeSession || this.session.abortController.signal.aborted) {
-          console.log(`[PlaybackController-${this.instanceId}] Discarding fetched chunk ${target}s due to session ID change.`);
           return;
         }
 
@@ -611,7 +602,6 @@ export class PlaybackController {
     this.state.isPlaying = true;
 
     try {
-      console.log(`[PlaybackController-${this.instanceId}] Playback State: PLAYING`);
       // Initialization has already fetched the playhead chunk. Preserve that
       // generation for the first play so its request is not aborted/repeated.
       const generation = this.initializedGeneration === this.session.playbackGeneration
@@ -660,7 +650,6 @@ export class PlaybackController {
     this.state.isPlaying = true;
 
     try {
-      console.log(`[PlaybackController-${this.instanceId}] Playback State: PLAYING_SYNCED`);
       const generation = this.initializedGeneration === this.session.playbackGeneration
         ? this.session.playbackGeneration
         : this.startNewPlaybackGeneration('playSyncedFromCurrentTime');
@@ -700,7 +689,6 @@ export class PlaybackController {
     this.state.isPlaying = false;
 
     try {
-      console.log(`[PlaybackController-${this.instanceId}] Playback State: PAUSED`);
       
       // Cancel current playback generation & downloads immediately
       this.startNewPlaybackGeneration('pause');
@@ -796,7 +784,6 @@ export class PlaybackController {
     if (this.videoEl) {
       this.videoEl.muted = this.state.activeStreamIndex !== -1;
     }
-    console.log(`[PlaybackController-${this.instanceId}] switchAudioTrack called. streamIndex=${this.state.activeStreamIndex}`);
     this.fetchingKeys.clear();
     this.playbackQueue.clear();
     this.manifest.clear();
@@ -821,7 +808,6 @@ export class PlaybackController {
   }
 
   async destroy(): Promise<void> {
-    console.log(`[PlaybackController-${this.instanceId}] destroy called.`);
     
     // Abort any active fetches, decodes, and scheduler updates immediately by moving generation forward
     this.startNewPlaybackGeneration('destroy');
@@ -835,7 +821,6 @@ export class PlaybackController {
         this.videoEl.removeEventListener('play', this.onPlayEvent);
         this.videoEl.removeEventListener('pause', this.onPauseEvent);
         this.listenersBound = false;
-        console.log(`[PlaybackController-${this.instanceId}] Event listeners removed from video element.`);
       }
     }
     this.fetchingKeys.clear();

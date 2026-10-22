@@ -534,11 +534,21 @@ var backendServer = import_http.default.createServer((req, res) => {
     return;
   }
   if (pathname === "/api/log") {
+    const now = Date.now();
+    if (!global._lastBrowserLogTime) global._lastBrowserLogTime = 0;
+    if (now - global._lastBrowserLogTime < 120000) {
+      res.statusCode = 200;
+      res.setHeader("Content-Type", "application/json");
+      res.end(JSON.stringify({ success: true, throttled: true }));
+      return;
+    }
+    global._lastBrowserLogTime = now;
     getJsonBody(req).then((data) => {
       const type = data.type || "INFO";
       const msg = data.message || "";
       console.log(`[Browser ${type}] ${msg}`);
       res.statusCode = 200;
+      res.setHeader("Content-Type", "application/json");
       res.end(JSON.stringify({ success: true }));
     });
     return;

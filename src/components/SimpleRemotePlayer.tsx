@@ -17,7 +17,7 @@ import {
   SkipIntroButton
 } from './player';
 import type { MediaDetails } from './player/PauseDetailsOverlay';
-import { getSavedCredentials, saveCredentials } from '../services/remote/mediaAuthStore';
+import { getSavedCredentials, saveCredentials, clearCredentials } from '../services/remote/mediaAuthStore';
 import { saveMediaTimestamp } from '../utils/mediaTimestampStorage';
 import { parseSubtitles, cleanSubtitleText } from '../utils/subtitleParser';
 import { trimSubtitleName } from '../utils/embedSubtitleStorage';
@@ -194,12 +194,14 @@ export const SimpleRemotePlayer: React.FC<SimpleRemotePlayerProps> = ({
     return () => clearInterval(timer);
   }, []);
 
+  const sessionIdRef = useRef<string>(Math.random().toString(36).substring(2, 10));
+
   // Proxied Video URL (bypasses CORS & provides sliding cache)
   const getProxiedUrl = useCallback((rawUrl: string): string => {
     if (!rawUrl) return '';
     if (rawUrl.startsWith('/api/proxy-media')) return rawUrl;
     const creds = (video as any).auth || getSavedCredentials(rawUrl);
-    let proxyUrl = `/api/proxy-media?url=${encodeURIComponent(rawUrl)}`;
+    let proxyUrl = `/api/proxy-media?url=${encodeURIComponent(rawUrl)}&sessionId=${sessionIdRef.current}`;
     if (duration > 0) {
       proxyUrl += `&duration=${duration}`;
     }
@@ -589,7 +591,7 @@ export const SimpleRemotePlayer: React.FC<SimpleRemotePlayerProps> = ({
       <video
         ref={videoRef}
         src={getProxiedUrl(video.url)}
-        crossOrigin="anonymous"
+        crossOrigin={video.playbackMode === 'advanced' ? 'anonymous' : undefined}
         playsInline
         autoPlay
         style={{
@@ -861,9 +863,19 @@ export const SimpleRemotePlayer: React.FC<SimpleRemotePlayerProps> = ({
         initialUsername={authModalState.initialUsername}
         errorMessage={authModalState.errorMessage}
         isLoading={authModalState.isLoading}
-        onSubmit={async ({ username, password }) => {
+        onSubmit={async ({ username, password, remember }) => {
           setAuthModalState(prev => ({ ...prev, isLoading: true, errorMessage: null }));
-          saveCredentials(video.url, { username, password });
+          const creds = { username, password };
+          if (remember !== false) {
+            saveCredentials(video.url, creds);
+          } else {
+            clearCredentials(video.url);
+          }
+          sessionIdRef.current = Math.random().toString(36).substring(2, 10);
+          onUpdateVideo({
+            ...video,
+            auth: creds
+          });
           if (videoRef.current) {
             videoRef.current.src = getProxiedUrl(video.url);
             videoRef.current.load();

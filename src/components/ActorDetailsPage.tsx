@@ -150,7 +150,6 @@ export const ActorDetailsPage: React.FC<ActorDetailsPageProps> = ({
           console.warn('TMDB details fetch failed with status:', detailsRes.status);
           
           if (token !== DEFAULT_TMDB_TOKEN) {
-            console.log('Attempting TMDB details fetch with system fallback token...');
             const fallbackHeaders = {
               'accept': 'application/json',
               'Authorization': `Bearer ${DEFAULT_TMDB_TOKEN}`
@@ -235,7 +234,6 @@ export const ActorDetailsPage: React.FC<ActorDetailsPageProps> = ({
       // Trakt Fallback if TMDB failed
       if (tmdbFailed) {
         try {
-          console.log('Fetching actor data from Trakt fallback...');
           const traktHeaders = {
             'Content-Type': 'application/json',
             'trakt-api-version': '2',

@@ -1,4 +1,4 @@
-const isDev = import.meta.env?.DEV ?? true;
+const isLoggingEnabled = typeof window !== 'undefined' && window.localStorage?.getItem('valor_verbose_logs') === 'true';
 
 const styles = {
   player: 'background: #5c6bc0; color: #fff; padding: 2px 5px; border-radius: 3px; font-weight: bold; font-size: 10px;',
@@ -15,61 +15,67 @@ const styles = {
 
 export const logger = {
   playback(message: string, ...args: any[]) {
-    if (isDev) console.log(`%c PLAYBACK %c ${message}`, styles.playback, 'color: #a78bfa; font-weight: 500;', ...args);
+    if (isLoggingEnabled) console.log(`%c PLAYBACK %c ${message}`, styles.playback, 'color: #a78bfa; font-weight: 500;', ...args);
   },
   buffer(message: string, ...args: any[]) {
-    if (isDev) console.log(`%c BUFFER   %c ${message}`, styles.buffer, 'color: #5eead4; font-weight: 500;', ...args);
+    if (isLoggingEnabled) console.log(`%c BUFFER   %c ${message}`, styles.buffer, 'color: #5eead4; font-weight: 500;', ...args);
   },
   scheduler(message: string, ...args: any[]) {
-    if (isDev) console.log(`%c SCHED    %c ${message}`, styles.scheduler, 'color: #7dd3fc; font-weight: 500;', ...args);
+    if (isLoggingEnabled) console.log(`%c SCHED    %c ${message}`, styles.scheduler, 'color: #7dd3fc; font-weight: 500;', ...args);
   },
   player(message: string, ...args: any[]) {
-    if (isDev) {
+    if (isLoggingEnabled) {
       console.log(`%c PLAYER %c ${message}`, styles.player, 'color: #7986cb; font-weight: 500;', ...args);
     }
   },
   ffmpeg(message: string, ...args: any[]) {
-    if (isDev) {
+    if (isLoggingEnabled) {
       console.log(`%c FFMPEG %c ${message}`, styles.ffmpeg, 'color: #81c784;', ...args);
     }
   },
   ffmpegWarning(message: string, ...args: any[]) {
-    if (isDev) {
+    if (isLoggingEnabled) {
       console.log(`%c FF WARN %c ${message}`, styles.ffmpegWarning, 'color: #ffb74d; font-weight: 500;', ...args);
     }
   },
   ffmpegError(message: string, ...args: any[]) {
-    console.log(`%c FF ERR  %c ${message}`, styles.ffmpegError, 'color: #e57373; font-weight: bold;', ...args);
+    if (isLoggingEnabled) {
+      console.log(`%c FF ERR  %c ${message}`, styles.ffmpegError, 'color: #e57373; font-weight: bold;', ...args);
+    }
   },
   ffmpegMap(message: string, ...args: any[]) {
-    if (isDev) {
+    if (isLoggingEnabled) {
       console.log(`%c FF MAP  %c ${message}`, styles.ffmpegMap, 'color: #64b5f6; font-weight: 500;', ...args);
     }
   },
   remote(message: string, ...args: any[]) {
-    if (isDev) {
+    if (isLoggingEnabled) {
       console.log(`%c REMOTE  %c ${message}`, styles.remote, 'color: #4dd0e1;', ...args);
     }
   },
   app(message: string, ...args: any[]) {
-    if (isDev) {
+    if (isLoggingEnabled) {
       console.log(`%c APP     %c ${message}`, styles.app, 'color: #90a4ae;', ...args);
     }
   },
   info(message: string, ...args: any[]) {
-    if (isDev) {
+    if (isLoggingEnabled) {
       console.log(`%cℹ %c${message}`, 'color: #0288d1; font-weight: bold;', 'color: #03a9f4;', ...args);
     }
   },
   success(message: string, ...args: any[]) {
-    if (isDev) {
+    if (isLoggingEnabled) {
       console.log(`%c✔ %c${message}`, 'color: #2e7d32; font-weight: bold;', 'color: #4caf50; font-weight: 500;', ...args);
     }
   },
   warn(message: string, ...args: any[]) {
-    console.warn(`%c⚠ %c${message}`, 'color: #f57c00; font-weight: bold;', 'color: #ffa726;', ...args);
+    if (isLoggingEnabled) {
+      console.warn(`%c⚠ %c${message}`, 'color: #f57c00; font-weight: bold;', 'color: #ffa726;', ...args);
+    }
   },
   error(message: string, ...args: any[]) {
-    console.error(`%c✖ %c${message}`, 'color: #d32f2f; font-weight: bold;', 'color: #ef5350; font-weight: 500;', ...args);
+    if (isLoggingEnabled) {
+      console.error(`%c✖ %c${message}`, 'color: #d32f2f; font-weight: bold;', 'color: #ef5350; font-weight: 500;', ...args);
+    }
   }
 };

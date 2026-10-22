@@ -271,12 +271,9 @@ export class DemuxManager {
           '-f', 'wav',
           tempOutFile
         ];
-
-        console.log(`[FFmpeg Command] ffmpeg ${args.join(" ")}`);
         const startTimeMs = performance.now();
         const code = await ff.exec(args);
         const durationMs = performance.now() - startTimeMs;
-        console.log(`[FFmpeg Status] Exit code: ${code}, Duration: ${durationMs.toFixed(2)}ms`);
         if (code !== 0) {
           throw new Error(`FFmpeg Slicing returned exit code ${code}`);
         }

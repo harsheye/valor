@@ -54,69 +54,75 @@ export class SessionMediaWorker {
     if (this.initPromise) return this.initPromise;
 
     this.initPromise = (async () => {
-      const headers = { 'Range': 'bytes=0-1' };
-      if (this.auth && this.auth.username) {
-        const creds = Buffer.from(`${this.auth.username}:${this.auth.password || ''}`).toString('base64');
-        headers['Authorization'] = `Basic ${creds}`;
-      }
-
-      const res = await RemoteDownloadManager.request(this.rawUrl, {
-        method: 'GET',
-        headers
-      });
-
-      if (res.statusCode !== 200 && res.statusCode !== 206) {
-        if (res.stream) res.stream.resume();
-        throw new Error(`Remote media returned HTTP ${res.statusCode}`);
-      }
-
-      if (res.headers['content-type']) {
-        this.contentType = res.headers['content-type'];
-      }
-
-      const contentRange = res.headers['content-range'];
-      if (contentRange) {
-        const match = contentRange.match(/\/(\d+)$/);
-        if (match) {
-          this.totalSize = parseInt(match[1], 10);
-        }
-      }
-
-      if (!this.totalSize && res.headers['content-length']) {
-        this.totalSize = parseInt(res.headers['content-length'], 10);
-      }
-
-      if (res.stream) {
-        res.stream.resume();
-      }
-
-      if (!this.totalSize) {
-        this.totalSize = 2 * 1024 * 1024 * 1024; // fallback 2GB if unknown
-      }
-
-      this.totalBlocks = Math.ceil(this.totalSize / BLOCK_SIZE);
-
-      // Guess proper MIME type if generic or octet-stream
       try {
-        const parsedU = new URL(res.url || this.rawUrl);
-        const p = parsedU.pathname.toLowerCase();
-        if (!this.contentType || this.contentType === 'application/octet-stream') {
-          if (p.endsWith('.mkv')) this.contentType = 'video/x-matroska';
-          else if (p.endsWith('.mp4') || p.endsWith('.m4v')) this.contentType = 'video/mp4';
-          else if (p.endsWith('.webm')) this.contentType = 'video/webm';
-          else if (p.endsWith('.ts')) this.contentType = 'video/mp2t';
-          else if (p.endsWith('.avi')) this.contentType = 'video/x-msvideo';
-          else if (p.endsWith('.mov')) this.contentType = 'video/quicktime';
-          else this.contentType = 'video/mp4';
+        const headers = { 'Range': 'bytes=0-1' };
+        if (this.auth && this.auth.username) {
+          const creds = Buffer.from(`${this.auth.username}:${this.auth.password || ''}`).toString('base64');
+          headers['Authorization'] = `Basic ${creds}`;
         }
-      } catch {}
 
-      if (this.duration > 0) {
-        this.bitrateBytesPerSec = Math.max(200 * 1024, Math.ceil(this.totalSize / this.duration));
+        const res = await RemoteDownloadManager.request(this.rawUrl, {
+          method: 'GET',
+          headers
+        });
+
+        if (res.statusCode !== 200 && res.statusCode !== 206) {
+          if (res.stream) res.stream.resume();
+          throw new Error(`Remote media returned HTTP ${res.statusCode}`);
+        }
+
+        if (res.headers['content-type']) {
+          this.contentType = res.headers['content-type'];
+        }
+
+        const contentRange = res.headers['content-range'];
+        if (contentRange) {
+          const match = contentRange.match(/\/(\d+)$/);
+          if (match) {
+            this.totalSize = parseInt(match[1], 10);
+          }
+        }
+
+        if (!this.totalSize && res.headers['content-length']) {
+          this.totalSize = parseInt(res.headers['content-length'], 10);
+        }
+
+        if (res.stream) {
+          res.stream.resume();
+        }
+
+        if (!this.totalSize) {
+          this.totalSize = 2 * 1024 * 1024 * 1024; // fallback 2GB if unknown
+        }
+
+        this.totalBlocks = Math.ceil(this.totalSize / BLOCK_SIZE);
+
+        // Guess proper MIME type if generic or octet-stream
+        try {
+          const parsedU = new URL(res.url || this.rawUrl);
+          const p = parsedU.pathname.toLowerCase();
+          if (!this.contentType || this.contentType === 'application/octet-stream') {
+            if (p.endsWith('.mkv')) this.contentType = 'video/x-matroska';
+            else if (p.endsWith('.mp4') || p.endsWith('.m4v')) this.contentType = 'video/mp4';
+            else if (p.endsWith('.webm')) this.contentType = 'video/webm';
+            else if (p.endsWith('.ts')) this.contentType = 'video/mp2t';
+            else if (p.endsWith('.avi')) this.contentType = 'video/x-msvideo';
+            else if (p.endsWith('.mov')) this.contentType = 'video/quicktime';
+            else this.contentType = 'video/mp4';
+          }
+        } catch {}
+
+        if (this.duration > 0) {
+          this.bitrateBytesPerSec = Math.max(200 * 1024, Math.ceil(this.totalSize / this.duration));
+        }
+
+        this.isInitialized = true;
+        console.log(`[SessionMediaWorker-${this.sessionId}] Initialized: size=${(this.totalSize / (1024 * 1024)).toFixed(1)}MB, totalBlocks=${this.totalBlocks}, bitrate=${(this.bitrateBytesPerSec / 1024).toFixed(0)}KB/s`);
+      } catch (err) {
+        this.initPromise = null;
+        this.isInitialized = false;
+        throw err;
       }
-
-      this.isInitialized = true;
-      console.log(`[SessionMediaWorker-${this.sessionId}] Initialized: size=${(this.totalSize / (1024 * 1024)).toFixed(1)}MB, totalBlocks=${this.totalBlocks}, bitrate=${(this.bitrateBytesPerSec / 1024).toFixed(0)}KB/s`);
     })();
 
     return this.initPromise;
@@ -344,6 +350,22 @@ export class SessionMediaManager {
   getOrCreateWorker(sessionId, url, options = {}) {
     const key = `${sessionId}_${crypto.createHash('md5').update(url).digest('hex').slice(0, 12)}`;
     let worker = this.workers.get(key);
+
+    if (worker && !worker.isDestroyed) {
+      if (options.auth && options.auth.username) {
+        const authChanged = !worker.auth ||
+          worker.auth.username !== options.auth.username ||
+          worker.auth.password !== options.auth.password;
+
+        if (authChanged || !worker.isInitialized) {
+          worker.auth = options.auth;
+          worker.initPromise = null;
+          worker.isInitialized = false;
+          worker.activeBlockDownloads.clear();
+        }
+      }
+      return worker;
+    }
 
     if (!worker || worker.isDestroyed) {
       const urlHash = crypto.createHash('md5').update(url).digest('hex').slice(0, 16);

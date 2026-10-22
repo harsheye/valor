@@ -45,8 +45,6 @@ export class ChunkManifest {
         `[ChunkManifest-${this.instanceId}] Invalid chunk state transition: chunk ${chunkKey}s, ${currentState} -> ${nextState}`
       );
     }
-
-    console.log(`[ChunkManifest-${this.instanceId}] Chunk ${chunkKey}s: ${currentState} -> ${nextState}`);
     this.states.set(chunkKey, nextState);
   }
 

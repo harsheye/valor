@@ -3,18 +3,20 @@ import { SkipForward } from 'lucide-react';
 import type { Bookmark } from '../../types/media';
 
 export interface SkipIntroButtonProps {
-  bookmark: Bookmark | null;
-  onSkip: (endTime: number) => void;
+  bookmark?: Bookmark | null;
+  onSkip: (endTimeOrEvent: any) => void;
+  label?: string;
+  shortcutHint?: string;
 }
 
-export const SkipIntroButton: React.FC<SkipIntroButtonProps> = ({ bookmark, onSkip }) => {
-  if (!bookmark || !bookmark.endTime) return null;
+export const SkipIntroButton: React.FC<SkipIntroButtonProps> = ({ bookmark, onSkip, label, shortcutHint }) => {
+  const displayLabel = label || bookmark?.label || bookmark?.category || 'Intro';
 
   return (
     <button
       onClick={(e) => {
         e.stopPropagation();
-        onSkip(bookmark.endTime!);
+        onSkip(e);
       }}
       className="animate-fade-in"
       style={{
@@ -49,7 +51,12 @@ export const SkipIntroButton: React.FC<SkipIntroButtonProps> = ({ bookmark, onSk
       }}
     >
       <SkipForward size={16} color="var(--accent-color, #e50914)" />
-      Skip {bookmark.label || bookmark.category || 'Intro'}
+      Skip {displayLabel}
+      {shortcutHint && (
+        <span style={{ fontSize: '11px', opacity: 0.6, marginLeft: '4px', padding: '2px 5px', borderRadius: '4px', background: 'rgba(255,255,255,0.1)' }}>
+          {shortcutHint}
+        </span>
+      )}
     </button>
   );
 };

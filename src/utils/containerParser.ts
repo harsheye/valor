@@ -742,7 +742,6 @@ export async function extractMkvSubtitles(
   signal?: AbortSignal,
   isAss?: boolean
 ): Promise<SubtitleCue[]> {
-  console.log('[extractMkvSubtitles] Started. TargetTrackNumber:', targetTrackNumber, 'SeekMap size:', seekMap.length, 'Time:', time);
   const cues: SubtitleCue[] = [];
   const fileSize = await source.getSize();
   
@@ -759,7 +758,6 @@ export async function extractMkvSubtitles(
     startOffset = startEntry ? startEntry.offset : (firstClusterOffset || 0);
   } else {
     // Sequential Cluster Scan Fallback
-    console.log('[extractMkvSubtitles] SeekMap empty. Doing sequential cluster scan from first cluster offset:', firstClusterOffset);
     let scanOffset = firstClusterOffset || 0;
     while (scanOffset < fileSize) {
       if (signal?.aborted) break;
@@ -794,7 +792,6 @@ export async function extractMkvSubtitles(
           if (clusterTimeSec >= Math.max(0, time - 15)) {
             // Found target cluster!
             startOffset = scanOffset;
-            console.log('[extractMkvSubtitles] Scan found target Cluster at offset:', startOffset, 'time:', clusterTimeSec);
             break;
           }
           
@@ -820,7 +817,6 @@ export async function extractMkvSubtitles(
 
   // Cues parsing contiguous loop
   const endOffset = fileSize;
-  console.log('[extractMkvSubtitles] Contiguous range starts at:', startOffset, 'to', endOffset);
 
   let currentOffset = startOffset;
   let clusterTimecode = 0;
@@ -844,7 +840,6 @@ export async function extractMkvSubtitles(
         clusterTimecode = new EbmlReader(timecodeBytes).readUint(sub.size);
         const clusterTimeSec = (clusterTimecode * timecodeScale) / 1000000000;
         if (clusterTimeSec > time + subDuration) {
-          console.log('[extractMkvSubtitles] Reached duration limit. Breaking at time:', clusterTimeSec);
           break;
         }
       } else if (sub.id === 0xA3 || sub.id === 0xA1) {
@@ -956,7 +951,6 @@ export async function extractMkvSubtitles(
         if (matchIdx !== -1) {
           currentOffset = scan + matchIdx;
           found = true;
-          console.log('[extractMkvSubtitles] Resynchronized to next Cluster at offset:', currentOffset);
           break;
         }
         scan += bytes.length - 3;

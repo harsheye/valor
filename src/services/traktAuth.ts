@@ -216,12 +216,6 @@ export async function initiateTraktPkceAuth(options?: {
     redirectUri
   )}&code_challenge=${challenge}&code_challenge_method=S256&scope=public`;
 
-  console.log('[Trakt PKCE] Redirecting to Trakt authorization:', {
-    redirectUri,
-    challenge,
-    action: options?.isLoginAction ? 'login' : 'connect'
-  });
-
   window.location.href = authUrl;
 }
 
@@ -266,8 +260,6 @@ export async function exchangeTraktCodeForToken(
   // Clear verifier after reading
   clearTraktAuthState();
 
-  console.log('[Trakt PKCE] Exchanging auth code for access token with verifier length:', verifier.length);
-
   // 1. Try Backend exchange endpoint first
   if (backendOrigin) {
     try {
@@ -284,7 +276,6 @@ export async function exchangeTraktCodeForToken(
       if (res.ok) {
         const data = await res.json();
         if (data.access_token) {
-          console.log('[Trakt PKCE] Token exchanged successfully via backend!');
           return data;
         }
       } else {
@@ -324,7 +315,6 @@ export async function exchangeTraktCodeForToken(
   const traktData = await traktRes.json().catch(() => ({}));
 
   if (traktRes.ok && traktData.access_token) {
-    console.log('[Trakt PKCE] Token exchanged directly with Trakt successfully!');
     return traktData as TraktTokenResponse;
   }
 

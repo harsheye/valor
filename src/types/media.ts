@@ -44,6 +44,7 @@ export interface VideoItem {
   resumeTime?: number;
   probingError?: string;
   playbackMode?: 'advanced' | 'native' | 'server' | 'simple';
+  auth?: { username: string; password?: string };
   isCinema?: boolean;
   lastPlayedDate?: string;
   localFilePath?: string;

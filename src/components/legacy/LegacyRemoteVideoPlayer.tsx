@@ -1717,7 +1717,6 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
   const [showSpeedMenu, setShowSpeedMenu] = useState(false);
   const [isKeyInitiated, setIsKeyInitiated] = useState(false);
   if (false as boolean) {
-    console.log(extractingStreamIndex, isKeyInitiated);
   }
   const [activeAudioStartOffset, setActiveAudioStartOffset] = useState(0);
   const [activeSubtitleStartOffset, setActiveSubtitleStartOffset] = useState(0);
@@ -2087,7 +2086,6 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
   // Auto probing states
   const [isAutoProbing, setIsAutoProbing] = useState(false);
   if (false as boolean) {
-    console.log(isAutoProbing);
   }
   const probingVideoIdRef = useRef<string | null>(null);
 
@@ -5177,7 +5175,6 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
             // If focus loss auto-pause is disabled and this pause was triggered by browser 
             // background tab throttling, ignore it — don't update UI state.
             if (!pauseOnFocusChangeRef.current && document.visibilityState === 'hidden') {
-              console.log('[RemoteVideoPlayer] Ignoring browser background throttle onPause event');
               return;
             }
             setIsPlaying(false);

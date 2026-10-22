@@ -57,8 +57,12 @@ export const isGenericTitle = (title?: string): boolean => {
     clean === 'unknown series' ||
     clean === 'unknown media' ||
     clean === 'stream' ||
+    clean === 'play' ||
+    clean === 'index' ||
+    clean === 'manifest' ||
     clean === 'master' ||
-    clean === 'playlist'
+    clean === 'playlist' ||
+    clean === 'chunk'
   ) {
     return true;
   }
@@ -76,11 +80,12 @@ export const extractTitleFromUrl = (url?: string): string => {
     if (paramTitle && !isGenericTitle(paramTitle)) {
       return paramTitle.trim();
     }
-    const segments = parsed.pathname.split('/').filter(Boolean);
-    const last = segments.pop() || '';
-    const clean = decodeURIComponent(last).replace(/\.[^/.]+$/, '').trim();
-    if (clean && !isGenericTitle(clean)) {
-      return clean;
+    const segments = parsed.pathname.split('/').filter(Boolean).reverse();
+    for (const seg of segments) {
+      const clean = decodeURIComponent(seg).replace(/\.[^/.]+$/, '').trim();
+      if (clean && !isGenericTitle(clean)) {
+        return clean;
+      }
     }
   } catch {}
   return '';
@@ -211,7 +216,11 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
   showPauseMetadataOverlayRef.current = showPauseMetadataOverlay;
   const pauseOverlayTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [mediaDetails, setMediaDetails] = useState<MediaDetails | null>(() => {
-    const rawTitle = video.title || (video as any).fileName || extractTitleFromUrl(video.url) || '';
+    const rawTitle = (!isGenericTitle(video.title) ? video.title : '') 
+      || (!isGenericTitle((video as any).fileName) ? (video as any).fileName : '') 
+      || extractTitleFromUrl(video.url) 
+      || video.title 
+      || '';
     const seriesInfo = classifyVideoTitle(rawTitle);
     const isTV = seriesInfo.type === 'series';
     const initialTitle = (isTV && seriesInfo.seriesTitle) 
@@ -228,7 +237,11 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
   });
 
   useEffect(() => {
-    const rawTitle = video.title || (video as any).fileName || extractTitleFromUrl(video.url) || '';
+    const rawTitle = (!isGenericTitle(video.title) ? video.title : '') 
+      || (!isGenericTitle((video as any).fileName) ? (video as any).fileName : '') 
+      || extractTitleFromUrl(video.url) 
+      || video.title 
+      || '';
     const seriesInfo = classifyVideoTitle(rawTitle);
     const isTV = seriesInfo.type === 'series';
     const initialTitle = (isTV && seriesInfo.seriesTitle) 
@@ -1156,7 +1169,11 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
 
     const fetchAllBookmarks = async () => {
       let resolvedTmdbId = video.tmdbId || tmdbIdRef.current;
-      const rawTitle = video.title || (video as any).fileName || extractTitleFromUrl(video.url) || '';
+      const rawTitle = (!isGenericTitle(video.title) ? video.title : '')
+        || (!isGenericTitle((video as any).fileName) ? (video as any).fileName : '')
+        || extractTitleFromUrl(video.url)
+        || video.title
+        || '';
       const seriesInfo = classifyVideoTitle(rawTitle);
       const isTV = seriesInfo.type === 'series';
       const season = seriesInfo.season || 1;
@@ -1653,7 +1670,6 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
   const [showSpeedMenu, setShowSpeedMenu] = useState(false);
   const [isKeyInitiated, setIsKeyInitiated] = useState(false);
   if (false as boolean) {
-    console.log(extractingStreamIndex, isKeyInitiated);
   }
   const [activeAudioStartOffset, setActiveAudioStartOffset] = useState(0);
   const [activeSubtitleStartOffset, setActiveSubtitleStartOffset] = useState(0);
@@ -1730,6 +1746,7 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
 
         onUpdateVideo({
           ...video,
+          auth: creds ? { username: creds.username, password: creds.password } : (video as any).auth,
           streams: allStreams,
           duration: probeData.duration ? String(probeData.duration) : video.duration
         });
@@ -2036,7 +2053,6 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
   // Auto probing states
   const [isAutoProbing, setIsAutoProbing] = useState(false);
   if (false as boolean) {
-    console.log(isAutoProbing);
   }
   const probingVideoIdRef = useRef<string | null>(null);
 
@@ -4655,7 +4671,6 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
             // If focus loss auto-pause is disabled and this pause was triggered by browser 
             // background tab throttling, ignore it — don't update UI state.
             if (!pauseOnFocusChangeRef.current && document.visibilityState === 'hidden') {
-              console.log('[LocalVideoPlayer] Ignoring browser background throttle onPause event');
               return;
             }
             setIsPlaying(false);
@@ -8027,6 +8042,29 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
               clearCredentials(video.url);
             }
             await runRemoteProbe(video.url, creds);
+
+            // 1. Invalidate stale unauthenticated session on backend & player
+            sessionIdRef.current = Math.random().toString(36).substring(2, 10);
+
+            // 2. Clear any prior playback error overlay
+            setPlaybackError(null);
+
+            // 3. Re-initialize cached byte source with newly authenticated credentials
+            const freshByteSource = new HttpByteSource(video.url);
+            cachedSourceRef.current = new CachedByteSource(freshByteSource, 4 * 1024 * 1024, 16);
+
+            // 4. Reload the video element with authenticated proxied stream
+            const newProxyUrl = getProxiedVideoUrl(video.url);
+            if (videoRef.current) {
+              videoRef.current.src = newProxyUrl;
+              videoRef.current.load();
+              videoRef.current.play().catch(() => {});
+            }
+            if (previewVideoRef.current) {
+              previewVideoRef.current.src = newProxyUrl;
+              previewVideoRef.current.load();
+            }
+
             setAuthModalState(prev => ({ ...prev, isOpen: false, isLoading: false }));
           }}
         />

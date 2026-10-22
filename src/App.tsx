@@ -77,7 +77,7 @@ import {
   HardDrive, Cloud, ShieldCheck, Check, Server, LogIn
 } from 'lucide-react';
 import { storeFileHandle, getFileHandle, removeFileHandle, verifyPermission, cleanupFileHandles } from './utils/indexedDB';
-import { HttpByteSource, CachedByteSource, detectUrlCapabilities } from './services/remote/remoteByteSource';
+import { HttpByteSource, CachedByteSource, detectUrlCapabilities, getBackendProxyUrl, getProxyHeaders } from './services/remote/remoteByteSource';
 import { probeContainer, parseMp4, parseMkv } from './utils/containerParser';
 import { parseHlsManifest } from './utils/hlsParser';
 import { LoadingSpinner, SPINNER_PRESETS, SpinnerThumbnail } from './components/LoadingSpinner';
@@ -251,9 +251,25 @@ const minimizeMessage = (msg: string): string => {
   return msg;
 };
 
+// Rate-limited log sender: at most 1 log every 2 minutes
+let lastLogApiSentTimestamp = 0;
+const LOG_API_RATE_LIMIT_MS = 2 * 60 * 1000; // 2 minutes
+
 const sendLogToServer = (type: string, args: any[]) => {
   try {
-    const rawMessage = args.map(a => typeof a === 'object' ? JSON.stringify(a) : String(a)).join(' ');
+    const now = Date.now();
+    if (now - lastLogApiSentTimestamp < LOG_API_RATE_LIMIT_MS) {
+      return;
+    }
+    lastLogApiSentTimestamp = now;
+
+    const rawMessage = args.map(a => {
+      if (a instanceof Error) return a.stack || a.message;
+      if (typeof a === 'object') {
+        try { return JSON.stringify(a); } catch { return String(a); }
+      }
+      return String(a);
+    }).join(' ');
     const message = minimizeMessage(rawMessage);
     fetch(`${BACKEND_ORIGIN}/api/log`, {
       method: 'POST',
@@ -264,24 +280,18 @@ const sendLogToServer = (type: string, args: any[]) => {
 };
 
 console.log = (...args) => {
-  const minimizedArgs = args.map(a => typeof a === 'string' ? minimizeMessage(a) : a);
-  originalConsoleLog(...minimizedArgs);
-  sendLogToServer('INFO', args);
+  originalConsoleLog(...args);
+};
+console.info = (...args) => {
+  originalConsoleInfo(...args);
 };
 console.warn = (...args) => {
-  const minimizedArgs = args.map(a => typeof a === 'string' ? minimizeMessage(a) : a);
-  originalConsoleWarn(...minimizedArgs);
+  originalConsoleWarn(...args);
   sendLogToServer('WARN', args);
 };
 console.error = (...args) => {
-  const minimizedArgs = args.map(a => typeof a === 'string' ? minimizeMessage(a) : a);
-  originalConsoleError(...minimizedArgs);
+  originalConsoleError(...args);
   sendLogToServer('ERROR', args);
-};
-console.info = (...args) => {
-  const minimizedArgs = args.map(a => typeof a === 'string' ? minimizeMessage(a) : a);
-  originalConsoleInfo(...minimizedArgs);
-  sendLogToServer('INFO', args);
 };
 
 const defaultSettings = {
@@ -727,10 +737,6 @@ function App() {
     }
   };
 
-  if (false as boolean) {
-    console.log(isProcessing, processingStep);
-  }
-
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -870,13 +876,10 @@ function App() {
         localStorage.setItem('valor_active_user_id', activeUserId);
       }
 
-      console.log('[VALOR INITIALIZATION] Starting setup. activeUserId in localStorage:', activeUserId);
-
       // 0. If using local browser profile, load it immediately and do not let server override it
       if (activeUserId === 'local' || activeUserId.startsWith('local_')) {
         const settingsKey = activeUserId === 'local' ? 'valor_settings' : `valor_settings_${activeUserId}`;
         const saved = localStorage.getItem(settingsKey);
-        console.log('[VALOR INITIALIZATION] Loading local profile settings. settingsKey:', settingsKey, 'savedContentLength:', saved ? saved.length : 0);
         if (saved) {
           try {
             const parsed = JSON.parse(saved);
@@ -909,7 +912,6 @@ function App() {
         
         const videosKey = activeUserId === 'local' ? 'valor_videos' : `valor_videos_${activeUserId}`;
         const savedVideos = localStorage.getItem(videosKey);
-        console.log('[VALOR INITIALIZATION] Loading local profile videos. videosKey:', videosKey, 'savedVideosContentLength:', savedVideos ? savedVideos.length : 0);
         if (savedVideos) {
           try {
             const parsed = JSON.parse(savedVideos);
@@ -1570,7 +1572,6 @@ function App() {
     let active = true;
     const loadFromProvider = async () => {
       try {
-        console.log('[StorageProvider] Loading settings and history from provider for userId:', settings.userId);
         
         // 1. Load latest settings
         const loadedSettings = await storageProvider.getSettings(defaultSettings);
@@ -1631,7 +1632,6 @@ function App() {
                         file,
                         url: newBlobUrl
                       };
-                      console.log('[Recovery] Successfully programmatically recovered local file handle and generated new blob URL.');
                     }
                   } catch (e) {
                     console.error('[Recovery] Failed to query permission on load:', e);
@@ -1647,7 +1647,6 @@ function App() {
                   }
                   if (videoObj.type === 'local' && !videoObj.localFilePath && (!isFileObj(videoObj.file) || !videoObj.url || videoObj.url.startsWith('blob:'))) {
                     if (hasHandle) {
-                      console.log('[Recovery] Local video has a saved handle. Retaining playingVideo for deferred permission grant.');
                       return {
                         ...videoObj,
                         hasHandle: true
@@ -1655,7 +1654,6 @@ function App() {
                     }
                     // No handle in IndexedDB, but still keep the video so the player's
                     // lock overlay can let the user re-select the file via onReassociate.
-                    console.log('[Recovery] Local video has no handle. Retaining for user-initiated reassociation.');
                     return videoObj;
                   }
                   return videoObj;
@@ -1897,9 +1895,7 @@ function App() {
     const performSave = async () => {
       try {
         const videosKey = settings.userId === 'local' || !settings.userId ? 'valor_videos' : `valor_videos_${settings.userId}`;
-        console.log('[VALOR HISTORY SAVE] saveVideosToStorage called. videosKey:', videosKey, 'videosLength:', videoList.length, 'saveHistorySetting:', settings.saveHistory, 'loadedVideosUserId:', loadedVideosUserIdRef.current, 'activeSettingsUserId:', settings.userId);
         if (loadedVideosUserIdRef.current !== settings.userId) {
-          console.log('[VALOR HISTORY SAVE] Aborting save. loadedVideosUserIdRef:', loadedVideosUserIdRef.current, 'does not match active settings.userId:', settings.userId);
           return;
         }
         if (!settings.saveHistory) {
@@ -2029,7 +2025,6 @@ function App() {
             } else {
               // Permission is 'prompt'. Can't auto-request without user gesture.
               // The player will mount with the lock overlay for user-initiated permission.
-              console.log('[Recovery] Found IndexedDB handle but permission is prompt. Waiting for user interaction.');
               return;
             }
           }
@@ -2039,7 +2034,6 @@ function App() {
 
         // No handle found — the player will mount with the lock overlay.
         // User can click "Resume Playback" to trigger onReassociate (which falls back to file picker).
-        console.log('[Recovery] No handle in IndexedDB. Player will show lock overlay for user-initiated reassociation.');
       };
       triggerReassociate();
     }
@@ -2644,7 +2638,6 @@ function App() {
       const parserAvailable = await detectUrlCapabilities(url);
       
       if (!parserAvailable) {
-        console.log('[App] Remote byte access blocked or failed. Engaging Native Playback Mode.');
         let rawTitle = localPathVal ? (localPathVal.split(/[/\\]/).pop() || localPathVal) : (url.substring(url.lastIndexOf('/') + 1) || 'Remote Stream');
         let title = rawTitle.replace(/\.[^/.]+$/, '');
         const parsedInfo = classifyVideoTitle(title);
@@ -2699,7 +2692,6 @@ function App() {
 
       setProcessingStep('Probing stream format...');
       const container = await probeContainer(cachedSource);
-      console.log('Probed remote container type:', container);
 
       let duration = 'Unknown';
       let format: string = container;
@@ -2710,7 +2702,11 @@ function App() {
 
       if (container === 'hls') {
         setProcessingStep('Parsing HLS manifest...');
-        const res = await fetch(url);
+        const isCross = typeof window !== 'undefined' && new URL(url, window.location.href).origin !== window.location.origin;
+        const hlsFetchUrl = isCross ? getBackendProxyUrl(url) : url;
+        const res = await fetch(hlsFetchUrl, {
+          headers: isCross ? getProxyHeaders(url) : undefined
+        });
         if (!res.ok) {
           throw new Error(`Failed to fetch HLS manifest, status: ${res.status}`);
         }

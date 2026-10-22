@@ -459,7 +459,7 @@ async function isValidAdminToken(token) {
   return false;
 }
 
-function handleProxyRequest(targetUrl, req, res, redirectCount = 0) {
+function handleProxyRequest(targetUrl, req, res, redirectCount = 0, parsedUrl = null) {
   if (redirectCount > 5) {
     res.statusCode = 508;
     res.end('Too many redirects');
@@ -472,11 +472,28 @@ function handleProxyRequest(targetUrl, req, res, redirectCount = 0) {
       res.end('Invalid protocol');
       return;
     }
+
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Headers', '*');
+    res.setHeader('Access-Control-Expose-Headers', 'Content-Range, Content-Length, Accept-Ranges, Content-Type');
+
     const client = u.protocol === 'https:' ? https : http;
     const headers = {};
     if (req.headers.range) headers['range'] = req.headers.range;
     if (req.headers['accept']) headers['accept'] = req.headers['accept'];
-    if (req.headers['authorization']) headers['authorization'] = req.headers['authorization'];
+    
+    if (req.headers['authorization']) {
+      headers['authorization'] = req.headers['authorization'];
+    } else {
+      const qUser = parsedUrl ? (parsedUrl.searchParams.get('user') || parsedUrl.searchParams.get('username')) : null;
+      const qPass = parsedUrl ? (parsedUrl.searchParams.get('pass') || parsedUrl.searchParams.get('password')) : '';
+      if (qUser) {
+        headers['authorization'] = 'Basic ' + Buffer.from(`${qUser}:${qPass || ''}`).toString('base64');
+      } else if (u.username) {
+        headers['authorization'] = 'Basic ' + Buffer.from(`${decodeURIComponent(u.username)}:${decodeURIComponent(u.password || '')}`).toString('base64');
+      }
+    }
+
     headers['user-agent'] = req.headers['user-agent'] || 'Mozilla/5.0';
 
     const proxyReq = client.request(u, {
@@ -486,7 +503,7 @@ function handleProxyRequest(targetUrl, req, res, redirectCount = 0) {
       if (proxyRes.statusCode >= 300 && proxyRes.statusCode < 400 && proxyRes.headers.location) {
         const nextUrl = new URL(proxyRes.headers.location, u).toString();
         proxyReq.destroy();
-        return handleProxyRequest(nextUrl, req, res, redirectCount + 1);
+        return handleProxyRequest(nextUrl, req, res, redirectCount + 1, parsedUrl);
       }
       res.statusCode = proxyRes.statusCode;
       const forwardHeaders = ['content-type', 'content-length', 'content-range', 'accept-ranges', 'last-modified', 'etag'];
@@ -618,7 +635,7 @@ const backendServer = http.createServer(async (req, res) => {
       res.end('Missing url parameter');
       return;
     }
-    handleProxyRequest(targetUrl, req, res);
+    handleProxyRequest(targetUrl, req, res, 0, parsedUrl);
     return;
   }
 
@@ -1051,13 +1068,23 @@ const backendServer = http.createServer(async (req, res) => {
     return;
   }
 
-  // Browser remote logging API
+  // Browser remote logging API (rate limited to at most 1 log every 2 minutes)
   if (pathname === '/api/log') {
+    const now = Date.now();
+    if (!global._lastBrowserLogTime) global._lastBrowserLogTime = 0;
+    if (now - global._lastBrowserLogTime < 120000) {
+      res.statusCode = 200;
+      res.setHeader('Content-Type', 'application/json');
+      res.end(JSON.stringify({ success: true, throttled: true }));
+      return;
+    }
+    global._lastBrowserLogTime = now;
     getJsonBody(req).then(data => {
       const type = data.type || 'INFO';
       const msg = data.message || '';
       console.log(`[Browser ${type}] ${msg}`);
       res.statusCode = 200;
+      res.setHeader('Content-Type', 'application/json');
       res.end(JSON.stringify({ success: true }));
     });
     return;

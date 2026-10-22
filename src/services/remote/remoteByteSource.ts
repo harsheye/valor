@@ -1,4 +1,5 @@
 import type { ByteSource } from '../local/localByteSource';
+import { getSavedCredentials } from './mediaAuthStore';
 
 type DownloadPriority = 'current' | 'prefetch';
 
@@ -32,8 +33,27 @@ const proxyFetch = (url: string, options: any, blob: boolean): Promise<any> => {
   });
 };
 
-const getBackendProxyUrl = (url: string): string => {
-  return `/api/proxy?url=${encodeURIComponent(url)}`;
+export const getBackendProxyUrl = (url: string): string => {
+  const creds = getSavedCredentials(url);
+  let proxyUrl = `/api/proxy?url=${encodeURIComponent(url)}`;
+  if (creds && creds.username) {
+    proxyUrl += `&user=${encodeURIComponent(creds.username)}`;
+    if (creds.password) {
+      proxyUrl += `&pass=${encodeURIComponent(creds.password)}`;
+    }
+  }
+  return proxyUrl;
+};
+
+export const getProxyHeaders = (url: string, extraHeaders: Record<string, string> = {}): Record<string, string> => {
+  const creds = getSavedCredentials(url);
+  const headers = { ...extraHeaders };
+  if (creds && creds.username) {
+    try {
+      headers['Authorization'] = `Basic ${btoa(`${creds.username}:${creds.password || ''}`)}`;
+    } catch {}
+  }
+  return headers;
 };
 
 export class HttpByteSource implements ByteSource {
@@ -43,6 +63,19 @@ export class HttpByteSource implements ByteSource {
 
   constructor(url: string) {
     this.url = url;
+    // If credentials are saved for this host, or if it is a cross-origin HTTP(S) URL,
+    // default to backend proxy to avoid browser CORS restrictions and forward Basic Auth!
+    const creds = getSavedCredentials(url);
+    if (creds && creds.username) {
+      this.proxyMode = 'backend';
+    } else if (typeof window !== 'undefined' && url && url.startsWith('http')) {
+      try {
+        const u = new URL(url, window.location.href);
+        if (u.origin !== window.location.origin) {
+          this.proxyMode = 'backend';
+        }
+      } catch {}
+    }
   }
 
   async getSize(): Promise<number> {
@@ -115,7 +148,7 @@ export class HttpByteSource implements ByteSource {
     try {
       const proxyUrl = getBackendProxyUrl(this.url);
       const response = await fetch(proxyUrl, {
-        headers: { Range: 'bytes=0-0' }
+        headers: getProxyHeaders(this.url, { Range: 'bytes=0-0' })
       });
       if (response.status === 200 || response.status === 206) {
         this.proxyMode = 'backend';
@@ -154,7 +187,7 @@ export class HttpByteSource implements ByteSource {
     if (this.proxyMode === 'backend') {
       const proxyUrl = getBackendProxyUrl(this.url);
       const response = await fetch(proxyUrl, {
-        headers: { Range: `bytes=${start}-${end}` },
+        headers: getProxyHeaders(this.url, { Range: `bytes=${start}-${end}` }),
         signal
       });
       if (response.status !== 206 && response.status !== 200) {
@@ -178,7 +211,7 @@ export class HttpByteSource implements ByteSource {
       try {
         const proxyUrl = getBackendProxyUrl(this.url);
         const response = await fetch(proxyUrl, {
-          headers: { Range: `bytes=${start}-${end}` },
+          headers: getProxyHeaders(this.url, { Range: `bytes=${start}-${end}` }),
           signal
         });
         if (response.status === 206 || response.status === 200) {
@@ -508,16 +541,35 @@ export class CachedByteSource implements ByteSource {
 
 export async function detectUrlCapabilities(url: string): Promise<boolean> {
   const controller = new AbortController();
-  const id = setTimeout(() => controller.abort(), 3000);
+  const id = setTimeout(() => controller.abort(), 4000);
 
   try {
     // Validate protocol for security
-    const parsedUrl = new URL(url);
+    const parsedUrl = new URL(url, typeof window !== 'undefined' ? window.location.href : 'http://localhost');
     if (parsedUrl.protocol !== 'http:' && parsedUrl.protocol !== 'https:') {
       console.warn('URL capability detection rejected: Unsupported protocol:', parsedUrl.protocol);
       clearTimeout(id);
       return false;
     }
+
+    const isCross = typeof window !== 'undefined' && parsedUrl.origin !== window.location.origin;
+    const creds = getSavedCredentials(url);
+
+    // If cross-origin or credentials exist, query through backend proxy immediately to prevent browser CORS errors!
+    if (isCross || creds) {
+      const proxyUrl = getBackendProxyUrl(url);
+      const res = await fetch(proxyUrl, {
+        headers: getProxyHeaders(url, { Range: 'bytes=0-15' }),
+        signal: controller.signal
+      });
+      clearTimeout(id);
+      if (res.status === 200 || res.status === 206) {
+        const buffer = await res.arrayBuffer();
+        return buffer.byteLength > 0;
+      }
+      return false;
+    }
+
     const response = await fetch(url, {
       headers: { Range: 'bytes=0-15' },
       signal: controller.signal
@@ -530,13 +582,12 @@ export async function detectUrlCapabilities(url: string): Promise<boolean> {
     return false;
   } catch (e) {
     clearTimeout(id);
-    console.warn('Direct capability detection failed (CORS or network error). Trying backend proxy fallback...', e);
     try {
       const proxyUrl = getBackendProxyUrl(url);
       const proxyController = new AbortController();
       const pId = setTimeout(() => proxyController.abort(), 4000);
       const res = await fetch(proxyUrl, {
-        headers: { Range: 'bytes=0-15' },
+        headers: getProxyHeaders(url, { Range: 'bytes=0-15' }),
         signal: proxyController.signal
       });
       clearTimeout(pId);
