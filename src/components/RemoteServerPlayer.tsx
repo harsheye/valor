@@ -211,6 +211,9 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
   }, [video.id, video.url, video.file]);
 
   const [isPlaying, setIsPlaying] = useState(false);
+  const isPlayingRef = useRef(false);
+  isPlayingRef.current = isPlaying;
+  const isWaitingForSyncRef = useRef(false);
   const [showPauseMetadataOverlay, setShowPauseMetadataOverlay] = useState(false);
   const showPauseMetadataOverlayRef = useRef(false);
   showPauseMetadataOverlayRef.current = showPauseMetadataOverlay;
@@ -2272,24 +2275,65 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
     let frameId: number;
 
     const tick = () => {
-      if (videoRef.current && !videoRef.current.paused) {
-        const shouldUpdate = !video.currentTime || hasSeekedRef.current || videoRef.current.currentTime > 0;
+      if (videoRef.current) {
+        const currentPlayhead = videoRef.current.currentTime;
+        const shouldUpdate = !video.currentTime || hasSeekedRef.current || currentPlayhead > 0;
         if (shouldUpdate && !isScrubbingRef.current && !debouncedSeekTimeoutRef.current) {
-          setCurrentTime(videoRef.current.currentTime);
+          setCurrentTime(currentPlayhead);
         }
         
         // Update buffered percentage
         const buffered = videoRef.current.buffered;
-        if (buffered.length > 0 && duration) {
-          let currentBufferEnd = 0;
-          const currentPlayhead = videoRef.current.currentTime;
+        let currentBufferEnd = 0;
+        if (buffered.length > 0) {
           for (let i = 0; i < buffered.length; i++) {
-            if (buffered.start(i) <= currentPlayhead && buffered.end(i) >= currentPlayhead) {
+            if (buffered.start(i) <= currentPlayhead + 0.15 && buffered.end(i) >= currentPlayhead) {
               currentBufferEnd = buffered.end(i);
               break;
             }
           }
-          setBufferedPercent((currentBufferEnd / duration) * 100);
+          if (duration) {
+            setBufferedPercent((currentBufferEnd / duration) * 100);
+          }
+        }
+
+        // Timeframe Synchronization Barrier:
+        // Ensures Video, Audio, and Subtitle packets are ALL cached and ready for the current timeframe before playing
+        const bufferedAhead = Math.max(0, currentBufferEnd - currentPlayhead);
+        const effectiveDuration = durationRef.current || duration || 0;
+        const isNearEnd = effectiveDuration > 0 && (effectiveDuration - currentPlayhead < 1.5);
+
+        const isAudioReady = !playbackControllerRef.current || playbackControllerRef.current.hasAudioCoverage(currentPlayhead, currentPlayhead + 0.3);
+        const isSubReady = extractingStreamIndex === null;
+
+        if (isPlayingRef.current) {
+          // 1. Starvation / Missing Packets: Pause video and wait for all packets to cache
+          if (!isWaitingForSyncRef.current) {
+            const videoStarving = !isNearEnd && bufferedAhead < 0.4;
+            const audioMissing = !isAudioReady;
+            const subMissing = !isSubReady;
+
+            if (videoStarving || audioMissing || subMissing) {
+              isWaitingForSyncRef.current = true;
+              setIsBuffering(true);
+              if (!videoRef.current.paused) {
+                videoRef.current.pause();
+              }
+            }
+          } else {
+            // 2. Resume Barrier: require >= 2.5s video buffer ahead (or near end), audio coverage, and subtitle ready
+            const videoReady = isNearEnd || bufferedAhead >= 2.5;
+            const audioReady = !playbackControllerRef.current || playbackControllerRef.current.hasAudioCoverage(currentPlayhead, currentPlayhead + 1.5);
+            const subReady = isSubReady;
+
+            if (videoReady && audioReady && subReady) {
+              isWaitingForSyncRef.current = false;
+              setIsBuffering(false);
+              if (videoRef.current.paused) {
+                videoRef.current.play().catch(() => {});
+              }
+            }
+          }
         }
       }
       frameId = requestAnimationFrame(tick);
@@ -2791,7 +2835,8 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
   };
 
   const handleVideoSeeked = async () => {
-    setIsBuffering(false);
+    isWaitingForSyncRef.current = true;
+    setIsBuffering(true);
     if (!videoRef.current) return;
     const newTime = videoRef.current.currentTime;
 
@@ -2938,7 +2983,11 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
         videoRef.current.pause();
       }
       setIsPlaying(false);
+      isPlayingRef.current = false;
+      isWaitingForSyncRef.current = false;
+      setIsBuffering(false);
     } else {
+      isPlayingRef.current = true;
       if (playbackControllerRef.current) {
         playbackControllerRef.current.play().catch(console.error);
       } else {
@@ -4750,7 +4799,7 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
           onWaiting={() => setIsBuffering(true)}
           onPlaying={() => setIsBuffering(false)}
           onSeeked={handleVideoSeeked}
-          onSeeking={() => setIsBuffering(true)}
+          onSeeking={() => { isWaitingForSyncRef.current = true; setIsBuffering(true); }}
           onError={handleVideoError}
           onEnded={() => {
             saveMediaTimestamp(video, 0, durationRef.current || duration, video.title, true);

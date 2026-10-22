@@ -563,6 +563,9 @@ export interface UrlCapabilitiesResult {
   supported: boolean;
   statusCode?: number;
   authRequired?: boolean;
+  isCorsBlocked?: boolean;
+  error?: string;
+  directByteAccess?: boolean;
 }
 
 export async function detectUrlCapabilities(url: string): Promise<UrlCapabilitiesResult> {
@@ -575,7 +578,7 @@ export async function detectUrlCapabilities(url: string): Promise<UrlCapabilitie
     if (parsedUrl.protocol !== 'http:' && parsedUrl.protocol !== 'https:') {
       console.warn('URL capability detection rejected: Unsupported protocol:', parsedUrl.protocol);
       clearTimeout(id);
-      return { supported: false };
+      return { supported: false, error: 'Unsupported protocol' };
     }
 
     const isCross = typeof window !== 'undefined' && parsedUrl.origin !== window.location.origin;
@@ -592,9 +595,15 @@ export async function detectUrlCapabilities(url: string): Promise<UrlCapabilitie
       if (res.status === 401) {
         return { supported: false, statusCode: 401, authRequired: true };
       }
+      if (res.status === 404) {
+        return { supported: false, statusCode: 404, error: 'Remote file not found (404)' };
+      }
+      if (res.status === 403) {
+        return { supported: false, statusCode: 403, error: 'Remote file access forbidden (403)' };
+      }
       if (res.status === 200 || res.status === 206) {
         const buffer = await res.arrayBuffer();
-        return { supported: buffer.byteLength > 0, statusCode: res.status };
+        return { supported: buffer.byteLength > 0, statusCode: res.status, directByteAccess: true };
       }
       return { supported: false, statusCode: res.status };
     }
@@ -607,12 +616,18 @@ export async function detectUrlCapabilities(url: string): Promise<UrlCapabilitie
     if (response.status === 401) {
       return { supported: false, statusCode: 401, authRequired: true };
     }
+    if (response.status === 404) {
+      return { supported: false, statusCode: 404, error: 'Remote file not found (404)' };
+    }
+    if (response.status === 403) {
+      return { supported: false, statusCode: 403, error: 'Remote file access forbidden (403)' };
+    }
     if (response.status === 200 || response.status === 206) {
       const buffer = await response.arrayBuffer();
-      return { supported: buffer.byteLength > 0, statusCode: response.status };
+      return { supported: buffer.byteLength > 0, statusCode: response.status, directByteAccess: true };
     }
     return { supported: false, statusCode: response.status };
-  } catch (e) {
+  } catch (e: any) {
     clearTimeout(id);
     try {
       const proxyUrl = getBackendProxyUrl(url);
@@ -626,12 +641,19 @@ export async function detectUrlCapabilities(url: string): Promise<UrlCapabilitie
       if (res.status === 401) {
         return { supported: false, statusCode: 401, authRequired: true };
       }
+      if (res.status === 404) {
+        return { supported: false, statusCode: 404, error: 'Remote file not found (404)' };
+      }
+      if (res.status === 403) {
+        return { supported: false, statusCode: 403, error: 'Remote file access forbidden (403)' };
+      }
       if (res.status === 200 || res.status === 206) {
         const buffer = await res.arrayBuffer();
-        return { supported: buffer.byteLength > 0, statusCode: res.status };
+        return { supported: buffer.byteLength > 0, statusCode: res.status, directByteAccess: true };
       }
       return { supported: false, statusCode: res.status };
-    } catch (err) {}
-    return { supported: false };
+    } catch (err: any) {
+      return { supported: false, isCorsBlocked: true, error: err?.message || 'CORS / Network failure' };
+    }
   }
 }

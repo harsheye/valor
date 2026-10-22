@@ -2661,6 +2661,19 @@ function App() {
           }
         } catch (e) {}
 
+        let probingError: string | undefined = undefined;
+        if (capabilities.statusCode === 404) {
+          probingError = 'The file server responded with a status of 404 (Not Found). The file does not exist at this URL.';
+        } else if (capabilities.statusCode === 403) {
+          probingError = 'The file server responded with a status of 403 (Forbidden). Access is denied.';
+        } else if (capabilities.authRequired) {
+          probingError = undefined;
+        } else if (capabilities.isCorsBlocked) {
+          probingError = 'The remote server blocks cross-origin byte access (CORS).';
+        } else {
+          probingError = capabilities.error || undefined;
+        }
+
         const nativeItem: VideoItem = {
           id: match ? match.id : urlId,
           title,
@@ -2671,8 +2684,8 @@ function App() {
           containerType: 'unknown',
           audioTracks: match ? match.audioTracks : [],
           subtitleTracks: match ? match.subtitleTracks : [],
-          playbackMode: isLocalFile ? 'native' : 'server',
-          probingError: capabilities.authRequired ? undefined : 'The remote server blocks cross-origin byte access (CORS).',
+          playbackMode: isLocalFile ? 'native' : undefined,
+          probingError,
           localFilePath: localPathVal,
           currentTime: 0,
           resumeTime: getResumeTimeFromMatch(match),
@@ -2860,7 +2873,7 @@ function App() {
         containerType: 'unknown',
         audioTracks: match ? match.audioTracks : [],
         subtitleTracks: match ? match.subtitleTracks : [],
-        playbackMode: 'native',
+        playbackMode: isLocalFile ? 'native' : undefined,
         probingError: probingError || undefined,
         currentTime: 0,
         resumeTime: getResumeTimeFromMatch(match),

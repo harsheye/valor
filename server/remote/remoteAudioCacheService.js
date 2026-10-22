@@ -41,6 +41,8 @@ export class RemoteAudioCacheService {
 
     const headers = {
       'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+      'Referer': validated.origin + '/',
+      'Accept': '*/*',
       ...customHeaders
     };
 
@@ -100,7 +102,8 @@ export class RemoteAudioCacheService {
       '-reconnect_at_eof', '1',
       '-reconnect_streamed', '1',
       '-reconnect_delay_max', '5',
-      '-headers', headerLines,
+          '-rw_timeout', '10000000',
+          '-headers', headerLines,
       ...(parsedStart > 0 ? ['-ss', parsedStart.toFixed(3)] : []),
       '-i', targetUrlStr,
       '-map', `0:${sIdx}`,
@@ -184,6 +187,7 @@ export class RemoteAudioCacheService {
           '-reconnect_at_eof', '1',
           '-reconnect_streamed', '1',
           '-reconnect_delay_max', '5',
+          '-rw_timeout', '10000000',
           '-headers', headerLines,
           '-ss', parsedStart.toFixed(3),
           '-i', targetUrlStr,
@@ -200,6 +204,7 @@ export class RemoteAudioCacheService {
 
       return new Promise((resolve, reject) => {
         const child = spawn(ffmpegInstaller.path, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+        const killTimer = setTimeout(() => { try { child.kill('SIGKILL'); } catch {} }, 15000);
         const chunks = [];
         let stderr = '';
 
@@ -212,6 +217,7 @@ export class RemoteAudioCacheService {
         });
 
         child.on('close', code => {
+          clearTimeout(killTimer);
           const buffer = Buffer.concat(chunks);
           if (code !== 0 && buffer.length <= 44) {
             const lower = stderr.toLowerCase();
@@ -391,6 +397,7 @@ export class RemoteAudioCacheService {
         '-reconnect_at_eof', '1',
         '-reconnect_streamed', '1',
         '-reconnect_delay_max', '5',
+        '-rw_timeout', '10000000',
         '-headers', headerLines,
         '-i', targetUrlStr,
         '-map', `0:${sIdx}`,
@@ -401,6 +408,7 @@ export class RemoteAudioCacheService {
 
       return new Promise((resolve, reject) => {
         const child = spawn(ffmpegInstaller.path, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+        const killTimer = setTimeout(() => { try { child.kill('SIGKILL'); } catch {} }, 15000);
         let stdout = '';
         let stderr = '';
 
@@ -413,6 +421,7 @@ export class RemoteAudioCacheService {
         });
 
         child.on('close', code => {
+          clearTimeout(killTimer);
           if (code !== 0 && !stdout.includes('WEBVTT')) {
             const lower = stderr.toLowerCase();
             if (lower.includes('401') || lower.includes('unauthorized')) {

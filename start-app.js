@@ -824,10 +824,14 @@ const backendServer = http.createServer(async (req, res) => {
         console.error('[SessionMediaProxy Error]', err.message);
         if (!res.headersSent) {
           const isAuth = err.message && (err.message.includes('401') || err.message.toLowerCase().includes('unauthorized'));
-          const status = err.message && err.message.includes('SSRF_GUARD') ? 403 : (isAuth ? 401 : 502);
+          const isNotFound = err.message && (err.message.includes('404') || err.message.toLowerCase().includes('not found'));
+          const status = err.message && err.message.includes('SSRF_GUARD') ? 403 : (isAuth ? 401 : (isNotFound ? 404 : 502));
           res.statusCode = status;
           res.setHeader('Content-Type', 'application/json');
-          res.end(JSON.stringify({ error: isAuth ? 'AUTH_REQUIRED' : 'Proxy request failed', message: err.message }));
+          res.end(JSON.stringify({ 
+            error: isAuth ? 'AUTH_REQUIRED' : (isNotFound ? 'NOT_FOUND' : 'Proxy request failed'), 
+            message: err.message 
+          }));
         }
       }
     })();

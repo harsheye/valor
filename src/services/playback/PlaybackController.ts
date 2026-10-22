@@ -198,6 +198,13 @@ export class PlaybackController {
     }
   }
 
+  public hasAudioCoverage(startTime: number, endTime: number): boolean {
+    if (this.state.activeStreamIndex === -1 || this.state.activeStreamIndex === null || typeof this.state.activeStreamIndex !== 'number') {
+      return true;
+    }
+    return this.bufferManager.getCache().hasCoverage(startTime, endTime);
+  }
+
   setBufferingCallback(cb: (buffering: boolean) => void): void {
     logger.playback(`controller=${this.instanceId} buffering callback registered`);
     this.onBufferingChange = cb;
@@ -387,6 +394,20 @@ export class PlaybackController {
 
     if (this.videoEl.paused) return;
 
+    if (this.state.activeStreamIndex !== -1 && this.state.activeStreamIndex !== null && typeof this.state.activeStreamIndex === 'number') {
+      const hasCoverage = this.hasAudioCoverage(currentTime, currentTime + 0.3);
+      if (!hasCoverage) {
+        if (!this.videoEl.paused) {
+          logger.buffer(`controller=${this.instanceId} underrun stall at ${currentTime.toFixed(2)}s: waiting for audio packet`);
+          this.videoEl.pause();
+        }
+        this.state.isBuffering = true;
+        this.onBufferingChange?.(true);
+        this.fillBufferWindow(currentTime, 'underrun-stall', this.session.playbackGeneration, true, true).catch(console.error);
+        return;
+      }
+    }
+
     // Drift detection & continuous micro-rate correction loop
     const audioPlayhead = this.audioScheduler.getCurrentPlayhead();
     const drift = this.timeline.getDrift(currentTime, audioPlayhead);
@@ -546,6 +567,18 @@ export class PlaybackController {
         if (this.videoEl && !this.videoEl.paused && !this.session.maintenanceFrozen) {
           this.playbackQueue.update(this.videoEl.currentTime, this.state.playbackRate);
         }
+
+        // If video element was stalled waiting for audio, resume once 1.5s is cached
+        if (this.state.isPlaying && this.videoEl && this.videoEl.paused && !this.session.maintenanceFrozen) {
+          const curTime = this.videoEl.currentTime;
+          if (this.hasAudioCoverage(curTime, curTime + 1.5)) {
+            logger.playback(`controller=${this.instanceId} audio buffer ready at ${curTime.toFixed(2)}s. Resuming playback.`);
+            this.playbackQueue.update(curTime, this.state.playbackRate);
+            this.videoEl.play().catch(console.error);
+            this.state.isBuffering = false;
+            this.onBufferingChange?.(false);
+          }
+        }
       } catch (err: any) {
         const errMsg = (err?.message || String(err)).toLowerCase();
         const isFileAccessError = errMsg.includes('filereadersync') || 
@@ -624,6 +657,14 @@ export class PlaybackController {
       // five warm-up chunks.
       await this.fillBufferWindow(currentTime, 'play-first-chunk', generation, true, true);
       if (this.session.abortController.signal.aborted || generation !== this.session.playbackGeneration) return;
+
+      if (this.state.activeStreamIndex !== -1 && typeof this.state.activeStreamIndex === 'number') {
+        if (!this.hasAudioCoverage(currentTime, currentTime + 0.3)) {
+          this.state.isBuffering = true;
+          this.onBufferingChange?.(true);
+          return;
+        }
+      }
 
       // 2. Play the video element
       await this.videoEl.play();
@@ -734,6 +775,13 @@ export class PlaybackController {
 
       // 3. Resume audio contexts and restart playback contiguously
       if (wasPlaying && this.videoEl) {
+        if (this.state.activeStreamIndex !== -1 && typeof this.state.activeStreamIndex === 'number') {
+          if (!this.hasAudioCoverage(time, time + 0.3)) {
+            this.state.isBuffering = true;
+            this.onBufferingChange?.(true);
+            return;
+          }
+        }
         await this.videoEl.play();
         if (this.session.abortController.signal.aborted || generation !== this.session.playbackGeneration) return;
         
