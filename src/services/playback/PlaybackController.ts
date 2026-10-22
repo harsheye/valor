@@ -910,7 +910,9 @@ export class PlaybackController {
     if (this.ff) {
       await Promise.all(this.decodeWorkers.map(async worker => {
         await worker.demux.cleanup(worker.ff).catch(() => {});
-        if (worker.manager !== this.ffmpegMgr) await worker.manager.destroy().catch(() => {});
+        if (worker.manager !== this.ffmpegMgr) {
+          await worker.manager.destroy().catch(() => {});
+        }
       }));
     }
     this.bufferManager.clear();
