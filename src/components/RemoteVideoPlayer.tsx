@@ -49,6 +49,13 @@ export interface VideoPlayerProps {
   onReassociate?: (videoId: string) => Promise<void>;
   isEmbed?: boolean;
   isCinema?: boolean;
+  showSubtitleControl?: boolean;
+  showBookmarksControl?: boolean;
+  showAudioControl?: boolean;
+  audioOnly?: boolean;
+  subFileOnly?: boolean;
+  allowSubUpload?: boolean;
+  showCloseButton?: boolean;
 }
 
 /**

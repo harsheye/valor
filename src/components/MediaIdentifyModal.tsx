@@ -3,6 +3,7 @@ import { Search, Film, Tv, Check, AlertCircle, X, Sparkles, Loader2 } from 'luci
 import { Button } from './ui/button';
 import type { Bookmark } from '../types/media';
 import { classifyVideoTitle } from '../utils/libraryClassifier';
+import { isTraktLoggedIn, getTraktToken, searchTraktMedia } from '../services/traktAuth';
 
 const TMDB_TOKEN = "eyJhbGciOiJIUzI1NiJ9.eyJhdWQiOiJlMzQwMGRhZWZjODJjNTJlZDEyYzk1MWU1ZWFmYmVhYyIsIm5iZiI6MTc4MzU0MTI2OS44NzUsInN1YiI6IjZhNGVhZTE1MzFhOWUyYmNhZjBmY2RlMiIsInNjb3BlcyI6WyJhcGlfcmVhZCJdLCJ2ZXJzaW9uIjoxfQ.GT6_b6NSJwjYCXlbaCi_djq09ug0rKDxY9iouqVrYWY";
 
@@ -98,20 +99,46 @@ export const MediaIdentifyModal: React.FC<MediaIdentifyModalProps> = ({
       // 1. Search TMDB for Show or Movie via backend proxy (Zero CORS error)
       const cleanQuery = mediaTitle.trim();
       const endpoint = isTvShow ? 'search/tv' : 'search/movie';
-      const searchData = await fetchTmdbApi(`${endpoint}?query=${encodeURIComponent(cleanQuery)}&include_adult=false`);
+      let tmdbId: number | null = null;
+      let resolvedTitle = cleanQuery;
+      let imdbId: string | undefined = undefined;
+      let topResult: any = null;
+      let traktRes: any = null;
 
-      if (!searchData.results || searchData.results.length === 0) {
-        throw new Error(`No match found on TMDB/IMDB for "${cleanQuery}".`);
+      try {
+        const searchData = await fetchTmdbApi(`${endpoint}?query=${encodeURIComponent(cleanQuery)}&include_adult=false`);
+        if (searchData && searchData.results && searchData.results.length > 0) {
+          topResult = searchData.results[0];
+          tmdbId = topResult.id;
+          resolvedTitle = topResult.name || topResult.title || cleanQuery;
+        }
+      } catch (tmdbErr) {
+        console.warn('[MediaIdentifyModal] TMDB search error / not running:', tmdbErr);
       }
 
-      const topResult = searchData.results[0];
-      const tmdbId: number = topResult.id;
-      const resolvedTitle = topResult.name || topResult.title || cleanQuery;
+      // If TMDB is not running or no results found, check if user is logged into Trakt
+      if (!tmdbId && isTraktLoggedIn()) {
+        setStatusMsg('TMDB not running or not found. Searching Trakt.tv...');
+        const traktToken = getTraktToken();
+        traktRes = await searchTraktMedia(cleanQuery, isTvShow, traktToken || undefined);
+        if (traktRes && traktRes.ids) {
+          if (traktRes.ids.tmdb) {
+            tmdbId = Number(traktRes.ids.tmdb);
+          }
+          if (traktRes.ids.imdb) {
+            imdbId = traktRes.ids.imdb;
+          }
+          resolvedTitle = traktRes.title || cleanQuery;
+        }
+      }
 
-      setStatusMsg(`Found: "${resolvedTitle}" (TMDB #${tmdbId}). Resolving IMDB ID...`);
+      if (!tmdbId && !imdbId) {
+        throw new Error(`No match found on TMDB/IMDB or Trakt for "${cleanQuery}".`);
+      }
+
+      setStatusMsg(`Found: "${resolvedTitle}" (TMDB #${tmdbId || 'N/A'}). Resolving IMDB ID...`);
 
       // 2. Fetch external IDs to get IMDB ID (e.g. tt1234567)
-      let imdbId: string | undefined = undefined;
       try {
         const extData = await fetchTmdbApi(`${isTvShow ? 'tv' : 'movie'}/${tmdbId}/external_ids`);
         if (extData && extData.imdb_id) {
@@ -248,17 +275,17 @@ export const MediaIdentifyModal: React.FC<MediaIdentifyModalProps> = ({
         : `Identified as "${resolvedTitle}" (${imdbId || `TMDB #${tmdbId}`}). No introdb entries yet.`;
 
       onToast?.(successToast);
-      const mediaImg = topResult.poster_path ? `https://image.tmdb.org/t/p/w500${topResult.poster_path}` : (topResult.backdrop_path ? `https://image.tmdb.org/t/p/w500${topResult.backdrop_path}` : '');
+      const mediaImg = topResult?.poster_path ? `https://image.tmdb.org/t/p/w500${topResult.poster_path}` : (topResult?.backdrop_path ? `https://image.tmdb.org/t/p/w500${topResult.backdrop_path}` : '');
       onApplyBookmarks(newBookmarks, {
         title: resolvedTitle,
-        tmdbId,
+        tmdbId: tmdbId || undefined,
         imdbId,
         season: isTvShow ? season : undefined,
         episode: isTvShow ? episode : undefined,
-        overview: topResult.overview || '',
+        overview: topResult?.overview || traktRes?.overview || '',
         imageUrl: mediaImg,
-        releaseDate: topResult.release_date || topResult.first_air_date || '',
-        rating: topResult.vote_average
+        releaseDate: topResult?.release_date || topResult?.first_air_date || (traktRes?.year ? String(traktRes.year) : ''),
+        rating: topResult?.vote_average || traktRes?.rating
       });
 
       onClose();

@@ -43,7 +43,8 @@ export interface VideoItem {
   currentTime?: number;
   resumeTime?: number;
   probingError?: string;
-  playbackMode?: 'advanced' | 'native';
+  playbackMode?: 'advanced' | 'native' | 'server' | 'simple';
+  isCinema?: boolean;
   lastPlayedDate?: string;
   localFilePath?: string;
   playedDates?: string[];

@@ -1,19 +1,28 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import {
-  Search, SkipForward,
-  Play, Pause, RotateCcw, RotateCw, X, 
-  Maximize, Minimize, Volume2, Volume1, VolumeX, 
-  Tv, Zap, ArrowLeft, Settings, AlertCircle
-} from 'lucide-react';
-import { Button } from './ui/button';
-import type { VideoItem, CustomSubtitleTrack, Bookmark } from '../types/media';
+import type { VideoItem, CustomAudioTrack, CustomSubtitleTrack, Bookmark } from '../types/media';
 import { SubtitleOverlay } from './SubtitleOverlay';
 import type { SubtitleSettings } from './SubtitleOverlay';
+import { AudioSubPopover } from './AudioSubPopover';
+import { BookmarkPanel } from './BookmarkPanel';
+import { BookmarkModal } from './BookmarkModal';
 import { MediaAuthModal } from './MediaAuthModal';
 import { MediaIdentifyModal } from './MediaIdentifyModal';
-import { getSavedCredentials, saveCredentials, clearCredentials } from '../services/remote/mediaAuthStore';
-import { saveMediaTimestamp, getMediaTimestamp } from '../utils/mediaTimestampStorage';
+import { RadialMenu } from './RadialMenu';
+import { ConsoleOverlay } from './ConsoleOverlay';
 import { LoadingSpinner } from './LoadingSpinner';
+import {
+  PlayerTopBar,
+  PlayerBottomBar,
+  PauseDetailsOverlay,
+  SkipIntroButton
+} from './player';
+import type { MediaDetails } from './player/PauseDetailsOverlay';
+import { getSavedCredentials, saveCredentials } from '../services/remote/mediaAuthStore';
+import { saveMediaTimestamp } from '../utils/mediaTimestampStorage';
+import { parseSubtitles, cleanSubtitleText } from '../utils/subtitleParser';
+import { trimSubtitleName } from '../utils/embedSubtitleStorage';
+import { classifyVideoTitle } from '../utils/libraryClassifier';
+import { Play, Pause } from 'lucide-react';
 
 export interface SimpleRemotePlayerProps {
   video: VideoItem;
@@ -35,7 +44,8 @@ export const SimpleRemotePlayer: React.FC<SimpleRemotePlayerProps> = ({
   video,
   onBack,
   onUpdateVideo,
-  subSettings,
+  subSettings: propSubSettings,
+  onUpdateSubSettings: propOnUpdateSubSettings,
   saveVolume = true,
   historySaveInterval = 5,
   uiHideTimeout = 2.5,
@@ -44,15 +54,15 @@ export const SimpleRemotePlayer: React.FC<SimpleRemotePlayerProps> = ({
   spinnerPreset = 'fire-circle',
   onSwitchMode
 }) => {
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const customSubInputRef = useRef<HTMLInputElement | null>(null);
+  const customAudioInputRef = useRef<HTMLInputElement | null>(null);
+
+  // Playback & Timing State
   const [isPlaying, setIsPlaying] = useState(false);
   const [isBuffering, setIsBuffering] = useState(false);
-  const [controlsVisible, setControlsVisible] = useState(true);
-  const [playbackError, setPlaybackError] = useState<string | null>(null);
-
   const [currentTime, setCurrentTime] = useState<number>(() => video.currentTime || 0);
-  const latestTimeRef = useRef<number>(currentTime);
-  latestTimeRef.current = currentTime;
-
   const [duration, setDuration] = useState<number>(() => {
     if (typeof video.duration === 'number') return video.duration;
     if (typeof video.duration === 'string') {
@@ -62,7 +72,10 @@ export const SimpleRemotePlayer: React.FC<SimpleRemotePlayerProps> = ({
     }
     return 0;
   });
+  const [playbackRate, setPlaybackRate] = useState<number>(1.0);
+  const [bufferedRanges, setBufferedRanges] = useState<{ start: number; end: number }[]>([]);
 
+  // Volume & Audio State
   const [volume, setVolume] = useState<number>(() => {
     if (saveVolume) {
       const saved = localStorage.getItem('valor_volume');
@@ -77,22 +90,77 @@ export const SimpleRemotePlayer: React.FC<SimpleRemotePlayerProps> = ({
     }
     return false;
   });
+  const [audioBoost, setAudioBoost] = useState<number>(1.0);
 
+  // Subtitles & Audio Tracks State
+  const [subSettings, setSubSettings] = useState<SubtitleSettings>(() => {
+    return propSubSettings || {
+      fontSize: 'medium',
+      color: 'white',
+      backdrop: 'shadow',
+      fontFamily: 'sans-serif',
+      fontStyle: 'normal'
+    };
+  });
+  const [subtitleTracks, setSubtitleTracks] = useState<CustomSubtitleTrack[]>(() => video.subtitleTracks || []);
+  const [selectedSubTrack, setSelectedSubTrack] = useState<CustomSubtitleTrack | null>(() => {
+    if (video.subtitleTracks && video.subtitleTracks.length > 0) {
+      return video.subtitleTracks[0];
+    }
+    return null;
+  });
+  const [audioTracks, setAudioTracks] = useState<CustomAudioTrack[]>(() => video.audioTracks || []);
+  const [selectedAudioTrack, setSelectedAudioTrack] = useState<CustomAudioTrack | null>(() => {
+    if (video.audioTracks && video.audioTracks.length > 0) {
+      return video.audioTracks[0];
+    }
+    return null;
+  });
+  const [showAudioSubMenu, setShowAudioSubMenu] = useState(false);
+
+  // OpenSubtitles integration
+  const [openSubtitles, setOpenSubtitles] = useState<any[]>([]);
+  const [isOpenSubLoading, setIsOpenSubLoading] = useState(false);
+  const [hasFetchedOpenSubtitles, setHasFetchedOpenSubtitles] = useState(false);
+
+  // Bookmarks State
   const [bookmarks, setBookmarks] = useState<Bookmark[]>(() => video.bookmarks || []);
-  const [showIdentifyModal, setShowIdentifyModal] = useState(false);
-  const [toastMsg, setToastMsg] = useState<string | null>(null);
+  const [showBookmarksPopover, setShowBookmarksPopover] = useState(false);
+  const [showBookmarkModal, setShowBookmarkModal] = useState(false);
+  const [editingBookmark, setEditingBookmark] = useState<Bookmark | undefined>(undefined);
 
-  const activeSkipBookmark = bookmarks.find(b => {
-    if (!b.endTime || b.endTime <= b.time) return false;
-    return currentTime >= b.time && currentTime < b.endTime;
+  // Overlays & HUD State
+  const [controlsVisible, setControlsVisible] = useState(true);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const [isLocked, setIsLocked] = useState(false);
+  const [showConsoleOverlay, setShowConsoleOverlay] = useState(false);
+  const [radialMenuState, setRadialMenuState] = useState<{ visible: boolean; x: number; y: number }>({ visible: false, x: 0, y: 0 });
+  const [toastMsg, setToastMsg] = useState<string | null>(null);
+  const [showCenterRipple, setShowCenterRipple] = useState<'play' | 'pause' | null>(null);
+  const [systemTime, setSystemTime] = useState<Date>(new Date());
+
+  // Netflix-style Pause Screen Overlay State
+  const [showPauseMetadataOverlay, setShowPauseMetadataOverlay] = useState(false);
+  const pauseOverlayTimerRef = useRef<any>(null);
+  const [mediaDetails, setMediaDetails] = useState<MediaDetails | null>(() => {
+    const rawTitle = video.title || (video as any).fileName || '';
+    const classified = classifyVideoTitle(rawTitle);
+    const isTV = classified.type === 'series';
+    return {
+      title: isTV && classified.seriesTitle ? classified.seriesTitle : (classified.displayTitle || rawTitle || 'Media'),
+      episodeTitle: isTV ? classified.episodeTitle : undefined,
+      season: isTV ? classified.season : undefined,
+      episode: isTV ? classified.episode : undefined,
+      overview: (video as any).overview || '',
+      imageUrl: (video as any).posterPath || (video as any).imageUrl || '',
+      rating: (video as any).rating || 8.4
+    };
   });
 
-  const [bufferedRanges, setBufferedRanges] = useState<{ start: number; end: number }[]>([]);
-  const [hoverTime, setHoverTime] = useState<string>('0:00');
-  const [hoverPercent, setHoverPercent] = useState<number>(0);
-  const [showCenterPlayHint, setShowCenterPlayHint] = useState(false);
+  // Identify / Sync Modal State
+  const [showIdentifyModal, setShowIdentifyModal] = useState(false);
 
-  // Auth modal
+  // Auth Modal State
   const [authModalState, setAuthModalState] = useState<{
     isOpen: boolean;
     initialUsername: string;
@@ -105,696 +173,663 @@ export const SimpleRemotePlayer: React.FC<SimpleRemotePlayerProps> = ({
     isLoading: false
   });
 
-  const videoRef = useRef<HTMLVideoElement | null>(null);
-  const containerRef = useRef<HTMLDivElement | null>(null);
-  const controlsTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const hasSeekedInitialRef = useRef(false);
-  const sessionIdRef = useRef<string>(Math.random().toString(36).substring(2, 10));
+  // Time formatting helper
+  const formatTime = useCallback((seconds: number) => {
+    if (!seconds || isNaN(seconds) || seconds < 0) return '0:00';
+    const h = Math.floor(seconds / 3600);
+    const m = Math.floor((seconds % 3600) / 60);
+    const s = Math.floor(seconds % 60);
+    if (h > 0) return `${h}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+    return `${m}:${s.toString().padStart(2, '0')}`;
+  }, []);
 
-  // Build proxied URL with session sliding buffer
+  const triggerToast = useCallback((msg: string) => {
+    setToastMsg(msg);
+    setTimeout(() => setToastMsg(null), 3000);
+  }, []);
+
+  // System time ticker for digital Odometer clock
+  useEffect(() => {
+    const timer = setInterval(() => setSystemTime(new Date()), 1000);
+    return () => clearInterval(timer);
+  }, []);
+
+  // Proxied Video URL (bypasses CORS & provides sliding cache)
   const getProxiedUrl = useCallback((rawUrl: string): string => {
     if (!rawUrl) return '';
     if (rawUrl.startsWith('/api/proxy-media')) return rawUrl;
     const creds = (video as any).auth || getSavedCredentials(rawUrl);
-    let proxyUrl = `/api/proxy-media?url=${encodeURIComponent(rawUrl)}&sessionId=${sessionIdRef.current}`;
-    if (video.duration) {
-      proxyUrl += `&duration=${encodeURIComponent(video.duration.toString())}`;
+    let proxyUrl = `/api/proxy-media?url=${encodeURIComponent(rawUrl)}`;
+    if (duration > 0) {
+      proxyUrl += `&duration=${duration}`;
     }
     if (creds?.username) {
       proxyUrl += `&user=${encodeURIComponent(creds.username)}`;
-      if (creds.password) proxyUrl += `&pass=${encodeURIComponent(creds.password)}`;
+      if (creds?.password) proxyUrl += `&pass=${encodeURIComponent(creds.password)}`;
     }
     return proxyUrl;
-  }, [video]);
+  }, [video, duration]);
 
-  // Master Play/Pause
-  const handlePlay = async () => {
-    if (!videoRef.current) return;
-    try {
-      await videoRef.current.play();
-      setIsPlaying(true);
-      setShowCenterPlayHint(false);
-    } catch (err: any) {
-      console.warn('[SimpleRemotePlayer] Play blocked by browser policy:', err);
-      setShowCenterPlayHint(true);
+  // Controls auto-hide timer
+  const controlsTimeoutRef = useRef<any>(null);
+  const resetControlsTimeout = useCallback(() => {
+    setControlsVisible(true);
+    if (controlsTimeoutRef.current) clearTimeout(controlsTimeoutRef.current);
+    if (isPlaying && !isLocked && !showAudioSubMenu && !showBookmarksPopover && !showBookmarkModal) {
+      controlsTimeoutRef.current = setTimeout(() => {
+        setControlsVisible(false);
+      }, uiHideTimeout * 1000);
     }
-  };
+  }, [isPlaying, isLocked, showAudioSubMenu, showBookmarksPopover, showBookmarkModal, uiHideTimeout]);
 
-  const handlePause = () => {
-    if (videoRef.current) {
+  // Handle Pause Screen Timer (Show after 10s of continuous pause)
+  useEffect(() => {
+    if (!isPlaying) {
+      setShowPauseMetadataOverlay(false);
+      pauseOverlayTimerRef.current = setTimeout(() => {
+        setShowPauseMetadataOverlay(true);
+        setControlsVisible(false);
+      }, 10000);
+    } else {
+      if (pauseOverlayTimerRef.current) clearTimeout(pauseOverlayTimerRef.current);
+      setShowPauseMetadataOverlay(false);
+      resetControlsTimeout();
+    }
+    return () => {
+      if (pauseOverlayTimerRef.current) clearTimeout(pauseOverlayTimerRef.current);
+    };
+  }, [isPlaying, resetControlsTimeout]);
+
+  // Play / Pause toggle
+  const togglePlay = useCallback(() => {
+    if (!videoRef.current) return;
+    if (showPauseMetadataOverlay) {
+      setShowPauseMetadataOverlay(false);
+    }
+    if (videoRef.current.paused) {
+      videoRef.current.play().then(() => {
+        setIsPlaying(true);
+        setShowCenterRipple('play');
+        setTimeout(() => setShowCenterRipple(null), 500);
+      }).catch(err => {
+        console.warn('[SimpleRemotePlayer] Play error:', err);
+      });
+    } else {
       videoRef.current.pause();
       setIsPlaying(false);
+      setShowCenterRipple('pause');
+      setTimeout(() => setShowCenterRipple(null), 500);
     }
-  };
+    resetControlsTimeout();
+  }, [showPauseMetadataOverlay, resetControlsTimeout]);
 
-  const togglePlay = () => {
+  // Seek
+  const handleSeek = useCallback((targetTime: number) => {
     if (!videoRef.current) return;
-    if (videoRef.current.paused) {
-      handlePlay();
-    } else {
-      handlePause();
-    }
-  };
-
-  const handleSeek = (targetTime: number) => {
-    const clamped = Math.max(0, Math.min(targetTime, duration || Infinity));
-    if (videoRef.current) {
-      videoRef.current.currentTime = clamped;
-    }
+    const clamped = Math.max(0, Math.min(duration || 0, targetTime));
+    videoRef.current.currentTime = clamped;
     setCurrentTime(clamped);
-  };
+    resetControlsTimeout();
+  }, [duration, resetControlsTimeout]);
 
-  const toggleFullscreen = () => {
-    if (!containerRef.current) return;
-    if (!document.fullscreenElement) {
-      containerRef.current.requestFullscreen().catch(() => {});
+  // Volume
+  const updateVolume = useCallback((newVol: number, muteState?: boolean) => {
+    if (!videoRef.current) return;
+    const clamped = Math.max(0, Math.min(1, newVol));
+    videoRef.current.volume = clamped;
+    setVolume(clamped);
+    if (muteState !== undefined) {
+      videoRef.current.muted = muteState;
+      setIsMuted(muteState);
+      if (saveVolume) localStorage.setItem('valor_muted', String(muteState));
+    } else if (clamped === 0) {
+      videoRef.current.muted = true;
+      setIsMuted(true);
+      if (saveVolume) localStorage.setItem('valor_muted', 'true');
     } else {
-      document.exitFullscreen().catch(() => {});
+      videoRef.current.muted = false;
+      setIsMuted(false);
+      if (saveVolume) localStorage.setItem('valor_muted', 'false');
     }
-  };
+    if (saveVolume) localStorage.setItem('valor_volume', String(clamped));
+  }, [saveVolume]);
 
-  // Volume control
-  const updateVolume = (newVol: number, newMuted: boolean) => {
-    setVolume(newVol);
-    setIsMuted(newMuted);
-    if (videoRef.current) {
-      videoRef.current.volume = newVol;
-      videoRef.current.muted = newMuted;
-    }
-    if (saveVolume) {
-      localStorage.setItem('valor_volume', newVol.toString());
-      localStorage.setItem('valor_muted', newMuted ? 'true' : 'false');
-    }
-  };
+  const toggleMute = useCallback(() => {
+    updateVolume(volume, !isMuted);
+  }, [volume, isMuted, updateVolume]);
 
-  // Keyboard controls
+  // Speed
+  const handleSpeedChange = useCallback((speed: number) => {
+    if (!videoRef.current) return;
+    videoRef.current.playbackRate = speed;
+    setPlaybackRate(speed);
+    triggerToast(`Speed: ${speed}x`);
+  }, [triggerToast]);
+
+  // Fullscreen
+  const toggleFullscreen = useCallback(async () => {
+    if (!containerRef.current) return;
+    try {
+      if (!document.fullscreenElement) {
+        await containerRef.current.requestFullscreen();
+        setIsFullscreen(true);
+      } else {
+        await document.exitFullscreen();
+        setIsFullscreen(false);
+      }
+    } catch {}
+  }, []);
+
+  const togglePiP = useCallback(async () => {
+    if (!videoRef.current) return;
+    try {
+      if (document.pictureInPictureElement) {
+        await document.exitPictureInPicture();
+      } else {
+        await videoRef.current.requestPictureInPicture();
+      }
+    } catch {}
+  }, []);
+
+  // Sync buffered ranges
+  const updateBufferedRanges = useCallback(() => {
+    if (!videoRef.current) return;
+    const b = videoRef.current.buffered;
+    const ranges: { start: number; end: number }[] = [];
+    for (let i = 0; i < b.length; i++) {
+      ranges.push({ start: b.start(i), end: b.end(i) });
+    }
+    setBufferedRanges(ranges);
+  }, []);
+
+  // Periodic history & timestamp saving
   useEffect(() => {
-    const onKeyDown = (e: KeyboardEvent) => {
-      if (['INPUT', 'TEXTAREA'].includes((e.target as HTMLElement).tagName)) return;
+    const interval = setInterval(() => {
+      if (currentTime > 0) {
+        saveMediaTimestamp(video.id, currentTime, duration);
+        onUpdateVideo((prev: any) => ({
+          ...prev,
+          currentTime,
+          duration: duration || prev.duration
+        }), false, video.id);
+      }
+    }, historySaveInterval * 1000);
+
+    return () => clearInterval(interval);
+  }, [currentTime, duration, historySaveInterval, onUpdateVideo, video.id]);
+
+  // Floating skip intro bookmark detection
+  const activeSkipBookmark = bookmarks.find(b => {
+    if (!b.endTime || b.endTime <= b.time) return false;
+    return currentTime >= b.time && currentTime < b.endTime;
+  });
+
+  // OpenSubtitles fetch
+  const fetchOpenSubtitles = useCallback(async (customQuery?: string) => {
+    setIsOpenSubLoading(true);
+    setHasFetchedOpenSubtitles(true);
+    try {
+      let resolvedApiKey = '';
+      try {
+        const saved = localStorage.getItem('valor_settings');
+        if (saved) resolvedApiKey = JSON.parse(saved).openSubtitlesApiKey || '';
+      } catch {}
+
+      if (!resolvedApiKey) {
+        triggerToast("OpenSubtitles API key required. Enter one in Settings.");
+        setIsOpenSubLoading(false);
+        return;
+      }
+
+      const cleanQuery = (customQuery || video.title || '').trim().replace(/\.[^/.]+$/, "");
+      const searchUrl = `https://api.opensubtitles.com/api/v1/subtitles?query=${encodeURIComponent(cleanQuery)}&languages=en`;
+      const proxyUrl = `/api/proxy?url=${encodeURIComponent(searchUrl)}`;
+
+      const res = await fetch(proxyUrl, {
+        headers: {
+          'Api-Key': resolvedApiKey,
+          'Accept': 'application/json',
+          'User-Agent': 'Valor v1.0'
+        }
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        const items = (data.data || []).map((item: any) => ({
+          fileId: item.attributes?.files?.[0]?.file_id,
+          fileName: item.attributes?.release || item.attributes?.feature_details?.movie_name || 'Subtitle',
+          language: item.attributes?.language || 'en',
+          downloadCount: item.attributes?.download_count || 0
+        })).filter((x: any) => !!x.fileId);
+
+        setOpenSubtitles(items);
+        triggerToast(`Found ${items.length} OpenSubtitles`);
+      } else {
+        triggerToast(`OpenSubtitles search failed (${res.status})`);
+      }
+    } catch (err: any) {
+      triggerToast(`Search error: ${err.message}`);
+    } finally {
+      setIsOpenSubLoading(false);
+    }
+  }, [video.title, triggerToast]);
+
+  // OpenSubtitles download
+  const downloadOpenSubtitle = useCallback(async (fileId: number, fileName: string, language: string) => {
+    triggerToast("Downloading subtitle...");
+    try {
+      let resolvedApiKey = '';
+      try {
+        const saved = localStorage.getItem('valor_settings');
+        if (saved) resolvedApiKey = JSON.parse(saved).openSubtitlesApiKey || '';
+      } catch {}
+
+      const postUrl = `/api/proxy?url=${encodeURIComponent('https://api.opensubtitles.com/api/v1/download')}`;
+      const res = await fetch(postUrl, {
+        method: 'POST',
+        headers: {
+          'Api-Key': resolvedApiKey,
+          'Content-Type': 'application/json',
+          'User-Agent': 'Valor v1.0'
+        },
+        body: JSON.stringify({ file_id: fileId })
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        if (data.link) {
+          const fileRes = await fetch(`/api/proxy?url=${encodeURIComponent(data.link)}`);
+          if (fileRes.ok) {
+            const text = await fileRes.text();
+            const cues = parseSubtitles(text, fileName);
+            const newTrack: CustomSubtitleTrack = {
+              id: `opensub-${fileId}`,
+              name: trimSubtitleName(fileName, language),
+              url: '',
+              cues,
+              isExtracted: false,
+              language: language.toLowerCase()
+            };
+            setSubtitleTracks(prev => [...prev, newTrack]);
+            setSelectedSubTrack(newTrack);
+            triggerToast(`Loaded subtitle: ${newTrack.name}`);
+          }
+        }
+      }
+    } catch (err: any) {
+      triggerToast(`Download failed: ${err.message}`);
+    }
+  }, [triggerToast]);
+
+  // Custom local subtitle upload handler
+  const handleCustomSubFile = useCallback((file: File) => {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const content = e.target?.result as string;
+      if (content) {
+        const cues = parseSubtitles(content, file.name);
+        const newTrack: CustomSubtitleTrack = {
+          id: `custom-sub-${Date.now()}`,
+          name: file.name.replace(/\.[^/.]+$/, ""),
+          url: '',
+          cues,
+          isExtracted: false
+        };
+        setSubtitleTracks(prev => [...prev, newTrack]);
+        setSelectedSubTrack(newTrack);
+        triggerToast(`Loaded: ${file.name}`);
+      }
+    };
+    reader.readAsText(file);
+  }, [triggerToast]);
+
+  // Keyboard shortcuts
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Ignore if typing in input
+      if (['INPUT', 'TEXTAREA'].includes((e.target as HTMLElement)?.tagName)) return;
+
       switch (e.key) {
         case ' ':
         case 'k':
           e.preventDefault();
           togglePlay();
           break;
-        case 'ArrowRight':
-        case 'l':
-          e.preventDefault();
-          handleSeek(currentTime + (e.shiftKey ? 30 : 10));
-          break;
         case 'ArrowLeft':
         case 'j':
           e.preventDefault();
-          handleSeek(currentTime - (e.shiftKey ? 30 : 10));
+          handleSeek(currentTime - 10);
+          break;
+        case 'ArrowRight':
+        case 'l':
+          e.preventDefault();
+          handleSeek(currentTime + 10);
           break;
         case 'ArrowUp':
           e.preventDefault();
-          updateVolume(Math.min(1, volume + 0.05), false);
+          updateVolume(Math.min(1, volume + 0.05));
           break;
         case 'ArrowDown':
           e.preventDefault();
-          updateVolume(Math.max(0, volume - 0.05), false);
+          updateVolume(Math.max(0, volume - 0.05));
           break;
         case 'm':
           e.preventDefault();
-          updateVolume(volume, !isMuted);
+          toggleMute();
           break;
         case 'f':
           e.preventDefault();
           toggleFullscreen();
           break;
+        case 'b':
+          e.preventDefault();
+          setShowBookmarkModal(true);
+          break;
+        case 'c':
+          e.preventDefault();
+          setShowAudioSubMenu(prev => !prev);
+          break;
         case 'Escape':
-          if (document.fullscreenElement) {
-            document.exitFullscreen().catch(() => {});
-          } else {
-            onBack();
-          }
+          if (showBookmarkModal) setShowBookmarkModal(false);
+          else if (showBookmarksPopover) setShowBookmarksPopover(false);
+          else if (showAudioSubMenu) setShowAudioSubMenu(false);
+          else if (showIdentifyModal) setShowIdentifyModal(false);
+          else onBack();
           break;
       }
     };
-    window.addEventListener('keydown', onKeyDown);
-    return () => window.removeEventListener('keydown', onKeyDown);
-  }, [currentTime, volume, isMuted, duration]);
 
-  // Controls visibility timeout
-  const resetControlsTimeout = () => {
-    setControlsVisible(true);
-    if (controlsTimeoutRef.current) clearTimeout(controlsTimeoutRef.current);
-    controlsTimeoutRef.current = setTimeout(() => {
-      if (isPlaying) {
-        setControlsVisible(false);
-      }
-    }, uiHideTimeout * 1000);
-  };
-
-  // History autosave
-  useEffect(() => {
-    const interval = setInterval(() => {
-      if (latestTimeRef.current > 0) {
-        onUpdateVideo({
-          ...video,
-          currentTime: latestTimeRef.current,
-          duration: duration ? String(duration) : video.duration
-        }, false);
-        saveMediaTimestamp(video, latestTimeRef.current, duration, video.title);
-      }
-    }, historySaveInterval * 1000);
-    return () => clearInterval(interval);
-  }, [historySaveInterval, video, duration, onUpdateVideo]);
-
-  // Format time
-  const formatTime = (seconds: number) => {
-    const s = Math.floor(seconds);
-    const hrs = Math.floor(s / 3600);
-    const mins = Math.floor((s % 3600) / 60);
-    const secs = s % 60;
-    if (hrs > 0) {
-      return `${hrs}:${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
-    }
-    return `${mins}:${String(secs).padStart(2, '0')}`;
-  };
-
-  const progressPercent = duration > 0 ? (currentTime / duration) * 100 : 0;
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [togglePlay, handleSeek, updateVolume, volume, toggleMute, toggleFullscreen, currentTime, showBookmarkModal, showBookmarksPopover, showAudioSubMenu, showIdentifyModal, onBack]);
 
   return (
     <div
       ref={containerRef}
-      className="simple-remote-player-container"
-      onMouseMove={resetControlsTimeout}
-      onClick={resetControlsTimeout}
+      className="valor-video-player-container modern-player-theme"
       style={{
-        position: 'relative',
-        width: '100%',
-        height: '100%',
+        position: 'fixed',
+        inset: 0,
         backgroundColor: '#000000',
+        zIndex: 9999,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
         overflow: 'hidden',
-        userSelect: 'none'
+        cursor: controlsVisible ? 'default' : 'none',
+        fontFamily: 'var(--font-sans)'
+      }}
+      onMouseMove={resetControlsTimeout}
+      onClick={() => {
+        if (showPauseMetadataOverlay) {
+          setShowPauseMetadataOverlay(false);
+          togglePlay();
+          return;
+        }
+        resetControlsTimeout();
+      }}
+      onContextMenu={(e) => {
+        e.preventDefault();
+        setRadialMenuState({ visible: true, x: e.clientX, y: e.clientY });
       }}
     >
-      {/* 1. Main HTML5 Video Element */}
+      {/* Hidden File Inputs for custom upload */}
+      <input
+        type="file"
+        ref={customSubInputRef}
+        accept=".srt,.vtt,.ass,.ssa"
+        style={{ display: 'none' }}
+        onChange={(e) => {
+          const file = e.target.files?.[0];
+          if (file) handleCustomSubFile(file);
+        }}
+      />
+
+      {/* Main HTML5 Video Element */}
       <video
         ref={videoRef}
         src={getProxiedUrl(video.url)}
+        crossOrigin="anonymous"
+        playsInline
+        autoPlay
         style={{
           width: '100%',
           height: '100%',
-          objectFit: 'contain'
+          objectFit: 'contain',
+          backgroundColor: '#000000'
         }}
-        playsInline
-        autoPlay
-        crossOrigin="anonymous"
         onTimeUpdate={() => {
-          if (!videoRef.current) return;
-          const cur = videoRef.current.currentTime;
-          setCurrentTime(cur);
-          latestTimeRef.current = cur;
-
-          const buf = videoRef.current.buffered;
-          const ranges = [];
-          for (let i = 0; i < buf.length; i++) {
-            ranges.push({ start: buf.start(i), end: buf.end(i) });
+          if (videoRef.current) {
+            setCurrentTime(videoRef.current.currentTime);
+            updateBufferedRanges();
           }
-          setBufferedRanges(ranges);
         }}
-        onWaiting={() => setIsBuffering(true)}
-        onPlaying={() => {
-          setIsBuffering(false);
-          setIsPlaying(true);
-          setShowCenterPlayHint(false);
+        onDurationChange={() => {
+          if (videoRef.current && videoRef.current.duration) {
+            setDuration(videoRef.current.duration);
+          }
         }}
+        onPlay={() => setIsPlaying(true)}
         onPause={() => setIsPlaying(false)}
-        onLoadedMetadata={() => {
-          if (!videoRef.current) return;
-          const vidDur = videoRef.current.duration;
-          if (vidDur && !isNaN(vidDur)) {
-            setDuration(vidDur);
-          }
-
-          if (!hasSeekedInitialRef.current) {
-            hasSeekedInitialRef.current = true;
-            const stored = getMediaTimestamp(video, vidDur);
-            const targetResume = (video.currentTime && video.currentTime > 0) ? video.currentTime : stored;
-            if (targetResume > 0 && targetResume < (vidDur - 3)) {
-              videoRef.current.currentTime = targetResume;
-              setCurrentTime(targetResume);
-            }
-          }
-
-          // Trigger autoplay
-          handlePlay().catch(() => {
-            setShowCenterPlayHint(true);
-          });
-        }}
+        onWaiting={() => setIsBuffering(true)}
+        onPlaying={() => setIsBuffering(false)}
+        onCanPlay={() => setIsBuffering(false)}
         onError={() => {
-          // Check if auth required
+          setIsBuffering(false);
+          // Check for 401 auth required
           fetch(getProxiedUrl(video.url), { method: 'HEAD' }).then(res => {
             if (res.status === 401) {
               setAuthModalState({
                 isOpen: true,
                 initialUsername: '',
-                errorMessage: 'Authentication required. Please enter username and password.',
+                errorMessage: null,
                 isLoading: false
               });
             } else {
-              setPlaybackError('Network error loading remote media file.');
+              triggerToast("Playback error occurred.");
             }
-          }).catch(() => {
-            setPlaybackError('Unable to connect to remote stream.');
-          });
+          }).catch(() => triggerToast("Network or stream error."));
         }}
       />
 
-      {/* 2. Buffering Spinner */}
+      {/* Subtitles Overlay */}
+      {selectedSubTrack && selectedSubTrack.cues && (
+        <SubtitleOverlay
+          cues={selectedSubTrack.cues}
+          currentTime={currentTime}
+          settings={subSettings}
+          controlsVisible={controlsVisible}
+          menuVisible={showAudioSubMenu}
+        />
+      )}
+
+      {/* Buffering Indicator */}
       {isBuffering && (
-        <div style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', pointerEvents: 'none', zIndex: 100 }}>
-          <LoadingSpinner preset={spinnerPreset as any} customLoaderUrl={customLoaderUrl} customLoaderType={customLoaderType} />
+        <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', pointerEvents: 'none', zIndex: 60 }}>
+          <LoadingSpinner customLoaderUrl={customLoaderUrl} customLoaderType={customLoaderType} preset={spinnerPreset as any} />
         </div>
       )}
 
-      {/* 3. Center Play / Resume Button when autoplay blocked or paused on load */}
-      {showCenterPlayHint && !isPlaying && (
+      {/* Center Play/Pause Ripple Feedback */}
+      {showCenterRipple && (
         <div
-          onClick={handlePlay}
+          className="animate-ping"
           style={{
             position: 'absolute',
-            top: '50%',
-            left: '50%',
-            transform: 'translate(-50%, -50%)',
-            zIndex: 150,
-            cursor: 'pointer',
-            display: 'flex',
-            flexDirection: 'column',
-            alignItems: 'center',
-            gap: '12px',
-            background: 'rgba(15, 23, 42, 0.85)',
-            backdropFilter: 'blur(10px)',
-            padding: '24px 36px',
-            borderRadius: '20px',
-            border: '1px solid rgba(255, 255, 255, 0.15)',
-            boxShadow: '0 20px 40px rgba(0, 0, 0, 0.6)',
-            transition: 'transform 0.15s ease'
-          }}
-          onMouseEnter={e => (e.currentTarget.style.transform = 'translate(-50%, -50%) scale(1.04)')}
-          onMouseLeave={e => (e.currentTarget.style.transform = 'translate(-50%, -50%) scale(1)')}
-        >
-          <div style={{
-            width: '64px',
-            height: '64px',
+            pointerEvents: 'none',
+            zIndex: 70,
+            width: '80px',
+            height: '80px',
             borderRadius: '50%',
-            background: 'linear-gradient(135deg, #06b6d4, #0891b2)',
+            background: 'rgba(0, 0, 0, 0.6)',
+            backdropFilter: 'blur(8px)',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
-            boxShadow: '0 0 20px rgba(6, 182, 212, 0.5)'
-          }}>
-            <Play size={32} color="#ffffff" style={{ marginLeft: '4px' }} />
-          </div>
-          <span style={{ fontSize: '15px', fontWeight: 700, color: '#f8fafc' }}>
-            {currentTime > 5 ? `Resume at ${formatTime(currentTime)}` : 'Click to Play'}
-          </span>
-        </div>
-      )}
-
-      {/* 4. Playback Error Overlay */}
-      {playbackError && (
-        <div style={{
-          position: 'absolute',
-          top: '50%',
-          left: '50%',
-          transform: 'translate(-50%, -50%)',
-          background: 'rgba(15, 23, 42, 0.95)',
-          padding: '24px 32px',
-          borderRadius: '16px',
-          border: '1px solid rgba(239, 68, 68, 0.4)',
-          color: '#f87171',
-          zIndex: 200,
-          textAlign: 'center',
-          maxWidth: '420px'
-        }}>
-          <AlertCircle size={40} style={{ margin: '0 auto 12px auto' }} />
-          <h3 style={{ fontSize: '18px', fontWeight: 700, margin: '0 0 8px 0', color: '#fff' }}>Playback Error</h3>
-          <p style={{ fontSize: '13px', color: '#cbd5e1', margin: '0 0 16px 0' }}>{playbackError}</p>
-          <div style={{ display: 'flex', gap: '10px', justifyContent: 'center' }}>
-            {onSwitchMode && (
-              <Button
-                onClick={() => onSwitchMode('server')}
-                style={{ background: '#8b5cf6', color: '#fff', fontSize: '13px', fontWeight: 700 }}
-              >
-                Try Server Remote Engine
-              </Button>
-            )}
-            <Button
-              variant="outline"
-              onClick={onBack}
-              style={{ borderColor: 'rgba(255,255,255,0.2)', color: '#fff' }}
-            >
-              Go Back
-            </Button>
-          </div>
-        </div>
-      )}
-
-      {/* 5. Sleek Floating UI Controls */}
-      <div
-        className="simple-player-ui"
-        style={{
-          position: 'absolute',
-          inset: 0,
-          pointerEvents: controlsVisible ? 'auto' : 'none',
-          opacity: controlsVisible ? 1 : 0,
-          transition: 'opacity 0.25s ease',
-          display: 'flex',
-          flexDirection: 'column',
-          justifyContent: 'space-between'
-        }}
-      >
-        {/* Top Header */}
-        <div style={{
-          padding: '20px 28px',
-          background: 'linear-gradient(to bottom, rgba(0,0,0,0.85) 0%, transparent 100%)',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between'
-        }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
-            <button
-              onClick={onBack}
-              style={{
-                background: 'rgba(255, 255, 255, 0.1)',
-                border: 'none',
-                color: '#fff',
-                borderRadius: '50%',
-                width: '40px',
-                height: '40px',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                cursor: 'pointer',
-                transition: 'background 0.15s'
-              }}
-              onMouseEnter={e => (e.currentTarget.style.background = 'rgba(255, 255, 255, 0.25)')}
-              onMouseLeave={e => (e.currentTarget.style.background = 'rgba(255, 255, 255, 0.1)')}
-              title="Back"
-            >
-              <ArrowLeft size={20} />
-            </button>
-            <div>
-              <h1 style={{ fontSize: '17px', fontWeight: 700, margin: 0, color: '#ffffff' }}>
-                {video.title || 'Remote Video'}
-              </h1>
-              <span style={{ fontSize: '12px', color: '#06b6d4', fontWeight: 600 }}>
-                ⚡ Simple HTML5 Player
-              </span>
-            </div>
-          </div>
-
-          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-            {/* Mode Switcher Button */}
-            {onSwitchMode && (
-              <button
-                onClick={() => {
-                  if (videoRef.current) {
-                    onUpdateVideo({
-                      ...video,
-                      currentTime: videoRef.current.currentTime,
-                      duration: duration ? String(duration) : video.duration
-                    }, false);
-                  }
-                  onSwitchMode('server');
-                }}
-                style={{
-                  background: 'rgba(139, 92, 246, 0.2)',
-                  border: '1px solid rgba(139, 92, 246, 0.4)',
-                  color: '#c4b5fd',
-                  padding: '7px 14px',
-                  borderRadius: '20px',
-                  fontSize: '12px',
-                  fontWeight: 700,
-                  cursor: 'pointer',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '6px',
-                  transition: 'all 0.15s ease'
-                }}
-                onMouseEnter={e => {
-                  e.currentTarget.style.background = 'rgba(139, 92, 246, 0.35)';
-                  e.currentTarget.style.color = '#ffffff';
-                }}
-                onMouseLeave={e => {
-                  e.currentTarget.style.background = 'rgba(139, 92, 246, 0.2)';
-                  e.currentTarget.style.color = '#c4b5fd';
-                }}
-                title="Switch to Server Remote Engine (Movies & TV)"
-              >
-                <Tv size={14} />
-                Switch to Movies & TV Engine
-              </button>
-            )}
-
-            <button
-                onClick={() => setShowIdentifyModal(true)}
-                style={{
-                  background: 'rgba(59, 130, 246, 0.2)',
-                  border: '1px solid rgba(59, 130, 246, 0.4)',
-                  color: '#93c5fd',
-                  padding: '7px 14px',
-                  borderRadius: '20px',
-                  fontSize: '12px',
-                  fontWeight: 700,
-                  cursor: 'pointer',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '6px',
-                  transition: 'all 0.15s ease'
-                }}
-                onMouseEnter={e => {
-                  e.currentTarget.style.background = 'rgba(59, 130, 246, 0.35)';
-                  e.currentTarget.style.color = '#ffffff';
-                }}
-                onMouseLeave={e => {
-                  e.currentTarget.style.background = 'rgba(59, 130, 246, 0.2)';
-                  e.currentTarget.style.color = '#93c5fd';
-                }}
-                title="Search IMDB to fetch Intro & Outro skip markers"
-              >
-                <Search size={14} />
-                Sync IntroDB
-              </button>
-              <button
-                onClick={toggleFullscreen}
-              style={{
-                background: 'rgba(255, 255, 255, 0.1)',
-                border: 'none',
-                color: '#fff',
-                borderRadius: '50%',
-                width: '38px',
-                height: '38px',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                cursor: 'pointer'
-              }}
-              title="Fullscreen (F)"
-            >
-              <Maximize size={18} />
-            </button>
-          </div>
-        </div>
-
-        {/* Bottom Bar Controls */}
-        <div style={{
-          padding: '16px 28px 24px 28px',
-          background: 'linear-gradient(to top, rgba(0,0,0,0.9) 0%, transparent 100%)',
-          display: 'flex',
-          flexDirection: 'column',
-          gap: '10px'
-        }}>
-          {/* Progress / Scrub Bar */}
-          <div
-            style={{ position: 'relative', width: '100%', height: '8px', cursor: 'pointer', display: 'flex', alignItems: 'center' }}
-            onClick={e => {
-              const rect = e.currentTarget.getBoundingClientRect();
-              const clickPercent = (e.clientX - rect.left) / rect.width;
-              handleSeek(clickPercent * duration);
-            }}
-            onMouseMove={e => {
-              const rect = e.currentTarget.getBoundingClientRect();
-              const percent = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
-              setHoverPercent(percent * 100);
-              setHoverTime(formatTime(percent * duration));
-            }}
-          >
-            {/* Background Track */}
-            <div style={{ width: '100%', height: '5px', backgroundColor: 'rgba(255, 255, 255, 0.2)', borderRadius: '3px', position: 'relative', overflow: 'hidden' }}>
-              {/* Buffered Ranges */}
-              {bufferedRanges.map((r, i) => (
-                <div
-                  key={i}
-                  style={{
-                    position: 'absolute',
-                    top: 0,
-                    bottom: 0,
-                    left: `${duration > 0 ? (r.start / duration) * 100 : 0}%`,
-                    width: `${duration > 0 ? ((r.end - r.start) / duration) * 100 : 0}%`,
-                    backgroundColor: 'rgba(255, 255, 255, 0.35)'
-                  }}
-                />
-              ))}
-              {/* Play Progress */}
-              <div style={{ width: `${progressPercent}%`, height: '100%', backgroundColor: '#06b6d4' }} />
-            </div>
-
-            {/* Scrub Handle */}
-            <div style={{
-              position: 'absolute',
-              left: `${progressPercent}%`,
-              transform: 'translateX(-50%)',
-              width: '13px',
-              height: '13px',
-              borderRadius: '50%',
-              backgroundColor: '#fff',
-              boxShadow: '0 0 8px rgba(6, 182, 212, 0.8)'
-            }} />
-          </div>
-
-          {/* Control Buttons Row */}
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', color: '#fff' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
-              <button
-                onClick={togglePlay}
-                style={{
-                  background: 'transparent',
-                  border: 'none',
-                  color: '#fff',
-                  cursor: 'pointer',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  padding: '6px'
-                }}
-                title={isPlaying ? 'Pause (Space)' : 'Play (Space)'}
-              >
-                {isPlaying ? <Pause size={24} /> : <Play size={24} />}
-              </button>
-
-              <button
-                onClick={() => handleSeek(currentTime - 10)}
-                style={{ background: 'transparent', border: 'none', color: '#fff', cursor: 'pointer', padding: '6px' }}
-                title="Rewind 10s (Left Arrow)"
-              >
-                <RotateCcw size={20} />
-              </button>
-
-              <button
-                onClick={() => handleSeek(currentTime + 10)}
-                style={{ background: 'transparent', border: 'none', color: '#fff', cursor: 'pointer', padding: '6px' }}
-                title="Forward 10s (Right Arrow)"
-              >
-                <RotateCw size={20} />
-              </button>
-
-              {/* Volume Slider */}
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginLeft: '6px' }}>
-                <button
-                  onClick={() => updateVolume(volume, !isMuted)}
-                  style={{ background: 'transparent', border: 'none', color: '#fff', cursor: 'pointer', padding: '4px' }}
-                  title="Mute / Unmute (M)"
-                >
-                  {isMuted || volume === 0 ? <VolumeX size={20} /> : volume < 0.5 ? <Volume1 size={20} /> : <Volume2 size={20} />}
-                </button>
-                <input
-                  type="range"
-                  min="0"
-                  max="1"
-                  step="0.05"
-                  value={isMuted ? 0 : volume}
-                  onChange={e => updateVolume(parseFloat(e.target.value), false)}
-                  style={{ width: '70px', accentColor: '#06b6d4', cursor: 'pointer' }}
-                />
-              </div>
-
-              {/* Time Display */}
-              <span style={{ fontSize: '13px', fontWeight: 600, color: '#e2e8f0', marginLeft: '8px' }}>
-                {formatTime(currentTime)} / {formatTime(duration)}
-              </span>
-            </div>
-
-            <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
-              <button
-                onClick={toggleFullscreen}
-                style={{ background: 'transparent', border: 'none', color: '#fff', cursor: 'pointer', padding: '6px' }}
-                title="Fullscreen (F)"
-              >
-                <Maximize size={20} />
-              </button>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* 6. Media Auth Modal if 401 encountered */}
-      <MediaAuthModal
-        isOpen={authModalState.isOpen}
-        initialUsername={authModalState.initialUsername}
-        errorMessage={authModalState.errorMessage}
-        isLoading={authModalState.isLoading}
-        onSubmit={async (username, password) => {
-          setAuthModalState(prev => ({ ...prev, isLoading: true, errorMessage: null }));
-          saveCredentials(video.url, username, password);
-          if (videoRef.current) {
-            videoRef.current.src = getProxiedUrl(video.url);
-            videoRef.current.load();
-            videoRef.current.play().catch(() => {});
-          }
-          setAuthModalState(prev => ({ ...prev, isOpen: false, isLoading: false }));
-        }}
-        onCancel={() => {
-          setAuthModalState(prev => ({ ...prev, isOpen: false }));
-          onBack();
-        }}
-      />
-      {/* Toast message */}
-      {toastMsg && (
-        <div style={{
-          position: 'absolute', top: '24px', left: '50%', transform: 'translateX(-50%)',
-          background: 'rgba(15, 23, 42, 0.9)', color: '#fff', padding: '8px 18px',
-          borderRadius: '24px', border: '1px solid rgba(255, 255, 255, 0.2)',
-          fontSize: '14px', fontWeight: 600, zIndex: 3000, pointerEvents: 'none'
-        }}>
-          {toastMsg}
-        </div>
-      )}
-
-      {/* Floating Skip Intro Button */}
-      {activeSkipBookmark && (
-        <button
-          onClick={() => handleSeek(activeSkipBookmark.endTime!)}
-          style={{
-            position: 'absolute',
-            bottom: '90px',
-            right: '32px',
-            zIndex: 3500,
-            background: 'rgba(15, 23, 42, 0.9)',
-            border: '1px solid rgba(255, 255, 255, 0.3)',
-            backdropFilter: 'blur(10px)',
-            color: '#ffffff',
-            padding: '10px 20px',
-            borderRadius: '30px',
-            fontSize: '14px',
-            fontWeight: 700,
-            cursor: 'pointer',
-            display: 'flex',
-            alignItems: 'center',
-            gap: '8px',
-            boxShadow: '0 8px 24px rgba(0, 0, 0, 0.6)'
+            color: '#ffffff'
           }}
         >
-          <SkipForward size={16} color="#60a5fa" />
-          Skip {activeSkipBookmark.label || 'Segment'}
-        </button>
+          {showCenterRipple === 'play' ? <Play size={40} fill="#ffffff" /> : <Pause size={40} fill="#ffffff" />}
+        </div>
       )}
 
-      {/* Media Identify & IntroDB Modal */}
+      {/* Netflix-style Paused Details Overlay */}
+      <PauseDetailsOverlay
+        visible={showPauseMetadataOverlay && !isPlaying}
+        mediaDetails={mediaDetails}
+        videoTitle={video.title}
+        duration={duration}
+      />
+
+      {/* Floating Skip Intro / Outro Button */}
+      <SkipIntroButton
+        bookmark={activeSkipBookmark || null}
+        onSkip={handleSeek}
+      />
+
+      {/* Top Header Overlay Bar */}
+      {controlsVisible && !isLocked && (
+        <PlayerTopBar
+          title={video.title || 'Simple Player'}
+          episodeInfo={mediaDetails?.season && mediaDetails?.episode ? `S${mediaDetails.season} E${mediaDetails.episode}` : undefined}
+          onBack={onBack}
+          currentMode="simple"
+          onSwitchMode={onSwitchMode}
+          isLocked={isLocked}
+          onToggleLock={() => setIsLocked(!isLocked)}
+          showConsole={showConsoleOverlay}
+          onToggleConsole={() => setShowConsoleOverlay(!showConsoleOverlay)}
+          onClose={onBack}
+        />
+      )}
+
+      {/* Bottom Controls Bar */}
+      {controlsVisible && !isLocked && (
+        <PlayerBottomBar
+          currentTime={currentTime}
+          duration={duration}
+          bufferedRanges={bufferedRanges}
+          bookmarks={bookmarks}
+          onSeek={handleSeek}
+          formatTime={formatTime}
+          isPlaying={isPlaying}
+          onTogglePlay={togglePlay}
+          onRewind10={() => handleSeek(currentTime - 10)}
+          onForward10={() => handleSeek(currentTime + 10)}
+          volume={volume}
+          isMuted={isMuted}
+          onChangeVolume={updateVolume}
+          onToggleMute={toggleMute}
+          playbackRate={playbackRate}
+          onChangeSpeed={handleSpeedChange}
+          isFullscreen={isFullscreen}
+          onToggleFullscreen={toggleFullscreen}
+          onTogglePiP={togglePiP}
+          showAudioSubMenu={showAudioSubMenu}
+          setShowAudioSubMenu={setShowAudioSubMenu}
+          audioSubPopoverContent={
+            <AudioSubPopover
+              audioStreams={[]}
+              audioTracks={audioTracks}
+              selectedAudioTrack={selectedAudioTrack}
+              setSelectedAudioTrack={setSelectedAudioTrack}
+              setActiveAudioStreamIndex={() => {}}
+              handleSelectEmbeddedAudio={async () => {}}
+              customAudioInputRef={customAudioInputRef}
+              subtitleStreams={[]}
+              subtitleTracks={subtitleTracks}
+              selectedSubTrack={selectedSubTrack}
+              setSelectedSubTrack={setSelectedSubTrack}
+              setActiveSubStreamIndex={() => {}}
+              handleSelectEmbeddedSubtitle={async () => {}}
+              customSubInputRef={customSubInputRef}
+              currentTime={currentTime}
+              videoRef={videoRef}
+              setCurrentTime={handleSeek}
+              setShowAudioSubMenu={setShowAudioSubMenu}
+              audioSubTimeoutRef={{ current: null }}
+              getLangLabel={(l) => l || 'Default'}
+              formatTime={formatTime}
+              cleanSubtitleText={cleanSubtitleText}
+              subSettings={subSettings}
+              onUpdateSubSettings={(s) => {
+                setSubSettings(prev => ({ ...prev, ...s }));
+                propOnUpdateSubSettings?.(s);
+              }}
+              audioBoost={audioBoost}
+              setAudioBoost={setAudioBoost}
+              openSubtitles={openSubtitles}
+              isOpenSubLoading={isOpenSubLoading}
+              onDownloadOpenSubtitle={downloadOpenSubtitle}
+              hasFetchedOpenSubtitles={hasFetchedOpenSubtitles}
+              onFetchOpenSubtitles={fetchOpenSubtitles}
+            />
+          }
+          showBookmarksPopover={showBookmarksPopover}
+          setShowBookmarksPopover={setShowBookmarksPopover}
+          bookmarkPanelContent={
+            <BookmarkPanel
+              bookmarks={bookmarks}
+              onJump={handleSeek}
+              onEdit={(bm) => {
+                setEditingBookmark(bm);
+                setShowBookmarkModal(true);
+                setShowBookmarksPopover(false);
+              }}
+              onDelete={(id) => {
+                const filtered = bookmarks.filter(b => b.id !== id);
+                setBookmarks(filtered);
+                onUpdateVideo({ ...video, bookmarks: filtered }, false);
+              }}
+              onAdd={() => {
+                setEditingBookmark(undefined);
+                setShowBookmarkModal(true);
+                setShowBookmarksPopover(false);
+              }}
+              onClose={() => setShowBookmarksPopover(false)}
+            />
+          }
+          systemTime={systemTime}
+        />
+      )}
+
+      {/* Bookmark Modal */}
+      {showBookmarkModal && (
+        <BookmarkModal
+          initialTime={currentTime}
+          initialBookmark={editingBookmark}
+          videoElement={videoRef.current}
+          videoTitle={video.title}
+          onSave={(bmData) => {
+            let updated: Bookmark[];
+            if (editingBookmark) {
+              updated = bookmarks.map(b => b.id === editingBookmark.id ? ({ ...b, ...bmData } as Bookmark) : b);
+            } else {
+              const newBm: Bookmark = {
+                id: `bm-${Date.now()}`,
+                time: currentTime,
+                label: bmData.title || bmData.label || 'Bookmark',
+                title: bmData.title || bmData.label || 'Bookmark',
+                category: bmData.category || 'Intro',
+                endTime: bmData.endTime,
+                ...bmData
+              } as Bookmark;
+              updated = [...bookmarks, newBm];
+            }
+            setBookmarks(updated);
+            onUpdateVideo({ ...video, bookmarks: updated }, false);
+            setShowBookmarkModal(false);
+            setEditingBookmark(undefined);
+            triggerToast("Bookmark saved");
+          }}
+          onClose={() => {
+            setShowBookmarkModal(false);
+            setEditingBookmark(undefined);
+          }}
+        />
+      )}
+
+      {/* Media Identify & TheIntroDB Modal */}
       {showIdentifyModal && (
         <MediaIdentifyModal
           isOpen={showIdentifyModal}
@@ -812,12 +847,106 @@ export const SimpleRemotePlayer: React.FC<SimpleRemotePlayerProps> = ({
               tmdbId: mediaInfo.tmdbId,
               bookmarks: updated
             }, false);
+            triggerToast(`Loaded ${newBms.length} bookmarks`);
           }}
-          onToast={msg => {
-            setToastMsg(msg);
-            setTimeout(() => setToastMsg(null), 3000);
+          onToast={triggerToast}
+          videoId={video.id}
+        />
+      )}
+
+      {/* Media Auth Modal (HTTP 401 basic auth) */}
+      <MediaAuthModal
+        isOpen={authModalState.isOpen}
+        url={video.url}
+        initialUsername={authModalState.initialUsername}
+        errorMessage={authModalState.errorMessage}
+        isLoading={authModalState.isLoading}
+        onSubmit={async ({ username, password }) => {
+          setAuthModalState(prev => ({ ...prev, isLoading: true, errorMessage: null }));
+          saveCredentials(video.url, { username, password });
+          if (videoRef.current) {
+            videoRef.current.src = getProxiedUrl(video.url);
+            videoRef.current.load();
+            videoRef.current.play().catch(() => {});
+          }
+          setAuthModalState(prev => ({ ...prev, isOpen: false, isLoading: false }));
+        }}
+        onCancel={() => {
+          setAuthModalState(prev => ({ ...prev, isOpen: false }));
+          onBack();
+        }}
+      />
+
+      {/* Stream Stats Console Overlay */}
+      {showConsoleOverlay && (
+        <ConsoleOverlay onClose={() => setShowConsoleOverlay(false)} />
+      )}
+
+      {/* Radial Menu on Right Click */}
+      {radialMenuState.visible && (
+        <RadialMenu
+          x={radialMenuState.x}
+          y={radialMenuState.y}
+          onClose={() => setRadialMenuState({ visible: false, x: 0, y: 0 })}
+          items={[
+            {
+              id: 'audioSubs',
+              label: 'Audio/Subs',
+              onClick: () => setShowAudioSubMenu(true),
+              disabled: isLocked
+            },
+            {
+              id: 'bookmark',
+              label: 'Bookmark',
+              onClick: () => setShowBookmarkModal(true),
+              disabled: isLocked
+            },
+            {
+              id: 'fullscreen',
+              label: isFullscreen ? 'Exit Fullscreen' : 'Fullscreen',
+              onClick: toggleFullscreen,
+              disabled: false
+            },
+            {
+              id: 'speed',
+              label: `${playbackRate}x Speed`,
+              onClick: () => {
+                const speeds = [1.0, 1.25, 1.5, 2.0];
+                const next = speeds[(speeds.indexOf(playbackRate) + 1) % speeds.length];
+                handleSpeedChange(next);
+              },
+              disabled: isLocked
+            }
+          ]}
+          centerItem={{
+            icon: isPlaying ? <Pause size={24} fill="#ffffff" /> : <Play size={24} fill="#ffffff" />,
+            onClick: togglePlay,
+            disabled: false
           }}
         />
+      )}
+
+      {/* Toast Notification Notification Pill */}
+      {toastMsg && (
+        <div style={{
+          position: 'absolute',
+          top: '32px',
+          left: '50%',
+          transform: 'translateX(-50%)',
+          background: 'var(--card-bg, rgba(18, 18, 28, 0.95))',
+          color: 'var(--text-primary, #ffffff)',
+          padding: '8px 20px',
+          borderRadius: '30px',
+          border: '1px solid var(--border-color, rgba(255, 255, 255, 0.18))',
+          boxShadow: 'var(--shadow-lg, 0 8px 24px rgba(0, 0, 0, 0.6))',
+          fontSize: '13px',
+          fontWeight: 600,
+          zIndex: 4000,
+          pointerEvents: 'none',
+          animation: 'fadeIn 0.2s ease-out'
+        }}>
+          {toastMsg}
+        </div>
       )}
     </div>
   );

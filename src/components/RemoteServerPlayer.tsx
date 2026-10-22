@@ -41,7 +41,49 @@ const getAudioBoostMultiplier = (boostPercent: number): number => {
   return 1.0;
 };
 import { classifyVideoTitle } from '../utils/libraryClassifier';
-import { syncTraktHistory, syncTraktRating, resolveTraktMetadata } from '../services/traktAuth';
+import { syncTraktHistory, syncTraktRating, resolveTraktMetadata, isTraktLoggedIn, getTraktToken, searchTraktMedia, fetchTraktEpisode } from '../services/traktAuth';
+
+export const isGenericTitle = (title?: string): boolean => {
+  if (!title || !title.trim()) return true;
+  const clean = title.trim().toLowerCase();
+  if (
+    clean === 'remote stream' ||
+    clean === 'embedded video' ||
+    clean === 'embedded media' ||
+    clean === 'video' ||
+    clean === 'untitled' ||
+    clean === 'unknown title' ||
+    clean === 'unknown series' ||
+    clean === 'unknown media' ||
+    clean === 'stream' ||
+    clean === 'master' ||
+    clean === 'playlist'
+  ) {
+    return true;
+  }
+  if (/^[a-f0-9]{16,}$/i.test(clean) || /^[a-zA-Z0-9_\-]{20,}$/.test(clean)) {
+    return true;
+  }
+  return false;
+};
+
+export const extractTitleFromUrl = (url?: string): string => {
+  if (!url) return '';
+  try {
+    const parsed = new URL(url, typeof window !== 'undefined' ? window.location.origin : 'http://localhost');
+    const paramTitle = parsed.searchParams.get('title') || parsed.searchParams.get('name') || parsed.searchParams.get('file');
+    if (paramTitle && !isGenericTitle(paramTitle)) {
+      return paramTitle.trim();
+    }
+    const segments = parsed.pathname.split('/').filter(Boolean);
+    const last = segments.pop() || '';
+    const clean = decodeURIComponent(last).replace(/\.[^/.]+$/, '').trim();
+    if (clean && !isGenericTitle(clean)) {
+      return clean;
+    }
+  } catch {}
+  return '';
+};
 import { LoadingSpinner, BufferingOverlay } from './LoadingSpinner';
 import { RadialMenu } from './RadialMenu';
 import { ConsoleOverlay } from './ConsoleOverlay';
@@ -235,7 +277,7 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
   showPauseMetadataOverlayRef.current = showPauseMetadataOverlay;
   const pauseOverlayTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [mediaDetails, setMediaDetails] = useState<MediaDetails | null>(() => {
-    const rawTitle = video.title || (video as any).fileName || '';
+    const rawTitle = video.title || (video as any).fileName || extractTitleFromUrl(video.url) || '';
     const seriesInfo = classifyVideoTitle(rawTitle);
     const isTV = seriesInfo.type === 'series';
     const initialTitle = (isTV && seriesInfo.seriesTitle) 
@@ -252,7 +294,7 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
   });
 
   useEffect(() => {
-    const rawTitle = video.title || (video as any).fileName || '';
+    const rawTitle = video.title || (video as any).fileName || extractTitleFromUrl(video.url) || '';
     const seriesInfo = classifyVideoTitle(rawTitle);
     const isTV = seriesInfo.type === 'series';
     const initialTitle = (isTV && seriesInfo.seriesTitle) 
@@ -260,7 +302,7 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
       : (seriesInfo.displayTitle || rawTitle || 'Unknown Title');
     
     setMediaDetails(prev => ({
-      title: initialTitle,
+      title: (prev?.title && !isGenericTitle(prev.title)) ? prev.title : initialTitle,
       overview: prev?.overview || '',
       imageUrl: prev?.imageUrl || '',
       logoUrl: prev?.logoUrl,
@@ -270,7 +312,7 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
       season: isTV ? (prev?.season ?? seriesInfo.season) : undefined,
       episode: isTV ? (prev?.episode ?? seriesInfo.episode) : undefined,
     }));
-  }, [video.id, video.title, (video as any).fileName]);
+  }, [video.id, video.title, (video as any).fileName, video.url]);
 
   const [videoLayout, setVideoLayout] = useState({ left: 0, top: 0, width: 0, height: 0 });
   const [openSubtitles, setOpenSubtitles] = useState<any[]>([]);
@@ -1180,42 +1222,133 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
 
     const fetchAllBookmarks = async () => {
       let resolvedTmdbId = video.tmdbId || tmdbIdRef.current;
-      const seriesInfo = classifyVideoTitle(video.title);
+      const rawTitle = video.title || (video as any).fileName || extractTitleFromUrl(video.url) || '';
+      const seriesInfo = classifyVideoTitle(rawTitle);
       const isTV = seriesInfo.type === 'series';
       const season = seriesInfo.season || 1;
       const episode = seriesInfo.episode || 1;
+      const hasMediaName = !isGenericTitle(rawTitle);
 
       if (!resolvedTmdbId) {
-        try {
-          const tmdbToken = "eyJhbGciOiJIUzI1NiJ9.eyJhdWQiOiJlMzQwMGRhZWZjODJjNTJlZDEyYzk1MWU1ZWFmYmVhYyIsIm5iZiI6MTc4MzU0MTI2OS44NzUsInN1YiI6IjZhNGVhZTE1MzFhOWUyYmNhZjBmY2RlMiIsInNjb3BlcyI6WyJhcGlfcmVhZCJdLCJ2ZXJzaW9uIjoxfQ.GT6_b6NSJwjYCXlbaCi_djq09ug0rKDxY9iouqVrYWY";
-          let searchUrl = "";
-          if (isTV && seriesInfo.seriesTitle) {
-            searchUrl = `https://api.themoviedb.org/3/search/tv?query=${encodeURIComponent(seriesInfo.seriesTitle)}&include_adult=false`;
-          } else {
-            searchUrl = `https://api.themoviedb.org/3/search/movie?query=${encodeURIComponent(seriesInfo.displayTitle)}&include_adult=false`;
-          }
+        let tmdbRunning = true;
+        let tmdbMatched = false;
 
-          logger.player(`[Bookmarks Sync] Querying TMDB search: "${searchUrl}"`);
-          const searchRes = await fetch(searchUrl, {
-            headers: { 'Authorization': `Bearer ${tmdbToken}`, 'accept': 'application/json' }
-          });
-
-          if (searchRes.ok) {
-            const searchData = await searchRes.json();
-            if (searchData.results && searchData.results.length > 0) {
-              const matchedItem = searchData.results[0];
-              resolvedTmdbId = matchedItem.id;
-              tmdbIdRef.current = resolvedTmdbId;
-
-              // Save tmdbId in the video metadata
-              onUpdateVideo((prev: any) => ({
-                ...prev,
-                tmdbId: resolvedTmdbId
-              }));
+        // 1. If media name is present, try querying TMDB first
+        if (hasMediaName) {
+          try {
+            const tmdbToken = "eyJhbGciOiJIUzI1NiJ9.eyJhdWQiOiJlMzQwMGRhZWZjODJjNTJlZDEyYzk1MWU1ZWFmYmVhYyIsIm5iZiI6MTc4MzU0MTI2OS44NzUsInN1YiI6IjZhNGVhZTE1MzFhOWUyYmNhZjBmY2RlMiIsInNjb3BlcyI6WyJhcGlfcmVhZCJdLCJ2ZXJzaW9uIjoxfQ.GT6_b6NSJwjYCXlbaCi_djq09ug0rKDxY9iouqVrYWY";
+            let searchUrl = "";
+            if (isTV && seriesInfo.seriesTitle) {
+              searchUrl = `https://api.themoviedb.org/3/search/tv?query=${encodeURIComponent(seriesInfo.seriesTitle)}&include_adult=false`;
+            } else {
+              searchUrl = `https://api.themoviedb.org/3/search/movie?query=${encodeURIComponent(seriesInfo.displayTitle || rawTitle)}&include_adult=false`;
             }
+
+            logger.player(`[Bookmarks Sync] Querying TMDB search: "${searchUrl}"`);
+            const searchRes = await fetch(searchUrl, {
+              headers: { 'Authorization': `Bearer ${tmdbToken}`, 'accept': 'application/json' }
+            });
+
+            if (searchRes.ok) {
+              const searchData = await searchRes.json();
+              if (searchData.results && searchData.results.length > 0) {
+                const matchedItem = searchData.results[0];
+                resolvedTmdbId = matchedItem.id;
+                tmdbIdRef.current = resolvedTmdbId;
+                tmdbMatched = true;
+
+                // Save tmdbId in the video metadata
+                onUpdateVideo((prev: any) => ({
+                  ...prev,
+                  tmdbId: resolvedTmdbId,
+                  ...(isGenericTitle(prev.title) && (matchedItem.name || matchedItem.title) ? { title: matchedItem.name || matchedItem.title } : {})
+                }));
+              }
+            } else {
+              tmdbRunning = false;
+              logger.player(`[Bookmarks Sync] TMDB search returned HTTP ${searchRes.status} (TMDB not running/available)`);
+            }
+          } catch (err) {
+            tmdbRunning = false;
+            logger.player(`[Bookmarks Sync] TMDB search error / not running: ${err}`);
           }
-        } catch (err) {
-          logger.player(`[Bookmarks Sync] TMDB search error: ${err}`);
+        } else {
+          logger.player('[Bookmarks Sync] Name of media is not present in video title.');
+        }
+
+        // 2. If name of the media is not there or TMDB is not running/matched:
+        // Check if user is logged into Trakt and then search via Trakt to get the ID
+        if (!resolvedTmdbId) {
+          const traktToken = getTraktToken();
+          const userLoggedInTrakt = isTraktLoggedIn(traktToken || undefined);
+
+          if (userLoggedInTrakt) {
+            logger.player('[Bookmarks Sync] Media name not resolved or TMDB not running. Checking Trakt... User is logged in to Trakt.tv. Searching via Trakt to get the ID...');
+            const traktQuery = (isTV && seriesInfo.seriesTitle)
+              ? seriesInfo.seriesTitle
+              : (seriesInfo.displayTitle || rawTitle || extractTitleFromUrl(video.url)).trim();
+
+            if (traktQuery && !isGenericTitle(traktQuery)) {
+              try {
+                const traktResult = await searchTraktMedia(traktQuery, isTV, traktToken || undefined);
+                if (traktResult && traktResult.ids) {
+                  const { ids, title: traktTitle, overview: traktOverview, year: traktYear, rating: traktRating } = traktResult;
+                  const traktTmdbId = ids.tmdb ? Number(ids.tmdb) : null;
+                  const traktId = ids.trakt ? Number(ids.trakt) : null;
+                  const imdbId = ids.imdb || undefined;
+
+                  if (traktTmdbId) {
+                    resolvedTmdbId = traktTmdbId;
+                    tmdbIdRef.current = resolvedTmdbId;
+                  }
+
+                  logger.player(`[Bookmarks Sync] Trakt search resolved media: "${traktTitle}" (TMDB ID: ${traktTmdbId || 'N/A'}, Trakt ID: ${traktId || 'N/A'})`);
+
+                  // If series, attempt to get episode details from Trakt
+                  let traktEpTitle: string | undefined = undefined;
+                  if (traktResult.isTV && (ids.trakt || ids.slug || traktTmdbId)) {
+                    try {
+                      const epMatch = await fetchTraktEpisode(ids.trakt || ids.slug || traktTmdbId!, season, episode, traktToken || undefined);
+                      if (epMatch?.title) {
+                        traktEpTitle = epMatch.title;
+                      }
+                    } catch {}
+                  }
+
+                  // Update video metadata and storage
+                  onUpdateVideo((prev: any) => ({
+                    ...prev,
+                    ...(traktTmdbId ? { tmdbId: traktTmdbId } : {}),
+                    ...(traktId ? { traktId } : {}),
+                    ...(imdbId ? { imdbId } : {}),
+                    ...(traktTitle && isGenericTitle(prev.title) ? { title: traktTitle } : {})
+                  }));
+
+                  // Update media details for pause card overlay and UI
+                  setMediaDetails((prev) => ({
+                    title: traktTitle || prev?.title || 'Unknown Title',
+                    overview: traktOverview || prev?.overview || '',
+                    imageUrl: prev?.imageUrl || '',
+                    releaseDate: traktYear ? String(traktYear) : prev?.releaseDate,
+                    rating: traktRating || prev?.rating,
+                    season: isTV ? season : prev?.season,
+                    episode: isTV ? episode : prev?.episode,
+                    episodeTitle: traktEpTitle || prev?.episodeTitle
+                  }));
+
+                  setShowIdentifyModal(false);
+                } else {
+                  logger.player(`[Bookmarks Sync] Trakt search yielded no results for "${traktQuery}".`);
+                }
+              } catch (traktErr) {
+                logger.player(`[Bookmarks Sync] Trakt search error: ${traktErr}`);
+              }
+            } else {
+              logger.player('[Bookmarks Sync] Skipping Trakt search: No media query could be derived from title, filename, or URL.');
+            }
+          } else {
+            logger.player('[Bookmarks Sync] TMDB not running or media unresolved, but user is not logged in to Trakt.tv.');
+          }
         }
       }
 
@@ -2104,6 +2237,8 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
   useEffect(() => {
     const autoProbe = async () => {
       if (video.type === 'local' && video.file && !video.streams && probingVideoIdRef.current !== video.id) {
+        const targetFile = video.file;
+        if (!targetFile) return;
         // Remote media runs on native hardware acceleration with backend 240s sliding cache
     if (true || !isWasmSupported()) {
           logger.player('WebAssembly is not supported in this browser. Skipping FFmpeg probe and using native stream.');
@@ -2113,7 +2248,7 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
 
         // Verify that the file is actually readable
         try {
-          await video.file.slice(0, 1).arrayBuffer();
+          await targetFile.slice(0, 1).arrayBuffer();
         } catch (readErr) {
           logger.error('Local file is not readable on auto-probe:', readErr);
           probingVideoIdRef.current = null;
@@ -2125,12 +2260,12 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
           if (!ffmpegService.isReady()) {
             await ffmpegService.load(video.id);
           }
-          const result = await ffmpegService.probeFile(video.file, video.id);
+          const result = await ffmpegService.probeFile(targetFile, video.id);
 
           let seekMap: any[] = [];
           let timecodeScale: number | undefined = undefined;
           try {
-            const fileSource = new FileByteSource(video.file);
+            const fileSource = new FileByteSource(targetFile);
             const cachedFileSource = new CachedByteSource(fileSource);
             const containerType = (result.format || '').toLowerCase();
             if (containerType.includes('mkv') || containerType.includes('matroska')) {
@@ -4538,7 +4673,6 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
           onContextMenu={(e) => e.preventDefault()}
           src={getProxiedVideoUrl(video.url)}
           autoPlay
-          crossOrigin="anonymous"
           controls={false}
           crossOrigin={video.playbackMode === 'advanced' ? 'anonymous' : undefined}
           className="main-video-element"

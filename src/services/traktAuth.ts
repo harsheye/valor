@@ -610,20 +610,72 @@ export interface TraktResolvedMetadata {
 }
 
 /**
+ * Checks if user is authenticated into Trakt.tv via stored token or provided token.
+ */
+export function isTraktLoggedIn(token?: string): boolean {
+  if (token && typeof token === 'string' && token.trim().length > 0) {
+    return true;
+  }
+  if (typeof window === 'undefined') return false;
+  try {
+    const saved = localStorage.getItem('valor_settings');
+    if (!saved) return false;
+    const parsed = JSON.parse(saved);
+    return Boolean(parsed.traktAccessToken && typeof parsed.traktAccessToken === 'string' && parsed.traktAccessToken.trim().length > 0);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Retrieves the stored Trakt access token if user is logged in.
+ */
+export function getTraktToken(): string | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const saved = localStorage.getItem('valor_settings');
+    if (!saved) return null;
+    const parsed = JSON.parse(saved);
+    return (parsed.traktAccessToken && typeof parsed.traktAccessToken === 'string' && parsed.traktAccessToken.trim().length > 0)
+      ? parsed.traktAccessToken.trim()
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+export interface TraktSearchResult {
+  title: string;
+  ids: TraktMediaIds;
+  overview?: string;
+  year?: number;
+  rating?: number;
+  isTV?: boolean;
+}
+
+/**
  * Searches Trakt for a TV show by title or TMDB ID
  */
-export async function searchTraktShow(query: string, tmdbId?: number | null): Promise<{ title: string; ids: TraktMediaIds } | null> {
-  const headers = getTraktHeaders();
+export async function searchTraktShow(
+  query: string,
+  tmdbId?: number | null,
+  token?: string
+): Promise<TraktSearchResult | null> {
+  const headers = getTraktHeaders(token);
 
   if (tmdbId) {
     try {
-      const res = await fetch(`${TRAKT_API_BASE}/search/tmdb/${tmdbId}?type=show`, { headers });
+      const res = await fetch(`${TRAKT_API_BASE}/search/tmdb/${tmdbId}?type=show&extended=full`, { headers });
       if (res.ok) {
         const data = await res.json();
         if (Array.isArray(data) && data.length > 0 && data[0].show) {
           return {
             title: data[0].show.title,
-            ids: data[0].show.ids
+            ids: data[0].show.ids,
+            overview: data[0].show.overview,
+            year: data[0].show.year,
+            rating: data[0].show.rating,
+            isTV: true
           };
         }
       }
@@ -634,13 +686,18 @@ export async function searchTraktShow(query: string, tmdbId?: number | null): Pr
 
   if (query && query.trim()) {
     try {
-      const res = await fetch(`${TRAKT_API_BASE}/search/show?query=${encodeURIComponent(query.trim())}`, { headers });
+      const clean = query.replace(/[._]/g, ' ').trim();
+      const res = await fetch(`${TRAKT_API_BASE}/search/show?query=${encodeURIComponent(clean)}&extended=full`, { headers });
       if (res.ok) {
         const data = await res.json();
         if (Array.isArray(data) && data.length > 0 && data[0].show) {
           return {
             title: data[0].show.title,
-            ids: data[0].show.ids
+            ids: data[0].show.ids,
+            overview: data[0].show.overview,
+            year: data[0].show.year,
+            rating: data[0].show.rating,
+            isTV: true
           };
         }
       }
@@ -655,18 +712,26 @@ export async function searchTraktShow(query: string, tmdbId?: number | null): Pr
 /**
  * Searches Trakt for a movie by title or TMDB ID
  */
-export async function searchTraktMovie(query: string, tmdbId?: number | null): Promise<{ title: string; ids: TraktMediaIds } | null> {
-  const headers = getTraktHeaders();
+export async function searchTraktMovie(
+  query: string,
+  tmdbId?: number | null,
+  token?: string
+): Promise<TraktSearchResult | null> {
+  const headers = getTraktHeaders(token);
 
   if (tmdbId) {
     try {
-      const res = await fetch(`${TRAKT_API_BASE}/search/tmdb/${tmdbId}?type=movie`, { headers });
+      const res = await fetch(`${TRAKT_API_BASE}/search/tmdb/${tmdbId}?type=movie&extended=full`, { headers });
       if (res.ok) {
         const data = await res.json();
         if (Array.isArray(data) && data.length > 0 && data[0].movie) {
           return {
             title: data[0].movie.title,
-            ids: data[0].movie.ids
+            ids: data[0].movie.ids,
+            overview: data[0].movie.overview,
+            year: data[0].movie.year,
+            rating: data[0].movie.rating,
+            isTV: false
           };
         }
       }
@@ -677,13 +742,18 @@ export async function searchTraktMovie(query: string, tmdbId?: number | null): P
 
   if (query && query.trim()) {
     try {
-      const res = await fetch(`${TRAKT_API_BASE}/search/movie?query=${encodeURIComponent(query.trim())}`, { headers });
+      const clean = query.replace(/[._]/g, ' ').trim();
+      const res = await fetch(`${TRAKT_API_BASE}/search/movie?query=${encodeURIComponent(clean)}&extended=full`, { headers });
       if (res.ok) {
         const data = await res.json();
         if (Array.isArray(data) && data.length > 0 && data[0].movie) {
           return {
             title: data[0].movie.title,
-            ids: data[0].movie.ids
+            ids: data[0].movie.ids,
+            overview: data[0].movie.overview,
+            year: data[0].movie.year,
+            rating: data[0].movie.rating,
+            isTV: false
           };
         }
       }
@@ -696,17 +766,44 @@ export async function searchTraktMovie(query: string, tmdbId?: number | null): P
 }
 
 /**
+ * Searches Trakt for either a movie or show by query title with intelligent fallback.
+ */
+export async function searchTraktMedia(
+  query: string,
+  isTVHint?: boolean,
+  token?: string
+): Promise<TraktSearchResult | null> {
+  if (!query || !query.trim()) return null;
+  const cleanQuery = query.replace(/[._]/g, ' ').trim();
+
+  if (isTVHint) {
+    const show = await searchTraktShow(cleanQuery, null, token);
+    if (show) return show;
+    const movie = await searchTraktMovie(cleanQuery, null, token);
+    if (movie) return movie;
+  } else {
+    const movie = await searchTraktMovie(cleanQuery, null, token);
+    if (movie) return movie;
+    const show = await searchTraktShow(cleanQuery, null, token);
+    if (show) return show;
+  }
+
+  return null;
+}
+
+/**
  * Fetches episode details and IDs from Trakt
  */
 export async function fetchTraktEpisode(
   showIdentifier: string | number,
   season: number,
-  episode: number
-): Promise<{ title?: string; ids: TraktMediaIds } | null> {
-  const headers = getTraktHeaders();
+  episode: number,
+  token?: string
+): Promise<{ title?: string; ids: TraktMediaIds; overview?: string; rating?: number } | null> {
+  const headers = getTraktHeaders(token);
   try {
     const res = await fetch(
-      `${TRAKT_API_BASE}/shows/${encodeURIComponent(String(showIdentifier))}/seasons/${season}/episodes/${episode}`,
+      `${TRAKT_API_BASE}/shows/${encodeURIComponent(String(showIdentifier))}/seasons/${season}/episodes/${episode}?extended=full`,
       { headers }
     );
     if (res.ok) {
@@ -714,7 +811,9 @@ export async function fetchTraktEpisode(
       if (data && data.ids) {
         return {
           title: data.title,
-          ids: data.ids
+          ids: data.ids,
+          overview: data.overview,
+          rating: data.rating
         };
       }
     }
@@ -727,16 +826,19 @@ export async function fetchTraktEpisode(
 /**
  * Resolves media metadata using library title classifier and Trakt endpoints
  */
-export async function resolveTraktMetadata(video: {
-  title: string;
-  tmdbId?: number | null;
-}): Promise<TraktResolvedMetadata> {
+export async function resolveTraktMetadata(
+  video: {
+    title: string;
+    tmdbId?: number | null;
+  },
+  token?: string
+): Promise<TraktResolvedMetadata> {
   const seriesInfo = classifyVideoTitle(video.title);
   const isTV = seriesInfo.type === 'series';
 
   if (isTV) {
     const query = seriesInfo.seriesTitle || video.title;
-    const showMatch = await searchTraktShow(query, video.tmdbId);
+    const showMatch = await searchTraktShow(query, video.tmdbId, token);
     const showIds = showMatch?.ids || (video.tmdbId ? { tmdb: video.tmdbId } : undefined);
     const showTitle = showMatch?.title || seriesInfo.seriesTitle || video.title;
     const season = seriesInfo.season || 1;
@@ -747,7 +849,7 @@ export async function resolveTraktMetadata(video: {
 
     const showIdentifier = showIds?.trakt || showIds?.slug || video.tmdbId || query;
     if (showIdentifier) {
-      const epMatch = await fetchTraktEpisode(showIdentifier, season, episode);
+      const epMatch = await fetchTraktEpisode(showIdentifier, season, episode, token);
       if (epMatch) {
         episodeIds = epMatch.ids;
         episodeTitle = epMatch.title;
@@ -767,7 +869,7 @@ export async function resolveTraktMetadata(video: {
   }
 
   const query = seriesInfo.displayTitle || video.title;
-  const movieMatch = await searchTraktMovie(query, video.tmdbId);
+  const movieMatch = await searchTraktMovie(query, video.tmdbId, token);
   const movieIds = movieMatch?.ids || (video.tmdbId ? { tmdb: video.tmdbId } : undefined);
   const movieTitle = movieMatch?.title || seriesInfo.displayTitle || video.title;
 
