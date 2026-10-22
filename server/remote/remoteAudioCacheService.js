@@ -522,7 +522,7 @@ export class RemoteAudioCacheService {
 
       return new Promise((resolve, reject) => {
         const child = spawn(ffmpegInstaller.path, args, { stdio: ['ignore', 'pipe', 'pipe'] });
-        const killTimer = setTimeout(() => { try { child.kill('SIGKILL'); } catch {} }, 25000);
+        const killTimer = setTimeout(() => { try { child.kill('SIGKILL'); } catch {} }, 60000);
         let stdout = '';
         let stderr = '';
 

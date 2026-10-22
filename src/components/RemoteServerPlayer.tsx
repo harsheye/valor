@@ -2034,7 +2034,7 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
       
       const containerType = (video.containerType || '').toLowerCase();
       const isMkv = containerType.includes('mkv') || containerType.includes('matroska') || (video.format || '').toLowerCase().includes('mkv') || (video.format || '').toLowerCase().includes('matroska');
-      const subDuration = isRemote ? (isMkv ? 300 : 60) : 300;
+      const subDuration = isRemote ? 120 : (isMkv ? 300 : 60);
 
       if (activeAudioStreamIndex !== null && selectedAudioTrack && selectedAudioTrack.streamIndex === activeAudioStreamIndex && selectedAudioTrack.url) {
         if (currentTime - activeAudioStartOffsetRef.current > audioDuration - 15) {
@@ -2508,20 +2508,21 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
       && (selectedSubTrack as any).isFullTrack
     ) return;
 
-    // The playback clock updates continuously. Advance the window before any
-    // async work so the boundary effect cannot launch the same fetch every frame.
+    // The playback clock updates continuously.
+    // If an in-flight request is already active for this stream and covers the requested time window, don't abort or re-fetch.
     const inFlight = subtitleLoadInFlightRef.current;
     if (
       inFlight
       && !inFlight.controller.signal.aborted
       && inFlight.streamIndex === streamIndex
-      && Math.abs(inFlight.time - time) < 10
+      && time >= inFlight.time - 5
+      && time < inFlight.time + 110
     ) return;
 
     activeSubtitleStartOffsetRef.current = time;
     setActiveSubtitleStartOffset(time);
 
-    // A real seek or a different subtitle window replaces the previous fetch.
+    // A real seek outside the window or a streamIndex switch replaces the previous fetch.
     if (subAbortControllerRef.current) {
       subAbortControllerRef.current.abort();
     }
@@ -2538,7 +2539,7 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
       if (video.isRemote) {
         try {
           const creds = (video as any).auth || getSavedCredentials(video.url);
-          const chunkDuration = 300;
+          const chunkDuration = 120;
           const params = new URLSearchParams({
             url: video.url,
             streamIndex: String(streamIndex),
@@ -2819,12 +2820,14 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
         }
       }
     } finally {
+      if (subtitleLoadInFlightRef.current?.controller === currentController) {
+        subtitleLoadInFlightRef.current = null;
+      }
       if (subAbortControllerRef.current === currentController) {
         subAbortControllerRef.current = null;
-        subtitleLoadInFlightRef.current = null;
-        setExtractingStreamIndex(null);
-        setIsKeyInitiated(false);
       }
+      setExtractingStreamIndex(null);
+      setIsKeyInitiated(false);
     }
   };
 
@@ -2955,7 +2958,7 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
         }
       } else {
         const isRemote = video.isRemote;
-        const subDuration = isRemote ? 300 : (isMkv ? 300 : 60);
+        const subDuration = isRemote ? 120 : (isMkv ? 300 : 60);
         if (!(selectedSubTrack as any)?.isFullTrack && (newTime < activeSubtitleStartOffsetRef.current || newTime > activeSubtitleStartOffsetRef.current + subDuration - 5)) {
           needLoad = true;
         }
@@ -3003,6 +3006,10 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
       triggerSwitchToast('WebAssembly unavailable on this browser. Embedded subtitle extraction disabled.');
       return;
     }
+    // Guard: if this stream is already active and loaded, don't restart
+    if (activeSubStreamIndex === streamIndex && selectedSubTrack?.streamIndex === streamIndex && selectedSubTrack.cues.length > 0) {
+      return;
+    }
     if (subDebounceTimeoutRef.current) {
       clearTimeout(subDebounceTimeoutRef.current);
       subDebounceTimeoutRef.current = null;
@@ -3020,7 +3027,8 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
     });
     syncSubRef(null, streamIndex);
     if (!skipLoad) {
-      await loadSubtitleChunk(currentTime, streamIndex);
+      const playhead = videoRef.current ? videoRef.current.currentTime : currentTime;
+      await loadSubtitleChunk(playhead, streamIndex);
     }
   };
 
@@ -3088,9 +3096,8 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
       const isNearEnd = effectiveDuration > 0 && (effectiveDuration - currentPlayhead < 2.5);
       const videoReady = isNearEnd || bufferedAhead >= 2.5;
       const audioReady = isNearEnd || !playbackControllerRef.current || playbackControllerRef.current.hasAudioCoverage(currentPlayhead, currentPlayhead + 2.0);
-      const subReady = extractingStreamIndex === null;
 
-      if (!videoReady || !audioReady || !subReady) {
+      if (!videoReady || !audioReady) {
         isWaitingForSyncRef.current = true;
         setIsBuffering(true);
         if (playbackControllerRef.current) {
