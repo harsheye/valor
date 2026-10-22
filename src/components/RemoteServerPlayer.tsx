@@ -1750,15 +1750,11 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
           streams: allStreams,
           duration: probeData.duration ? String(probeData.duration) : video.duration
         });
-
-        if (probeData.audioStreams && probeData.audioStreams.length > 0 && activeAudioStreamIndex === null) {
-          setActiveAudioStreamIndex(probeData.audioStreams[0].index);
-        }
       }
     } catch (err) {
       console.warn('[RemoteServerPlayer] Probe error:', err);
     }
-  }, [video, duration, onUpdateVideo, activeAudioStreamIndex]);
+  }, [video, duration, onUpdateVideo]);
 
   useEffect(() => {
     runRemoteProbe(video.url);
@@ -1996,15 +1992,15 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
     return entry.offset;
   };
 
-  // Background prefetch next chunks as video plays
+  // Background prefetch next chunks as local video plays (remote streams are prefetched on server by SessionMediaWorker)
   useEffect(() => {
-    if ((video.isRemote || video.type === 'local') && video.seekMap && video.seekMap.length > 0 && cachedSourceRef.current) {
+    if (video.type === 'local' && activeFile && video.seekMap && video.seekMap.length > 0 && cachedSourceRef.current) {
       const currentOffset = getByteOffsetForTime(video.seekMap, currentTime);
       const chunkSize = 4 * 1024 * 1024; // 4MB chunks
       const currentChunk = Math.floor(currentOffset / chunkSize);
       
-      // Prefetch next 3 chunks in background
-      for (let i = 1; i <= 3; i++) {
+      // Prefetch next 2 chunks in background
+      for (let i = 1; i <= 2; i++) {
         const nextChunk = currentChunk + i;
         const start = nextChunk * chunkSize;
         const end = (nextChunk + 1) * chunkSize - 1;
@@ -2012,7 +2008,7 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
         cachedSourceRef.current.read(start, end).catch(() => {});
       }
     }
-  }, [currentTime, video.isRemote, video.type, video.url, video.seekMap]);
+  }, [currentTime, video.type, activeFile, video.seekMap]);
 
   // Load next chunk during normal playback when crossing chunk boundaries
   useEffect(() => {
@@ -2932,6 +2928,9 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
       }
     }
     if (!videoRef.current) return;
+    if (audioCtxRef.current && audioCtxRef.current.state === 'suspended') {
+      audioCtxRef.current.resume().catch(() => {});
+    }
     if (isPlaying) {
       if (playbackControllerRef.current) {
         playbackControllerRef.current.pause();
@@ -5257,11 +5256,12 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
                     <div className="scrub-hover-preview-box">
                       <video
                         ref={previewVideoRef}
-                        src={getProxiedVideoUrl(video.url)}
+                        src={(hoverTime || isScrubbing) ? getProxiedVideoUrl(video.url) : undefined}
                         crossOrigin={video.playbackMode === 'advanced' ? 'anonymous' : undefined}
                         className="scrub-hover-preview-video"
                         muted
                         playsInline
+                        preload="none"
                       />
                     </div>
                     {showTimeDisplay && (

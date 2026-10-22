@@ -2,6 +2,22 @@ import http from 'http';
 import https from 'https';
 import { validateRemoteUrl } from './ssrfGuard.js';
 
+const httpsAgent = new https.Agent({
+  keepAlive: true,
+  maxSockets: 32,
+  maxFreeSockets: 16,
+  keepAliveMsecs: 60000,
+  timeout: 30000
+});
+
+const httpAgent = new http.Agent({
+  keepAlive: true,
+  maxSockets: 32,
+  maxFreeSockets: 16,
+  keepAliveMsecs: 60000,
+  timeout: 30000
+});
+
 export class RemoteDownloadManager {
   /**
    * Fetches headers or byte range with SSRF validation, redirect tracking, and retries.
@@ -38,9 +54,13 @@ export class RemoteDownloadManager {
               const validatedUrl = await validateRemoteUrl(targetUrlStr);
               const isHttps = validatedUrl.protocol === 'https:';
               const client = isHttps ? https : http;
+              const agent = isHttps ? httpsAgent : httpAgent;
 
               const reqHeaders = {
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'Accept': '*/*',
+                'Accept-Encoding': 'identity',
+                'Referer': validatedUrl.origin + '/',
                 ...headers
               };
 
@@ -53,11 +73,12 @@ export class RemoteDownloadManager {
               req = client.request(validatedUrl, {
                 method,
                 headers: reqHeaders,
+                agent,
                 timeout
               }, (res) => {
                 clearTimeout(timer);
 
-                // Handle Redirects (301, 302, 307, 308)
+                // Handle Redirects (301, 302, 303, 307, 308)
                 if ([301, 302, 303, 307, 308].includes(res.statusCode) && res.headers.location) {
                   redirectCount++;
                   if (redirectCount > maxRedirects) {

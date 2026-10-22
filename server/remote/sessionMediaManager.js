@@ -150,8 +150,8 @@ export class SessionMediaWorker {
           if (match[2]) {
             end = parseInt(match[2], 10);
           } else {
-            // Cap single range response to maximum 16MB to optimize transmission
-            end = Math.min(start + 16 * 1024 * 1024 - 1, this.totalSize - 1);
+            // Stream in 2MB chunk per 206 response for instant TTFB; prefetcher caches ahead on disk
+            end = Math.min(start + BLOCK_SIZE - 1, this.totalSize - 1);
           }
         } else if (match[2]) {
           // Suffix byte range: bytes=-500 (last 500 bytes)
@@ -161,8 +161,8 @@ export class SessionMediaWorker {
         }
       }
     } else {
-      // If no range requested, provide initial 4MB chunk
-      end = Math.min(4 * 1024 * 1024 - 1, this.totalSize - 1);
+      // If no range requested, provide initial 2MB block
+      end = Math.min(BLOCK_SIZE - 1, this.totalSize - 1);
     }
 
     if (start >= this.totalSize) {
@@ -177,7 +177,7 @@ export class SessionMediaWorker {
 
     this.currentPlayheadByte = start;
 
-    // Trigger 240s sliding window prefetch ahead
+    // Trigger sliding window prefetch ahead
     this.triggerPrefetch();
 
     const startBlock = Math.floor(start / BLOCK_SIZE);
@@ -284,22 +284,32 @@ export class SessionMediaWorker {
     (async () => {
       try {
         const forwardBytes = this.bitrateBytesPerSec * FORWARD_BUFFER_SECONDS;
-        const currentBlock = Math.floor(this.currentPlayheadByte / BLOCK_SIZE);
-        const maxBlock = Math.min(Math.floor((this.currentPlayheadByte + forwardBytes) / BLOCK_SIZE), this.totalBlocks - 1);
+        const forwardBlocks = Math.max(10, Math.ceil(forwardBytes / BLOCK_SIZE));
 
-        // Fetch forward blocks sequentially to respect bandwidth
-        for (let b = currentBlock; b <= maxBlock; b++) {
-          if (this.isDestroyed) break;
+        while (!this.isDestroyed) {
+          const curPlayheadBlock = Math.floor(this.currentPlayheadByte / BLOCK_SIZE);
+          const maxTargetBlock = Math.min(curPlayheadBlock + forwardBlocks, this.totalBlocks - 1);
 
-          // Check if playhead moved drastically (user sought away)
-          const newCurrentBlock = Math.floor(this.currentPlayheadByte / BLOCK_SIZE);
-          if (Math.abs(newCurrentBlock - currentBlock) > 5) {
-            break; // Restart prefetch from new playhead on next request
+          // Find the next block in the window that is not yet cached
+          let nextBlockToFetch = -1;
+          for (let b = curPlayheadBlock; b <= maxTargetBlock; b++) {
+            const blockPath = path.join(this.cacheDir, `blk_${b}.bin`);
+            if (!fs.existsSync(blockPath) && !this.activeBlockDownloads.has(b)) {
+              nextBlockToFetch = b;
+              break;
+            }
           }
 
-          const blockPath = path.join(this.cacheDir, `blk_${b}.bin`);
-          if (!fs.existsSync(blockPath)) {
-            await this.getBlock(b).catch(() => {});
+          // If all blocks in the forward window are already cached or being downloaded, exit
+          if (nextBlockToFetch === -1) {
+            break;
+          }
+
+          // Fetch the block
+          try {
+            await this.getBlock(nextBlockToFetch);
+          } catch {
+            await new Promise(r => setTimeout(r, 250));
           }
         }
       } finally {

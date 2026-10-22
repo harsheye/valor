@@ -464,6 +464,9 @@ async function isValidAdminToken(token) {
   return false;
 }
 
+const proxyHttpsAgent = new https.Agent({ keepAlive: true, maxSockets: 32, maxFreeSockets: 16, keepAliveMsecs: 60000 });
+const proxyHttpAgent = new http.Agent({ keepAlive: true, maxSockets: 32, maxFreeSockets: 16, keepAliveMsecs: 60000 });
+
 function handleProxyRequest(targetUrl, req, res, redirectCount = 0, parsedUrl = null) {
   if (redirectCount > 5) {
     res.statusCode = 508;
@@ -482,10 +485,22 @@ function handleProxyRequest(targetUrl, req, res, redirectCount = 0, parsedUrl = 
     res.setHeader('Access-Control-Allow-Headers', '*');
     res.setHeader('Access-Control-Expose-Headers', 'Content-Range, Content-Length, Accept-Ranges, Content-Type');
 
-    const client = u.protocol === 'https:' ? https : http;
+    if (req.method === 'OPTIONS') {
+      res.statusCode = 204;
+      res.end();
+      return;
+    }
+
+    const isHttps = u.protocol === 'https:';
+    const client = isHttps ? https : http;
+    const agent = isHttps ? proxyHttpsAgent : proxyHttpAgent;
+
     const headers = {};
     if (req.headers.range) headers['range'] = req.headers.range;
-    if (req.headers['accept']) headers['accept'] = req.headers['accept'];
+    headers['accept'] = req.headers['accept'] || '*/*';
+    headers['accept-encoding'] = 'identity';
+    headers['host'] = u.host;
+    headers['referer'] = u.origin + '/';
     
     if (req.headers['authorization']) {
       headers['authorization'] = req.headers['authorization'];
@@ -499,11 +514,12 @@ function handleProxyRequest(targetUrl, req, res, redirectCount = 0, parsedUrl = 
       }
     }
 
-    headers['user-agent'] = req.headers['user-agent'] || 'Mozilla/5.0';
+    headers['user-agent'] = req.headers['user-agent'] || 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
 
     const proxyReq = client.request(u, {
       method: req.method === 'HEAD' ? 'HEAD' : 'GET',
-      headers
+      headers,
+      agent
     }, (proxyRes) => {
       if (proxyRes.statusCode >= 300 && proxyRes.statusCode < 400 && proxyRes.headers.location) {
         const nextUrl = new URL(proxyRes.headers.location, u).toString();
@@ -797,6 +813,7 @@ const backendServer = http.createServer(async (req, res) => {
         }
 
         res.setHeader('Accept-Ranges', 'bytes');
+        res.setHeader('Cache-Control', 'public, max-age=3600');
         res.setHeader('Content-Type', result.contentType || 'video/mp4');
         res.setHeader('Content-Length', result.buffer.length);
 

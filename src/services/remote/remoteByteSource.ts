@@ -68,13 +68,19 @@ export class HttpByteSource implements ByteSource {
     const creds = getSavedCredentials(url);
     if (creds && creds.username) {
       this.proxyMode = 'backend';
-    } else if (typeof window !== 'undefined' && url && url.startsWith('http')) {
-      try {
-        const u = new URL(url, window.location.href);
-        if (u.origin !== window.location.origin) {
+    } else if (url && (url.startsWith('http://') || url.startsWith('https://'))) {
+      if (typeof window !== 'undefined') {
+        try {
+          const u = new URL(url, window.location.href);
+          if (u.origin !== window.location.origin) {
+            this.proxyMode = 'backend';
+          }
+        } catch {
           this.proxyMode = 'backend';
         }
-      } catch {}
+      } else {
+        this.proxyMode = 'backend';
+      }
     }
   }
 
