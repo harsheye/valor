@@ -51,7 +51,7 @@ function describeTextArc(x: number, y: number, radius: number, startAngle: numbe
 export interface RadialMenuItem {
   id: string;
   label: string;
-  icon: React.ReactNode;
+  icon?: React.ReactNode;
   onClick: () => void;
   color?: string; // Hex or rgba for slice fill
   disabled?: boolean;

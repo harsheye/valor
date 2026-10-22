@@ -10,12 +10,15 @@ const TMDB_TOKEN = "eyJhbGciOiJIUzI1NiJ9.eyJhdWQiOiJlMzQwMGRhZWZjODJjNTJlZDEyYzk
 export interface MediaIdentifyModalProps {
   isOpen: boolean;
   videoTitle: string;
-  duration: number;
+  duration?: number;
   onClose: () => void;
-  onApplyBookmarks: (bookmarks: Bookmark[], mediaInfo: { title: string; tmdbId?: number; imdbId?: string; season?: number; episode?: number; overview?: string; imageUrl?: string; releaseDate?: string; rating?: number }) => void;
+  onApplyBookmarks?: (bookmarks: Bookmark[], mediaInfo: { title: string; tmdbId?: number; imdbId?: string; season?: number; episode?: number; overview?: string; imageUrl?: string; releaseDate?: string; rating?: number }) => void;
   onToast?: (msg: string) => void;
   videoId?: string;
   userId?: string;
+  onSubmitName?: (title: string, isTvShow: boolean, season: number, episode: number) => void;
+  submitLabel?: string;
+  isTvHint?: boolean;
 }
 
 /**
@@ -55,12 +58,15 @@ async function fetchTmdbApi(endpointPath: string): Promise<any> {
 export const MediaIdentifyModal: React.FC<MediaIdentifyModalProps> = ({
   isOpen,
   videoTitle,
-  duration,
+  duration = 0,
   onClose,
   onApplyBookmarks,
   onToast,
   videoId,
-  userId
+  userId,
+  onSubmitName,
+  submitLabel = 'Enter',
+  isTvHint
 }) => {
   const isHashOrUrl = (str: string) => {
     if (!str) return true;
@@ -75,7 +81,10 @@ export const MediaIdentifyModal: React.FC<MediaIdentifyModalProps> = ({
     if (isHashOrUrl(videoTitle)) return '';
     return initialClassified.seriesTitle || initialClassified.displayTitle || videoTitle || '';
   });
-  const [isTvShow, setIsTvShow] = useState<boolean>(() => initialClassified.type === 'series');
+  const [isTvShow, setIsTvShow] = useState<boolean>(() => {
+    if (isTvHint !== undefined) return isTvHint;
+    return initialClassified.type === 'series';
+  });
   const [season, setSeason] = useState<number>(() => initialClassified.season || 1);
   const [episode, setEpisode] = useState<number>(() => initialClassified.episode || 1);
 
@@ -85,20 +94,14 @@ export const MediaIdentifyModal: React.FC<MediaIdentifyModalProps> = ({
 
   if (!isOpen) return null;
 
-  const handleSearchAndFetch = async () => {
-    if (!mediaTitle.trim()) {
-      setErrorMsg('Please enter a media title.');
-      return;
-    }
-
-    setIsLoading(true);
-    setErrorMsg(null);
-    setStatusMsg('Searching IMDB / TMDB...');
-
+  const handleSearchAndFetchInBackground = async (
+    cleanQuery: string,
+    tvShowMode: boolean,
+    seasonNum: number,
+    episodeNum: number
+  ) => {
     try {
-      // 1. Search TMDB for Show or Movie via backend proxy (Zero CORS error)
-      const cleanQuery = mediaTitle.trim();
-      const endpoint = isTvShow ? 'search/tv' : 'search/movie';
+      const endpoint = tvShowMode ? 'search/tv' : 'search/movie';
       let tmdbId: number | null = null;
       let resolvedTitle = cleanQuery;
       let imdbId: string | undefined = undefined;
@@ -118,9 +121,8 @@ export const MediaIdentifyModal: React.FC<MediaIdentifyModalProps> = ({
 
       // If TMDB is not running or no results found, check if user is logged into Trakt
       if (!tmdbId && isTraktLoggedIn()) {
-        setStatusMsg('TMDB not running or not found. Searching Trakt.tv...');
         const traktToken = getTraktToken();
-        traktRes = await searchTraktMedia(cleanQuery, isTvShow, traktToken || undefined);
+        traktRes = await searchTraktMedia(cleanQuery, tvShowMode, traktToken || undefined);
         if (traktRes && traktRes.ids) {
           if (traktRes.ids.tmdb) {
             tmdbId = Number(traktRes.ids.tmdb);
@@ -132,31 +134,25 @@ export const MediaIdentifyModal: React.FC<MediaIdentifyModalProps> = ({
         }
       }
 
-      if (!tmdbId && !imdbId) {
-        throw new Error(`No match found on TMDB/IMDB or Trakt for "${cleanQuery}".`);
-      }
-
-      setStatusMsg(`Found: "${resolvedTitle}" (TMDB #${tmdbId || 'N/A'}). Resolving IMDB ID...`);
-
-      // 2. Fetch external IDs to get IMDB ID (e.g. tt1234567)
-      try {
-        const extData = await fetchTmdbApi(`${isTvShow ? 'tv' : 'movie'}/${tmdbId}/external_ids`);
-        if (extData && extData.imdb_id) {
-          imdbId = extData.imdb_id;
+      // 2. Fetch external IDs to get IMDB ID if missing
+      if (tmdbId && !imdbId) {
+        try {
+          const extData = await fetchTmdbApi(`${tvShowMode ? 'tv' : 'movie'}/${tmdbId}/external_ids`);
+          if (extData && extData.imdb_id) {
+            imdbId = extData.imdb_id;
+          }
+        } catch (extErr) {
+          console.warn('[MediaIdentifyModal] External IDs lookup error:', extErr);
         }
-      } catch (extErr) {
-        console.warn('[MediaIdentifyModal] External IDs lookup error:', extErr);
       }
-
-      setStatusMsg(`Querying TheIntroDB with ${imdbId ? `IMDB: ${imdbId}` : `TMDB: ${tmdbId}`}...`);
 
       // 3. Fetch Intro & Outro Timestamps from TheIntroDB
       const durationMs = Math.round((duration || 0) * 1000);
-      let introDbUrl = `https://api.theintrodb.org/v3/media?tmdb_id=${tmdbId}`;
-      if (isTvShow) {
-        introDbUrl += `&season=${season}&episode=${episode}`;
+      let introDbUrl = tmdbId ? `https://api.theintrodb.org/v3/media?tmdb_id=${tmdbId}` : '';
+      if (introDbUrl && tvShowMode) {
+        introDbUrl += `&season=${seasonNum}&episode=${episodeNum}`;
       }
-      if (durationMs > 0) {
+      if (introDbUrl && durationMs > 0) {
         introDbUrl += `&duration_ms=${durationMs}`;
       }
 
@@ -171,13 +167,13 @@ export const MediaIdentifyModal: React.FC<MediaIdentifyModalProps> = ({
         }
       } catch {}
 
-      let introDbRes = await fetch(introDbUrl, { headers: introHeaders }).catch(() => null);
+      let introDbRes = introDbUrl ? await fetch(introDbUrl, { headers: introHeaders }).catch(() => null) : null;
 
       // Fallback to IMDB query if TMDB query returned 404 and IMDB ID exists
       if ((!introDbRes || !introDbRes.ok) && imdbId) {
         let imdbIntroUrl = `https://api.theintrodb.org/v3/media?imdb_id=${imdbId}`;
-        if (isTvShow) {
-          imdbIntroUrl += `&season=${season}&episode=${episode}`;
+        if (tvShowMode) {
+          imdbIntroUrl += `&season=${seasonNum}&episode=${episodeNum}`;
         }
         if (durationMs > 0) {
           imdbIntroUrl += `&duration_ms=${durationMs}`;
@@ -202,100 +198,81 @@ export const MediaIdentifyModal: React.FC<MediaIdentifyModalProps> = ({
               id: `theintrodb-intro-${idx}`,
               time: msToSec(item.start_ms),
               endTime: msToSec(item.end_ms),
-              startTime: msToSec(item.start_ms),
               label: 'Intro',
-              category: 'Intro',
               isIntro: true,
               isOutro: false,
               skipEnabled: true,
-              createdBy: 'theintrodb'
+              title: item.type ? `Intro (${item.type})` : 'Intro',
+              category: 'intro'
             });
           });
         }
 
-        // Recaps / Previews
-        if (introDbData.recap && Array.isArray(introDbData.recap)) {
-          introDbData.recap.forEach((item: any, idx: number) => {
+        // Outros / Credits
+        if (introDbData.outro && Array.isArray(introDbData.outro)) {
+          introDbData.outro.forEach((item: any, idx: number) => {
             newBookmarks.push({
-              id: `theintrodb-recap-${idx}`,
+              id: `theintrodb-outro-${idx}`,
               time: msToSec(item.start_ms),
               endTime: msToSec(item.end_ms),
-              startTime: msToSec(item.start_ms),
-              label: 'Preview / Recap',
-              category: 'Preview',
-              isIntro: true,
-              isOutro: false,
-              skipEnabled: true,
-              createdBy: 'theintrodb'
-            });
-          });
-        }
-
-        // Credits / Outros
-        if (introDbData.credits && Array.isArray(introDbData.credits)) {
-          introDbData.credits.forEach((item: any, idx: number) => {
-            newBookmarks.push({
-              id: `theintrodb-credits-${idx}`,
-              time: msToSec(item.start_ms),
-              endTime: msToSec(item.end_ms),
-              startTime: msToSec(item.start_ms),
-              label: 'Credits / Outro',
-              category: 'Outro',
+              label: 'Credits',
               isIntro: false,
               isOutro: true,
               skipEnabled: true,
-              createdBy: 'theintrodb'
+              title: item.type ? `Credits (${item.type})` : 'Credits',
+              category: 'outro'
             });
           });
-        }
-
-        // Auto-cache discovered IntroDB timestamps into server database
-        if (newBookmarks.length > 0 && introDbData) {
-          try {
-            fetch('/api/timestamps/save-introdb', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                tmdbId,
-                season: isTvShow ? season : null,
-                episode: isTvShow ? episode : null,
-                videoId: videoId || String(tmdbId),
-                mediaName: resolvedTitle,
-                introDbData,
-                userId: userId || 'theintrodb'
-              })
-            }).catch(saveErr => console.warn('[IntroDB Cache] Auto-save failed:', saveErr));
-          } catch {}
         }
       }
 
       const count = newBookmarks.length;
       const successToast = count > 0
-        ? `Found ${imdbId ? `IMDB ${imdbId}` : `TMDB #${tmdbId}`} — Loaded ${count} intro/skip timestamps!`
-        : `Identified as "${resolvedTitle}" (${imdbId || `TMDB #${tmdbId}`}). No introdb entries yet.`;
+        ? `Found ${imdbId ? `IMDB ${imdbId}` : (tmdbId ? `TMDB #${tmdbId}` : resolvedTitle)} — Loaded ${count} intro/skip timestamps!`
+        : `Identified as "${resolvedTitle}".`;
 
       onToast?.(successToast);
+
       const mediaImg = topResult?.poster_path ? `https://image.tmdb.org/t/p/w500${topResult.poster_path}` : (topResult?.backdrop_path ? `https://image.tmdb.org/t/p/w500${topResult.backdrop_path}` : '');
-      onApplyBookmarks(newBookmarks, {
+      onApplyBookmarks?.(newBookmarks, {
         title: resolvedTitle,
         tmdbId: tmdbId || undefined,
         imdbId,
-        season: isTvShow ? season : undefined,
-        episode: isTvShow ? episode : undefined,
+        season: tvShowMode ? seasonNum : undefined,
+        episode: tvShowMode ? episodeNum : undefined,
         overview: topResult?.overview || traktRes?.overview || '',
         imageUrl: mediaImg,
         releaseDate: topResult?.release_date || topResult?.first_air_date || (traktRes?.year ? String(traktRes.year) : ''),
         rating: topResult?.vote_average || traktRes?.rating
       });
-
-      onClose();
     } catch (err: any) {
-      console.warn('[MediaIdentifyModal] Error:', err);
-      setErrorMsg(err.message || 'Failed to search IMDB / IntroDB.');
-    } finally {
-      setIsLoading(false);
-      setStatusMsg(null);
+      console.warn('[MediaIdentifyModal] Background error:', err);
     }
+  };
+
+  const handleEnter = () => {
+    const cleanQuery = mediaTitle.trim();
+    if (!cleanQuery) {
+      setErrorMsg('Please enter a media title.');
+      return;
+    }
+
+    if (onSubmitName) {
+      onSubmitName(cleanQuery, isTvShow, season, episode);
+      onClose();
+      return;
+    }
+
+    // Immediately submit entered title and close modal so user proceeds to player without waiting
+    onApplyBookmarks?.([], {
+      title: cleanQuery,
+      season: isTvShow ? season : undefined,
+      episode: isTvShow ? episode : undefined
+    });
+    onClose();
+
+    // Do the search and sync work in the background!
+    handleSearchAndFetchInBackground(cleanQuery, isTvShow, season, episode);
   };
 
   return (
@@ -341,14 +318,14 @@ export const MediaIdentifyModal: React.FC<MediaIdentifyModalProps> = ({
             <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '4px' }}>
               <Sparkles size={16} color="var(--accent-color, #e50914)" />
               <span style={{ fontSize: '11px', fontWeight: 700, color: 'var(--accent-color, #e50914)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-                TheIntroDB Skip Sync
+                Media Identification
               </span>
             </div>
             <h3 style={{ fontSize: '18px', fontWeight: 700, margin: 0, color: 'var(--text-primary, #ffffff)' }}>
               Identify Media
             </h3>
             <p style={{ fontSize: '12px', color: 'var(--text-muted, #9ca3af)', margin: '4px 0 0 0' }}>
-              Enter media name to resolve IMDB ID and fetch intro skip markers.
+              Enter media name to sync intro skip, subtitles, and watch history.
             </p>
           </div>
 
@@ -381,7 +358,7 @@ export const MediaIdentifyModal: React.FC<MediaIdentifyModalProps> = ({
                 value={mediaTitle}
                 onChange={e => setMediaTitle(e.target.value)}
                 onKeyDown={e => {
-                  if (e.key === 'Enter') handleSearchAndFetch();
+                  if (e.key === 'Enter') handleEnter();
                 }}
                 placeholder="e.g. Breaking Bad, Stranger Things, Dune"
                 style={{
@@ -525,7 +502,7 @@ export const MediaIdentifyModal: React.FC<MediaIdentifyModalProps> = ({
             Cancel
           </Button>
           <Button
-            onClick={handleSearchAndFetch}
+            onClick={handleEnter}
             disabled={isLoading}
             style={{
               background: 'var(--accent-color, #e50914)',
@@ -542,8 +519,8 @@ export const MediaIdentifyModal: React.FC<MediaIdentifyModalProps> = ({
               transition: 'background-color 0.15s ease'
             }}
           >
-            {isLoading ? <Loader2 size={15} className="animate-spin" /> : <Search size={15} />}
-            Search & Sync IntroDB
+            <Check size={15} />
+            {submitLabel || 'Enter'}
           </Button>
         </div>
       </div>
