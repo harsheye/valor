@@ -52,6 +52,9 @@ export interface VideoItem {
   timeToFinish?: number;
   bookmarks?: Bookmark[];
   tmdbId?: number;
+  traktId?: number;
+  imdbId?: string;
+  backdropUrl?: string;
   anilistId?: number;
   posterPath?: string;
   season?: number;
