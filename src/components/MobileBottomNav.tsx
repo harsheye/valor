@@ -3,7 +3,7 @@ import { Home, History, Play, Settings } from 'lucide-react';
 
 interface MobileBottomNavProps {
   activeTab: string;
-  setActiveTab: (tab: 'home' | 'history' | 'calendar' | 'library' | 'settings' | 'online' | 'vlr') => void;
+  setActiveTab: (tab: 'home' | 'history' | 'calendar' | 'library' | 'settings' | 'online' | 'vlr' | 'companion') => void;
   setSelectedActor: (actor: any) => void;
   setSelectedDetailsMedia: (media: any) => void;
 }
@@ -14,7 +14,7 @@ export const MobileBottomNav: React.FC<MobileBottomNavProps> = ({
   setSelectedActor,
   setSelectedDetailsMedia,
 }) => {
-  const navigateTo = (tab: 'home' | 'history' | 'calendar' | 'library' | 'settings' | 'online' | 'vlr') => {
+  const navigateTo = (tab: 'home' | 'history' | 'calendar' | 'library' | 'settings' | 'online' | 'vlr' | 'companion') => {
     setSelectedActor(null);
     setSelectedDetailsMedia(null);
     setActiveTab(tab);

@@ -1,10 +1,11 @@
-import React from 'react';
-import { Home, History, Play, Settings, Film, X, Activity } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { Home, History, Play, Settings, Film, X, Activity, Zap } from 'lucide-react';
 import type { VideoItem } from '../types/media';
+import { sidecarService } from '../services/remote/sidecarService';
 
 interface SidebarProps {
   activeTab: string;
-  setActiveTab: (tab: 'home' | 'history' | 'calendar' | 'library' | 'settings' | 'online' | 'vlr') => void;
+  setActiveTab: (tab: 'home' | 'history' | 'calendar' | 'library' | 'settings' | 'online' | 'vlr' | 'companion') => void;
   isSidebarCollapsed: boolean;
   videos: VideoItem[];
   setSelectedActor: (actor: any) => void;
@@ -23,7 +24,16 @@ export const Sidebar: React.FC<SidebarProps> = ({
   handlePlayVideo,
   handleRemoveVideo,
 }) => {
-  const navigateTo = (tab: 'home' | 'history' | 'calendar' | 'library' | 'settings' | 'online' | 'vlr') => {
+  const [isSidecarActive, setIsSidecarActive] = useState<boolean>(() => sidecarService.isEnabled());
+
+  useEffect(() => {
+    const unsub = sidecarService.subscribe((status) => {
+      setIsSidecarActive(status.isAvailable);
+    });
+    return () => unsub();
+  }, []);
+
+  const navigateTo = (tab: 'home' | 'history' | 'calendar' | 'library' | 'settings' | 'online' | 'vlr' | 'companion') => {
     setSelectedActor(null);
     setSelectedDetailsMedia(null);
     setActiveTab(tab);
@@ -67,6 +77,25 @@ export const Sidebar: React.FC<SidebarProps> = ({
         >
           <Play size={20} />
           <span className="sidebar-menu-text">Online Stream</span>
+        </button>
+        <button 
+          className={`sidebar-menu-item ${activeTab === 'companion' ? 'active' : ''}`}
+          onClick={() => navigateTo('companion')}
+          title="Local Companion Engine"
+        >
+          <Zap size={20} color={isSidecarActive ? '#10b981' : undefined} />
+          <span className="sidebar-menu-text">Local Engine</span>
+          {isSidecarActive && (
+            <span style={{
+              width: '7px',
+              height: '7px',
+              borderRadius: '50%',
+              backgroundColor: '#10b981',
+              boxShadow: '0 0 8px #10b981',
+              marginLeft: 'auto',
+              flexShrink: 0
+            }} />
+          )}
         </button>
       </nav>
 

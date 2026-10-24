@@ -694,6 +694,47 @@ const backendServer = http.createServer(async (req, res) => {
     return;
   }
 
+  // Companion Sidecar scripts distribution
+  if (pathname.startsWith('/api/sidecar/')) {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', '*');
+    if (req.method === 'OPTIONS') {
+      res.statusCode = 204;
+      res.end();
+      return;
+    }
+
+    const filename = pathname.replace('/api/sidecar/', '').split('?')[0];
+    const safeFiles = {
+      'valor-service.mjs': { mime: 'application/javascript; charset=utf-8', file: 'valor-service.mjs' },
+      'install.ps1': { mime: 'text/plain; charset=utf-8', file: 'install.ps1' },
+      'install.sh': { mime: 'text/plain; charset=utf-8', file: 'install.sh' },
+      'run.bat': { mime: 'text/plain; charset=utf-8', file: 'run.bat' }
+    };
+
+    if (safeFiles[filename]) {
+      const filePath = path.join(appDir, 'server', 'sidecar', safeFiles[filename].file);
+      if (fs.existsSync(filePath)) {
+        let content = fs.readFileSync(filePath, 'utf8');
+        // Dynamically replace default host with current requesting origin/host
+        const hostHeader = req.headers['x-forwarded-host'] || req.headers.host || '127.0.0.1';
+        const proto = req.headers['x-forwarded-proto'] || (req.socket.encrypted ? 'https' : 'http');
+        const origin = `${proto}://${hostHeader}`;
+        content = content.replace(/http:\/\/127\.0\.0\.1:80/g, origin);
+
+        res.statusCode = 200;
+        res.setHeader('Content-Type', safeFiles[filename].mime);
+        res.end(content);
+        return;
+      }
+    }
+    res.statusCode = 404;
+    res.setHeader('Content-Type', 'application/json');
+    res.end(JSON.stringify({ error: 'Sidecar file not found' }));
+    return;
+  }
+
   // Remote media proxy endpoint with SessionMediaManager (240s sliding window cache)
   if (pathname === '/api/proxy-media') {
     (async () => {

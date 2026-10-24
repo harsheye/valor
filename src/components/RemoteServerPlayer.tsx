@@ -30,6 +30,8 @@ import { PlaybackController } from '../services/playback/PlaybackController';
 import { logger } from '../utils/logger';
 import { saveMediaTimestamp, getMediaTimestamp } from '../utils/mediaTimestampStorage';
 import { isWasmSupported } from '../utils/wasmCheck';
+import { sidecarService } from '../services/remote/sidecarService';
+import { LocalServicePage } from '../pages/LocalServicePage';
 
 const getAudioBoostMultiplier = (boostPercent: number): number => {
   if (boostPercent <= 100) return 1.0;
@@ -149,7 +151,7 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
   onUpdateVideo, 
   customLoaderUrl,
   customLoaderType = 'default',
-  spinnerPreset = 'fire-circle',
+  spinnerPreset = 'netflix',
   userId = 'local',
   profileName = 'Local Profile',
   hideUIOverlays: propHideUIOverlays = false,
@@ -1607,6 +1609,16 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
   const scrubTimeRef = useRef<number | null>(null);
   scrubTimeRef.current = scrubTime;
   const debouncedSeekTimeoutRef = useRef<any>(null);
+  const [isSidecarActive, setIsSidecarActive] = useState<boolean>(() => sidecarService.isEnabled());
+  const [showCompanionModal, setShowCompanionModal] = useState<boolean>(false);
+
+  useEffect(() => {
+    const unsub = sidecarService.subscribe((status) => {
+      setIsSidecarActive(status.isAvailable);
+    });
+    return () => unsub();
+  }, []);
+
   const [systemTime, setSystemTime] = useState(new Date());
 
   useEffect(() => {
@@ -1703,9 +1715,10 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
 
   const getProxiedVideoUrl = useCallback((rawUrl: string): string => {
     if (!rawUrl) return '';
-    if (rawUrl.startsWith('/api/proxy-media')) return rawUrl;
+    if (rawUrl.startsWith('http://127.0.0.1:45454/api/proxy-media') || rawUrl.startsWith('/api/proxy-media')) return rawUrl;
+    const apiBase = sidecarService.getRemoteApiBase();
     const creds = (video as any).auth || getSavedCredentials(rawUrl);
-    let proxyUrl = `/api/proxy-media?url=${encodeURIComponent(rawUrl)}&sessionId=${sessionIdRef.current}`;
+    let proxyUrl = `${apiBase}/api/proxy-media?url=${encodeURIComponent(rawUrl)}&sessionId=${sessionIdRef.current}`;
     if (video.duration) {
       proxyUrl += `&duration=${encodeURIComponent(video.duration.toString())}`;
     }
@@ -1714,13 +1727,14 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
       if (creds.password) proxyUrl += `&pass=${encodeURIComponent(creds.password)}`;
     }
     return proxyUrl;
-  }, [video]);
+  }, [video, isSidecarActive]);
 
   const runRemoteProbe = useCallback(async (targetUrl: string, authOverride?: { username: string; password?: string }) => {
     if (!targetUrl) return;
     try {
+      const apiBase = sidecarService.getRemoteApiBase();
       const creds = authOverride || (video as any).auth || getSavedCredentials(targetUrl);
-      const res = await fetch('/api/remote/probe', {
+      const res = await fetch(`${apiBase}/api/remote/probe`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -1888,7 +1902,7 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
 
 
   // Buffering States
-  const [isBuffering, setIsBuffering] = useState(false);
+  const [isBuffering, setIsBuffering] = useState(true);
   const [bufferedPercent, setBufferedPercent] = useState(0);
 
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -2553,7 +2567,8 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
             }
           }
 
-          const res = await fetch(`/api/remote/subtitle-packet?${params.toString()}`, { signal });
+          const apiBase = sidecarService.getRemoteApiBase();
+          const res = await fetch(`${apiBase}/api/remote/subtitle-packet?${params.toString()}`, { signal });
           if (res.ok) {
             const isFullTrack = res.headers.get('x-full-track') === 'true';
             const vttText = await res.text();
@@ -4923,7 +4938,13 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
             playbackControllerRef.current?.pauseForBuffering();
           }}
           onPlaying={() => {
-            if (!isWaitingForSyncRef.current) setIsBuffering(false);
+            isWaitingForSyncRef.current = false;
+            setIsBuffering(false);
+          }}
+          onCanPlay={() => {
+            if (videoRef.current && !videoRef.current.paused) {
+              setIsBuffering(false);
+            }
           }}
           onSeeked={handleVideoSeeked}
           onSeeking={() => { isWaitingForSyncRef.current = true; setIsBuffering(true); }}
@@ -5063,7 +5084,8 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
         isBuffering={isBuffering}
         customLoaderUrl={customLoaderUrl} 
         customLoaderType={customLoaderType} 
-        preset={(spinnerPreset || 'fire-circle') as any} 
+        preset={(spinnerPreset || 'netflix') as any} 
+        isRemote={true}
       />
 
       {/* Top Header Overlay */}
@@ -5118,10 +5140,39 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
             </div>
           )}
 
-          {/* Close Button */}
-          <button className="close-btn" onClick={handleExit} title="Close">
-            <X size={24} />
-          </button>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+            {/* Companion Engine Status Badge */}
+            <button 
+              onClick={() => setShowCompanionModal(true)}
+              title={isSidecarActive 
+                ? "⚡ Running via Local Companion Engine (127.0.0.1:45454) - Click to manage" 
+                : "☁️ Running via Central Server Relay - Click to install Local Companion Engine for 0% server lag"}
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '6px',
+                padding: '4px 12px',
+                borderRadius: '20px',
+                fontSize: '0.75rem',
+                fontWeight: 600,
+                cursor: 'pointer',
+                border: isSidecarActive ? '1px solid rgba(16, 185, 129, 0.5)' : '1px solid rgba(148, 163, 184, 0.3)',
+                backgroundColor: isSidecarActive ? 'rgba(16, 185, 129, 0.18)' : 'rgba(30, 41, 59, 0.7)',
+                color: isSidecarActive ? '#34d399' : '#94a3b8',
+                backdropFilter: 'blur(8px)',
+                transition: 'all 0.2s',
+                letterSpacing: '0.02em'
+              }}
+            >
+              <Zap size={13} color={isSidecarActive ? '#34d399' : '#94a3b8'} />
+              <span>{isSidecarActive ? 'Local Engine' : 'Server Mode'}</span>
+            </button>
+
+            {/* Close Button */}
+            <button className="close-btn" onClick={handleExit} title="Close">
+              <X size={24} />
+            </button>
+          </div>
         </div>
       )}
 
@@ -7678,11 +7729,11 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
         .buffering-spinner-overlay {
           position: absolute;
           inset: 0;
-          z-index: 18;
+          z-index: 50;
           display: flex;
           align-items: center;
           justify-content: center;
-          background: rgba(0, 0, 0, 0.25);
+          background: #000000;
         }
 
         /* Non-blocking Toast notification */
@@ -8359,6 +8410,40 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
           videoId={video.id}
           userId={userId}
         />
+      )}
+      {/* Companion Engine Setup & Diagnostics Modal */}
+      {showCompanionModal && (
+        <div 
+          style={{
+            position: 'fixed',
+            inset: 0,
+            zIndex: 9999,
+            backgroundColor: 'rgba(0, 0, 0, 0.85)',
+            backdropFilter: 'blur(10px)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: '20px',
+            overflowY: 'auto'
+          }}
+          onClick={() => setShowCompanionModal(false)}
+        >
+          <div 
+            style={{
+              width: '100%',
+              maxWidth: '900px',
+              maxHeight: '90vh',
+              overflowY: 'auto',
+              borderRadius: '20px',
+              backgroundColor: '#0a0f1d',
+              border: '1px solid rgba(255, 255, 255, 0.15)',
+              boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.7)'
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <LocalServicePage onClose={() => setShowCompanionModal(false)} />
+          </div>
+        </div>
       )}
     </div>
   );

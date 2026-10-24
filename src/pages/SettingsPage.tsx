@@ -4,9 +4,10 @@ import { ToggleSwitch } from '../components/ToggleSwitch';
 import { ApiSettingsView } from '../components/ApiSettingsView';
 import { SpinnerSettingsView } from '../components/SpinnerSettingsView';
 import { RadialMenu } from '../components/RadialMenu';
+import { LocalServicePage } from './LocalServicePage';
 import { 
   RotateCcw, UserPlus, LogOut, Trash2, Volume2, X, ChevronRight, ChevronLeft,
-  Terminal, MessageSquare, Maximize, Bookmark, FastForward, Unlock, Play, LogIn
+  Terminal, MessageSquare, Maximize, Bookmark, FastForward, Unlock, Play, LogIn, Zap
 } from 'lucide-react';
 import { 
   audioOptions, subOptions, calendarStyleOptions, limitOptions, 
@@ -15,8 +16,8 @@ import {
 } from '../utils/constants';
 
 interface SettingsPageProps {
-  settingsTab: 'general' | 'hotkeys' | 'subtitle' | 'bookmarks' | 'storage' | 'api' | 'loader' | 'gridOverlay' | 'radialMenu';
-  setSettingsTab: (tab: 'general' | 'hotkeys' | 'subtitle' | 'bookmarks' | 'storage' | 'api' | 'loader' | 'gridOverlay' | 'radialMenu') => void;
+  settingsTab: 'general' | 'hotkeys' | 'subtitle' | 'bookmarks' | 'storage' | 'api' | 'loader' | 'gridOverlay' | 'radialMenu' | 'companion';
+  setSettingsTab: (tab: 'general' | 'hotkeys' | 'subtitle' | 'bookmarks' | 'storage' | 'api' | 'loader' | 'gridOverlay' | 'radialMenu' | 'companion') => void;
   uiOverlaySection: 'gridOverlay' | 'pauseOverlay';
   setUiOverlaySection: (section: 'gridOverlay' | 'pauseOverlay') => void;
   settings: any;
@@ -143,6 +144,14 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
             onClick={() => setSettingsTab('radialMenu')}
           >
             Radial Menu
+          </button>
+          <button 
+            className={`settings-nav-btn ${settingsTab === 'companion' ? 'active' : ''}`}
+            onClick={() => setSettingsTab('companion')}
+            style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}
+          >
+            <Zap size={14} color="#10b981" />
+            Local Engine
           </button>
         </div>
 
@@ -1917,6 +1926,13 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                 </div>
               )}
 
+            </div>
+          )}
+
+          {/* Local Companion Engine Section */}
+          {settingsTab === 'companion' && (
+            <div className="settings-tab-content animate-fade-in" style={{ width: '100%', padding: '0 12px' }}>
+              <LocalServicePage />
             </div>
           )}
 

@@ -1,8 +1,9 @@
 import React, { useRef, useEffect, useCallback } from 'react';
 
-export type SpinnerPreset = 'fire-circle' | 'fire-ring' | 'flame-burst';
+export type SpinnerPreset = 'netflix' | 'fire-circle' | 'fire-ring' | 'flame-burst';
 
 export const SPINNER_PRESETS: { id: SpinnerPreset; name: string; emoji: string }[] = [
+  { id: 'netflix', name: 'Netflix V Loader', emoji: '🎬' },
   { id: 'fire-circle', name: 'Fire Circle', emoji: '🔥' },
   { id: 'fire-ring', name: 'Flame Ring', emoji: '🌀' },
   { id: 'flame-burst', name: 'Flame Burst', emoji: '💥' },
@@ -557,9 +558,176 @@ const FlameBurst: React.FC<{ fullscreen?: boolean }> = ({ fullscreen = false }) 
 };
 
 
+/* ═══════════════════════════════════════════════════════════════════
+   4. NETFLIX V LOADER — Cinematic Netflix-style black screen with
+      glowing 3D ribbon 'V' in the center and revolving red spinner over V
+   ═══════════════════════════════════════════════════════════════════ */
+export const NetflixVLoader: React.FC<{ size?: number }> = ({ size = 160 }) => {
+  return (
+    <div className="netflix-loader-container" style={{ width: size, height: size }}>
+      <style>{`
+        .netflix-loader-container {
+          position: relative;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          user-select: none;
+        }
+        .netflix-loader-glow {
+          position: absolute;
+          width: 140px;
+          height: 140px;
+          border-radius: 50%;
+          background: radial-gradient(circle, rgba(229, 9, 20, 0.42) 0%, rgba(229, 9, 20, 0.12) 48%, transparent 72%);
+          filter: blur(14px);
+          animation: netflixAura 2s ease-in-out infinite alternate;
+          pointer-events: none;
+        }
+        @keyframes netflixAura {
+          0% { transform: scale(0.9); opacity: 0.5; }
+          100% { transform: scale(1.15); opacity: 0.85; }
+        }
+        .netflix-v-wrapper {
+          position: relative;
+          z-index: 1;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          animation: netflixVPulse 2.4s ease-in-out infinite;
+        }
+        @keyframes netflixVPulse {
+          0%, 100% {
+            transform: scale(1);
+            filter: drop-shadow(0 0 16px rgba(229, 9, 20, 0.45));
+          }
+          50% {
+            transform: scale(1.025);
+            filter: drop-shadow(0 0 28px rgba(229, 9, 20, 0.8));
+          }
+        }
+        .netflix-spinner-ring-wrap {
+          position: absolute;
+          inset: 0;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          z-index: 3;
+          pointer-events: none;
+        }
+        .netflix-spinner-svg {
+          width: 140px;
+          height: 140px;
+          animation: netflixSpin 0.95s cubic-bezier(0.5, 0.1, 0.5, 0.9) infinite;
+          transform-origin: center;
+          filter: drop-shadow(0 0 8px rgba(229, 9, 20, 0.85));
+        }
+        @keyframes netflixSpin {
+          0% { transform: rotate(0deg); }
+          100% { transform: rotate(360deg); }
+        }
+        .netflix-buffering-overlay {
+          background: #000000 !important;
+          position: absolute !important;
+          inset: 0 !important;
+          z-index: 50 !important;
+          display: flex !important;
+          align-items: center !important;
+          justify-content: center !important;
+          width: 100% !important;
+          height: 100% !important;
+          overflow: hidden !important;
+        }
+      `}</style>
+
+      {/* Ambient background red aura */}
+      <div className="netflix-loader-glow" />
+
+      {/* Central 3D Ribbon 'V' Logo */}
+      <div className="netflix-v-wrapper">
+        <svg
+          viewBox="0 0 100 120"
+          width="76"
+          height="92"
+          fill="none"
+          xmlns="http://www.w3.org/2000/svg"
+        >
+          <defs>
+            {/* Left wing gradient: darker shaded Netflix red */}
+            <linearGradient id="netflixVLeft" x1="0%" y1="0%" x2="100%" y2="100%">
+              <stop offset="0%" stopColor="#E50914" />
+              <stop offset="60%" stopColor="#B81D24" />
+              <stop offset="100%" stopColor="#7E080E" />
+            </linearGradient>
+
+            {/* Right wing gradient: vibrant Netflix red */}
+            <linearGradient id="netflixVRight" x1="0%" y1="0%" x2="0%" y2="100%">
+              <stop offset="0%" stopColor="#FF2B33" />
+              <stop offset="40%" stopColor="#E50914" />
+              <stop offset="100%" stopColor="#B81D24" />
+            </linearGradient>
+
+            {/* Overlapping ribbon drop shadow */}
+            <filter id="netflixRibbonShadow" x="-30%" y="-30%" width="160%" height="160%">
+              <feDropShadow dx="-2.5" dy="1.5" stdDeviation="3" floodColor="#000000" floodOpacity="0.85" />
+            </filter>
+          </defs>
+
+          {/* Left Ribbon Wing */}
+          <path
+            d="M 12 14 L 34 14 L 50 78 L 50 106 L 46 106 Z"
+            fill="url(#netflixVLeft)"
+          />
+
+          {/* Right Ribbon Wing (overlaps the vertex in front) */}
+          <path
+            d="M 50 78 L 66 14 L 88 14 L 54 106 L 46 106 L 46 90 Z"
+            fill="url(#netflixVRight)"
+            filter="url(#netflixRibbonShadow)"
+          />
+        </svg>
+      </div>
+
+      {/* Loading Animation Ring Over 'V' */}
+      <div className="netflix-spinner-ring-wrap">
+        <svg className="netflix-spinner-svg" viewBox="0 0 140 140">
+          <defs>
+            <linearGradient id="netflixRingGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+              <stop offset="0%" stopColor="#E50914" />
+              <stop offset="50%" stopColor="#E50914" stopOpacity="0.85" />
+              <stop offset="85%" stopColor="#E50914" stopOpacity="0.2" />
+              <stop offset="100%" stopColor="#E50914" stopOpacity="0" />
+            </linearGradient>
+          </defs>
+          {/* Faint track */}
+          <circle
+            cx="70"
+            cy="70"
+            r="60"
+            fill="none"
+            stroke="rgba(229, 9, 20, 0.12)"
+            strokeWidth="4"
+          />
+          {/* Revolving Netflix Red arc over the V */}
+          <circle
+            cx="70"
+            cy="70"
+            r="60"
+            fill="none"
+            stroke="url(#netflixRingGrad)"
+            strokeWidth="4.5"
+            strokeLinecap="round"
+            strokeDasharray="160 220"
+          />
+        </svg>
+      </div>
+    </div>
+  );
+};
+
 /* ─── Preset Router ─── */
 const PresetSpinner: React.FC<{ preset: SpinnerPreset; fullscreen?: boolean }> = ({ preset, fullscreen }) => {
   switch (preset) {
+    case 'netflix': return <NetflixVLoader />;
     case 'fire-ring': return <FireRing />;
     case 'flame-burst': return <FlameBurst fullscreen={fullscreen} />;
     case 'fire-circle':
@@ -602,7 +770,13 @@ export const SpinnerThumbnail: React.FC<{ preset: SpinnerPreset; size?: number }
 );
 
 /* ─── Buffering Overlay Wrapper ─── */
-export const BufferingOverlay: React.FC<{ isBuffering: boolean; customLoaderUrl?: string; customLoaderType?: any; preset?: any }> = ({ isBuffering, customLoaderUrl, customLoaderType, preset }) => {
+export const BufferingOverlay: React.FC<{
+  isBuffering: boolean;
+  customLoaderUrl?: string;
+  customLoaderType?: any;
+  preset?: any;
+  isRemote?: boolean;
+}> = ({ isBuffering, customLoaderUrl, customLoaderType, preset, isRemote = false }) => {
   const [shouldRender, setShouldRender] = React.useState(isBuffering);
   const [visible, setVisible] = React.useState(isBuffering);
 
@@ -614,25 +788,40 @@ export const BufferingOverlay: React.FC<{ isBuffering: boolean; customLoaderUrl?
       timeoutId = setTimeout(() => setVisible(true), 10);
     } else {
       setVisible(false);
-      // Wait for fade out animation (800ms) before unmounting to free up CPU
-      timeoutId = setTimeout(() => setShouldRender(false), 800);
+      // Fade out transition before unmounting
+      timeoutId = setTimeout(() => setShouldRender(false), 450);
     }
     return () => clearTimeout(timeoutId);
   }, [isBuffering]);
 
   if (!shouldRender) return null;
 
+  const resolvedPreset = preset || (isRemote ? 'netflix' : 'fire-circle');
+  const isNetflixTheme = resolvedPreset === 'netflix' || isRemote;
+
   return (
     <div 
-      className="buffering-spinner-overlay" 
+      className={`buffering-spinner-overlay ${isNetflixTheme ? 'netflix-buffering-overlay' : ''}`} 
       onClick={(e) => e.stopPropagation()}
       style={{
         opacity: visible ? 1 : 0,
-        transition: 'opacity 0.8s ease-in-out',
-        pointerEvents: visible ? 'auto' : 'none'
+        transition: 'opacity 0.35s ease-in-out',
+        pointerEvents: visible ? 'auto' : 'none',
+        ...(isNetflixTheme ? {
+          background: '#000000',
+          position: 'absolute',
+          inset: 0,
+          zIndex: 50,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          width: '100%',
+          height: '100%',
+          overflow: 'hidden'
+        } : {})
       }}
     >
-      <LoadingSpinner customLoaderUrl={customLoaderUrl} customLoaderType={customLoaderType} preset={preset} />
+      <LoadingSpinner customLoaderUrl={customLoaderUrl} customLoaderType={customLoaderType} preset={resolvedPreset} />
     </div>
   );
 };

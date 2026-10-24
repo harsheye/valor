@@ -4,6 +4,7 @@ import type { ByteSource } from '../local/localByteSource';
 import { FFmpegManager } from './FFmpegManager';
 import { remoteMediaAccess } from '../remote/remoteMediaAccess';
 import { getSavedCredentials } from '../remote/mediaAuthStore';
+import { sidecarService } from '../remote/sidecarService';
 import type { ProbeResult, MediaStreamInfo } from '../pipeline/MediaPipeline';
 
 export class DemuxManager {
@@ -69,7 +70,8 @@ export class DemuxManager {
     if (remoteUrl) {
       try {
         const creds = getSavedCredentials(remoteUrl);
-        const res = await fetch('/api/remote/probe', {
+        const apiBase = sidecarService.getRemoteApiBase();
+        const res = await fetch(`${apiBase}/api/remote/probe`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -223,7 +225,8 @@ export class DemuxManager {
         }
       }
 
-      const res = await fetch(`/api/remote/audio-packet?${params.toString()}`, {
+      const apiBase = sidecarService.getRemoteApiBase();
+      const res = await fetch(`${apiBase}/api/remote/audio-packet?${params.toString()}`, {
         signal
       });
 

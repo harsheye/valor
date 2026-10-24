@@ -1,5 +1,6 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { ArrowLeft, Lock, Unlock, Terminal, X, Tv, Zap } from 'lucide-react';
+import { sidecarService } from '../../services/remote/sidecarService';
 
 export interface PlayerTopBarProps {
   title: string;
@@ -12,6 +13,7 @@ export interface PlayerTopBarProps {
   showConsole?: boolean;
   onToggleConsole?: () => void;
   onClose?: () => void;
+  onOpenCompanion?: () => void;
 }
 
 export const PlayerTopBar: React.FC<PlayerTopBarProps> = ({
@@ -24,8 +26,15 @@ export const PlayerTopBar: React.FC<PlayerTopBarProps> = ({
   onToggleLock,
   showConsole,
   onToggleConsole,
-  onClose
+  onClose,
+  onOpenCompanion
 }) => {
+  const [isSidecarActive, setIsSidecarActive] = useState<boolean>(() => sidecarService.isEnabled());
+
+  useEffect(() => {
+    const unsub = sidecarService.subscribe(s => setIsSidecarActive(s.isAvailable));
+    return () => unsub();
+  }, []);
   return (
     <div
       className="player-top-bar"
@@ -152,6 +161,36 @@ export const PlayerTopBar: React.FC<PlayerTopBarProps> = ({
             title={isLocked ? 'Unlock UI' : 'Lock UI'}
           >
             {isLocked ? <Lock size={18} /> : <Unlock size={18} />}
+          </button>
+        )}
+
+        {/* Companion Engine Status Badge */}
+        {onOpenCompanion && (
+          <button 
+            onClick={onOpenCompanion}
+            title={isSidecarActive 
+              ? "⚡ Running via Local Companion Engine (127.0.0.1:45454) - Zero server load. Click to manage." 
+              : "☁️ Running via Central Server Relay - Click to install Local Companion Engine for 0% server lag"}
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '6px',
+              padding: '4px 12px',
+              borderRadius: '20px',
+              fontSize: '0.75rem',
+              fontWeight: 600,
+              cursor: 'pointer',
+              border: isSidecarActive ? '1px solid rgba(16, 185, 129, 0.5)' : '1px solid rgba(148, 163, 184, 0.3)',
+              backgroundColor: isSidecarActive ? 'rgba(16, 185, 129, 0.18)' : 'rgba(30, 41, 59, 0.7)',
+              color: isSidecarActive ? '#34d399' : '#94a3b8',
+              backdropFilter: 'blur(8px)',
+              transition: 'all 0.2s',
+              letterSpacing: '0.02em',
+              marginRight: '4px'
+            }}
+          >
+            <Zap size={13} color={isSidecarActive ? '#34d399' : '#94a3b8'} />
+            <span>{isSidecarActive ? 'Local Engine' : 'Server Mode'}</span>
           </button>
         )}
 

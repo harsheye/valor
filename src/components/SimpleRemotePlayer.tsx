@@ -9,7 +9,7 @@ import { MediaAuthModal } from './MediaAuthModal';
 import { MediaIdentifyModal } from './MediaIdentifyModal';
 import { RadialMenu } from './RadialMenu';
 import { ConsoleOverlay } from './ConsoleOverlay';
-import { LoadingSpinner } from './LoadingSpinner';
+import { LoadingSpinner, BufferingOverlay } from './LoadingSpinner';
 import {
   PlayerTopBar,
   PlayerBottomBar,
@@ -23,6 +23,8 @@ import { parseSubtitles, cleanSubtitleText } from '../utils/subtitleParser';
 import { trimSubtitleName } from '../utils/embedSubtitleStorage';
 import { classifyVideoTitle } from '../utils/libraryClassifier';
 import { Play, Pause } from 'lucide-react';
+import { sidecarService } from '../services/remote/sidecarService';
+import { LocalServicePage } from '../pages/LocalServicePage';
 
 export interface SimpleRemotePlayerProps {
   video: VideoItem;
@@ -51,7 +53,7 @@ export const SimpleRemotePlayer: React.FC<SimpleRemotePlayerProps> = ({
   uiHideTimeout = 2.5,
   customLoaderUrl,
   customLoaderType = 'default',
-  spinnerPreset = 'fire-circle',
+  spinnerPreset = 'netflix',
   onSwitchMode
 }) => {
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -61,7 +63,7 @@ export const SimpleRemotePlayer: React.FC<SimpleRemotePlayerProps> = ({
 
   // Playback & Timing State
   const [isPlaying, setIsPlaying] = useState(false);
-  const [isBuffering, setIsBuffering] = useState(false);
+  const [isBuffering, setIsBuffering] = useState(true);
   const [currentTime, setCurrentTime] = useState<number>(() => video.currentTime || 0);
   const [duration, setDuration] = useState<number>(() => {
     if (typeof video.duration === 'number') return video.duration;
@@ -195,13 +197,23 @@ export const SimpleRemotePlayer: React.FC<SimpleRemotePlayerProps> = ({
   }, []);
 
   const sessionIdRef = useRef<string>(Math.random().toString(36).substring(2, 10));
+  const [isSidecarActive, setIsSidecarActive] = useState<boolean>(() => sidecarService.isEnabled());
+  const [showCompanionModal, setShowCompanionModal] = useState<boolean>(false);
+
+  useEffect(() => {
+    const unsub = sidecarService.subscribe((status) => {
+      setIsSidecarActive(status.isAvailable);
+    });
+    return () => unsub();
+  }, []);
 
   // Proxied Video URL (bypasses CORS & provides sliding cache)
   const getProxiedUrl = useCallback((rawUrl: string): string => {
     if (!rawUrl) return '';
-    if (rawUrl.startsWith('/api/proxy-media')) return rawUrl;
+    if (rawUrl.startsWith('http://127.0.0.1:45454/api/proxy-media') || rawUrl.startsWith('/api/proxy-media')) return rawUrl;
+    const apiBase = sidecarService.getRemoteApiBase();
     const creds = (video as any).auth || getSavedCredentials(rawUrl);
-    let proxyUrl = `/api/proxy-media?url=${encodeURIComponent(rawUrl)}&sessionId=${sessionIdRef.current}`;
+    let proxyUrl = `${apiBase}/api/proxy-media?url=${encodeURIComponent(rawUrl)}&sessionId=${sessionIdRef.current}`;
     if (duration > 0) {
       proxyUrl += `&duration=${duration}`;
     }
@@ -210,7 +222,7 @@ export const SimpleRemotePlayer: React.FC<SimpleRemotePlayerProps> = ({
       if (creds?.password) proxyUrl += `&pass=${encodeURIComponent(creds.password)}`;
     }
     return proxyUrl;
-  }, [video, duration]);
+  }, [video, duration, isSidecarActive]);
 
   // Controls auto-hide timer
   const controlsTimeoutRef = useRef<any>(null);
@@ -650,11 +662,13 @@ export const SimpleRemotePlayer: React.FC<SimpleRemotePlayerProps> = ({
       )}
 
       {/* Buffering Indicator */}
-      {isBuffering && (
-        <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', pointerEvents: 'none', zIndex: 60 }}>
-          <LoadingSpinner customLoaderUrl={customLoaderUrl} customLoaderType={customLoaderType} preset={spinnerPreset as any} />
-        </div>
-      )}
+      <BufferingOverlay
+        isBuffering={isBuffering}
+        customLoaderUrl={customLoaderUrl}
+        customLoaderType={customLoaderType}
+        preset={(spinnerPreset || 'netflix') as any}
+        isRemote={true}
+      />
 
       {/* Center Play/Pause Ripple Feedback */}
       {showCenterRipple && (
@@ -707,6 +721,7 @@ export const SimpleRemotePlayer: React.FC<SimpleRemotePlayerProps> = ({
           showConsole={showConsoleOverlay}
           onToggleConsole={() => setShowConsoleOverlay(!showConsoleOverlay)}
           onClose={onBack}
+          onOpenCompanion={() => setShowCompanionModal(true)}
         />
       )}
 
@@ -964,6 +979,40 @@ export const SimpleRemotePlayer: React.FC<SimpleRemotePlayerProps> = ({
           animation: 'fadeIn 0.2s ease-out'
         }}>
           {toastMsg}
+        </div>
+      )}
+      {/* Companion Engine Setup & Diagnostics Modal */}
+      {showCompanionModal && (
+        <div 
+          style={{
+            position: 'fixed',
+            inset: 0,
+            zIndex: 9999,
+            backgroundColor: 'rgba(0, 0, 0, 0.85)',
+            backdropFilter: 'blur(10px)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: '20px',
+            overflowY: 'auto'
+          }}
+          onClick={() => setShowCompanionModal(false)}
+        >
+          <div 
+            style={{
+              width: '100%',
+              maxWidth: '900px',
+              maxHeight: '90vh',
+              overflowY: 'auto',
+              borderRadius: '20px',
+              backgroundColor: '#0a0f1d',
+              border: '1px solid rgba(255, 255, 255, 0.15)',
+              boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.7)'
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <LocalServicePage onClose={() => setShowCompanionModal(false)} />
+          </div>
         </div>
       )}
     </div>

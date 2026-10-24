@@ -92,6 +92,7 @@ import { LibraryPage } from './pages/LibraryPage';
 import { OnlineStreamPage } from './pages/OnlineStreamPage';
 import { SettingsPage } from './pages/SettingsPage';
 import { AdminDashboard } from './pages/AdminDashboard';
+import { LocalServicePage } from './pages/LocalServicePage';
 import { 
   initiateTraktPkceAuth, 
   exchangeTraktCodeForToken, 
@@ -626,9 +627,9 @@ function App() {
     }
   }, [selectedDetailsMedia, selectedActor]);
   const [historyViewMode, setHistoryViewMode] = useState<'list' | 'calendar'>('list');
-  const [activeTab, setActiveTab] = useState<'home' | 'history' | 'calendar' | 'library' | 'settings' | 'online' | 'vlr'>(() => {
+  const [activeTab, setActiveTab] = useState<'home' | 'history' | 'calendar' | 'library' | 'settings' | 'online' | 'vlr' | 'companion'>(() => {
     const saved = localStorage.getItem('valor_active_tab');
-    if (saved && ['home', 'history', 'calendar', 'library', 'settings', 'online', 'vlr'].includes(saved)) {
+    if (saved && ['home', 'history', 'calendar', 'library', 'settings', 'online', 'vlr', 'companion'].includes(saved)) {
       return saved as any;
     }
     return 'home';
@@ -666,7 +667,7 @@ function App() {
     };
   }, [playingVideo]);
 
-  const [settingsTab, setSettingsTab] = useState<'general' | 'hotkeys' | 'subtitle' | 'storage' | 'gridOverlay' | 'api' | 'bookmarks' | 'loader' | 'radialMenu'>('general');
+  const [settingsTab, setSettingsTab] = useState<'general' | 'hotkeys' | 'subtitle' | 'storage' | 'gridOverlay' | 'api' | 'bookmarks' | 'loader' | 'radialMenu' | 'companion'>('general');
   const [uiOverlaySection, setUiOverlaySection] = useState<'gridOverlay' | 'pauseOverlay'>('gridOverlay');
   const [previewExpanded, setPreviewExpanded] = useState(false);
   const [showResetConfirm, setShowResetConfirm] = useState(false);
@@ -3247,6 +3248,10 @@ function App() {
                   renderMockPreviewButton={renderMockPreviewButton}
                   setShowResetConfirm={setShowResetConfirm}
                 />
+              )}
+
+              {activeTab === 'companion' && (
+                <LocalServicePage />
               )}
             </>
           )}
