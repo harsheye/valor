@@ -530,10 +530,17 @@ function App() {
   }, [settings.userId]);
   const [playingVideoState, rawSetPlayingVideo] = useState<VideoItem | null>(() => {
     try {
+      // Clear legacy shared localStorage keys so other tabs/webpages are never hijacked
+      try {
+        localStorage.removeItem('valor_currently_playing');
+        localStorage.removeItem('valor_active_tab');
+      } catch {}
+
       const params = new URLSearchParams(window.location.search);
       if (params.get('file')) return null;
 
-      const saved = localStorage.getItem('valor_currently_playing');
+      // Use sessionStorage so multiple tabs/webpages can play independent media
+      const saved = sessionStorage.getItem('valor_currently_playing');
       const useIdStreamInit = getUseIdStreamFromStorage();
       if (saved) {
         const parsed = JSON.parse(saved);
@@ -552,7 +559,7 @@ function App() {
 
   const [isPlaybackRestoring, setIsPlaybackRestoring] = useState(() => {
     try {
-      return !!localStorage.getItem('valor_currently_playing');
+      return !!sessionStorage.getItem('valor_currently_playing');
     } catch {
       return false;
     }
@@ -628,7 +635,7 @@ function App() {
   }, [selectedDetailsMedia, selectedActor]);
   const [historyViewMode, setHistoryViewMode] = useState<'list' | 'calendar'>('list');
   const [activeTab, setActiveTab] = useState<'home' | 'history' | 'calendar' | 'library' | 'settings' | 'online' | 'vlr' | 'companion'>(() => {
-    const saved = localStorage.getItem('valor_active_tab');
+    const saved = sessionStorage.getItem('valor_active_tab');
     if (saved && ['home', 'history', 'calendar', 'library', 'settings', 'online', 'vlr', 'companion'].includes(saved)) {
       return saved as any;
     }
@@ -636,18 +643,18 @@ function App() {
   });
 
   useEffect(() => {
-    localStorage.setItem('valor_active_tab', activeTab);
+    sessionStorage.setItem('valor_active_tab', activeTab);
   }, [activeTab]);
 
   useEffect(() => {
     if (isPlaybackRestoring) return;
     if (playingVideo) {
-      localStorage.setItem('valor_currently_playing', JSON.stringify(playingVideo));
+      sessionStorage.setItem('valor_currently_playing', JSON.stringify(playingVideo));
       if (typeof playingVideo.currentTime === 'number') {
         saveMediaTimestamp(playingVideo, playingVideo.currentTime, Number(playingVideo.duration) || 0, playingVideo.title);
       }
     } else {
-      localStorage.removeItem('valor_currently_playing');
+      sessionStorage.removeItem('valor_currently_playing');
     }
   }, [playingVideo, isPlaybackRestoring]);
 
@@ -656,7 +663,7 @@ function App() {
     const handleUnload = () => {
       if (playingVideo && typeof playingVideo.currentTime === 'number') {
         saveMediaTimestamp(playingVideo, playingVideo.currentTime, Number(playingVideo.duration) || 0, playingVideo.title);
-        localStorage.setItem('valor_currently_playing', JSON.stringify(playingVideo));
+        sessionStorage.setItem('valor_currently_playing', JSON.stringify(playingVideo));
       }
     };
     window.addEventListener('beforeunload', handleUnload);
@@ -1591,8 +1598,8 @@ function App() {
           setVideos(loadedHistory);
           loadedVideosUserIdRef.current = settings.userId;
 
-          // 3. Recover currently playing video with full path and metadata
-          const currentlyPlaying = localStorage.getItem('valor_currently_playing');
+          // 3. Recover currently playing video with full path and metadata (per-tab)
+          const currentlyPlaying = sessionStorage.getItem('valor_currently_playing');
           if (currentlyPlaying) {
             try {
               let videoObj = JSON.parse(currentlyPlaying) as VideoItem;
