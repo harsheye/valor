@@ -1,12 +1,10 @@
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { 
   Play, Pause, RotateCcw, RotateCw, X, 
-  Maximize, Minimize, Volume2, Volume1, VolumeX, Lock,
+  Maximize, Minimize, Volume2, Volume1, VolumeX, Lock, Unlock,
   Sliders, SkipForward, Ban, Eye, Settings, Bookmark as BookmarkIcon, List, Server, Cpu
 } from 'lucide-react';
 import type { VideoItem, Bookmark } from '../types/media';
-import { BookmarkPanel } from './BookmarkPanel';
-import { BookmarkModal } from './BookmarkModal';
 import { CustomSelect } from './CustomSelect';
 import { logger } from '../utils/logger';
 import { classifyVideoTitle } from '../utils/libraryClassifier';
@@ -869,58 +867,103 @@ export const OnlineVideoPlayer: React.FC<OnlineVideoPlayerProps> = ({
       onMouseLeave={() => !interactWithNative && setShowControls(false)}
       style={{ background: 'black', fontFamily: 'Outfit, sans-serif' }}
     >
-      {/* Standalone Source Selector Dropdown (Unnested) */}
-      <div style={{ position: 'fixed', top: '20px', right: '70px', zIndex: 2200, pointerEvents: 'auto' }}>
-        <CustomSelect
-          value={server}
-          onChange={(val) => setServer(val as 'videasy' | 'vidking')}
-          options={[
-            { value: 'videasy', label: 'Source 1' },
-            { value: 'vidking', label: 'Source 2' }
-          ]}
-          hideSearch={true}
-          width="130px"
-        />
-      </div>
-
-      {/* Standalone Exit Button (Unnested) */}
-      <button 
-        onClick={onBack}
+      {/* Standalone Lock Button (Top-Left) — Always accessible to lock & unlock */}
+      <button
+        onClick={() => {
+          const next = !isLocked;
+          setIsLocked(next);
+          addToast(next ? 'UI Locked' : 'UI Unlocked');
+        }}
         style={{
           position: 'fixed',
           top: '20px',
-          right: '20px',
+          left: '20px',
           zIndex: 2200,
-          width: '36px',
-          height: '36px',
+          width: '38px',
+          height: '38px',
           borderRadius: '50%',
-          background: 'rgba(10, 10, 15, 0.85)',
+          background: isLocked ? 'rgba(229, 9, 20, 0.4)' : 'rgba(10, 10, 15, 0.85)',
           backdropFilter: 'blur(15px)',
           WebkitBackdropFilter: 'blur(15px)',
-          border: '1px solid rgba(255, 255, 255, 0.12)',
-          color: 'rgba(255, 255, 255, 0.85)',
+          border: `1px solid ${isLocked ? '#e50914' : 'rgba(255, 255, 255, 0.15)'}`,
+          color: isLocked ? '#ff4d4d' : 'rgba(255, 255, 255, 0.85)',
           cursor: 'pointer',
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
-          boxShadow: '0 4px 20px rgba(0,0,0,0.5)',
+          boxShadow: isLocked ? '0 0 16px rgba(229, 9, 20, 0.6)' : '0 4px 20px rgba(0,0,0,0.5)',
           transition: 'all 0.2s ease',
           pointerEvents: 'auto'
         }}
-        onMouseEnter={(e) => {
-          e.currentTarget.style.color = '#fff';
-          e.currentTarget.style.background = '#e50914';
-          e.currentTarget.style.borderColor = '#e50914';
-        }}
-        onMouseLeave={(e) => {
-          e.currentTarget.style.color = 'rgba(255, 255, 255, 0.85)';
-          e.currentTarget.style.background = 'rgba(10, 10, 15, 0.85)';
-          e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.12)';
-        }}
-        title="Exit Player"
+        title={isLocked ? 'Locked (Click to Unlock)' : 'Lock UI'}
       >
-        <X size={18} />
+        {isLocked ? <Lock size={18} /> : <Unlock size={18} />}
       </button>
+
+      {/* Screen interaction blocker when in Lock mode */}
+      {isLocked && (
+        <div 
+          style={{ 
+            position: 'fixed', 
+            inset: 0, 
+            zIndex: 2100, 
+            pointerEvents: 'auto', 
+            cursor: 'not-allowed',
+            background: 'transparent'
+          }} 
+        />
+      )}
+
+      {/* Source Selector & Cross (Exit) Button — ONLY VISIBLE WHEN NOT LOCKED */}
+      {!isLocked && (
+        <div style={{ position: 'fixed', top: '20px', right: '20px', zIndex: 2200, display: 'flex', alignItems: 'center', gap: '10px', pointerEvents: 'auto' }}>
+          {/* Source Selector Dropdown */}
+          <CustomSelect
+            value={server}
+            onChange={(val) => setServer(val as 'videasy' | 'vidking')}
+            options={[
+              { value: 'videasy', label: 'Source 1' },
+              { value: 'vidking', label: 'Source 2' }
+            ]}
+            hideSearch={true}
+            width="125px"
+          />
+
+          {/* Cross (Exit) Button */}
+          <button 
+            onClick={onBack}
+            style={{
+              width: '36px',
+              height: '36px',
+              borderRadius: '50%',
+              background: 'rgba(10, 10, 15, 0.85)',
+              backdropFilter: 'blur(15px)',
+              WebkitBackdropFilter: 'blur(15px)',
+              border: '1px solid rgba(255, 255, 255, 0.15)',
+              color: 'rgba(255, 255, 255, 0.85)',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              boxShadow: '0 4px 20px rgba(0,0,0,0.5)',
+              transition: 'all 0.2s ease'
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.color = '#fff';
+              e.currentTarget.style.background = '#e50914';
+              e.currentTarget.style.borderColor = '#e50914';
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.color = 'rgba(255, 255, 255, 0.85)';
+              e.currentTarget.style.background = 'rgba(10, 10, 15, 0.85)';
+              e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.15)';
+            }}
+            title="Exit Player"
+          >
+            <X size={18} />
+          </button>
+        </div>
+      )}
 
       <style>{`
         .local-player-container {
@@ -1304,205 +1347,11 @@ export const OnlineVideoPlayer: React.FC<OnlineVideoPlayerProps> = ({
         />
       </div>
 
-      {/* Custom CONTROL OVERLAY OVER THE IFRAME */}
-      {!interactWithNative && (
-        <div 
-          className={`player-ui-overlay-layer ${showControls ? 'visible' : ''}`}
-          style={{ zIndex: 10, background: 'transparent', pointerEvents: 'none' }}
-        >
-          {/* Top Bar controls - Only X Close Button */}
-          <div className="top-bar-overlay" style={{ background: 'transparent', justifyContent: 'space-between', padding: '16px 20px', pointerEvents: 'none' }}>
-            <button
-              onClick={() => setIsLocked(!isLocked)}
-              className={`control-btn ${isLocked ? 'active' : ''}`}
-              style={{ pointerEvents: 'auto', background: isLocked ? 'rgba(229, 9, 20, 0.2)' : 'rgba(0,0,0,0.6)', border: `1px solid ${isLocked ? '#e50914' : 'rgba(255,255,255,0.15)'}`, borderRadius: '8px', padding: '8px', color: isLocked ? '#e50914' : '#fff' }}
-            >
-              <Lock size={20} />
-            </button>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginLeft: 'auto', pointerEvents: 'auto' }}>
-              {/* Close Button X */}
-              <button 
-                className="back-btn" 
-                onClick={onBack} 
-                title="Exit Player"
-                style={{ background: 'rgba(0,0,0,0.6)', border: '1px solid rgba(255,255,255,0.15)', borderRadius: '8px', width: '32px', height: '32px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', cursor: 'pointer' }}
-              >
-                <X size={20} />
-              </button>
-            </div>
-          </div>
-
-          {/* Toast notifications */}
-          {toastMessage && (
-            <div className="player-toast-notification" style={{ pointerEvents: 'auto' }}>
-              {toastMessage}
-            </div>
-          )}
-
-          {/* Interactive Skip Section Overlay Button */}
-          {activeBookmarkForSkip && (
-            <div 
-              style={{
-                position: 'absolute',
-                bottom: '80px',
-                right: '24px',
-                zIndex: 25,
-                pointerEvents: 'auto'
-              }}
-            >
-              <button
-                onClick={() => {
-                  if (activeBookmarkForSkip.endTime) {
-                    sendIframeCommand('seek', activeBookmarkForSkip.endTime);
-                    setCurrentTime(activeBookmarkForSkip.endTime);
-                    addToast(`Skipped ${activeBookmarkForSkip.category || 'Section'}`);
-                  }
-                }}
-                style={{
-                  background: 'linear-gradient(135deg, #8b5cf6 0%, #6d28d9 100%)',
-                  border: '1px solid rgba(255,255,255,0.2)',
-                  borderRadius: '10px',
-                  color: '#fff',
-                  padding: '10px 18px',
-                  fontSize: '0.85rem',
-                  fontWeight: 800,
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '8px',
-                  cursor: 'pointer',
-                  boxShadow: '0 8px 25px rgba(109, 40, 217, 0.5)'
-                }}
-              >
-                <SkipForward size={16} />
-                <span>Skip {activeBookmarkForSkip.category || 'Section'}</span>
-              </button>
-            </div>
-          )}
-
-          {/* Bottom Controls Overlay (Strictly pointerEvents none on wrapper!) */}
-          <div className="bottom-bar-overlay" style={{ background: 'transparent', padding: '16px 20px', pointerEvents: 'none' }}>
-            {/* Timeline Progress Tracker with Bookmarks */}
-            <div className="scrub-container-premium" style={{ cursor: 'default', marginBottom: '10px', pointerEvents: 'auto' }}>
-              {/* Visual Track Background */}
-              <div 
-                className="scrub-track-bg" 
-                style={{ 
-                  position: 'absolute', 
-                  width: '100%', 
-                  height: '4px', 
-                  background: 'rgba(255,255,255,0.2)', 
-                  borderRadius: '2px',
-                  zIndex: 7
-                }} 
-              />
-              
-              {/* Visual Progress Bar Overlay */}
-              <div 
-                className="scrub-track-progress" 
-                style={{ 
-                  width: `${(currentTime / (duration || 1)) * 100}%`,
-                  height: '4px',
-                  background: '#8b5cf6',
-                  borderRadius: '2px',
-                  position: 'absolute',
-                  zIndex: 8
-                }} 
-              />
-
-              {/* Render bookmarks on timeline */}
-              {bookmarks.map((bm) => {
-                const pct = (bm.time / (duration || 1)) * 100;
-                const isRange = bm.endTime !== undefined && bm.endTime > bm.time;
-                
-                if (isRange && bm.endTime) {
-                  const endPct = (bm.endTime / (duration || 1)) * 100;
-                  const width = endPct - pct;
-                  return (
-                    <div 
-                      key={bm.id}
-                      className={`timeline-bookmark-range ${bm.category?.toLowerCase() || ''}`}
-                      style={{ left: `${pct}%`, width: `${width}%` }}
-                      title={`${bm.category}: ${bm.title || bm.label}`}
-                    />
-                  );
-                }
-                return (
-                  <div 
-                    key={bm.id}
-                    className={`timeline-bookmark-dot ${bm.category?.toLowerCase() || ''}`}
-                    style={{ left: `${pct}%` }}
-                    title={`${bm.category}: ${bm.title || bm.label}`}
-                  />
-                );
-              })}
-            </div>
-
-            {/* Bottom Control Buttons Row - Strictly pointerEvents none on row wrapper! */}
-            <div className="bottom-control-buttons-row" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', marginTop: '6px', pointerEvents: 'none' }}>
-              <div className="popover-wrapper" style={{ position: 'relative', pointerEvents: 'auto' }}>
-                <button 
-                  className={`control-btn ${showBookmarksPopover ? 'active' : ''}`}
-                  onClick={() => setShowBookmarksPopover(prev => !prev)}
-                  title="Bookmarks Panel"
-                  style={{
-                    background: 'rgba(12, 12, 18, 0.85)',
-                    border: '1.5px solid rgba(255, 255, 255, 0.4)',
-                    borderRadius: '12px',
-                    color: '#fff',
-                    padding: '8px 16px',
-                    cursor: 'pointer',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    boxShadow: '0 8px 20px rgba(0, 0, 0, 0.6), 0 0 12px rgba(139, 92, 246, 0.3)',
-                    transition: 'all 0.2s ease'
-                  }}
-                >
-                  <BookmarkIcon size={22} />
-                </button>
-
-                {showBookmarksPopover && (
-                  <BookmarkPanel 
-                    bookmarks={bookmarks}
-                    onJump={(time) => {
-                      sendIframeCommand('seek', time);
-                      setCurrentTime(time);
-                      setShowBookmarksPopover(false);
-                    }}
-                    onEdit={(bm) => {
-                      setEditingBookmark(bm);
-                      setShowAddDialog(true);
-                      setShowBookmarksPopover(false);
-                    }}
-                    onDelete={handleDeleteBookmark}
-                    onAdd={() => {
-                      setEditingBookmark(undefined);
-                      setShowAddDialog(true);
-                      setShowBookmarksPopover(false);
-                    }}
-                    onClose={() => setShowBookmarksPopover(false)}
-                  />
-                )}
-              </div>
-            </div>
-          </div>
+      {/* Toast notifications */}
+      {toastMessage && (
+        <div className="player-toast-notification" style={{ pointerEvents: 'auto', zIndex: 3000 }}>
+          {toastMessage}
         </div>
-      )}
-
-      {/* Bookmark Modal */}
-      {showAddDialog && (
-        <BookmarkModal 
-          initialTime={markingStartTime !== null ? markingStartTime : Math.round(currentTime)}
-          initialEndTime={markingStartTime !== null ? Math.round(currentTime) : undefined}
-          initialBookmark={editingBookmark}
-          videoElement={null}
-          videoTitle={video.title}
-          onSave={handleSaveBookmark}
-          onClose={() => {
-            setShowAddDialog(false);
-            setMarkingStartTime(null);
-          }}
-        />
       )}
     </div>
   );
