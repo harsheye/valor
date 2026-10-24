@@ -5918,16 +5918,19 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
           }}
         >
           <div 
-            className="settings-modal-card animate-slide-in-right" 
+            className="settings-modal-card animate-magic-settings" 
             onClick={(e) => e.stopPropagation()}
             style={{
-              background: 'var(--dropdown-bg, rgba(18, 18, 18, 0.96))',
-              border: '1px solid var(--dropdown-border, rgba(255, 255, 255, 0.1))',
+              background: 'var(--dropdown-bg, rgba(16, 17, 24, 0.95))',
+              backdropFilter: 'blur(20px) saturate(160%)',
+              WebkitBackdropFilter: 'blur(20px) saturate(160%)',
+              border: '1px solid rgba(255, 255, 255, 0.14)',
+              borderLeft: '2px solid rgba(239, 68, 68, 0.85)',
               borderRight: 'none',
               borderRadius: '16px 0 0 16px',
               padding: '1.25rem 1rem',
               width: isSettingsExpanded ? '280px' : '154px',
-              boxShadow: '-10px 0 30px rgba(0,0,0,0.6)',
+              boxShadow: '-14px 0 40px rgba(0,0,0,0.7), -4px 0 20px rgba(239, 68, 68, 0.25)',
               display: 'flex',
               flexDirection: 'column',
               gap: '1rem',
@@ -5936,7 +5939,25 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
             }}
           >
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <h3 style={{ margin: 0, fontSize: '1rem', fontWeight: 600, color: 'var(--text-primary, #ffffff)' }}>UI Settings</h3>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <h3 style={{ margin: 0, fontSize: '0.95rem', fontWeight: 600, color: 'var(--text-primary, #ffffff)' }}>UI Settings</h3>
+                <span 
+                  title="Hotkey: Delete"
+                  style={{
+                    fontSize: '0.6rem',
+                    fontWeight: 700,
+                    padding: '2px 5px',
+                    borderRadius: '4px',
+                    background: 'rgba(239, 68, 68, 0.2)',
+                    border: '1px solid rgba(239, 68, 68, 0.45)',
+                    color: '#f87171',
+                    letterSpacing: '0.04em',
+                    boxShadow: '0 0 8px rgba(239, 68, 68, 0.2)'
+                  }}
+                >
+                  DEL
+                </span>
+              </div>
               <button 
                 onClick={() => {
                   setShowSettingsPanel(false);
@@ -6668,6 +6689,42 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
         .animate-slide-in-right {
           animation: slideInRight 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards;
         }
+        @keyframes magicSettingsReveal {
+          0% {
+            transform: translateX(110%) scale(0.94);
+            opacity: 0;
+            box-shadow: -30px 0 60px rgba(239, 68, 68, 0.4);
+          }
+          70% {
+            transform: translateX(-4px) scale(1.01);
+            opacity: 1;
+            box-shadow: -16px 0 40px rgba(239, 68, 68, 0.3);
+          }
+          100% {
+            transform: translateX(0) scale(1);
+            opacity: 1;
+            box-shadow: -12px 0 35px rgba(0,0,0,0.7), -4px 0 20px rgba(239, 68, 68, 0.2);
+          }
+        }
+        .animate-magic-settings {
+          animation: magicSettingsReveal 0.34s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+        }
+
+        .radial-edge-slide-btn {
+          transition: transform 0.28s cubic-bezier(0.34, 1.56, 0.64, 1), background 0.2s, box-shadow 0.2s, opacity 0.25s, border-color 0.2s;
+        }
+        .radial-edge-slide-btn:hover {
+          transform: translateY(-50%) translateX(-8px) !important;
+          background: rgba(26, 30, 44, 0.96) !important;
+          border-color: rgba(99, 102, 241, 0.7) !important;
+          box-shadow: -8px 0 24px rgba(99, 102, 241, 0.5), -2px 0 10px rgba(0,0,0,0.6) !important;
+          color: #ffffff !important;
+          opacity: 1 !important;
+        }
+        .radial-edge-slide-btn:active {
+          transform: translateY(-50%) translateX(-4px) scale(0.95) !important;
+        }
+
         @keyframes scaleIn {
           from { transform: scale(0.95); opacity: 0; }
           to { transform: scale(1); opacity: 1; }
@@ -8297,71 +8354,123 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
       {/* Render EsportsLiveOverlay here so it shows in Fullscreen */}
       <EsportsLiveOverlay />
 
-      {radialMenuState.visible && (() => {
-        // Build items dynamically based on settings
-        const config = radialMenuConfig || {
-          console: true, audioSubs: true, fullscreen: true, unlock: true, bookmark: true, mute: true, speed: true, pip: false, loop: false
-        };
-
-        const rItems = [];
-        if (config.console) {
-          rItems.push({
-            id: 'stats', label: 'Console', icon: <Terminal size={24} />, onClick: () => setShowConsoleOverlay(prev => !prev), disabled: false
-          });
-        }
-        if (config.audioSubs && !isUndetectedLocalMedia) {
-          rItems.push({
-            id: 'audio', label: 'Audio/Subs', icon: <MessageSquare size={24} />, onClick: () => setShowAudioSubMenu(true), disabled: isLocked
-          });
-        }
-        if (config.fullscreen) {
-          rItems.push({
-            id: 'fullscreen', label: (isFullscreen || isPseudoFullscreen) ? 'Exit Fullscreen' : 'Fullscreen', icon: (isFullscreen || isPseudoFullscreen) ? <Minimize size={24} /> : <Maximize size={24} />, onClick: toggleFullscreen, disabled: isLocked
-          });
-        }
-        if (config.bookmark && !isUndetectedLocalMedia) {
-          rItems.push({
-            id: 'bookmark', label: 'Bookmark', icon: <BookmarkIcon size={24} />, onClick: () => setShowAddDialog(true), disabled: isLocked
-          });
-        }
-        if (config.mute) {
-          rItems.push({
-            id: 'mute', label: isMuted ? 'Unmute' : 'Mute', icon: isMuted ? <VolumeX size={24} /> : <Volume2 size={24} />, onClick: () => setIsMuted(prev => !prev), disabled: isLocked
-          });
-        }
-        if (config.speed) {
-          rItems.push({
-            id: 'speed', label: `${playbackRate}x Speed`, icon: <FastForward size={24} />, onClick: () => {
-              const speeds = [1.0, 1.25, 1.5, 1.75, 2.0];
-              const currentIdx = speeds.indexOf(playbackRate);
-              const nextSpeed = speeds[(currentIdx + 1) % speeds.length];
-              if (videoRef.current) {
-                videoRef.current.playbackRate = nextSpeed;
-                setPlaybackRate(nextSpeed);
+      {/* Little Slide Button on player edge that slides out the Radial Menu */}
+      {!hideUIOverlays && (
+        <button
+          className="radial-edge-slide-btn"
+          onClick={(e) => {
+            e.stopPropagation();
+            e.preventDefault();
+            if (radialMenuState.visible) {
+              setRadialMenuState({ visible: false, x: 0, y: 0 });
+            } else {
+              const container = containerRef.current;
+              if (container) {
+                const rect = container.getBoundingClientRect();
+                const targetX = rect.left + Math.max(160, rect.width - 200);
+                const targetY = rect.top + (rect.height / 2);
+                setRadialMenuState({ visible: true, x: targetX, y: targetY });
+              } else {
+                setRadialMenuState({ visible: true, x: window.innerWidth * 0.75, y: window.innerHeight * 0.5 });
               }
-            }, disabled: isLocked
-          });
-        }
-        if (config.pip && document.pictureInPictureEnabled) {
-          rItems.push({
-            id: 'pip', label: 'PiP', icon: <Maximize size={24} />, onClick: () => {
-              if (document.pictureInPictureElement) document.exitPictureInPicture();
-              else if (videoRef.current) videoRef.current.requestPictureInPicture();
-            }, disabled: isLocked
-          });
-        }
-        if (config.loop) {
-          rItems.push({
-            id: 'loop', label: (videoRef.current && videoRef.current.loop) ? 'Unloop' : 'Loop', icon: <RotateCcw size={24} />, onClick: () => {
-              if (videoRef.current) videoRef.current.loop = !videoRef.current.loop;
-            }, disabled: isLocked
-          });
-        }
-        if (config.unlock && isLocked) {
-          rItems.push({
-            id: 'unlock', label: 'Unlock UI', icon: <Unlock size={24} />, onClick: () => setIsLocked(false), disabled: false
-          });
-        }
+            }
+          }}
+          title={radialMenuState.visible ? "Close Radial Menu" : "Slide out Radial Menu"}
+          aria-label="Toggle Radial Menu"
+          style={{
+            position: 'absolute',
+            right: 0,
+            top: '50%',
+            transform: 'translateY(-50%)',
+            zIndex: 85,
+            width: '26px',
+            height: '68px',
+            background: 'rgba(18, 20, 28, 0.82)',
+            backdropFilter: 'blur(10px) saturate(140%)',
+            WebkitBackdropFilter: 'blur(10px) saturate(140%)',
+            border: '1px solid rgba(255, 255, 255, 0.16)',
+            borderRight: 'none',
+            borderRadius: '12px 0 0 12px',
+            padding: 0,
+            margin: 0,
+            cursor: 'pointer',
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: '5px',
+            boxShadow: '-4px 0 16px rgba(0, 0, 0, 0.45)',
+            opacity: showControls || radialMenuState.visible ? 0.95 : 0.35,
+            color: radialMenuState.visible ? '#60a5fa' : 'rgba(255, 255, 255, 0.85)',
+            outline: 'none'
+          }}
+        >
+          <ChevronLeft 
+            size={14} 
+            style={{ 
+              transform: radialMenuState.visible ? 'rotate(180deg)' : 'none', 
+              transition: 'transform 0.25s ease' 
+            }} 
+          />
+          <div style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(2, 4px)',
+            gap: '3px',
+            pointerEvents: 'none'
+          }}>
+            <span style={{ width: 4, height: 4, borderRadius: '50%', background: '#ef4444' }} />
+            <span style={{ width: 4, height: 4, borderRadius: '50%', background: '#3b82f6' }} />
+            <span style={{ width: 4, height: 4, borderRadius: '50%', background: '#10b981' }} />
+            <span style={{ width: 4, height: 4, borderRadius: '50%', background: '#a855f7' }} />
+          </div>
+        </button>
+      )}
+
+      {radialMenuState.visible && (() => {
+        // Max 5 items: 1 mid (Pause/Play) and 4 on outer
+        const rItems = [
+          {
+            id: 'settings',
+            label: 'Settings (Del)',
+            icon: <Settings size={22} />,
+            color: 'rgba(239, 68, 68, 0.32)',
+            onClick: () => {
+              setShowSettingsPanel(true);
+            },
+            disabled: isLocked
+          },
+          {
+            id: 'audio',
+            label: 'Audio/Subs',
+            icon: <MessageSquare size={22} />,
+            color: 'rgba(59, 130, 246, 0.32)',
+            onClick: () => setShowAudioSubMenu(true),
+            disabled: isLocked
+          },
+          {
+            id: 'fullscreen',
+            label: (isFullscreen || isPseudoFullscreen) ? 'Exit Screen' : 'Fullscreen',
+            icon: (isFullscreen || isPseudoFullscreen) ? <Minimize size={22} /> : <Maximize size={22} />,
+            color: 'rgba(16, 185, 129, 0.32)',
+            onClick: toggleFullscreen,
+            disabled: isLocked
+          },
+          isLocked ? {
+            id: 'unlock',
+            label: 'Unlock UI',
+            icon: <Unlock size={22} />,
+            color: 'rgba(245, 158, 11, 0.32)',
+            onClick: () => setIsLocked(false),
+            disabled: false
+          } : {
+            id: 'mute',
+            label: isMuted ? 'Unmute' : 'Mute',
+            icon: isMuted ? <VolumeX size={22} /> : <Volume2 size={22} />,
+            color: 'rgba(168, 85, 247, 0.32)',
+            onClick: () => setIsMuted(prev => !prev),
+            disabled: false
+          }
+        ];
 
         return (
           <RadialMenu
