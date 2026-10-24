@@ -33,6 +33,7 @@ import { saveMediaTimestamp, getMediaTimestamp } from '../utils/mediaTimestampSt
 import { isWasmSupported } from '../utils/wasmCheck';
 import { sidecarService } from '../services/remote/sidecarService';
 import { LocalServicePage } from '../pages/LocalServicePage';
+import { findPreferredStream, getSavedMediaPreferences, getPreferredAudioStreamIndex, getLanguageDisplayLabel } from '../utils/languageMatcher';
 
 const getAudioBoostMultiplier = (boostPercent: number): number => {
   if (boostPercent <= 100) return 1.0;
@@ -1703,7 +1704,11 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
   const [activeAudioStartOffset, setActiveAudioStartOffset] = useState(0);
   const [activeSubtitleStartOffset, setActiveSubtitleStartOffset] = useState(0);
   const [activeAudioStreamIndex, setActiveAudioStreamIndex] = useState<number | null>(() => {
-    const existingAudio = (video.streams || []).find((s: any) => s.type === 'audio');
+    const prefs = getSavedMediaPreferences();
+    const streams = video.streams || [];
+    const preferredIdx = getPreferredAudioStreamIndex(streams, prefs.defaultAudio);
+    if (preferredIdx !== null) return preferredIdx;
+    const existingAudio = streams.find((s: any) => s.type === 'audio');
     return existingAudio !== undefined ? existingAudio.index : 0;
   });
   const [activeSubStreamIndex, setActiveSubStreamIndex] = useState<number | null>(null);
@@ -1778,12 +1783,15 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
           setDuration(probeData.duration);
         }
 
-        // Auto-select primary audio stream for server packet rendering & forwarding
-        const defaultAudio = probeData.audioStreams?.[0];
-        if (defaultAudio !== undefined && (activeAudioStreamIndex === null || activeAudioStreamIndex === undefined)) {
-          setActiveAudioStreamIndex(defaultAudio.index);
-          if (playbackControllerRef.current && (playbackControllerRef.current.state.activeStreamIndex === -1 || playbackControllerRef.current.state.activeStreamIndex === null)) {
-            playbackControllerRef.current.switchAudioTrack(defaultAudio.index);
+        // Auto-select preferred audio stream for server packet rendering & forwarding
+        const prefs = getSavedMediaPreferences();
+        const preferredAudioStream = probeData.audioStreams?.length
+          ? (findPreferredStream(probeData.audioStreams, prefs.defaultAudio, 'audio') || probeData.audioStreams[0])
+          : undefined;
+        if (preferredAudioStream !== undefined && (activeAudioStreamIndex === null || activeAudioStreamIndex === undefined || activeAudioStreamIndex === 0)) {
+          setActiveAudioStreamIndex(preferredAudioStream.index);
+          if (playbackControllerRef.current) {
+            playbackControllerRef.current.switchAudioTrack(preferredAudioStream.index);
           }
         }
 
@@ -2081,13 +2089,8 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
     }
   }, [currentTime, isPlaying, activeAudioStreamIndex, activeSubStreamIndex, video.seekMap, video.isRemote, video.containerType, video.format, selectedAudioTrack, selectedSubTrack]);
 
-  const getLangLabel = (lang?: string, fallback: string = '') => {
-    if (!lang) return fallback;
-    const clean = lang.toLowerCase().trim();
-    if (clean === 'eng' || clean === 'en') return 'ENG';
-    if (clean === 'jpn' || clean === 'ja') return 'JAP';
-    if (clean === 'chi' || clean === 'zho' || clean === 'zh') return 'CHN';
-    return clean.toUpperCase();
+  const getLangLabel = (lang?: string, fallback: string = '', title?: string) => {
+    return getLanguageDisplayLabel(lang, fallback, title);
   };
 
   // Auto probing states
@@ -3001,7 +3004,7 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
   };
 
   // On-the-fly selection handlers for embedded streams selected in-player using container-direct chunk reading
-  const handleSelectEmbeddedAudio = async (streamIndex: number, codec: string, language?: string, skipLoad = false) => {
+  const handleSelectEmbeddedAudio = async (streamIndex: number, codec: string, language?: string, skipLoad = false, title?: string) => {
     if (!isWasmSupported()) {
       triggerSwitchToast('WebAssembly unavailable on this browser. Client stream demuxing disabled.');
       return;
@@ -3015,7 +3018,10 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
       audioDebounceTimeoutRef.current = null;
     }
     setActiveAudioStreamIndex(streamIndex);
-    const label = getLangLabel(language, `Track #${streamIndex}`);
+    if (playbackControllerRef.current) {
+      playbackControllerRef.current.switchAudioTrack(streamIndex);
+    }
+    const label = getLangLabel(language, `Track #${streamIndex}`, title);
     setSelectedAudioTrack({
       id: `remote-aud-${streamIndex}`,
       name: `Audio (${label})`,
@@ -4316,38 +4322,29 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
         const targetAudio = settings.defaultAudio || 'ENG';
         const targetSub = settings.defaultSub || 'ENG';
 
+        let audioSelected = false;
         // Auto-select audio stream (for both local and remote)
         if (targetAudio !== 'Original' && !selectedAudioTrack) {
-          const stream = audioStreams.find(s => (
-            targetAudio === 'ENG' ? (s.language?.toLowerCase() === 'eng' || s.language?.toLowerCase() === 'en') :
-            targetAudio === 'JAP' ? (s.language?.toLowerCase() === 'jpn' || s.language?.toLowerCase() === 'ja') :
-            targetAudio === 'CHN' ? (s.language?.toLowerCase() === 'chi' || s.language?.toLowerCase() === 'zho' || s.language?.toLowerCase() === 'zh') :
-            s.language?.toUpperCase() === targetAudio
-          ));
+          const stream = findPreferredStream(audioStreams, targetAudio, 'audio');
           if (stream) {
-            logger.player(`Auto-selecting audio track: ${stream.language}`);
-            handleSelectEmbeddedAudio(stream.index, stream.codec, stream.language);
+            audioSelected = true;
+            logger.player(`Auto-selecting audio track: ${stream.language || stream.title}`);
+            handleSelectEmbeddedAudio(stream.index, stream.codec, stream.language, false, stream.title);
           }
         }
 
-        // Always auto-select the first audio track when available (for both local and remote)
-        // Browser native decoding from MKV container is unreliable, so always extract via FFmpeg
-        if (!selectedAudioTrack && audioStreams.length > 0) {
+        // Always auto-select the first audio track when available (for both local and remote) if no preferred track matched
+        if (!audioSelected && !selectedAudioTrack && audioStreams.length > 0) {
           const firstAudio = audioStreams[0];
-          logger.player(`Auto-selecting first audio track: ${firstAudio.language || 'unknown'} (${firstAudio.codec})`);
-          handleSelectEmbeddedAudio(firstAudio.index, firstAudio.codec, firstAudio.language);
+          logger.player(`Auto-selecting first audio track: ${firstAudio.language || firstAudio.title || 'unknown'} (${firstAudio.codec})`);
+          handleSelectEmbeddedAudio(firstAudio.index, firstAudio.codec, firstAudio.language, false, firstAudio.title);
         }
 
         // Auto-select subtitle stream
         if (targetSub !== 'Off' && !selectedSubTrack) {
-          const stream = subtitleStreams.find(s => (
-            targetSub === 'ENG' ? (s.language?.toLowerCase() === 'eng' || s.language?.toLowerCase() === 'en') :
-            targetSub === 'JAP' ? (s.language?.toLowerCase() === 'jpn' || s.language?.toLowerCase() === 'ja') :
-            targetSub === 'CHN' ? (s.language?.toLowerCase() === 'chi' || s.language?.toLowerCase() === 'zho' || s.language?.toLowerCase() === 'zh') :
-            s.language?.toUpperCase() === targetSub
-          ));
+          const stream = findPreferredStream(subtitleStreams, targetSub, 'subtitle');
           if (stream) {
-            logger.player(`Auto-selecting subtitle track: ${stream.language}`);
+            logger.player(`Auto-selecting subtitle track: ${stream.language || stream.title}`);
             handleSelectEmbeddedSubtitle(stream.index, stream.codec, stream.language);
           }
         }
@@ -5918,19 +5915,16 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
           }}
         >
           <div 
-            className="settings-modal-card animate-magic-settings" 
+            className="settings-modal-card animate-slide-in-right" 
             onClick={(e) => e.stopPropagation()}
             style={{
-              background: 'var(--dropdown-bg, rgba(16, 17, 24, 0.95))',
-              backdropFilter: 'blur(20px) saturate(160%)',
-              WebkitBackdropFilter: 'blur(20px) saturate(160%)',
-              border: '1px solid rgba(255, 255, 255, 0.14)',
-              borderLeft: '2px solid rgba(239, 68, 68, 0.85)',
+              background: 'var(--dropdown-bg, rgba(18, 18, 18, 0.96))',
+              border: '1px solid var(--dropdown-border, rgba(255, 255, 255, 0.1))',
               borderRight: 'none',
               borderRadius: '16px 0 0 16px',
               padding: '1.25rem 1rem',
               width: isSettingsExpanded ? '280px' : '154px',
-              boxShadow: '-14px 0 40px rgba(0,0,0,0.7), -4px 0 20px rgba(239, 68, 68, 0.25)',
+              boxShadow: '-10px 0 30px rgba(0,0,0,0.6)',
               display: 'flex',
               flexDirection: 'column',
               gap: '1rem',
@@ -5939,25 +5933,7 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
             }}
           >
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                <h3 style={{ margin: 0, fontSize: '0.95rem', fontWeight: 600, color: 'var(--text-primary, #ffffff)' }}>UI Settings</h3>
-                <span 
-                  title="Hotkey: Delete"
-                  style={{
-                    fontSize: '0.6rem',
-                    fontWeight: 700,
-                    padding: '2px 5px',
-                    borderRadius: '4px',
-                    background: 'rgba(239, 68, 68, 0.2)',
-                    border: '1px solid rgba(239, 68, 68, 0.45)',
-                    color: '#f87171',
-                    letterSpacing: '0.04em',
-                    boxShadow: '0 0 8px rgba(239, 68, 68, 0.2)'
-                  }}
-                >
-                  DEL
-                </span>
-              </div>
+              <h3 style={{ margin: 0, fontSize: '1rem', fontWeight: 600, color: 'var(--text-primary, #ffffff)' }}>UI Settings</h3>
               <button 
                 onClick={() => {
                   setShowSettingsPanel(false);
@@ -6689,40 +6665,19 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
         .animate-slide-in-right {
           animation: slideInRight 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards;
         }
-        @keyframes magicSettingsReveal {
-          0% {
-            transform: translateX(110%) scale(0.94);
-            opacity: 0;
-            box-shadow: -30px 0 60px rgba(239, 68, 68, 0.4);
-          }
-          70% {
-            transform: translateX(-4px) scale(1.01);
-            opacity: 1;
-            box-shadow: -16px 0 40px rgba(239, 68, 68, 0.3);
-          }
-          100% {
-            transform: translateX(0) scale(1);
-            opacity: 1;
-            box-shadow: -12px 0 35px rgba(0,0,0,0.7), -4px 0 20px rgba(239, 68, 68, 0.2);
-          }
+        .ui-settings-edge-slide-btn, .radial-edge-slide-btn {
+          transition: transform 0.25s cubic-bezier(0.34, 1.56, 0.64, 1), background 0.2s, box-shadow 0.2s, opacity 0.25s, border-color 0.2s;
         }
-        .animate-magic-settings {
-          animation: magicSettingsReveal 0.34s cubic-bezier(0.16, 1, 0.3, 1) forwards;
-        }
-
-        .radial-edge-slide-btn {
-          transition: transform 0.28s cubic-bezier(0.34, 1.56, 0.64, 1), background 0.2s, box-shadow 0.2s, opacity 0.25s, border-color 0.2s;
-        }
-        .radial-edge-slide-btn:hover {
-          transform: translateY(-50%) translateX(-8px) !important;
-          background: rgba(26, 30, 44, 0.96) !important;
-          border-color: rgba(99, 102, 241, 0.7) !important;
-          box-shadow: -8px 0 24px rgba(99, 102, 241, 0.5), -2px 0 10px rgba(0,0,0,0.6) !important;
+        .ui-settings-edge-slide-btn:hover, .radial-edge-slide-btn:hover {
+          transform: translateY(-50%) translateX(-6px) !important;
+          background: rgba(28, 30, 42, 0.98) !important;
+          border-color: rgba(255, 255, 255, 0.35) !important;
+          box-shadow: -6px 0 20px rgba(0, 0, 0, 0.6) !important;
           color: #ffffff !important;
           opacity: 1 !important;
         }
-        .radial-edge-slide-btn:active {
-          transform: translateY(-50%) translateX(-4px) scale(0.95) !important;
+        .ui-settings-edge-slide-btn:active, .radial-edge-slide-btn:active {
+          transform: translateY(-50%) translateX(-3px) scale(0.96) !important;
         }
 
         @keyframes scaleIn {
@@ -8354,29 +8309,21 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
       {/* Render EsportsLiveOverlay here so it shows in Fullscreen */}
       <EsportsLiveOverlay />
 
-      {/* Little Slide Button on player edge that slides out the Radial Menu */}
+      {/* Little Slide Button on player edge that slides out the Delete UI Settings Menu */}
       {!hideUIOverlays && (
         <button
-          className="radial-edge-slide-btn"
+          className="ui-settings-edge-slide-btn"
           onClick={(e) => {
             e.stopPropagation();
             e.preventDefault();
-            if (radialMenuState.visible) {
-              setRadialMenuState({ visible: false, x: 0, y: 0 });
-            } else {
-              const container = containerRef.current;
-              if (container) {
-                const rect = container.getBoundingClientRect();
-                const targetX = rect.left + Math.max(160, rect.width - 200);
-                const targetY = rect.top + (rect.height / 2);
-                setRadialMenuState({ visible: true, x: targetX, y: targetY });
-              } else {
-                setRadialMenuState({ visible: true, x: window.innerWidth * 0.75, y: window.innerHeight * 0.5 });
-              }
-            }
+            setShowSettingsPanel(prev => {
+              const next = !prev;
+              if (!next) setIsSettingsExpanded(false);
+              return next;
+            });
           }}
-          title={radialMenuState.visible ? "Close Radial Menu" : "Slide out Radial Menu"}
-          aria-label="Toggle Radial Menu"
+          title={showSettingsPanel ? "Close UI Settings (Del)" : "Slide out UI Settings (Del)"}
+          aria-label="Toggle UI Settings"
           style={{
             position: 'absolute',
             right: 0,
@@ -8384,11 +8331,11 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
             transform: 'translateY(-50%)',
             zIndex: 85,
             width: '26px',
-            height: '68px',
-            background: 'rgba(18, 20, 28, 0.82)',
-            backdropFilter: 'blur(10px) saturate(140%)',
-            WebkitBackdropFilter: 'blur(10px) saturate(140%)',
-            border: '1px solid rgba(255, 255, 255, 0.16)',
+            height: '64px',
+            background: 'var(--dropdown-bg, rgba(18, 18, 18, 0.9))',
+            backdropFilter: 'blur(8px)',
+            WebkitBackdropFilter: 'blur(8px)',
+            border: '1px solid var(--dropdown-border, rgba(255, 255, 255, 0.15))',
             borderRight: 'none',
             borderRadius: '12px 0 0 12px',
             padding: 0,
@@ -8400,29 +8347,17 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
             justifyContent: 'center',
             gap: '5px',
             boxShadow: '-4px 0 16px rgba(0, 0, 0, 0.45)',
-            opacity: showControls || radialMenuState.visible ? 0.95 : 0.35,
-            color: radialMenuState.visible ? '#60a5fa' : 'rgba(255, 255, 255, 0.85)',
+            opacity: showControls || showSettingsPanel ? 0.95 : 0.35,
+            color: showSettingsPanel ? 'var(--text-primary, #ffffff)' : 'rgba(255, 255, 255, 0.85)',
             outline: 'none'
           }}
         >
-          <ChevronLeft 
-            size={14} 
-            style={{ 
-              transform: radialMenuState.visible ? 'rotate(180deg)' : 'none', 
-              transition: 'transform 0.25s ease' 
-            }} 
-          />
-          <div style={{
-            display: 'grid',
-            gridTemplateColumns: 'repeat(2, 4px)',
-            gap: '3px',
-            pointerEvents: 'none'
-          }}>
-            <span style={{ width: 4, height: 4, borderRadius: '50%', background: '#ef4444' }} />
-            <span style={{ width: 4, height: 4, borderRadius: '50%', background: '#3b82f6' }} />
-            <span style={{ width: 4, height: 4, borderRadius: '50%', background: '#10b981' }} />
-            <span style={{ width: 4, height: 4, borderRadius: '50%', background: '#a855f7' }} />
-          </div>
+          {showSettingsPanel ? (
+            <ChevronRight size={15} />
+          ) : (
+            <ChevronLeft size={15} />
+          )}
+          <Settings size={13} style={{ opacity: 0.85 }} />
         </button>
       )}
 
