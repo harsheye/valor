@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { ArrowLeft, Lock, Unlock, Terminal, X, Tv, Zap } from 'lucide-react';
+import { ArrowLeft, Lock, Unlock, Terminal, X, Tv, Zap, Sun } from 'lucide-react';
 import { sidecarService } from '../../services/remote/sidecarService';
+import type { ToneMappingMode } from './ToneMappingFilters';
 
 export interface PlayerTopBarProps {
   title: string;
@@ -14,6 +15,9 @@ export interface PlayerTopBarProps {
   onToggleConsole?: () => void;
   onClose?: () => void;
   onOpenCompanion?: () => void;
+  toneMappingMode?: ToneMappingMode;
+  onCycleToneMapping?: () => void;
+  isX265OrHdr?: boolean;
 }
 
 export const PlayerTopBar: React.FC<PlayerTopBarProps> = ({
@@ -27,7 +31,10 @@ export const PlayerTopBar: React.FC<PlayerTopBarProps> = ({
   showConsole,
   onToggleConsole,
   onClose,
-  onOpenCompanion
+  onOpenCompanion,
+  toneMappingMode = 'off',
+  onCycleToneMapping,
+  isX265OrHdr = false
 }) => {
   const [isSidecarActive, setIsSidecarActive] = useState<boolean>(() => sidecarService.isEnabled());
 
@@ -161,6 +168,38 @@ export const PlayerTopBar: React.FC<PlayerTopBarProps> = ({
             title={isLocked ? 'Unlock UI' : 'Lock UI'}
           >
             {isLocked ? <Lock size={18} /> : <Unlock size={18} />}
+          </button>
+        )}
+
+        {/* HDR / x265 Tone Mapping Pill */}
+        {onCycleToneMapping && (
+          <button
+            onClick={onCycleToneMapping}
+            title={`HDR Tone Mapping: ${toneMappingMode.toUpperCase()} (Click to cycle modes: ACES -> Vibrant -> Reinhard -> Off)`}
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '6px',
+              padding: '4px 12px',
+              borderRadius: '20px',
+              fontSize: '0.75rem',
+              fontWeight: 600,
+              cursor: 'pointer',
+              border: toneMappingMode !== 'off' 
+                ? '1px solid rgba(245, 158, 11, 0.6)' 
+                : '1px solid rgba(148, 163, 184, 0.3)',
+              backgroundColor: toneMappingMode !== 'off' 
+                ? 'rgba(245, 158, 11, 0.18)' 
+                : 'rgba(30, 41, 59, 0.7)',
+              color: toneMappingMode !== 'off' ? '#fbbf24' : '#94a3b8',
+              backdropFilter: 'blur(8px)',
+              transition: 'all 0.2s',
+              letterSpacing: '0.02em',
+              marginRight: '4px'
+            }}
+          >
+            <Sun size={13} color={toneMappingMode !== 'off' ? '#fbbf24' : '#94a3b8'} />
+            <span>Tone Map: {toneMappingMode === 'off' ? (isX265OrHdr ? 'Off (HDR)' : 'Off') : toneMappingMode.toUpperCase()}</span>
           </button>
         )}
 

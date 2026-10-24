@@ -827,8 +827,9 @@ export async function extractMkvSubtitles(
 
   while (currentOffset < endOffset) {
     if (signal?.aborted) break;
-    if (++iterations > 2000) {
-      console.warn('[extractMkvSubtitles] Max safety iterations reached (2000), stopping block scan');
+    // Allow up to 250,000 block elements (sufficient for full-length high-framerate x265 MKV movies)
+    if (++iterations > 250000) {
+      console.warn('[extractMkvSubtitles] Safety iteration limit reached (250,000), stopping scan');
       break;
     }
 
@@ -838,7 +839,7 @@ export async function extractMkvSubtitles(
 
       if (sub.id === 0x1F43B675) { // Cluster
         // Move inside the Cluster payload contiguously
-        currentOffset += sub.headerSize;
+        currentOffset += Math.max(1, sub.headerSize);
         continue;
       }
 
@@ -878,6 +879,9 @@ export async function extractMkvSubtitles(
               endTime: startTime + 4.0, // default duration, capped below
               text: cleanSubtitleText(processSubtitleText(text, isAss))
             });
+            if (onCuesProgress && cues.length % 3 === 0) {
+              onCuesProgress([...cues]);
+            }
           }
         }
       } else if (sub.id === 0xA0) {
@@ -920,7 +924,7 @@ export async function extractMkvSubtitles(
             const durBytes = await source.read(bgSubHeaderOffset, bgSubHeaderOffset + bgSub.size - 1, signal);
             blockDurationVal = new EbmlReader(durBytes).readUint(bgSub.size);
           }
-          bgOffset += bgSub.headerSize + bgSub.size;
+          bgOffset += Math.max(1, bgSub.headerSize + bgSub.size);
         }
 
         if (gotBlock && blockText) {
@@ -931,10 +935,13 @@ export async function extractMkvSubtitles(
             endTime: blockStartTime + duration,
             text: cleanSubtitleText(processSubtitleText(blockText, isAss))
           });
+          if (onCuesProgress && cues.length % 3 === 0) {
+            onCuesProgress([...cues]);
+          }
         }
       }
 
-      currentOffset += sub.headerSize + sub.size;
+      currentOffset += Math.max(1, sub.headerSize + sub.size);
     } catch (err: any) {
       const errMsg = String(err?.message || err).toLowerCase();
       if (signal?.aborted || err?.name === 'AbortError' || errMsg.includes('abort')) {

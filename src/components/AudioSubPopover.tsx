@@ -162,28 +162,28 @@ export const AudioSubPopover: React.FC<AudioSubPopoverProps> = ({
   let baseWidth = 0;
 
   if (effectiveAudioVisible) {
-    baseCols.push('1fr');
+    baseCols.push('minmax(210px, 1fr)');
     baseWidth += 230;
   }
   if (effectiveSubVisible) {
-    baseCols.push('1fr');
+    baseCols.push('minmax(210px, 1fr)');
     baseWidth += 230;
   }
   if (baseCols.length === 0) {
-    baseCols.push('1fr');
+    baseCols.push('minmax(210px, 1fr)');
     baseWidth = 230;
   }
 
   if (showViewColumn) {
-    baseCols.push('1.3fr');
-    baseWidth += 280;
+    baseCols.push('minmax(270px, 1.2fr)');
+    baseWidth += 290;
   }
   if (showStyleColumn) {
-    baseCols.push('1.1fr');
-    baseWidth += 240;
+    baseCols.push('minmax(300px, 1.3fr)');
+    baseWidth += 320;
   }
 
-  const popoverWidth = Math.max(baseWidth, 260);
+  const popoverWidth = Math.max(baseWidth + 30, 280);
   const gridCols = baseCols.join(' ');
 
   return (
@@ -192,7 +192,9 @@ export const AudioSubPopover: React.FC<AudioSubPopoverProps> = ({
       style={{ 
         width: `${popoverWidth}px`, 
         maxWidth: 'calc(100vw - 32px)',
-        overflow: 'hidden'
+        overflowX: 'auto',
+        overflowY: 'hidden',
+        boxSizing: 'border-box'
       }}
       onMouseEnter={() => {
         if (audioSubTimeoutRef.current) clearTimeout(audioSubTimeoutRef.current);
@@ -807,9 +809,9 @@ export const AudioSubPopover: React.FC<AudioSubPopoverProps> = ({
             
             <div className="style-customizer">
               {/* Font and Size in 1 Row */}
-              <div className="style-font-size-row">
-                <div className="style-row">
-                  <span className="style-label">Font</span>
+              <div className="style-font-size-row" style={{ display: 'grid', gridTemplateColumns: 'minmax(140px, 1fr) auto', gap: '0.85rem', alignItems: 'flex-end', boxSizing: 'border-box' }}>
+                <div className="style-row" style={{ minWidth: 0, overflow: 'visible' }}>
+                  <span className="style-label" style={{ display: 'block', minWidth: 'fit-content', whiteSpace: 'nowrap', overflow: 'visible', paddingLeft: '1px' }}>Font</span>
                   <CustomSelect 
                     value={subSettings.fontFamily}
                     onChange={(val) => onUpdateSubSettings({ fontFamily: val })}
@@ -817,8 +819,8 @@ export const AudioSubPopover: React.FC<AudioSubPopoverProps> = ({
                   />
                 </div>
 
-                <div className="style-row">
-                  <span className="style-label">Size</span>
+                <div className="style-row" style={{ minWidth: 0, overflow: 'visible' }}>
+                  <span className="style-label" style={{ display: 'block', minWidth: 'fit-content', whiteSpace: 'nowrap', overflow: 'visible' }}>Size</span>
                   <div className="size-btn-group">
                     <button 
                       className="size-action-btn"
@@ -848,9 +850,9 @@ export const AudioSubPopover: React.FC<AudioSubPopoverProps> = ({
               </div>
 
               {/* Text Color & Background on 1 Line */}
-              <div className="style-colors-row">
-                <div className="color-picker-item">
-                  <span className="style-label">Text</span>
+              <div className="style-colors-row" style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', gap: '1rem', alignItems: 'flex-end', boxSizing: 'border-box' }}>
+                <div className="color-picker-item" style={{ minWidth: 0, overflow: 'visible' }}>
+                  <span className="style-label" style={{ display: 'block', minWidth: 'fit-content', whiteSpace: 'nowrap', overflow: 'visible', paddingLeft: '1px' }}>Text</span>
                   <div className="picker-wrapper">
                     <input 
                       type="color" 
@@ -863,8 +865,8 @@ export const AudioSubPopover: React.FC<AudioSubPopoverProps> = ({
                   </div>
                 </div>
                 
-                <div className="color-picker-item bg-picker-item">
-                  <span className="style-label">Background</span>
+                <div className="color-picker-item bg-picker-item" style={{ minWidth: 0, overflow: 'visible' }}>
+                  <span className="style-label" style={{ display: 'block', minWidth: 'fit-content', whiteSpace: 'nowrap', overflow: 'visible' }}>Background</span>
                   <div className="picker-wrapper">
                     <input 
                       type="color" 

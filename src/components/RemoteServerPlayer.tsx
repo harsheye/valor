@@ -3,7 +3,7 @@ import {
   Play, Pause, RotateCcw, RotateCw, Cast, X, 
   MessageSquare, Maximize, Minimize, MonitorPlay,
   Volume2, Volume1, VolumeX, AlertCircle, Lock, Unlock,
-  Layers, Type, Clock, Sliders, SkipForward, Ban, FastForward, Zap, Coffee, ChevronRight, ChevronLeft, Eye, Settings, Bookmark as BookmarkIcon, Activity, Terminal
+  Layers, Type, Clock, Sliders, SkipForward, Ban, FastForward, Zap, Coffee, ChevronRight, ChevronLeft, Eye, Settings, Bookmark as BookmarkIcon, Activity, Terminal, Sun
 } from 'lucide-react';
 import { Button } from './ui/button';
 import type { VideoItem, CustomAudioTrack, CustomSubtitleTrack, Bookmark } from '../types/media';
@@ -16,6 +16,7 @@ import { AudioSubPopover } from './AudioSubPopover';
 import { BookmarkPanel } from './BookmarkPanel';
 import { BookmarkModal } from './BookmarkModal';
 import { OdometerClock, PauseDetailsOverlay, SkipIntroButton, type MediaDetails } from './player';
+import { ToneMappingSvgDefs, isHdrOrX265Video, getToneMappingCssFilter, type ToneMappingMode } from './player/ToneMappingFilters';
 import { AudioSyncEngine } from '../services/remote/audioSync';
 import { parseSubtitles, cleanSubtitleText } from '../utils/subtitleParser';
 import { parseMkv, parseMp4, extractMkvSubtitles } from '../utils/containerParser';
@@ -1611,6 +1612,19 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
   const debouncedSeekTimeoutRef = useRef<any>(null);
   const [isSidecarActive, setIsSidecarActive] = useState<boolean>(() => sidecarService.isEnabled());
   const [showCompanionModal, setShowCompanionModal] = useState<boolean>(false);
+
+  const isX265OrHdr = useMemo(() => isHdrOrX265Video(video), [video]);
+  const [toneMappingMode, setToneMappingMode] = useState<ToneMappingMode>(() => {
+    return isHdrOrX265Video(video) ? 'aces' : 'off';
+  });
+
+  const cycleToneMapping = () => {
+    setToneMappingMode(prev => {
+      const next: ToneMappingMode = prev === 'off' ? 'aces' : prev === 'aces' ? 'vibrant' : prev === 'vibrant' ? 'reinhard' : 'off';
+      triggerSwitchToast(`HDR Tone Mapping: ${next.toUpperCase()}`);
+      return next;
+    });
+  };
 
   useEffect(() => {
     const unsub = sidecarService.subscribe((status) => {
@@ -4857,6 +4871,7 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
           controls={false}
           crossOrigin={video.playbackMode === 'advanced' ? 'anonymous' : undefined}
           className="main-video-element"
+          style={toneMappingMode !== 'off' ? { filter: getToneMappingCssFilter(toneMappingMode) } : undefined}
            onLoadedMetadata={() => {
             if (videoRef.current) {
               const videoDuration = videoRef.current.duration;
@@ -4993,6 +5008,9 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
       </div>
 
       {false && activeSubtitleStartOffset}
+
+      {/* Tone Mapping SVG Filters (ACES Filmic, Vibrant, Reinhard for x265/HDR) */}
+      <ToneMappingSvgDefs />
 
       {/* Subtitles Overlay */}
       {selectedSubTrack && (
@@ -5141,6 +5159,35 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
           )}
 
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+            {/* HDR / x265 Tone Mapping Pill */}
+            <button
+              onClick={cycleToneMapping}
+              title={`HDR Tone Mapping: ${toneMappingMode.toUpperCase()} (Click to toggle ACES Filmic / Vibrant / Reinhard / Off for x265/HDR content)`}
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '6px',
+                padding: '4px 12px',
+                borderRadius: '20px',
+                fontSize: '0.75rem',
+                fontWeight: 600,
+                cursor: 'pointer',
+                border: toneMappingMode !== 'off' 
+                  ? '1px solid rgba(245, 158, 11, 0.6)' 
+                  : '1px solid rgba(148, 163, 184, 0.3)',
+                backgroundColor: toneMappingMode !== 'off' 
+                  ? 'rgba(245, 158, 11, 0.18)' 
+                  : 'rgba(30, 41, 59, 0.7)',
+                color: toneMappingMode !== 'off' ? '#fbbf24' : '#94a3b8',
+                backdropFilter: 'blur(8px)',
+                transition: 'all 0.2s',
+                letterSpacing: '0.02em'
+              }}
+            >
+              <Sun size={13} color={toneMappingMode !== 'off' ? '#fbbf24' : '#94a3b8'} />
+              <span>Tone Map: {toneMappingMode === 'off' ? (isX265OrHdr ? 'Off (HDR)' : 'Off') : toneMappingMode.toUpperCase()}</span>
+            </button>
+
             {/* Companion Engine Status Badge */}
             <button 
               onClick={() => setShowCompanionModal(true)}
@@ -7179,11 +7226,12 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
           position: absolute;
           bottom: 50px;
           left: 50%;
-          translate: -50% 0;
+          transform: translateX(-50%);
           max-width: calc(100vw - 32px);
           height: 380px;
           max-height: min(480px, calc(100vh - 120px));
-          overflow: hidden;
+          overflow-x: auto;
+          overflow-y: hidden;
           background: var(--card-bg);
           backdrop-filter: blur(25px);
           -webkit-backdrop-filter: blur(25px);
@@ -7240,11 +7288,15 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
         .popover-style-col {
           border-left: 1px solid var(--border-subtle);
           padding-left: 1.25rem;
+          padding-right: 0.5rem;
+          min-width: 290px;
+          box-sizing: border-box;
           display: flex;
           flex-direction: column;
           height: 100%;
           min-height: 0;
-          overflow: hidden;
+          overflow-x: hidden;
+          overflow-y: auto;
         }
         .style-header-row {
           display: flex;
@@ -7300,20 +7352,28 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
         }
         .style-font-size-row {
           display: grid;
-          grid-template-columns: 1.2fr 1fr;
-          gap: 0.85rem;
+          grid-template-columns: minmax(130px, 1fr) auto;
+          gap: 0.75rem;
+          align-items: flex-end;
+          box-sizing: border-box;
         }
         .style-row {
           display: flex;
           flex-direction: column;
           gap: 0.35rem;
+          min-width: 0;
+          overflow: visible;
         }
         .style-label {
-          font-size: 0.7rem;
-          color: var(--text-muted, rgba(255, 255, 255, 0.45));
+          font-size: 0.72rem;
+          color: var(--text-muted, rgba(255, 255, 255, 0.5));
           text-transform: uppercase;
           letter-spacing: 0.05em;
           font-weight: 600;
+          display: block;
+          white-space: nowrap;
+          overflow: visible;
+          margin-bottom: 0.15rem;
         }
         
         /* Font Size Control - Premium Button Group */
@@ -7370,8 +7430,10 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
         /* Subtitle Color Selector - 1 line Text & Background */
         .style-colors-row {
           display: grid;
-          grid-template-columns: 1.2fr 2fr;
+          grid-template-columns: auto 1fr;
           gap: 1rem;
+          align-items: flex-end;
+          box-sizing: border-box;
         }
         .color-picker-item {
           display: flex;
