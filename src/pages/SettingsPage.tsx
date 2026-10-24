@@ -76,7 +76,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
   renderMockPreviewButton,
   setShowResetConfirm,
 }) => {
-  const isMonochrome = settings.theme === 'black-and-white' || settings.theme === 'oled';
+  const isMonochrome = settings.theme === 'black-and-white' || settings.theme === 'oled' || settings.theme === 'black-ops';
 
   return (
     <div className="workspace-panel-wrapper">
@@ -169,10 +169,11 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                     <div className="pref-row">
                       <span className="pref-label">Application Theme</span>
                       <CustomSelect 
-                        value={settings.theme || 'dark'} 
+                        value={settings.theme || 'black-ops'} 
                         onChange={(val) => handleDefaultLangChange('theme' as any, val)}
                         options={[
-                          { value: 'dark', label: '🍿 Cinematic Dark (Default)' },
+                          { value: 'black-ops', label: '🥷 Black-Ops (Stealth Codex)' },
+                          { value: 'dark', label: '🍿 Cinematic Dark' },
                           { value: 'black-and-white', label: '🏁 Monochrome Noir' },
                           { value: 'light', label: '🧪 Custom Teal' },
                           { value: 'garden', label: '🏡 Cozy Garden' },

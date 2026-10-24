@@ -1021,3 +1021,99 @@ html[data-theme="valentine"],
 
   color-scheme: light;
 }
+
+
+/* --------------------------------------------------------------------------
+   THEME: black-ops (Stealth Monochromatic / Codex Theme)
+   -------------------------------------------------------------------------- */
+html[data-theme="black-ops"],
+[data-theme="black-ops"] {
+  /* Canvas & Containers: Pure Pitch Black */
+  --bg-color:              #000000;
+  --bg-primary:            #000000;
+  --bg-secondary:          #08080a;
+  --background:            #000000;
+  --surface:               #090a0d;
+  --surface-elevated:      #111216;
+  --surface-hover:         #18191f;
+  --card-bg:               #0c0d11;
+  --card-hover-bg:         #13141a;
+  --card-border:           #1f2025;
+  --sidebar:               #000000;
+  --sidebar-hover:         rgba(255, 255, 255, 0.06);
+
+  /* Typography: Codex Clean White & Muted Silver */
+  --text-primary:          #ffffff;
+  --text-secondary:        #8e8ea0;
+  --text-muted:            #555660;
+
+  /* Tactical Stealth Accents */
+  --accent-color:          #ffffff;
+  --accent:                #ffffff;
+  --accent-hover:          #e4e4e7;
+  --accent-glow:           rgba(255, 255, 255, 0.16);
+  --danger:                #ef4444;
+  --success:               #10b981;
+  --warning:               #f59e0b;
+
+  /* Controls: Pure High Contrast Pill Buttons */
+  --btn-base-color:        #ffffff;
+  --btn-border-width:      1px;
+  --btn-border-radius:     8px;
+  --btn-text-color:        #000000;
+
+  /* Inputs & Dropdowns */
+  --input-bg:              #08080a;
+  --input-border:          #1f2025;
+  --input-text:            #ffffff;
+  --input-placeholder:     #555660;
+
+  --dropdown-bg:           #0c0d11;
+  --dropdown-border:       #1f2025;
+  --dropdown-text:         #ffffff;
+  --dropdown-hover-bg:     #18191f;
+  --dropdown-selected-bg:  #ffffff;
+
+  /* Player Overlays & Controls */
+  --player-accent:         #ffffff;
+  --player-bg:             #000000;
+  --player-control-bg:     rgba(10, 11, 15, 0.95);
+  --play-btn-bg:           #ffffff;
+  --play-btn-text:         #000000;
+  --banner-bg:             linear-gradient(135deg, #18191f 0%, #050507 100%);
+  --banner-shadow:         0 8px 24px rgba(255, 255, 255, 0.04);
+  --player-overlay-gradient-top: linear-gradient(to bottom, rgba(0,0,0,0.95) 0%, rgba(0,0,0,0.4) 60%, transparent 100%);
+  --player-overlay-gradient-bottom: linear-gradient(to top, rgba(0,0,0,0.95) 0%, rgba(0,0,0,0.4) 60%, transparent 100%);
+
+  /* Borders & Hairlines */
+  --border-color:          #1f2025;
+  --border:                #1f2025;
+  --border-subtle:         #141518;
+  --border-focus:          #ffffff;
+
+  /* Glassmorphism & Overlays */
+  --glass-bg:              rgba(8, 8, 10, 0.92);
+  --glass-blur:            blur(20px);
+  --glass-border:          #1f2025;
+  --glass-shadow:          0 12px 40px 0 rgba(0, 0, 0, 0.95);
+  --overlay-bg:            rgba(0, 0, 0, 0.92);
+
+  /* Scrollbars */
+  --scrollbar-track:       #000000;
+  --scrollbar-thumb:       #1c1c1f;
+  --scrollbar-thumb-hover: #2e3038;
+
+  /* Badges & Shadows */
+  --badge-bg:              #14151a;
+  --badge-text:            #8e8ea0;
+  --shadow-sm:             0 1px 3px rgba(0, 0, 0, 0.8);
+  --shadow-md:             0 4px 12px rgba(0, 0, 0, 0.9);
+  --shadow-lg:             0 8px 24px rgba(0, 0, 0, 0.95);
+  --shadow-xl:             0 16px 40px rgba(0, 0, 0, 1.0);
+
+  /* Skeletons */
+  --skeleton-base:         rgba(255, 255, 255, 0.04);
+  --skeleton-highlight:    rgba(255, 255, 255, 0.08);
+
+  color-scheme: dark;
+}

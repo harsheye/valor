@@ -4457,3 +4457,117 @@ a:hover {
 
 
 
+
+
+/* ==========================================================================
+   BLACK-OPS THEME UNIVERSAL STYLING ENGINE
+   Precision pitch-black (#000000) canvas with crisp hairlines (#1f2025)
+   and high-contrast typography matching the Codex docs design system.
+   ========================================================================== */
+[data-theme="black-ops"],
+[data-theme="black-ops"] body,
+html[data-theme="black-ops"] {
+  background-color: #000000 !important;
+  color: #ffffff !important;
+}
+
+[data-theme="black-ops"] .app-layout,
+[data-theme="black-ops"] .app-main,
+[data-theme="black-ops"] .main-content,
+[data-theme="black-ops"] .home-container,
+[data-theme="black-ops"] .settings-container,
+[data-theme="black-ops"] .dashboard-container {
+  background-color: #000000 !important;
+}
+
+[data-theme="black-ops"] header,
+[data-theme="black-ops"] .top-bar,
+[data-theme="black-ops"] .header-bar,
+[data-theme="black-ops"] .navbar {
+  background-color: #000000 !important;
+  border-bottom: 1px solid #1c1c1f !important;
+}
+
+[data-theme="black-ops"] aside,
+[data-theme="black-ops"] .sidebar,
+[data-theme="black-ops"] .left-nav {
+  background-color: #000000 !important;
+  border-right: 1px solid #18181b !important;
+}
+
+[data-theme="black-ops"] .theme-card,
+[data-theme="black-ops"] .media-card,
+[data-theme="black-ops"] .settings-card,
+[data-theme="black-ops"] .settings-section,
+[data-theme="black-ops"] .modal-content,
+[data-theme="black-ops"] .dialog-content {
+  background-color: #0c0d11 !important;
+  border: 1px solid #1f2025 !important;
+}
+
+[data-theme="black-ops"] .theme-card:hover,
+[data-theme="black-ops"] .media-card:hover {
+  border-color: #383a42 !important;
+}
+
+[data-theme="black-ops"] .btn-theme-primary {
+  background-color: #ffffff !important;
+  color: #000000 !important;
+  border: 1px solid #ffffff !important;
+  font-weight: 600;
+}
+
+[data-theme="black-ops"] .btn-theme-primary:hover {
+  background-color: #e4e4e7 !important;
+}
+
+[data-theme="black-ops"] .btn-theme-secondary,
+[data-theme="black-ops"] .btn-theme-outline {
+  background-color: #131417 !important;
+  color: #ffffff !important;
+  border: 1px solid #232429 !important;
+}
+
+[data-theme="black-ops"] .btn-theme-secondary:hover,
+[data-theme="black-ops"] .btn-theme-outline:hover {
+  background-color: #1c1c1f !important;
+  border-color: #383a42 !important;
+}
+
+[data-theme="black-ops"] hr,
+[data-theme="black-ops"] .divider,
+[data-theme="black-ops"] .section-divider {
+  border-color: #1c1c1f !important;
+}
+
+[data-theme="black-ops"] input,
+[data-theme="black-ops"] select,
+[data-theme="black-ops"] textarea,
+[data-theme="black-ops"] .custom-select-trigger {
+  background-color: #08080a !important;
+  border: 1px solid #1f2025 !important;
+  color: #ffffff !important;
+}
+
+[data-theme="black-ops"] input:focus,
+[data-theme="black-ops"] select:focus,
+[data-theme="black-ops"] textarea:focus,
+[data-theme="black-ops"] .custom-select-trigger:focus {
+  border-color: #ffffff !important;
+  box-shadow: 0 0 0 1px #ffffff !important;
+}
+
+[data-theme="black-ops"] .tab-btn.active,
+[data-theme="black-ops"] .pill-tab.active,
+[data-theme="black-ops"] .settings-nav-item.active {
+  background-color: #1c1c1f !important;
+  color: #ffffff !important;
+  border-color: #383a42 !important;
+}
+
+[data-theme="black-ops"] .badge,
+[data-theme="black-ops"] .meta-badge {
+  background-color: #14151a !important;
+  border: 1px solid #232429 !important;
+  color: #8e8ea0 !important;
+}

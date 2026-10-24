@@ -19,7 +19,6 @@ import {
   X,
   Eye,
   Activity,
-  Search,
   Monitor,
   Globe,
   Database,
@@ -36,12 +35,10 @@ interface LocalServicePageProps {
 
 type OsTab = 'mac' | 'windows' | 'node' | 'bat';
 type ScriptType = 'install.ps1' | 'install.sh' | 'valor-service.mjs' | 'run.bat';
-type NavTab = 'overview' | 'features' | 'configuration' | 'developers' | 'security' | 'scripts';
 type SidebarItem = 'quickstart' | 'use-companion' | 'architecture' | 'install-windows' | 'install-mac' | 'install-node' | 'verify' | 'inspect-scripts' | 'faq';
 
 export const LocalServicePage: React.FC<LocalServicePageProps> = ({ onClose, standalone = false }) => {
   const [status, setStatus] = useState<SidecarStatus>(sidecarService.getStatus());
-  const [activeNav, setActiveNav] = useState<NavTab>('overview');
   const [activeOs, setActiveOs] = useState<OsTab>('windows');
   const [activeSidebar, setActiveSidebar] = useState<SidebarItem>('quickstart');
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
@@ -125,9 +122,8 @@ export const LocalServicePage: React.FC<LocalServicePageProps> = ({ onClose, sta
     await sidecarService.checkHealth();
   };
 
-  const scrollTo = (ref: React.RefObject<HTMLDivElement | null>, sidebarKey?: SidebarItem, navKey?: NavTab) => {
+  const scrollTo = (ref: React.RefObject<HTMLDivElement | null>, sidebarKey?: SidebarItem) => {
     if (sidebarKey) setActiveSidebar(sidebarKey);
-    if (navKey) setActiveNav(navKey);
     if (ref.current) {
       ref.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
@@ -140,7 +136,7 @@ export const LocalServicePage: React.FC<LocalServicePageProps> = ({ onClose, sta
       color: '#ffffff',
       fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif',
       letterSpacing: '-0.012em',
-      overflowX: 'hidden'
+      overflowX: 'clip'
     }}>
       <style>{`
         /* Codex Theme Exact CSS */
@@ -270,7 +266,7 @@ export const LocalServicePage: React.FC<LocalServicePageProps> = ({ onClose, sta
       `}</style>
 
       {/* ────────────────────────────────────────────────────────── */}
-      {/* 1. TOP HEADER (Exact OpenAI Docs Header - Row 1 & Row 2) */}
+      {/* 1. TOP HEADER (Exact OpenAI Docs Header - Clean Single Tier) */}
       {/* ────────────────────────────────────────────────────────── */}
       <header style={{
         position: 'sticky',
@@ -279,14 +275,12 @@ export const LocalServicePage: React.FC<LocalServicePageProps> = ({ onClose, sta
         backgroundColor: '#000000',
         borderBottom: '1px solid #1c1c1f'
       }}>
-        {/* Row 1: Brand, Docs Links, Search & Try CTA */}
         <div style={{
           padding: '0 28px',
           height: '56px',
           display: 'flex',
           alignItems: 'center',
-          justifyContent: 'space-between',
-          borderBottom: '1px solid #18181b'
+          justifyContent: 'space-between'
         }}>
           {/* Left: OpenAI glyph + Brand */}
           <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
@@ -308,7 +302,7 @@ export const LocalServicePage: React.FC<LocalServicePageProps> = ({ onClose, sta
             </a>
           </div>
 
-          {/* Center Top: Home | Docs | Use cases | Pricing | Resources */}
+          {/* Center Top: Home | Docs | Features | Scripts | Resources */}
           <div style={{ display: 'flex', alignItems: 'center', gap: '22px' }}>
             <a href="/" style={{ color: '#8e8ea0', textDecoration: 'none', fontSize: '0.85rem', fontWeight: 500 }}>Home</a>
             <span style={{ color: '#ffffff', fontSize: '0.85rem', fontWeight: 600 }}>Docs</span>
@@ -317,27 +311,8 @@ export const LocalServicePage: React.FC<LocalServicePageProps> = ({ onClose, sta
             <button onClick={() => scrollTo(faqRef)} style={{ background: 'none', border: 'none', color: '#8e8ea0', fontSize: '0.85rem', cursor: 'pointer' }}>Resources</button>
           </div>
 
-          {/* Right Top: Search bar & White Pill CTA */}
+          {/* Right Top: CTA Button */}
           <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-            {/* Search Input Bar (Codex Style) */}
-            <div style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: '8px',
-              backgroundColor: '#111215',
-              border: '1px solid #25262c',
-              borderRadius: '6px',
-              padding: '6px 12px',
-              color: '#8e8ea0',
-              fontSize: '0.8rem',
-              width: '180px'
-            }}>
-              <Search size={13} />
-              <span>Search docs</span>
-              <span style={{ marginLeft: 'auto', fontSize: '0.7rem', color: '#555', border: '1px solid #333', padding: '1px 4px', borderRadius: '3px' }}>⌘K</span>
-            </div>
-
-            {/* Launch Player Button */}
             {standalone ? (
               <a
                 href="/"
@@ -375,40 +350,14 @@ export const LocalServicePage: React.FC<LocalServicePageProps> = ({ onClose, sta
             ) : null}
           </div>
         </div>
-
-        {/* Row 2: Secondary Tab Bar (Exact tabs from image: Overview, Features, Configuration, Developers, Security, Administration) */}
-        <div style={{
-          padding: '0 28px',
-          height: '44px',
-          display: 'flex',
-          alignItems: 'center',
-          gap: '24px'
-        }}>
-          {[
-            { id: 'overview', label: 'Overview', onClick: () => { setActiveNav('overview'); window.scrollTo({ top: 0, behavior: 'smooth' }); } },
-            { id: 'features', label: 'Features', onClick: () => scrollTo(featuresRef, 'quickstart', 'features') },
-            { id: 'configuration', label: 'Configuration', onClick: () => scrollTo(quickstartRef, 'quickstart', 'configuration') },
-            { id: 'developers', label: 'Developers', onClick: () => scrollTo(scriptsRef, 'inspect-scripts', 'developers') },
-            { id: 'security', label: 'Security', onClick: () => scrollTo(faqRef, 'faq', 'security') },
-            { id: 'scripts', label: 'Inspect Scripts', onClick: () => scrollTo(scriptsRef, 'inspect-scripts', 'scripts') }
-          ].map(tab => (
-            <button
-              key={tab.id}
-              className={`codex-nav-btn ${activeNav === tab.id ? 'active' : ''}`}
-              onClick={tab.onClick}
-            >
-              {tab.label}
-            </button>
-          ))}
-        </div>
       </header>
 
       {/* ────────────────────────────────────────────────────────── */}
-      {/* 2. BODY LAYOUT: Sidebar (Left) + Content (Center/Right)    */}
+      {/* 2. BODY LAYOUT: Fixed Sticky Sidebar (Left) + Content (Right) */}
       {/* ────────────────────────────────────────────────────────── */}
-      <div style={{ display: 'flex', maxWidth: '1440px', margin: '0 auto', minHeight: 'calc(100vh - 100px)' }}>
+      <div style={{ display: 'flex', maxWidth: '1440px', margin: '0 auto', minHeight: 'calc(100vh - 56px)' }}>
         
-        {/* Left Sidebar (Exact Codex Sidebar Structure from Image 1 & 2) */}
+        {/* Left Sidebar (Pinned Fixed / Sticky) */}
         <aside style={{
           width: '260px',
           flexShrink: 0,
@@ -416,7 +365,12 @@ export const LocalServicePage: React.FC<LocalServicePageProps> = ({ onClose, sta
           padding: '28px 16px',
           display: 'flex',
           flexDirection: 'column',
-          gap: '20px'
+          gap: '20px',
+          position: 'sticky',
+          top: '56px',
+          height: 'calc(100vh - 56px)',
+          alignSelf: 'flex-start',
+          overflowY: 'auto'
         }}>
           {/* Group 1: Get started */}
           <div>

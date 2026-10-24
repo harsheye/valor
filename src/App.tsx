@@ -317,7 +317,7 @@ const defaultSettings = {
   defaultSub: 'ENG',
   historyLimit: 10 as number | 'Infinite',
   historySaveInterval: 5 as number,
-  theme: 'dark' as 'dark' | 'black-and-white' | 'light' | 'garden' | 'black' | 'luxury' | 'dim' | 'abyss' | 'aqua' | 'valentine',
+  theme: 'black-ops' as 'black-ops' | 'dark' | 'black-and-white' | 'light' | 'garden' | 'black' | 'luxury' | 'dim' | 'abyss' | 'aqua' | 'valentine',
   hideUIOverlays: false,
   hideVideoName: false,
   uiHideTimeout: 1.5,
@@ -1561,7 +1561,7 @@ function App() {
   }, []);
 
   useEffect(() => {
-    document.documentElement.setAttribute('data-theme', settings.theme || 'dark');
+    document.documentElement.setAttribute('data-theme', settings.theme || 'black-ops');
   }, [settings.theme]);
 
   const storageProvider = useMemo(() => {
