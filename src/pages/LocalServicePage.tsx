@@ -131,12 +131,15 @@ export const LocalServicePage: React.FC<LocalServicePageProps> = ({ onClose, sta
 
   return (
     <div className="codex-docs-page" style={{
-      minHeight: '100vh',
+      height: '100vh',
+      maxHeight: '100vh',
+      display: 'flex',
+      flexDirection: 'column',
       backgroundColor: '#000000',
       color: '#ffffff',
       fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif',
       letterSpacing: '-0.012em',
-      overflowX: 'clip'
+      overflow: 'hidden'
     }}>
       <style>{`
         /* Codex Theme Exact CSS */
@@ -269,8 +272,8 @@ export const LocalServicePage: React.FC<LocalServicePageProps> = ({ onClose, sta
       {/* 1. TOP HEADER (Exact OpenAI Docs Header - Clean Single Tier) */}
       {/* ────────────────────────────────────────────────────────── */}
       <header style={{
-        position: 'sticky',
-        top: 0,
+        flexShrink: 0,
+        height: '56px',
         zIndex: 60,
         backgroundColor: '#000000',
         borderBottom: '1px solid #1c1c1f'
@@ -353,11 +356,11 @@ export const LocalServicePage: React.FC<LocalServicePageProps> = ({ onClose, sta
       </header>
 
       {/* ────────────────────────────────────────────────────────── */}
-      {/* 2. BODY LAYOUT: Fixed Sticky Sidebar (Left) + Content (Right) */}
+      {/* 2. BODY LAYOUT: Fixed Left Sidebar + Scrolling Content Div  */}
       {/* ────────────────────────────────────────────────────────── */}
-      <div style={{ display: 'flex', maxWidth: '1440px', margin: '0 auto', minHeight: 'calc(100vh - 56px)' }}>
+      <div style={{ display: 'flex', maxWidth: '1440px', width: '100%', margin: '0 auto', height: 'calc(100vh - 56px)', overflow: 'hidden' }}>
         
-        {/* Left Sidebar (Pinned Fixed / Sticky) */}
+        {/* Left Sidebar (Fixed - does not scroll) */}
         <aside style={{
           width: '260px',
           flexShrink: 0,
@@ -366,10 +369,7 @@ export const LocalServicePage: React.FC<LocalServicePageProps> = ({ onClose, sta
           display: 'flex',
           flexDirection: 'column',
           gap: '20px',
-          position: 'sticky',
-          top: '56px',
-          height: 'calc(100vh - 56px)',
-          alignSelf: 'flex-start',
+          height: '100%',
           overflowY: 'auto'
         }}>
           {/* Group 1: Get started */}
@@ -476,8 +476,14 @@ export const LocalServicePage: React.FC<LocalServicePageProps> = ({ onClose, sta
           </div>
         </aside>
 
-        {/* Main Content Pane */}
-        <main style={{ flex: 1, padding: '40px 48px 80px 48px', maxWidth: '1040px' }}>
+        {/* Main Content Pane (Second div - allowed to scroll) */}
+        <main style={{
+          flex: 1,
+          height: '100%',
+          overflowY: 'auto',
+          padding: '40px 48px 80px 48px',
+          scrollBehavior: 'smooth'
+        }}>
           
           {/* ────────────────────────────────────────────────────────── */}
           {/* HERO SECTION (Pixel-Perfect to Image 1)                     */}
