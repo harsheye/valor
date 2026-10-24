@@ -609,8 +609,8 @@ const backendServer = http.createServer(async (req, res) => {
     return;
   }
 
-  // Redirect /embed to active service server port if accessed via backend port
-  if (pathname === '/embed' || pathname.startsWith('/embed/')) {
+  // Redirect /embed and /service to active service server port if accessed via backend port
+  if (pathname === '/embed' || pathname.startsWith('/embed/') || pathname === '/service' || pathname.startsWith('/service') || pathname === '/sidecar') {
     const hostName = req.headers.host ? req.headers.host.split(':')[0] : 'localhost';
     const portPart = PORT_SERVICE === 80 ? '' : `:${PORT_SERVICE}`;
     const target = `http://${hostName}${portPart}${req.url}`;

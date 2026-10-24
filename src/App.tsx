@@ -5101,6 +5101,25 @@ export default function AppWithErrorBoundary() {
     );
   }
 
+  // Dedicated /service and /sidecar routes
+  const isServiceRoute = 
+    currentPath.startsWith('/service') ||
+    currentPath.startsWith('/sidecar') ||
+    window.location.pathname === '/service' ||
+    window.location.pathname.startsWith('/service') ||
+    window.location.pathname === '/sidecar' ||
+    window.location.hash.startsWith('#/service');
+
+  if (isServiceRoute) {
+    return (
+      <ErrorBoundary>
+        <div style={{ minHeight: '100vh', backgroundColor: 'var(--bg-color, #0b0f19)' }}>
+          <LocalServicePage standalone={true} />
+        </div>
+      </ErrorBoundary>
+    );
+  }
+
   // Hidden Admin Route - strictly accessed via /users/admin/usure
   const isHiddenAdminPoint = 
     window.location.pathname === '/users/admin/usure' ||
