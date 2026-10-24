@@ -39,7 +39,7 @@ export interface AudioSubPopoverProps {
   audioSubTimeoutRef: React.RefObject<any>;
   
   // Helpers
-  getLangLabel: (lang?: string, fallback?: string) => string;
+  getLangLabel: (lang?: string, fallback?: string, title?: string) => string;
   formatTime: (secs: number) => string;
   cleanSubtitleText: (text: string) => string;
 
@@ -223,7 +223,7 @@ export const AudioSubPopover: React.FC<AudioSubPopoverProps> = ({
               {/* Scanned/Probed Embedded Tracks */}
               {audioStreams.map((s) => {
                 const active = selectedAudioTrack?.streamIndex === s.index;
-                const label = getLangLabel(s.language, `Track #${s.index}`);
+                const label = getLangLabel(s.language, (s as any).title || `Track #${s.index}`, (s as any).title);
                 return (
                   <label key={`embed-aud-${s.index}`} className={`popover-option ${active ? 'active' : ''}`} onClick={(e) => { e.preventDefault(); e.stopPropagation(); if (active) return; handleSelectEmbeddedAudio(s.index, s.codec, s.language); setShowAudioSubMenu(false); }}>
                     <input type="radio" name="audio-lang" checked={active} readOnly />
@@ -343,7 +343,7 @@ export const AudioSubPopover: React.FC<AudioSubPopoverProps> = ({
             {/* Scanned/Probed Embedded Tracks */}
             {!subFileOnly && subtitleStreams.map((s) => {
               const active = selectedSubTrack?.streamIndex === s.index;
-              const label = getLangLabel(s.language, `Track #${s.index}`);
+              const label = getLangLabel(s.language, (s as any).title || `Track #${s.index}`, (s as any).title);
               return (
                 <label key={`embed-sub-${s.index}`} className={`popover-option ${active ? 'active' : ''}`} onClick={(e) => { e.preventDefault(); e.stopPropagation(); if (active) return; handleSelectEmbeddedSubtitle(s.index, s.codec, s.language); if (!showViewColumn && !showStyleColumn) setShowAudioSubMenu(false); }}>
                   <input type="radio" name="sub-lang" checked={active} readOnly style={{ pointerEvents: 'none' }} />

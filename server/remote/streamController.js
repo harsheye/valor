@@ -77,7 +77,8 @@ export async function handleStreamRoute(req, res, parsedUrl, sessionManager) {
 
       // Pre-warm the audio stream cache immediately upon probe
       if (probeResult.audioStreams && probeResult.audioStreams.length > 0) {
-        const defaultAudio = probeResult.audioStreams[0];
+        const engAudio = probeResult.audioStreams.find(s => { const l = (s.language || '').toLowerCase(); const t = (s.title || '').toLowerCase(); return l.startsWith('en') || l === 'eng' || t.includes('english') || t.includes('eng'); });
+        const defaultAudio = engAudio || probeResult.audioStreams[0];
         audioCacheService.triggerBackgroundExtraction(rawUrl, defaultAudio.index, auth, customHeaders).catch(() => {});
       }
 

@@ -482,6 +482,7 @@ export interface MKVTrackInfo {
   type: 'video' | 'audio' | 'subtitle';
   codec: string;
   language?: string;
+  title?: string;
 }
 
 export async function parseMkv(source: ByteSource): Promise<{ duration: number; tracks: MKVTrackInfo[]; seekMap: { time: number; offset: number }[]; timecodeScale: number; firstClusterOffset: number }> {
@@ -591,6 +592,7 @@ export async function parseMkv(source: ByteSource): Promise<{ duration: number; 
           let trackTypeVal = 0;
           let codecId = '';
           let lang = 'und';
+          let trackTitle: string | undefined = undefined;
           while (entryReader.hasMore(2)) {
             const entryId = entryReader.readId();
             const entrySize = entryReader.readVint().value;
@@ -600,8 +602,10 @@ export async function parseMkv(source: ByteSource): Promise<{ duration: number; 
               trackTypeVal = entryReader.readUint(entrySize);
             } else if (entryId === 0x86) {
               codecId = entryReader.readString(entrySize);
-            } else if (entryId === 0x22B59C) {
+            } else if (entryId === 0x22B59C || entryId === 0x22B59D) {
               lang = entryReader.readString(entrySize);
+            } else if (entryId === 0x536E) {
+              trackTitle = entryReader.readString(entrySize);
             } else {
               entryReader.skip(entrySize);
             }
@@ -612,7 +616,7 @@ export async function parseMkv(source: ByteSource): Promise<{ duration: number; 
           else if (trackTypeVal === 17) type = 'subtitle';
           
           if (type) {
-            tracks.push({ number: num, type, codec: codecId, language: lang });
+            tracks.push({ number: num, type, codec: codecId, language: lang, title: trackTitle });
           }
           tr.skip(subSize);
         } else {

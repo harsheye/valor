@@ -42,6 +42,7 @@ export interface MediaStream {
   type: 'video' | 'audio' | 'subtitle';
   codec: string;
   language?: string;
+  title?: string;
   details: string;
 }
 

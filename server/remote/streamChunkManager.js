@@ -103,8 +103,8 @@ export class StreamChunkManager extends EventEmitter {
       }
 
       const seekSeconds = segmentIndex * TARGET_SEGMENT_DURATION;
-      const primaryAudio = session.probe.audioStreams?.[session.selectedAudioIndex || 0];
-      const audioStreamIndex = primaryAudio ? primaryAudio.index : null;
+      const primaryAudio = session.probe.audioStreams?.find(s => s.index === session.selectedAudioIndex) || session.probe.audioStreams?.[session.selectedAudioIndex] || session.probe.audioStreams?.[0];
+      const audioStreamIndex = primaryAudio ? primaryAudio.index : (typeof session.selectedAudioIndex === 'number' ? session.selectedAudioIndex : null);
 
       workerState = {
         startSegmentIndex: segmentIndex,

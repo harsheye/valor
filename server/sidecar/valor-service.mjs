@@ -455,7 +455,7 @@ const server = http.createServer(async (req, res) => {
           if (s.codec_type === 'video') {
             videoStreams.push({ index: s.index, codec: s.codec_name, width: s.width, height: s.height });
           } else if (s.codec_type === 'audio') {
-            audioStreams.push({ index: s.index, codec: s.codec_name, language: s.tags?.language, sampleRate: parseInt(s.sample_rate, 10), channels: s.channels });
+            audioStreams.push({ index: s.index, codec: s.codec_name, language: s.tags?.language, title: s.tags?.title, sampleRate: parseInt(s.sample_rate, 10), channels: s.channels });
           } else if (s.codec_type === 'subtitle') {
             subtitleStreams.push({ index: s.index, codec: s.codec_name, language: s.tags?.language, title: s.tags?.title });
           }

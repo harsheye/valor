@@ -2,14 +2,18 @@ export const audioOptions = [
   { value: 'Original', label: 'Original' },
   { value: 'ENG', label: 'English (Default)' },
   { value: 'JAP', label: 'Japanese' },
-  { value: 'CHN', label: 'Chinese' }
+  { value: 'CHN', label: 'Chinese' },
+  { value: 'HIN', label: 'Hindi' },
+  { value: 'SPA', label: 'Spanish' }
 ];
 
 export const subOptions = [
   { value: 'Off', label: 'Off' },
   { value: 'ENG', label: 'English (Default)' },
   { value: 'JAP', label: 'Japanese' },
-  { value: 'CHN', label: 'Chinese' }
+  { value: 'CHN', label: 'Chinese' },
+  { value: 'HIN', label: 'Hindi' },
+  { value: 'SPA', label: 'Spanish' }
 ];
 
 export const calendarStyleOptions = [

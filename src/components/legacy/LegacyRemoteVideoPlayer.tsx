@@ -27,6 +27,7 @@ import { PlaybackController } from '../services/playback/PlaybackController';
 import { logger } from '../utils/logger';
 import { saveMediaTimestamp, getMediaTimestamp } from '../utils/mediaTimestampStorage';
 import { isWasmSupported } from '../utils/wasmCheck';
+import { findPreferredStream, getSavedMediaPreferences, getPreferredAudioStreamIndex, getLanguageDisplayLabel } from '../../utils/languageMatcher';
 import { cuesToWebVTT, remoteMediaAccess } from '../services/remote/remoteMediaAccess';
 import { MediaAuthModal } from './MediaAuthModal';
 import { getSavedCredentials, saveCredentials, clearCredentials } from '../services/remote/mediaAuthStore';
@@ -2074,13 +2075,8 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
     }
   }, [currentTime, isPlaying, activeAudioStreamIndex, activeSubStreamIndex, video.seekMap, video.isRemote, video.containerType, video.format, selectedAudioTrack, selectedSubTrack]);
 
-  const getLangLabel = (lang?: string, fallback: string = '') => {
-    if (!lang) return fallback;
-    const clean = lang.toLowerCase().trim();
-    if (clean === 'eng' || clean === 'en') return 'ENG';
-    if (clean === 'jpn' || clean === 'ja') return 'JAP';
-    if (clean === 'chi' || clean === 'zho' || clean === 'zh') return 'CHN';
-    return clean.toUpperCase();
+  const getLangLabel = (lang?: string, fallback: string = '', title?: string) => {
+    return getLanguageDisplayLabel(lang, fallback, title);
   };
 
   // Auto probing states
@@ -2297,17 +2293,18 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
             timecodeScale = undefined;
 
             if (probeData.audioStreams && probeData.audioStreams.length > 0) {
-              const firstAudio = probeData.audioStreams[0];
-              setActiveAudioStreamIndex(firstAudio.index);
-              const label = getLangLabel(firstAudio.language, `Track #${firstAudio.index}`);
+              const prefs = getSavedMediaPreferences();
+              const preferredAudio = findPreferredStream(probeData.audioStreams, prefs.defaultAudio, 'audio') || probeData.audioStreams[0];
+              setActiveAudioStreamIndex(preferredAudio.index);
+              const label = getLangLabel(preferredAudio.language, `Track #${preferredAudio.index}`, preferredAudio.title);
               setSelectedAudioTrack({
-                id: `remote-aud-${firstAudio.index}`,
+                id: `remote-aud-${preferredAudio.index}`,
                 name: `Audio (${label})`,
                 url: '',
                 isExtracted: true,
-                language: firstAudio.language,
-                streamIndex: firstAudio.index,
-                codec: firstAudio.codec
+                language: preferredAudio.language,
+                streamIndex: preferredAudio.index,
+                codec: preferredAudio.codec
               });
             }
           }
@@ -2389,17 +2386,18 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
       });
 
       if (probeData.audioStreams && probeData.audioStreams.length > 0) {
-        const firstAudio = probeData.audioStreams[0];
-        setActiveAudioStreamIndex(firstAudio.index);
-        const label = getLangLabel(firstAudio.language, `Track #${firstAudio.index}`);
+        const prefs = getSavedMediaPreferences();
+        const preferredAudio = findPreferredStream(probeData.audioStreams, prefs.defaultAudio, 'audio') || probeData.audioStreams[0];
+        setActiveAudioStreamIndex(preferredAudio.index);
+        const label = getLangLabel(preferredAudio.language, `Track #${preferredAudio.index}`, preferredAudio.title);
         setSelectedAudioTrack({
-          id: `remote-aud-${firstAudio.index}`,
+          id: `remote-aud-${preferredAudio.index}`,
           name: `Audio (${label})`,
           url: '',
           isExtracted: true,
-          language: firstAudio.language,
-          streamIndex: firstAudio.index,
-          codec: firstAudio.codec
+          language: preferredAudio.language,
+          streamIndex: preferredAudio.index,
+          codec: preferredAudio.codec
         });
       }
 
@@ -4578,37 +4576,29 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
         const targetAudio = settings.defaultAudio || 'ENG';
         const targetSub = settings.defaultSub || 'ENG';
 
+        let audioSelected = false;
         // Auto-select audio stream (for both local and remote)
         if (targetAudio !== 'Original' && !selectedAudioTrack) {
-          const stream = audioStreams.find(s => (
-            targetAudio === 'ENG' ? (s.language?.toLowerCase() === 'eng' || s.language?.toLowerCase() === 'en') :
-            targetAudio === 'JAP' ? (s.language?.toLowerCase() === 'jpn' || s.language?.toLowerCase() === 'ja') :
-            targetAudio === 'CHN' ? (s.language?.toLowerCase() === 'chi' || s.language?.toLowerCase() === 'zho' || s.language?.toLowerCase() === 'zh') :
-            s.language?.toUpperCase() === targetAudio
-          ));
+          const stream = findPreferredStream(audioStreams, targetAudio, 'audio');
           if (stream) {
-            logger.player(`Auto-selecting audio track: ${stream.language}`);
+            audioSelected = true;
+            logger.player(`Auto-selecting audio track: ${stream.language || stream.title}`);
             handleSelectEmbeddedAudio(stream.index, stream.codec, stream.language);
           }
         }
 
         // For remote media streams, preserve native audio unless the user has set a preferred audio language
-        if (!video.isRemote && !selectedAudioTrack && audioStreams.length > 0) {
+        if (!video.isRemote && !audioSelected && !selectedAudioTrack && audioStreams.length > 0) {
           const firstAudio = audioStreams[0];
-          logger.player(`Auto-selecting first audio track: ${firstAudio.language || 'unknown'} (${firstAudio.codec})`);
+          logger.player(`Auto-selecting first audio track: ${firstAudio.language || firstAudio.title || 'unknown'} (${firstAudio.codec})`);
           handleSelectEmbeddedAudio(firstAudio.index, firstAudio.codec, firstAudio.language);
         }
 
         // Auto-select subtitle stream
         if (targetSub !== 'Off' && !selectedSubTrack) {
-          const stream = subtitleStreams.find(s => (
-            targetSub === 'ENG' ? (s.language?.toLowerCase() === 'eng' || s.language?.toLowerCase() === 'en') :
-            targetSub === 'JAP' ? (s.language?.toLowerCase() === 'jpn' || s.language?.toLowerCase() === 'ja') :
-            targetSub === 'CHN' ? (s.language?.toLowerCase() === 'chi' || s.language?.toLowerCase() === 'zho' || s.language?.toLowerCase() === 'zh') :
-            s.language?.toUpperCase() === targetSub
-          ));
+          const stream = findPreferredStream(subtitleStreams, targetSub, 'subtitle');
           if (stream) {
-            logger.player(`Auto-selecting subtitle track: ${stream.language}`);
+            logger.player(`Auto-selecting subtitle track: ${stream.language || stream.title}`);
             handleSelectEmbeddedSubtitle(stream.index, stream.codec, stream.language);
           }
         }

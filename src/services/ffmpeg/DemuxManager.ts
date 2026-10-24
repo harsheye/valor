@@ -99,6 +99,7 @@ export class DemuxManager {
               type: 'audio',
               codec: a.codec,
               language: a.language,
+              title: a.title,
               details: `${a.codec}, ${a.sampleRate} Hz, ${a.channels} channels`
             });
           }
@@ -109,6 +110,7 @@ export class DemuxManager {
               type: 'subtitle',
               codec: s.codec,
               language: s.language,
+              title: s.title,
               details: `${s.codec} (${s.language})`
             });
           }
