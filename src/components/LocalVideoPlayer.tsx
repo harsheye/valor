@@ -8077,7 +8077,6 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
             id: 'settings',
             label: 'Settings (Del)',
             icon: <Settings size={22} />,
-            color: 'rgba(239, 68, 68, 0.32)',
             onClick: () => {
               setShowSettingsPanel(true);
             },
@@ -8087,7 +8086,6 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
             id: 'audio',
             label: 'Audio/Subs',
             icon: <MessageSquare size={22} />,
-            color: 'rgba(59, 130, 246, 0.32)',
             onClick: () => setShowAudioSubMenu(true),
             disabled: isLocked
           },
@@ -8095,7 +8093,6 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
             id: 'fullscreen',
             label: (isFullscreen || isPseudoFullscreen) ? 'Exit Screen' : 'Fullscreen',
             icon: (isFullscreen || isPseudoFullscreen) ? <Minimize size={22} /> : <Maximize size={22} />,
-            color: 'rgba(16, 185, 129, 0.32)',
             onClick: toggleFullscreen,
             disabled: isLocked
           },
@@ -8103,14 +8100,12 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
             id: 'unlock',
             label: 'Unlock UI',
             icon: <Unlock size={22} />,
-            color: 'rgba(245, 158, 11, 0.32)',
             onClick: () => setIsLocked(false),
             disabled: false
           } : {
             id: 'mute',
             label: isMuted ? 'Unmute' : 'Mute',
             icon: isMuted ? <VolumeX size={22} /> : <Volume2 size={22} />,
-            color: 'rgba(168, 85, 247, 0.32)',
             onClick: () => setIsMuted(prev => !prev),
             disabled: false
           }

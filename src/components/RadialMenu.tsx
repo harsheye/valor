@@ -85,7 +85,7 @@ export const RadialMenu: React.FC<RadialMenuProps> = ({ x, y, items, centerItem,
   const center = size / 2;
   const innerRadius = 45;
   const outerRadius = 125;
-  const sliceGap = 0;
+  const sliceGap = 0; // Removed gap for a complete pie chart
 
   // Keep menu fully within viewport bounds
   const safeX = Math.max(size / 2, Math.min(window.innerWidth - size / 2, x));
@@ -94,7 +94,7 @@ export const RadialMenu: React.FC<RadialMenuProps> = ({ x, y, items, centerItem,
   // Max 4 outer items (1 mid + 4 on outer = 5 total)
   const displayItems = items.slice(0, 4);
   const sliceAngle = 360 / Math.max(1, displayItems.length);
-  // 45 deg offset so the 4 slices align symmetrically (North, East, South, West)
+  // Offset so the 4 slices align symmetrically (North, East, South, West)
   const angleOffset = displayItems.length === 4 ? 45 : displayItems.length === 3 ? 60 : 90;
 
   return (
@@ -105,36 +105,16 @@ export const RadialMenu: React.FC<RadialMenuProps> = ({ x, y, items, centerItem,
         width: inline ? size : undefined,
         height: inline ? size : undefined,
         zIndex: inline ? 1 : 9999,
-        backgroundColor: inline ? 'transparent' : 'rgba(0, 0, 0, 0.65)',
-        backdropFilter: inline ? 'none' : 'blur(8px) saturate(140%)',
+        backgroundColor: inline ? 'transparent' : 'rgba(0, 0, 0, 0.5)',
+        backdropFilter: inline ? 'none' : 'blur(3px)',
         opacity: mounted ? 1 : 0,
-        transition: 'opacity 0.25s cubic-bezier(0.16, 1, 0.3, 1)',
+        transition: 'opacity 0.2s ease',
       }}
+      // Context menu on the backdrop should close the menu
       onContextMenu={(e) => { e.preventDefault(); if (!inline) onClose(); }}
       onClick={() => { if (!inline) onClose(); }}
       onWheel={() => { if (!inline) onClose(); }}
     >
-      <style>{`
-        @keyframes radialMagicPulse {
-          0% { r: 44px; opacity: 0.7; stroke-width: 2px; }
-          50% { r: 52px; opacity: 0.25; stroke-width: 1.5px; }
-          100% { r: 60px; opacity: 0; stroke-width: 0.5px; }
-        }
-        @keyframes magicGlowRotate {
-          0% { filter: hue-rotate(0deg); }
-          100% { filter: hue-rotate(360deg); }
-        }
-        .magic-pulse-circle {
-          animation: radialMagicPulse 2.4s infinite cubic-bezier(0.2, 0.8, 0.4, 1);
-          pointer-events: none;
-        }
-        .radial-slice-path {
-          transition: fill 0.2s cubic-bezier(0.16, 1, 0.3, 1), stroke 0.2s, filter 0.2s;
-        }
-        .radial-slice-path:hover {
-          filter: drop-shadow(0 0 12px rgba(255, 255, 255, 0.35));
-        }
-      `}</style>
       <div
         style={{
           position: 'absolute',
@@ -142,27 +122,17 @@ export const RadialMenu: React.FC<RadialMenuProps> = ({ x, y, items, centerItem,
           top: inline ? 0 : safeY - center,
           width: size,
           height: size,
-          transform: mounted ? 'scale(1) rotate(0deg)' : 'scale(0.7) rotate(-10deg)',
+          transform: mounted ? 'scale(1)' : 'scale(0.8)',
           opacity: mounted ? 1 : 0,
-          transition: 'all 0.32s cubic-bezier(0.34, 1.56, 0.64, 1)',
-          pointerEvents: 'none'
+          transition: 'all 0.25s cubic-bezier(0.175, 0.885, 0.32, 1.275)',
+          pointerEvents: 'none' // wrapper passes through pointer events to SVG paths
         }}
       >
         <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`}>
           <defs>
-            <filter id="drop-shadow" x="-30%" y="-30%" width="160%" height="160%">
-              <feDropShadow dx="0" dy="10" stdDeviation="16" floodColor="#000" floodOpacity="0.8"/>
+            <filter id="drop-shadow" x="-20%" y="-20%" width="140%" height="140%">
+              <feDropShadow dx="0" dy="8" stdDeviation="12" floodColor="#000" floodOpacity="0.6"/>
             </filter>
-            <radialGradient id="center-orb-grad" cx="50%" cy="50%" r="50%">
-              <stop offset="0%" stopColor="#2c2d36" />
-              <stop offset="85%" stopColor="#111217" />
-              <stop offset="100%" stopColor="#08080c" />
-            </radialGradient>
-            <radialGradient id="center-orb-hover" cx="50%" cy="50%" r="50%">
-              <stop offset="0%" stopColor="#454756" />
-              <stop offset="85%" stopColor="#222430" />
-              <stop offset="100%" stopColor="#14151b" />
-            </radialGradient>
           </defs>
           
           <g filter="url(#drop-shadow)" style={{ pointerEvents: 'auto' }}>
@@ -184,8 +154,8 @@ export const RadialMenu: React.FC<RadialMenuProps> = ({ x, y, items, centerItem,
               const textPathData = describeTextArc(center, center, textRadius, startAngle, endAngle);
               
               const isHovered = hoveredId === item.id && !item.disabled;
-              const defaultColor = 'rgba(18, 19, 24, 0.92)';
-              const hoverDefaultColor = 'rgba(40, 42, 52, 0.96)';
+              const defaultColor = 'rgba(20, 20, 24, 0.95)';
+              const hoverDefaultColor = 'rgba(40, 40, 48, 0.95)';
               
               return (
                 <g 
@@ -197,7 +167,7 @@ export const RadialMenu: React.FC<RadialMenuProps> = ({ x, y, items, centerItem,
                     e.stopPropagation(); 
                     if (e.button === 0 && !item.disabled) {
                       item.onClick(); 
-                      onClose(); 
+                      if (!inline) onClose();
                     }
                   }}
                   onContextMenu={(e) => { 
@@ -212,11 +182,11 @@ export const RadialMenu: React.FC<RadialMenuProps> = ({ x, y, items, centerItem,
                   }}
                 >
                   <path
-                    className="radial-slice-path"
                     d={pathData}
-                    fill={item.color && isHovered ? item.color : (isHovered ? hoverDefaultColor : (item.color || defaultColor))}
-                    stroke={isHovered ? 'rgba(255, 255, 255, 0.45)' : 'rgba(255, 255, 255, 0.12)'}
-                    strokeWidth={isHovered ? '1.5' : '1'}
+                    fill={isHovered ? hoverDefaultColor : defaultColor}
+                    stroke="rgba(255, 255, 255, 0.15)"
+                    strokeWidth="1"
+                    style={{ transition: 'fill 0.15s ease' }}
                   />
                   
                   {/* Invisible path for curved text */}
@@ -224,24 +194,23 @@ export const RadialMenu: React.FC<RadialMenuProps> = ({ x, y, items, centerItem,
                   
                   {/* Curved Text */}
                   <text 
-                    fill={isHovered ? '#ffffff' : 'rgba(255, 255, 255, 0.85)'}
+                    fill="white" 
                     fontSize="11px" 
                     fontWeight="600"
-                    fontFamily="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif"
-                    letterSpacing="0.03em"
+                    fontFamily="Inter, system-ui, sans-serif"
                     textAnchor="middle"
                     style={{
                       pointerEvents: 'none',
-                      transform: isHovered ? 'scale(1.04)' : 'scale(1)',
+                      transform: isHovered ? 'scale(1.05)' : 'scale(1)',
                       transformOrigin: `${center}px ${center}px`,
-                      transition: 'transform 0.18s cubic-bezier(0.175, 0.885, 0.32, 1.275)',
-                      textShadow: '0 2px 6px rgba(0,0,0,0.9)'
+                      transition: 'transform 0.15s cubic-bezier(0.175, 0.885, 0.32, 1.275)',
+                      textShadow: '0 2px 4px rgba(0,0,0,0.8)'
                     }}
                   >
                     <textPath 
                       href={`#${textPathId}`} 
                       startOffset="50%" 
-                      baselineShift={isBottom ? "-3px" : "3px"}
+                      baselineShift={isBottom ? "-2px" : "2px"}
                     >
                       {item.label}
                     </textPath>
@@ -256,9 +225,9 @@ export const RadialMenu: React.FC<RadialMenuProps> = ({ x, y, items, centerItem,
                         justifyContent: 'center',
                         width: '100%',
                         height: '100%',
-                        color: isHovered ? '#ffffff' : 'rgba(255, 255, 255, 0.9)',
-                        transform: isHovered ? 'scale(1.2)' : 'scale(1)',
-                        transition: 'transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1)'
+                        color: 'white',
+                        transform: isHovered ? 'scale(1.15)' : 'scale(1)',
+                        transition: 'transform 0.15s cubic-bezier(0.175, 0.885, 0.32, 1.275)'
                       }}>
                         {item.icon}
                       </div>
@@ -292,30 +261,15 @@ export const RadialMenu: React.FC<RadialMenuProps> = ({ x, y, items, centerItem,
                   pointerEvents: centerItem.disabled ? 'none' : 'auto'
                 }}
               >
-                {/* Magical pulse ring */}
-                <circle 
-                  className="magic-pulse-circle"
-                  cx={center} 
-                  cy={center} 
-                  r={innerRadius} 
-                  fill="none"
-                  stroke="rgba(255, 255, 255, 0.5)"
-                />
-
-                {/* Main center orb */}
                 <circle 
                   cx={center} 
                   cy={center} 
-                  r={innerRadius - 3} 
-                  fill={hoveredId === 'center' && !centerItem.disabled ? 'url(#center-orb-hover)' : 'url(#center-orb-grad)'}
-                  stroke={hoveredId === 'center' ? 'rgba(255, 255, 255, 0.6)' : 'rgba(255, 255, 255, 0.25)'}
+                  r={innerRadius - 4} 
+                  fill={hoveredId === 'center' && !centerItem.disabled ? 'rgba(60, 60, 68, 0.95)' : 'rgba(20, 20, 24, 0.95)'}
+                  stroke="rgba(255, 255, 255, 0.2)"
                   strokeWidth="2"
-                  style={{ 
-                    transition: 'all 0.2s cubic-bezier(0.16, 1, 0.3, 1)',
-                    filter: hoveredId === 'center' ? 'drop-shadow(0 0 10px rgba(255, 255, 255, 0.4))' : 'none'
-                  }}
+                  style={{ transition: 'fill 0.15s ease' }}
                 />
-                
                 <foreignObject x={center - 25} y={center - 25} width="50" height="50" style={{ pointerEvents: 'none' }}>
                   <div style={{
                     display: 'flex',
@@ -323,9 +277,9 @@ export const RadialMenu: React.FC<RadialMenuProps> = ({ x, y, items, centerItem,
                     justifyContent: 'center',
                     width: '100%',
                     height: '100%',
-                    color: '#ffffff',
-                    transform: hoveredId === 'center' ? 'scale(1.22)' : 'scale(1)',
-                    transition: 'transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1)'
+                    color: 'white',
+                    transform: hoveredId === 'center' ? 'scale(1.2)' : 'scale(1)',
+                    transition: 'transform 0.15s cubic-bezier(0.175, 0.885, 0.32, 1.275)'
                   }}>
                     {centerItem.icon}
                   </div>
