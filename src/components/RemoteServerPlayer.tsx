@@ -3,7 +3,7 @@ import {
   Play, Pause, RotateCcw, RotateCw, Cast, X, ArrowLeft, 
   MessageSquare, MessageSquareText, CircleGauge, Maximize, Minimize, MonitorPlay,
   Volume2, Volume1, VolumeX, AlertCircle, Lock, Unlock,
-  Layers, Type, Clock, Sliders, SkipForward, Ban, FastForward, Zap, Coffee, ChevronRight, ChevronLeft, Eye, Settings, Bookmark as BookmarkIcon, Activity, Terminal, Sun
+  Layers, Type, Clock, Sliders, SkipForward, Ban, FastForward, Zap, Coffee, ChevronRight, ChevronLeft, Eye, Settings, Bookmark as BookmarkIcon, Activity, Terminal, Sun, Sparkles
 } from 'lucide-react';
 import { Button } from './ui/button';
 import type { VideoItem, CustomAudioTrack, CustomSubtitleTrack, Bookmark } from '../types/media';
@@ -5262,62 +5262,6 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
           <div style={{ flex: 1 }} />
 
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-            {/* HDR / x265 Tone Mapping Pill */}
-            <button
-              onClick={cycleToneMapping}
-              title={`HDR Tone Mapping: ${toneMappingMode.toUpperCase()} (Click to toggle ACES Filmic / Vibrant / Reinhard / Off for x265/HDR content)`}
-              style={{
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: '6px',
-                padding: '4px 12px',
-                borderRadius: '20px',
-                fontSize: '0.75rem',
-                fontWeight: 600,
-                cursor: 'pointer',
-                border: toneMappingMode !== 'off' 
-                  ? '1px solid rgba(245, 158, 11, 0.6)' 
-                  : '1px solid rgba(148, 163, 184, 0.3)',
-                backgroundColor: toneMappingMode !== 'off' 
-                  ? 'rgba(245, 158, 11, 0.18)' 
-                  : 'rgba(30, 41, 59, 0.7)',
-                color: toneMappingMode !== 'off' ? '#fbbf24' : '#94a3b8',
-                backdropFilter: 'blur(8px)',
-                transition: 'all 0.2s',
-                letterSpacing: '0.02em'
-              }}
-            >
-              <Sun size={13} color={toneMappingMode !== 'off' ? '#fbbf24' : '#94a3b8'} />
-              <span>Tone Map: {toneMappingMode === 'off' ? (isX265OrHdr ? 'Off (HDR)' : 'Off') : toneMappingMode.toUpperCase()}</span>
-            </button>
-
-            {/* Companion Engine Status Badge */}
-            <button 
-              onClick={() => setShowCompanionModal(true)}
-              title={isSidecarActive 
-                ? "⚡ Running via Local Companion Engine (127.0.0.1:45454) - Click to manage" 
-                : "☁️ Running via Central Server Relay - Click to install Local Companion Engine for 0% server lag"}
-              style={{
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: '6px',
-                padding: '4px 12px',
-                borderRadius: '20px',
-                fontSize: '0.75rem',
-                fontWeight: 600,
-                cursor: 'pointer',
-                border: isSidecarActive ? '1px solid rgba(16, 185, 129, 0.5)' : '1px solid rgba(148, 163, 184, 0.3)',
-                backgroundColor: isSidecarActive ? 'rgba(16, 185, 129, 0.18)' : 'rgba(30, 41, 59, 0.7)',
-                color: isSidecarActive ? '#34d399' : '#94a3b8',
-                backdropFilter: 'blur(8px)',
-                transition: 'all 0.2s',
-                letterSpacing: '0.02em'
-              }}
-            >
-              <Zap size={13} color={isSidecarActive ? '#34d399' : '#94a3b8'} />
-              <span>{isSidecarActive ? 'Local Engine' : 'Server Mode'}</span>
-            </button>
-
             {/* Chromecast trigger (acting as native browser cast prompt) */}
             <button className="cast-btn" onClick={handleCast} title="Chromecast">
               <Cast size={24} />
@@ -5827,6 +5771,20 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
                     )}
                   </div>
                 )}
+
+                {/* HDR / Tone Mapping */}
+                <button
+                  className={`control-btn-netflix control-btn-tonemap ${toneMappingMode !== 'off' ? 'active' : ''}`}
+                  onClick={cycleToneMapping}
+                  title={`HDR Tone Mapping: ${toneMappingMode.toUpperCase()} (Click to cycle ACES Filmic / Vibrant / Reinhard / Off)`}
+                >
+                  <Sparkles size={22} color={toneMappingMode !== 'off' ? '#fbbf24' : 'currentColor'} />
+                  {toneMappingMode !== 'off' && (
+                    <span className="netflix-speed-badge" style={{ background: '#f59e0b' }}>
+                      {toneMappingMode === 'aces' ? 'ACES' : toneMappingMode === 'vibrant' ? 'VIB' : 'REIN'}
+                    </span>
+                  )}
+                </button>
 
                 {/* Netflix-style Audio & Subtitles Icon Button & Popover */}
                 {!isUndetectedLocalMedia && (

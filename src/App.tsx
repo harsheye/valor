@@ -2651,12 +2651,8 @@ function App() {
       const capabilities = await detectUrlCapabilities(url);
       
       if (!capabilities.supported) {
-        let rawTitle = localPathVal ? (localPathVal.split(/[/\\]/).pop() || localPathVal) : (url.substring(url.lastIndexOf('/') + 1) || 'Remote Stream');
-        let title = rawTitle.replace(/\.[^/.]+$/, '');
-        const parsedInfo = classifyVideoTitle(title);
-        if (parsedInfo.type !== 'unknown') {
-          title = parsedInfo.displayTitle;
-        }
+        const parsedInfo = classifyVideoTitle(titleHint || localPathVal || url);
+        let title = parsedInfo.displayTitle || parsedInfo.cleanTitle || 'Remote Stream';
         
         // Match history by normalized identity
         let match: VideoItem | undefined = undefined;
@@ -2787,12 +2783,8 @@ function App() {
       const audioTracks: CustomAudioTrack[] = [];
       const subtitleTracks: CustomSubtitleTrack[] = [];
 
-      let rawTitle = localPathVal ? (localPathVal.split(/[/\\]/).pop() || localPathVal) : (url.substring(url.lastIndexOf('/') + 1) || 'Remote Stream');
-      let title = rawTitle.replace(/\.[^/.]+$/, '');
-      const parsedInfo = classifyVideoTitle(title);
-      if (parsedInfo.type !== 'unknown') {
-        title = parsedInfo.displayTitle;
-      }
+      const parsedInfo = classifyVideoTitle(titleHint || localPathVal || url);
+      let title = parsedInfo.displayTitle || parsedInfo.cleanTitle || 'Remote Stream';
       
       // Match history by normalized identity
       let match: VideoItem | undefined = undefined;
@@ -2853,12 +2845,8 @@ function App() {
         probingError = err?.message || errStr;
       }
 
-      let rawTitle = localPathVal ? (localPathVal.split(/[/\\]/).pop() || localPathVal) : (url.substring(url.lastIndexOf('/') + 1) || 'Remote Stream');
-      let title = rawTitle.replace(/\.[^/.]+$/, '');
-      const parsedInfo = classifyVideoTitle(title);
-      if (parsedInfo.type !== 'unknown') {
-        title = parsedInfo.displayTitle;
-      }
+      const parsedInfo = classifyVideoTitle(titleHint || localPathVal || url);
+      let title = parsedInfo.displayTitle || parsedInfo.cleanTitle || 'Remote Stream';
       
       // Match history by normalized identity
       let match: VideoItem | undefined = undefined;

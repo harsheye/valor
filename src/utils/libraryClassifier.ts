@@ -8,6 +8,8 @@ export interface ParsedLibraryItem {
   originalTitle: string;
 }
 
+const JUNK_PATTERN = /\b(1080p|720p|2160p|4k|uhd|hd|sd|480p|576p|web-?dl|web-?rip|bluray|blu-ray|bdrip|brrip|hdrip|dvdrip|remux|imax|camrip|telesync|hdcam|x264|x265|h264|h265|hevc|avc|av1|10bit|8bit|hdr10\+?|hdr|dv|dolby\s*vision|sdr|dual[.\s-]audio|multi[.\s-]audio|multi[.\s-]sub|esubs?|subs?|subbed|dubbed|proper|repack|rerip|amzn|nf|dsnp|hmax|atvp|bilibili|bollyflix|yts(\.mx)?|psa|rarbg|eztv|tgx|galaxytv|ita|eng|english|hindi|tamil|telugu|korean|japanese|spanish|french|german|mandarin|cantonese|thai|vietnamese|russian|italian|ddp?5[.\s]1|atmos|truehd|dts(-hd)?|aac\d?(\.0)?|ac3|mp3|flac|eac3)\b.*/i;
+
 export function classifyVideoTitle(title: string): {
   type: 'movie' | 'series' | 'unknown';
   seriesTitle?: string;
@@ -26,11 +28,46 @@ export function classifyVideoTitle(title: string): {
     };
   }
 
-  // 1. Clean file extensions (.mkv, .mp4, .avi, etc.)
-  let clean = title.replace(/\.[a-z0-9]{2,5}$/i, '');
+  let raw = title;
+  // If title is a full URL or path, extract the target file name
+  if (raw.startsWith('http://') || raw.startsWith('https://') || raw.includes('/') || raw.includes('\\')) {
+    try {
+      const u = new URL(raw);
+      const paramName = u.searchParams.get('title') || u.searchParams.get('name') || u.searchParams.get('file');
+      if (paramName) {
+        raw = paramName;
+      } else {
+        const segs = u.pathname.split('/').filter(Boolean);
+        if (segs.length > 0) raw = segs[segs.length - 1];
+      }
+    } catch {
+      raw = raw.split(/[/\\]/).filter(Boolean).pop() || raw;
+    }
+  }
 
-  // 2. Strip bracketed site / release group tags like [BollyFlix], [YTS.MX], [1337x], [PSA], [RARBG]
-  clean = clean.replace(/\[[^\]]*\]/g, ' ');
+  // Safe URI decoding (replace + with space first, decode %20, %5B, %5D, etc.)
+  try {
+    raw = decodeURIComponent(raw.replace(/\+/g, ' '));
+  } catch {
+    raw = raw
+      .replace(/%20/g, ' ')
+      .replace(/%5B/gi, '[')
+      .replace(/%5D/gi, ']')
+      .replace(/%28/gi, '(')
+      .replace(/%29/gi, ')')
+      .replace(/%2E/gi, '.')
+      .replace(/%2D/gi, '-')
+      .replace(/%5F/gi, '_');
+  }
+
+  // Strip query parameters if any remains
+  raw = raw.split('?')[0];
+
+  // 1. Clean file extensions (.mkv, .mp4, .avi, etc.)
+  let clean = raw.replace(/\.(?:mkv|mp4|avi|mov|wmv|flv|webm|m4v|ts|iso|[a-z0-9]{2,4})$/i, '');
+
+  // 2. Strip bracketed site / release group tags like [BollyFlix], [YTS.MX], [1337x], [PSA], [RARBG], {HD}
+  clean = clean.replace(/\[[^\]]*\]/g, ' ').replace(/\{[^\}]*\}/g, ' ');
 
   // 3. Strip website prefixes like www.SiteName.com -
   clean = clean.replace(/^(?:https?:\/\/)?(?:www\.)?[a-z0-9-]+\.[a-z]{2,6}\s*[-_–—:]\s*/i, '');
@@ -52,20 +89,24 @@ export function classifyVideoTitle(title: string): {
     const sIndex = s.indexOf(sMatch[0]);
     let seriesTitle = s.substring(0, sIndex).replace(/[-–—:]+$/, '').trim();
     let after = s.substring(sIndex + sMatch[0].length).replace(/^[-–—:]+/, '').trim();
-    // Preserve year if present in series title, clean other parenthetical junk
+    
+    // Preserve year if present in series title
     const seriesYearMatch = seriesTitle.match(/\b\((19\d\d|20[0-3]\d)\)/) || seriesTitle.match(/\b(19\d\d|20[0-3]\d)\b/);
     const seriesYear = seriesYearMatch ? parseInt(seriesYearMatch[1] || seriesYearMatch[0], 10) : undefined;
 
     seriesTitle = seriesTitle
       .replace(/\[.*?\]/g, ' ')
+      .replace(/\(\s*(19\d\d|20[0-3]\d)\s*\)/g, ' ')
+      .replace(/\b(19\d\d|20[0-3]\d)\b/g, ' ')
+      .replace(/\(\s*\)/g, ' ')
       .replace(/\((?!\d{4}\))[^\)]*\)/g, ' ')
-      .replace(/\b(1080p|720p|2160p|4k|web-?dl|web-?rip|bluray|x264|x265|hevc|aac|dts)\b.*/i, '')
+      .replace(JUNK_PATTERN, '')
       .replace(/^[-–—:\s]+|[-–—:\s]+$/g, '')
       .replace(/\s+/g, ' ')
       .trim();
 
     let epTitle = after.replace(/\[.*?\]|\(.*?\)/g, '').trim();
-    epTitle = epTitle.replace(/\b(1080p|720p|2160p|4k|web-?dl|web-?rip|bluray|x264|x265|hevc|aac|dts)\b.*/i, '').trim();
+    epTitle = epTitle.replace(JUNK_PATTERN, '').trim();
     epTitle = epTitle.replace(/^[-–—:\s]+|[-–—:\s]+$/g, '').trim();
 
     const season = parseInt(sMatch[1], 10);
@@ -73,9 +114,7 @@ export function classifyVideoTitle(title: string): {
     const sStr = String(season).padStart(2, '0');
     const eStr = String(episode).padStart(2, '0');
 
-    const formattedSeriesTitle = seriesYear && !seriesTitle.includes(String(seriesYear))
-      ? `${seriesTitle} (${seriesYear})`
-      : seriesTitle;
+    const formattedSeriesTitle = seriesYear ? `${seriesTitle} (${seriesYear})` : seriesTitle;
 
     return {
       type: 'series',
@@ -95,7 +134,7 @@ export function classifyVideoTitle(title: string): {
   const epMatch = s.match(epOnlyPattern);
   if (epMatch) {
     const epIndex = s.indexOf(epMatch[0]);
-    let seriesTitle = s.substring(0, epIndex).replace(/^[-–—:\s]+|[-–—:\s]+$/g, '').replace(/\[.*?\]|\(.*?\)/g, '').trim();
+    let seriesTitle = s.substring(0, epIndex).replace(/^[-–—:\s]+|[-–—:\s]+$/g, '').replace(/\[.*?\]|\(.*?\)/g, '').replace(JUNK_PATTERN, '').trim();
     const episode = parseInt(epMatch[1], 10);
     return {
       type: 'series',
@@ -138,12 +177,9 @@ export function classifyVideoTitle(title: string): {
   }
 
   // 7. Strip all leftover parenthetical junk (except year) and release tags
-  movieTitle = movieTitle.replace(/\[[^\]]*\]/g, ' ');
+  movieTitle = movieTitle.replace(/\[[^\]]*\]/g, ' ').replace(/\{[^\}]*\}/g, ' ');
   movieTitle = movieTitle.replace(/\((?!\d{4}\))[^\)]*\)/g, ' ');
-
-  // Release tags: quality, codecs, source, channels, languages
-  const junkPattern = /\b(1080p|720p|2160p|4k|uhd|hd|sd|480p|576p|web-?dl|web-?rip|bluray|blu-ray|bdrip|brrip|hdrip|dvdrip|remux|imax|camrip|telesync|hdcam|x264|x265|h264|h265|hevc|avc|av1|10bit|8bit|hdr10\+?|hdr|dv|sdr|dual[.\s-]audio|multi[.\s-]audio|esubs?|subs?|subbed|dubbed|english|hindi|tamil|telugu|korean|japanese|spanish|french|ddp?5[.\s]1|atmos|truehd|dts(-hd)?|aac\d?(\.0)?|ac3|mp3)\b.*/i;
-  movieTitle = movieTitle.replace(junkPattern, '');
+  movieTitle = movieTitle.replace(JUNK_PATTERN, '');
   movieTitle = movieTitle.replace(/^[-–—:\s]+|[-–—:\s]+$/g, '').replace(/\s+/g, ' ').trim();
 
   const finalTitle = movieTitle || s || 'Unknown Title';
