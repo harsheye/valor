@@ -11,6 +11,10 @@ export interface MediaDetails {
   imageUrl?: string;
   logoUrl?: string;
   rating?: number;
+  runtime?: string;
+  platform?: string;
+  platformBg?: string;
+  platformTextColor?: string;
 }
 
 export interface PauseDetailsOverlayProps {
@@ -108,11 +112,11 @@ export const PauseDetailsOverlay: React.FC<PauseDetailsOverlayProps> = ({
           textAlign: overlayPosition.includes('right') ? 'right' : 'left'
         }}
       >
-        {/* Netflix Header Badge */}
+        {/* Real Platform Header Badge */}
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '2px' }}>
           <span style={{ 
-            background: 'var(--accent-color, #e50914)', 
-            color: '#ffffff', 
+            background: mediaDetails.platformBg || 'var(--accent-color, #e50914)', 
+            color: mediaDetails.platformTextColor || '#ffffff', 
             fontSize: '0.68rem', 
             fontWeight: 900, 
             letterSpacing: '1.5px', 
@@ -120,7 +124,7 @@ export const PauseDetailsOverlay: React.FC<PauseDetailsOverlayProps> = ({
             borderRadius: '3px',
             fontFamily: "'Outfit', 'Inter', sans-serif"
           }}>
-            VALOR
+            {mediaDetails.platform || (mediaDetails.episodeTitle || mediaDetails.season ? 'SERIES' : 'FILM')}
           </span>
           <span style={{ 
             color: 'rgba(255, 255, 255, 0.7)', 
@@ -201,7 +205,7 @@ export const PauseDetailsOverlay: React.FC<PauseDetailsOverlayProps> = ({
           {mediaDetails.season ? (
             <span>Season {mediaDetails.season}</span>
           ) : (
-            <span>{formatRuntime(duration)}</span>
+            <span>{mediaDetails.runtime || formatRuntime(duration)}</span>
           )}
           <span style={{ 
             border: '1px solid rgba(255, 255, 255, 0.35)', 
@@ -241,7 +245,7 @@ export const PauseDetailsOverlay: React.FC<PauseDetailsOverlayProps> = ({
         )}
 
         {/* Overview / Plot */}
-        {overlayShowOverview && (mediaDetails.overview || videoTitle) && (
+        {overlayShowOverview && (mediaDetails.overview || mediaDetails.title) && (
           <p style={{ 
             margin: '2px 0 0 0', 
             fontSize: 'clamp(0.9rem, 1.05vw, 0.98rem)', 
@@ -256,7 +260,7 @@ export const PauseDetailsOverlay: React.FC<PauseDetailsOverlayProps> = ({
             fontFamily: "'Inter', sans-serif",
             textShadow: '0 1px 6px rgba(0,0,0,0.9)'
           }}>
-            {mediaDetails.overview || videoTitle}
+            {mediaDetails.overview || mediaDetails.title}
           </p>
         )}
 

@@ -2,9 +2,6 @@ import { FFmpeg } from '@ffmpeg/ffmpeg';
 import { logger } from '../../utils/logger';
 import type { ByteSource } from '../local/localByteSource';
 import { FFmpegManager } from './FFmpegManager';
-import { remoteMediaAccess } from '../remote/remoteMediaAccess';
-import { getSavedCredentials } from '../remote/mediaAuthStore';
-import { sidecarService } from '../remote/sidecarService';
 import type { ProbeResult, MediaStreamInfo } from '../pipeline/MediaPipeline';
 
 export class DemuxManager {
@@ -13,25 +10,25 @@ export class DemuxManager {
 
   constructor(
     private ffmpegMgr: FFmpegManager,
-    private videoFileOrSource: File | ByteSource,
-    private remoteUrl?: string
+    private videoFileOrSource: File | ByteSource
   ) {}
-
-  public getRemoteUrl(): string | null {
-    if (this.remoteUrl) return this.remoteUrl;
-    if (this.isFile(this.videoFileOrSource)) return null;
-    const src = this.videoFileOrSource as any;
-    if (typeof src?.url === 'string') return src.url;
-    if (src?.source && typeof src.source.url === 'string') return src.source.url;
-    return null;
-  }
 
   private isFile(obj: any): obj is File {
     return obj instanceof File || (obj && typeof obj.size === 'number' && typeof obj.slice === 'function');
   }
 
+  private async getSizeFallback(source: any): Promise<number> {
+    if (typeof source.getSize === 'function') {
+      return await source.getSize();
+    }
+    if (typeof source.size === 'number') {
+      return source.size;
+    }
+    throw new Error('Source does not expose getSize() or size');
+  }
+
   createSibling(ffmpegMgr: FFmpegManager): DemuxManager {
-    return new DemuxManager(ffmpegMgr, this.videoFileOrSource, this.remoteUrl || this.getRemoteUrl() || undefined);
+    return new DemuxManager(ffmpegMgr, this.videoFileOrSource);
   }
 
   async getMountedInputPath(ff: FFmpeg): Promise<string> {
@@ -46,7 +43,7 @@ export class DemuxManager {
 
       try {
         await ff.createDir(mountPoint);
-      } catch { /* ignore */ }
+      } catch {}
 
       try {
         await ff.mount('WORKERFS' as any, { files: [cleanFile] }, mountPoint);
@@ -66,83 +63,20 @@ export class DemuxManager {
   }
 
   async probe(ff: FFmpeg): Promise<ProbeResult> {
-    const remoteUrl = this.getRemoteUrl();
-    if (remoteUrl) {
-      try {
-        const creds = getSavedCredentials(remoteUrl);
-        const apiBase = sidecarService.getRemoteApiBase();
-        const res = await fetch(`${apiBase}/api/remote/probe`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            url: remoteUrl,
-            auth: creds ? { username: creds.username, password: creds.password } : undefined
-          })
-        });
-
-        if (res.ok) {
-          const data = await res.json();
-          const streams: MediaStreamInfo[] = [];
-
-          for (const v of (data.videoStreams || [])) {
-            streams.push({
-              index: v.index,
-              type: 'video',
-              codec: v.codec,
-              details: `${v.codec}, ${v.width}x${v.height}`
-            });
-          }
-
-          for (const a of (data.audioStreams || [])) {
-            streams.push({
-              index: a.index,
-              type: 'audio',
-              codec: a.codec,
-              language: a.language,
-              title: a.title,
-              details: `${a.codec}, ${a.sampleRate} Hz, ${a.channels} channels`
-            });
-          }
-
-          for (const s of (data.subtitleStreams || [])) {
-            streams.push({
-              index: s.index,
-              type: 'subtitle',
-              codec: s.codec,
-              language: s.language,
-              title: s.title,
-              details: `${s.codec} (${s.language})`
-            });
-          }
-
-          logger.success(`[DemuxManager] Remote probe succeeded via backend for ${remoteUrl}: ${streams.length} streams found`);
-          return {
-            duration: data.duration || 0,
-            streams
-          };
-        }
-      } catch (probeErr) {
-        logger.warn('[DemuxManager] Backend remote probe failed, falling back:', probeErr);
-      }
-    }
-
     const inputPath = await this.getMountedInputPath(ff);
     
     if (!this.isFile(this.videoFileOrSource)) {
-      const details = await remoteMediaAccess.probeRemoteMedia(
-        ff,
-        this.videoFileOrSource as ByteSource
-      );
-      return {
-        duration: details.duration,
-        streams: details.streams
-      };
+      // remote probe: load first 2MB
+      const source = this.videoFileOrSource as ByteSource;
+      const size = await this.getSizeFallback(source);
+      const bytes = await source.read(0, Math.min(2 * 1024 * 1024, size - 1));
+      await ff.writeFile(inputPath, bytes);
     }
 
     this.ffmpegMgr.clearLogs();
     try {
       await ff.exec(['-i', inputPath, '-hide_banner']);
-    } catch { /* ignore */ }
+    } catch {}
 
     const logs = this.ffmpegMgr.getLogs().join('\n');
     return this.parseProbeLogs(logs);
@@ -200,6 +134,15 @@ export class DemuxManager {
     return { duration, streams };
   }
 
+  private getMkvHeaderOnly(bytes: Uint8Array): Uint8Array {
+    for (let i = 0; i <= bytes.length - 4; i++) {
+      if (bytes[i] === 0x1f && bytes[i + 1] === 0x43 && bytes[i + 2] === 0xb6 && bytes[i + 3] === 0x75) {
+        return bytes.subarray(0, i);
+      }
+    }
+    return bytes;
+  }
+
   /**
    * Slice a short segment of audio into WAV bytes
    */
@@ -211,53 +154,61 @@ export class DemuxManager {
     seekMap?: any[],
     signal?: AbortSignal
   ): Promise<Uint8Array> {
-    const remoteUrl = this.getRemoteUrl();
-    if (remoteUrl) {
-      const creds = getSavedCredentials(remoteUrl);
-      const params = new URLSearchParams({
-        url: remoteUrl,
-        streamIndex: streamIndex.toString(),
-        startTime: startTime.toFixed(3),
-        duration: duration.toString()
-      });
-      if (creds?.username) {
-        params.set('user', creds.username);
-        if (creds.password) {
-          params.set('pass', creds.password);
-        }
-      }
-
-      const apiBase = sidecarService.getRemoteApiBase();
-      const res = await fetch(`${apiBase}/api/remote/audio-packet?${params.toString()}`, {
-        signal
-      });
-
-      if (!res.ok) {
-        throw new Error(`Failed to fetch audio packet from backend: ${res.status} ${res.statusText}`);
-      }
-
-      const arrayBuffer = await res.arrayBuffer();
-      return new Uint8Array(arrayBuffer);
-    }
-
     const mountedInputPath = await this.getMountedInputPath(ff);
     const tempOutFile = `slice_${streamIndex}_${startTime}.wav`;
     const isRemoteSource = !this.isFile(this.videoFileOrSource);
+    const inputPath = isRemoteSource
+      ? `remote_input_${this.uniqueId}_${streamIndex}_${Math.floor(startTime * 1000)}_${Math.random().toString(36).substring(2, 7)}.mkv`
+      : mountedInputPath;
+    let ffmpegSeekTime = startTime;
+
     if (isRemoteSource) {
-      return await remoteMediaAccess.extractRemoteAudioToPcmWav(
-        ff,
-        this.videoFileOrSource as ByteSource,
-        streamIndex,
-        startTime,
-        duration,
-        seekMap,
-        undefined,
-        signal
+      // Remote chunk: resolve byte range and write chunk
+      const source = this.videoFileOrSource as ByteSource;
+      const seekList = seekMap || [];
+      
+      let startOffset = 0;
+      let endOffset = 8 * 1024 * 1024;
+      let offsetTime = 0;
+      const fileSize = await this.getSizeFallback(source);
+
+      const matchedStart = seekList.reduce((prev: any, curr: any) => {
+        return curr.time <= startTime ? curr : prev;
+      }, seekList[0]);
+
+      if (matchedStart) {
+        startOffset = matchedStart.offset;
+        offsetTime = matchedStart.time || 0;
+        const targetEndTime = startTime + duration + 30;
+        const matchedEnd = seekList.reduce((prev: any, curr: any) => {
+          return curr.time <= targetEndTime ? curr : prev;
+        }, matchedStart);
+        endOffset = matchedEnd ? matchedEnd.offset + 8 * 1024 * 1024 : startOffset + 24 * 1024 * 1024;
+      } else {
+        // Linear fallback
+        const size = await this.getSizeFallback(source);
+        startOffset = Math.floor((startTime / 3600) * size);
+        endOffset = Math.min(startOffset + 24 * 1024 * 1024, size);
+        offsetTime = startTime;
+      }
+
+      endOffset = Math.min(endOffset, fileSize - 1);
+      ffmpegSeekTime = Math.max(0, startTime - offsetTime);
+
+      // Fetch chunk
+      const headerProbeBytes = await source.read(0, Math.min(2 * 1024 * 1024, fileSize - 1), signal);
+      const headerBytes = this.getMkvHeaderOnly(headerProbeBytes);
+      const chunkBytes = await source.read(startOffset, endOffset, signal);
+
+      const concatenated = new Uint8Array(headerBytes.length + chunkBytes.length);
+      concatenated.set(headerBytes, 0);
+      concatenated.set(chunkBytes, headerBytes.length);
+
+      await ff.writeFile(inputPath, concatenated);
+      console.log(
+        `[DemuxManager] Remote audio slice start=${startTime}s offset=${offsetTime}s ffmpegSeek=${ffmpegSeekTime}s header=${headerBytes.length} bytes=${startOffset}-${endOffset}`
       );
     }
-
-    const inputPath = mountedInputPath;
-    const ffmpegSeekTime = startTime;
 
     try {
       const runSlice = async (seekSeconds: number): Promise<Uint8Array> => {
@@ -276,9 +227,12 @@ export class DemuxManager {
           '-f', 'wav',
           tempOutFile
         ];
+
+        console.log(`[FFmpeg Command] ffmpeg ${args.join(" ")}`);
         const startTimeMs = performance.now();
         const code = await ff.exec(args);
         const durationMs = performance.now() - startTimeMs;
+        console.log(`[FFmpeg Status] Exit code: ${code}, Duration: ${durationMs.toFixed(2)}ms`);
         if (code !== 0) {
           throw new Error(`FFmpeg Slicing returned exit code ${code}`);
         }
@@ -294,7 +248,7 @@ export class DemuxManager {
         );
         try {
           await ff.deleteFile(tempOutFile);
-        } catch { /* ignore */ }
+        } catch {}
         outputData = await runSlice(0);
       }
       return outputData;
@@ -304,7 +258,7 @@ export class DemuxManager {
         if (isRemoteSource) {
           await ff.deleteFile(inputPath);
         }
-      } catch { /* ignore */ }
+      } catch {}
     }
   }
 
@@ -317,11 +271,11 @@ export class DemuxManager {
         try {
           await ff.unmount(mountPoint);
           await ff.deleteDir(mountPoint);
-        } catch { /* ignore */ }
+        } catch {}
       } else {
         try {
           await ff.deleteFile(path);
-        } catch { /* ignore */ }
+        } catch {}
       }
     }
   }

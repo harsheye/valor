@@ -13,13 +13,14 @@ export class Timeline {
   }
 
   /**
-   * Check if there is significant drift between video currentTime and AudioContext playhead
-   * Returns true if drift is > 150ms (significant enough to require a hard resync)
+   * Check if there is severe, unrecoverable drift between video currentTime and AudioContext playhead.
+   * Moderate drift (< 1.2s) is handled smoothly by micro-rate adjustment and video-to-audio sync nudging.
+   * Returns true only if drift is > 1.2s (significant enough to require a hard resync).
    */
   public checkDrift(currentTime: number, audioPlayhead: number | null): boolean {
     const drift = this.getDrift(currentTime, audioPlayhead);
     if (drift !== null) {
-      return Math.abs(drift) > 0.15;
+      return Math.abs(drift) > 1.2;
     }
     return false;
   }

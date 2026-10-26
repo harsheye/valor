@@ -688,7 +688,7 @@ async function readIdAndSize(
   source: ByteSource,
   offset: number,
   signal?: AbortSignal
-): Promise<{ id: number; size: number; headerSize: number; vintLength: number }> {
+): Promise<{ id: number; size: number; headerSize: number; vintLength: number; buffer?: Uint8Array }> {
   // Read up to 12 bytes
   const bytes = await source.read(offset, offset + 11, signal);
   if (bytes.length === 0) {
@@ -701,7 +701,8 @@ async function readIdAndSize(
     id,
     size: vint.value,
     headerSize: r.offset,
-    vintLength: vint.length
+    vintLength: vint.length,
+    buffer: bytes
   };
 }
 
@@ -831,9 +832,14 @@ export async function extractMkvSubtitles(
 
   while (currentOffset < endOffset) {
     if (signal?.aborted) break;
-    // Allow up to 250,000 block elements (sufficient for full-length high-framerate x265 MKV movies)
-    if (++iterations > 250000) {
-      console.warn('[extractMkvSubtitles] Safety iteration limit reached (250,000), stopping scan');
+
+    // Yield to the event loop every 100 iterations to avoid freezing the main thread and stalling audio/video sync
+    if (++iterations % 100 === 0) {
+      await new Promise(resolve => setTimeout(resolve, 0));
+    }
+
+    if (iterations > 50000) {
+      console.warn('[extractMkvSubtitles] Safety iteration limit reached (50,000), stopping scan');
       break;
     }
 
@@ -842,6 +848,40 @@ export async function extractMkvSubtitles(
       const subHeaderOffset = currentOffset + sub.headerSize;
 
       if (sub.id === 0x1F43B675) { // Cluster
+        // Inspect Cluster's timecode directly from its first few bytes to fast-skip clusters outside window
+        let cTimeSec = -1;
+        try {
+          const previewLen = Math.min(80, sub.size > 0 ? sub.size : 80);
+          const previewBytes = await source.read(subHeaderOffset, Math.min(subHeaderOffset + previewLen - 1, fileSize - 1), signal);
+          const cr = new EbmlReader(previewBytes);
+          while (cr.hasMore(2)) {
+            const childId = cr.readId();
+            const childSize = cr.readVint().value;
+            if (childId === 0xE7) {
+              const cTimecode = cr.readUint(childSize);
+              cTimeSec = (cTimecode * timecodeScale) / 1000000000;
+              break;
+            } else {
+              cr.skip(childSize);
+            }
+          }
+        } catch (e: any) {
+          if (signal?.aborted || e?.name === 'AbortError') return cues;
+        }
+
+        if (cTimeSec >= 0) {
+          // Stop if past the target subtitle duration window
+          if (cTimeSec > time + subDuration + 2) {
+            break;
+          }
+          // Fast skip if cluster is well before our target time window
+          if (cTimeSec < time - 10 && sub.size > 0) {
+            currentOffset += sub.headerSize + sub.size;
+            continue;
+          }
+          clusterTimecode = Math.round((cTimeSec * 1000000000) / timecodeScale);
+        }
+
         // Move inside the Cluster payload contiguously
         currentOffset += Math.max(1, sub.headerSize);
         continue;
@@ -852,23 +892,39 @@ export async function extractMkvSubtitles(
         const timecodeBytes = await source.read(subHeaderOffset, subHeaderOffset + sub.size - 1, signal);
         clusterTimecode = new EbmlReader(timecodeBytes).readUint(sub.size);
         const clusterTimeSec = (clusterTimecode * timecodeScale) / 1000000000;
-        if (clusterTimeSec > time + subDuration) {
+        if (clusterTimeSec > time + subDuration + 2) {
           break;
         }
       } else if (sub.id === 0xA3 || sub.id === 0xA1) {
         // SimpleBlock or Block
-        const headerLen = Math.min(8, sub.size);
-        const blockHeaderBytes = await source.read(subHeaderOffset, subHeaderOffset + headerLen - 1, signal);
-        
-        const br = new EbmlReader(blockHeaderBytes);
-        const trackNumVint = br.readVint();
-        const blockTrackNumber = trackNumVint.value;
+        // Fast path: use already read bytes in sub.buffer if available to check track number without extra I/O
+        let blockTrackNumber: number;
+        let relativeTimecode: number;
+        let trackNumVintLen: number;
+
+        const subBuf = sub.buffer;
+        const availableInBuf = subBuf ? subBuf.length - sub.headerSize : 0;
+
+        if (subBuf && availableInBuf >= 4) {
+          const br = new EbmlReader(subBuf.subarray(sub.headerSize));
+          const trackNumVint = br.readVint();
+          blockTrackNumber = trackNumVint.value;
+          trackNumVintLen = trackNumVint.length;
+          relativeTimecode = (subBuf[sub.headerSize + br.offset] << 8) | subBuf[sub.headerSize + br.offset + 1];
+          relativeTimecode = (relativeTimecode << 16) >> 16;
+        } else {
+          const headerLen = Math.min(8, sub.size);
+          const blockHeaderBytes = await source.read(subHeaderOffset, subHeaderOffset + headerLen - 1, signal);
+          const br = new EbmlReader(blockHeaderBytes);
+          const trackNumVint = br.readVint();
+          blockTrackNumber = trackNumVint.value;
+          trackNumVintLen = trackNumVint.length;
+          relativeTimecode = (blockHeaderBytes[br.offset] << 8) | blockHeaderBytes[br.offset + 1];
+          relativeTimecode = (relativeTimecode << 16) >> 16;
+        }
 
         if (blockTrackNumber === targetTrackNumber) {
-          let relativeTimecode = (blockHeaderBytes[br.offset] << 8) | blockHeaderBytes[br.offset + 1];
-          relativeTimecode = (relativeTimecode << 16) >> 16;
-
-          const payloadStart = subHeaderOffset + trackNumVint.length + 3;
+          const payloadStart = subHeaderOffset + trackNumVintLen + 3;
           const payloadEnd = subHeaderOffset + sub.size - 1;
           
           if (payloadEnd >= payloadStart) {

@@ -1,6 +1,5 @@
 import { FFmpeg } from '@ffmpeg/ffmpeg';
 import { logger } from '../../utils/logger';
-import { isWasmSupported } from '../../utils/wasmCheck';
 
 export class FFmpegManager {
   private ffmpeg: FFmpeg | null = null;
@@ -15,11 +14,6 @@ export class FFmpegManager {
 
   async load(onProgress?: (progress: number) => void): Promise<FFmpeg> {
     if (this.ffmpeg && this.isLoaded) return this.ffmpeg;
-
-    if (!isWasmSupported()) {
-      logger.warn('[FFmpegManager] WebAssembly is not supported in this browser environment.');
-      throw new Error('WebAssembly is not supported in this browser environment.');
-    }
 
     const ff = new FFmpeg();
 

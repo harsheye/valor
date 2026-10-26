@@ -462,11 +462,11 @@ export class RemoteMediaAccess {
           '-ss', seekSec.toFixed(3),
           '-accurate_seek',
           '-i', tempInFile,
-          '-ss', '0',
+
           '-t', duration.toFixed(3),
           '-map', `0:${streamIndex}`,
           '-vn',
-          '-avoid_negative_ts', 'make_zero',
+
           '-acodec', 'pcm_s16le',
           '-ac', '2',
           '-ar', '44100',

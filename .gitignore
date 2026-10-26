@@ -31,3 +31,4 @@ dist-ssr
 *.blob
 *.mp4
 .valor_data/
+valor/

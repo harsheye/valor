@@ -6,13 +6,6 @@ import { extractLocalSubtitleSegment } from '../local/ffmpegLocal';
 import { extractRemoteSubtitleSegment } from '../remote/ffmpegRemote';
 import { parseSubtitles } from '../../utils/subtitleParser';
 
-function isAbortError(err: any, signal?: AbortSignal): boolean {
-  if (signal?.aborted) return true;
-  if (err?.name === 'AbortError') return true;
-  const msg = (err?.message || String(err)).toLowerCase();
-  return msg.includes('abort') || msg.includes('canceled') || msg.includes('cancelled');
-}
-
 export class BufferManager {
   private packetCache = new PacketCache(60, 120);
   private subtitleCache = new Map<string, any[]>(); // keyed by streamIndex_offsetTime
@@ -21,6 +14,7 @@ export class BufferManager {
   private isBuffering = false;
 
   private readonly COOLDOWN_MS = 8000;
+  private readonly MAX_RETRIES = 3;
 
   constructor(
     private packetReader: PacketReader,
@@ -39,24 +33,17 @@ export class BufferManager {
     const record = this.failedFills.get(key);
     if (!record) return false;
 
-    // Repeated failures back off, but never permanently blacklist a chunk.
-    // A permanent block can leave an audio gap that keeps playback buffering forever.
-    const retryDelay = Math.min(
-      this.COOLDOWN_MS * (2 ** Math.max(0, record.count - 1)),
-      60000
-    );
-    return Date.now() - record.lastTime < retryDelay;
-  }
+    if (record.count >= this.MAX_RETRIES) {
+      return true;
+    }
 
-  getRetryDelayMs(key: string): number {
-    const record = this.failedFills.get(key);
-    if (!record) return this.COOLDOWN_MS;
+    const elapsed = Date.now() - record.lastTime;
+    if (elapsed < this.COOLDOWN_MS) {
+      console.log(`[BufferManager] Key ${key} is in failure cooldown (${((this.COOLDOWN_MS - elapsed)/1000).toFixed(1)}s remaining). Skipping request.`);
+      return true;
+    }
 
-    const retryDelay = Math.min(
-      this.COOLDOWN_MS * (2 ** Math.max(0, record.count - 1)),
-      60000
-    );
-    return Math.max(0, retryDelay - (Date.now() - record.lastTime));
+    return false;
   }
 
   markFailed(key: string): void {
@@ -64,7 +51,7 @@ export class BufferManager {
     record.count += 1;
     record.lastTime = Date.now();
     this.failedFills.set(key, record);
-    console.warn(`[BufferManager] Key ${key} failed. Attempt count: ${record.count}; retry delay: ${Math.min(this.COOLDOWN_MS * (2 ** Math.max(0, record.count - 1)), 60000)}ms`);
+    console.warn(`[BufferManager] Key ${key} failed. Attempt count: ${record.count}/${this.MAX_RETRIES}`);
   }
 
   resetFailures(): void {
@@ -80,7 +67,7 @@ export class BufferManager {
     this.onBufferingChange = cb;
   }
 
-  public setBuffering(state: boolean): void {
+  private setBuffering(state: boolean): void {
     if (this.isBuffering === state) return;
     this.isBuffering = state;
     if (this.onBufferingChange) {
@@ -122,15 +109,15 @@ export class BufferManager {
     let promise = this.activeFills.get(key);
     if (!promise) {
       this.setBuffering(true);
+      console.log(`[BufferManager] [${new Date().toISOString()}] Launching single-flight audio request for: ${key}`);
       promise = packetReader.readAudioPacket(ff, streamIndex, startTime, duration, seekMap, signal)
         .then((packet) => {
+          console.log("Cache Insert:", chunkKey, "packetStart:", packet.startTime, "duration:", packet.duration);
           this.packetCache.add(packet, chunkKey);
           return packet;
         })
         .catch((err) => {
-          if (!isAbortError(err, signal)) {
-            this.markFailed(key);
-          }
+          this.markFailed(key);
           throw err;
         })
         .finally(() => {
@@ -141,6 +128,7 @@ export class BufferManager {
         });
       this.activeFills.set(key, promise);
     } else {
+      console.log(`[BufferManager] [${new Date().toISOString()}] Re-using existing single-flight audio request for: ${key}`);
     }
 
     return promise;
@@ -174,6 +162,7 @@ export class BufferManager {
     // 1. Check Cache
     const cached = this.subtitleCache.get(key);
     if (cached) {
+      console.log(`[BufferManager] [${new Date().toISOString()}] Cache hit for subtitle request: ${key}`);
       return cached;
     }
 
@@ -181,6 +170,7 @@ export class BufferManager {
     let promise = this.activeFills.get(key);
     if (!promise) {
       this.setBuffering(true);
+      console.log(`[BufferManager] [${new Date().toISOString()}] Launching single-flight subtitle request for: ${key}`);
       promise = (async () => {
         let text = '';
         if (!isRemote && videoFile) {
@@ -196,9 +186,7 @@ export class BufferManager {
         return parsedCues;
       })()
       .catch((err) => {
-        if (!isAbortError(err, signal)) {
-          this.markFailed(key);
-        }
+        this.markFailed(key);
         throw err;
       })
       .finally(() => {
@@ -209,6 +197,7 @@ export class BufferManager {
       });
       this.activeFills.set(key, promise);
     } else {
+      console.log(`[BufferManager] [${new Date().toISOString()}] Re-using existing single-flight subtitle request for: ${key}`);
     }
 
     return promise;

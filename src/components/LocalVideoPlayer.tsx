@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { 
-  Play, Pause, RotateCcw, RotateCw, Cast, X, 
-  MessageSquare, Maximize, Minimize, MonitorPlay,
+  Play, Pause, RotateCcw, RotateCw, Cast, X, ArrowLeft, 
+  MessageSquare, MessageSquareText, CircleGauge, Maximize, Minimize, MonitorPlay,
   Volume2, Volume1, VolumeX, AlertCircle, Lock, Unlock,
   Layers, Type, Clock, Sliders, SkipForward, Ban, FastForward, Zap, Coffee, ChevronRight, ChevronLeft, Eye, Settings, Bookmark as BookmarkIcon, Activity, Terminal
 } from 'lucide-react';
@@ -38,7 +38,7 @@ const getAudioBoostMultiplier = (boostPercent: number): number => {
   }
   return 1.0;
 };
-import { classifyVideoTitle } from '../utils/libraryClassifier';
+import { classifyVideoTitle, getRegexedTitleWithYear } from '../utils/libraryClassifier';
 import { syncTraktHistory, syncTraktRating, resolveTraktMetadata } from '../services/traktAuth';
 import { LoadingSpinner, BufferingOverlay } from './LoadingSpinner';
 import { RadialMenu } from './RadialMenu';
@@ -155,6 +155,105 @@ export interface MediaDetails {
   imageUrl?: string;
   logoUrl?: string;
   rating?: number;
+  runtime?: string;
+  platform?: string;
+  platformBg?: string;
+  platformTextColor?: string;
+}
+
+export function detectMediaPlatform(itemData: any, isTV: boolean): {
+  platform: string;
+  platformBg: string;
+  platformTextColor: string;
+} {
+  if (!itemData) {
+    return { platform: isTV ? 'SERIES' : 'FILM', platformBg: '#e50914', platformTextColor: '#ffffff' };
+  }
+
+  // 1. Check TV broadcast/streaming network first
+  if (isTV && itemData.networks && itemData.networks.length > 0) {
+    const netName = (itemData.networks[0].name || '').trim();
+    const netLower = netName.toLowerCase();
+    if (netLower.includes('netflix')) return { platform: 'NETFLIX', platformBg: '#e50914', platformTextColor: '#ffffff' };
+    if (netLower.includes('apple')) return { platform: 'APPLE TV+', platformBg: '#000000', platformTextColor: '#ffffff' };
+    if (netLower.includes('amazon') || netLower.includes('prime')) return { platform: 'PRIME VIDEO', platformBg: '#00a8e1', platformTextColor: '#ffffff' };
+    if (netLower.includes('disney')) return { platform: 'DISNEY+', platformBg: '#113ccf', platformTextColor: '#ffffff' };
+    if (netLower.includes('hbo') || netLower.includes('max')) return { platform: 'MAX', platformBg: '#002be7', platformTextColor: '#ffffff' };
+    if (netLower.includes('paramount')) return { platform: 'PARAMOUNT+', platformBg: '#0064ff', platformTextColor: '#ffffff' };
+    if (netLower.includes('hulu')) return { platform: 'HULU', platformBg: '#1ce783', platformTextColor: '#0b0c0f' };
+    if (netLower.includes('peacock')) return { platform: 'PEACOCK', platformBg: '#000000', platformTextColor: '#ffffff' };
+    if (netLower.includes('jio')) return { platform: 'JIOCINEMA', platformBg: '#99004d', platformTextColor: '#ffffff' };
+    if (netLower.includes('zee')) return { platform: 'ZEE5', platformBg: '#8230c6', platformTextColor: '#ffffff' };
+    if (netLower.includes('sony')) return { platform: 'SONYLIV', platformBg: '#0072d2', platformTextColor: '#ffffff' };
+    if (netLower.includes('bbc')) return { platform: 'BBC', platformBg: '#000000', platformTextColor: '#ffffff' };
+    return { platform: netName.toUpperCase(), platformBg: '#222222', platformTextColor: '#ffffff' };
+  }
+
+  // 2. Check Watch Providers (Flatrate streaming first, then rent/buy)
+  const wpResults = itemData['watch/providers']?.results || {};
+  const countryList = ['US', 'IN', 'GB', 'CA', 'AU', ...Object.keys(wpResults)];
+  let foundProvider: string | null = null;
+
+  for (const c of countryList) {
+    const provObj = wpResults[c];
+    if (!provObj) continue;
+    if (provObj.flatrate && provObj.flatrate.length > 0) {
+      foundProvider = provObj.flatrate[0].provider_name;
+      break;
+    }
+  }
+
+  // If no flatrate, check buy/rent providers
+  if (!foundProvider) {
+    for (const c of ['US', 'IN', 'GB']) {
+      const provObj = wpResults[c];
+      if (!provObj) continue;
+      if (provObj.buy && provObj.buy.length > 0) {
+        foundProvider = provObj.buy[0].provider_name;
+        break;
+      }
+      if (provObj.rent && provObj.rent.length > 0) {
+        foundProvider = provObj.rent[0].provider_name;
+        break;
+      }
+    }
+  }
+
+  if (foundProvider) {
+    const pLower = foundProvider.toLowerCase();
+    if (pLower.includes('netflix')) return { platform: 'NETFLIX', platformBg: '#e50914', platformTextColor: '#ffffff' };
+    if (pLower.includes('apple')) return { platform: 'APPLE TV+', platformBg: '#000000', platformTextColor: '#ffffff' };
+    if (pLower.includes('amazon') || pLower.includes('prime')) return { platform: 'PRIME VIDEO', platformBg: '#00a8e1', platformTextColor: '#ffffff' };
+    if (pLower.includes('disney')) return { platform: 'DISNEY+', platformBg: '#113ccf', platformTextColor: '#ffffff' };
+    if (pLower.includes('hbo') || pLower.includes('max')) return { platform: 'MAX', platformBg: '#002be7', platformTextColor: '#ffffff' };
+    if (pLower.includes('paramount')) return { platform: 'PARAMOUNT+', platformBg: '#0064ff', platformTextColor: '#ffffff' };
+    if (pLower.includes('hulu')) return { platform: 'HULU', platformBg: '#1ce783', platformTextColor: '#0b0c0f' };
+    if (pLower.includes('peacock')) return { platform: 'PEACOCK', platformBg: '#000000', platformTextColor: '#ffffff' };
+    if (pLower.includes('jio')) return { platform: 'JIOCINEMA', platformBg: '#99004d', platformTextColor: '#ffffff' };
+    if (pLower.includes('zee')) return { platform: 'ZEE5', platformBg: '#8230c6', platformTextColor: '#ffffff' };
+    if (pLower.includes('sony')) return { platform: 'SONYLIV', platformBg: '#0072d2', platformTextColor: '#ffffff' };
+    if (pLower.includes('google')) return { platform: 'GOOGLE PLAY', platformBg: '#00875a', platformTextColor: '#ffffff' };
+    if (pLower.includes('youtube')) return { platform: 'YOUTUBE', platformBg: '#ff0000', platformTextColor: '#ffffff' };
+    return { platform: foundProvider.toUpperCase(), platformBg: '#333333', platformTextColor: '#ffffff' };
+  }
+
+  // 3. Fallback to production company
+  if (itemData.production_companies && itemData.production_companies.length > 0) {
+    const compName = (itemData.production_companies[0].name || '').trim();
+    const cLower = compName.toLowerCase();
+    if (cLower.includes('warner')) return { platform: 'WARNER BROS', platformBg: '#004db3', platformTextColor: '#ffffff' };
+    if (cLower.includes('universal')) return { platform: 'UNIVERSAL', platformBg: '#000000', platformTextColor: '#ffffff' };
+    if (cLower.includes('paramount')) return { platform: 'PARAMOUNT', platformBg: '#0064ff', platformTextColor: '#ffffff' };
+    if (cLower.includes('sony') || cLower.includes('columbia')) return { platform: 'SONY PICTURES', platformBg: '#000000', platformTextColor: '#ffffff' };
+    if (cLower.includes('disney') || cLower.includes('marvel')) return { platform: 'DISNEY', platformBg: '#113ccf', platformTextColor: '#ffffff' };
+    if (cLower.includes('a24')) return { platform: 'A24', platformBg: '#ffffff', platformTextColor: '#000000' };
+    if (cLower.includes('lionsgate')) return { platform: 'LIONSGATE', platformBg: '#c29b38', platformTextColor: '#000000' };
+    if (compName.length <= 18) {
+      return { platform: compName.toUpperCase(), platformBg: '#222222', platformTextColor: '#ffffff' };
+    }
+  }
+
+  return { platform: isTV ? 'SERIES' : 'FILM', platformBg: '#e50914', platformTextColor: '#ffffff' };
 }
 
 export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({ 
@@ -227,6 +326,17 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
     }
   }, [video.id, video.url, video.file]);
 
+  // Lock browser window scrollbar when player is mounted
+  useEffect(() => {
+    const origOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => {
+      document.body.style.overflow = origOverflow;
+    };
+  }, []);
+
+
+
   const [isPlaying, setIsPlaying] = useState(false);
   const [showPauseMetadataOverlay, setShowPauseMetadataOverlay] = useState(false);
   const showPauseMetadataOverlayRef = useRef(false);
@@ -238,11 +348,15 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
     const isTV = seriesInfo.type === 'series';
     const initialTitle = (isTV && seriesInfo.seriesTitle) 
       ? seriesInfo.seriesTitle 
-      : (seriesInfo.displayTitle || rawTitle || 'Unknown Title');
+      : (seriesInfo.cleanTitle || seriesInfo.displayTitle || rawTitle || 'Unknown Title');
     return {
       title: initialTitle,
       overview: '',
       imageUrl: '',
+      releaseDate: seriesInfo.year ? String(seriesInfo.year) : undefined,
+      platform: isTV ? 'SERIES' : 'FILM',
+      platformBg: '#e50914',
+      platformTextColor: '#ffffff',
       episodeTitle: isTV ? seriesInfo.episodeTitle : undefined,
       season: isTV ? seriesInfo.season : undefined,
       episode: isTV ? seriesInfo.episode : undefined,
@@ -255,15 +369,19 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
     const isTV = seriesInfo.type === 'series';
     const initialTitle = (isTV && seriesInfo.seriesTitle) 
       ? seriesInfo.seriesTitle 
-      : (seriesInfo.displayTitle || rawTitle || 'Unknown Title');
+      : (seriesInfo.cleanTitle || seriesInfo.displayTitle || rawTitle || 'Unknown Title');
     
     setMediaDetails(prev => ({
-      title: initialTitle,
+      title: prev?.title || initialTitle,
       overview: prev?.overview || '',
       imageUrl: prev?.imageUrl || '',
       logoUrl: prev?.logoUrl,
       rating: prev?.rating,
-      releaseDate: prev?.releaseDate,
+      releaseDate: prev?.releaseDate || (seriesInfo.year ? String(seriesInfo.year) : undefined),
+      runtime: prev?.runtime,
+      platform: prev?.platform || (isTV ? 'SERIES' : 'FILM'),
+      platformBg: prev?.platformBg || '#e50914',
+      platformTextColor: prev?.platformTextColor || '#ffffff',
       episodeTitle: isTV ? (prev?.episodeTitle || seriesInfo.episodeTitle) : undefined,
       season: isTV ? (prev?.season ?? seriesInfo.season) : undefined,
       episode: isTV ? (prev?.episode ?? seriesInfo.episode) : undefined,
@@ -1188,18 +1306,31 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
           const tmdbToken = "eyJhbGciOiJIUzI1NiJ9.eyJhdWQiOiJlMzQwMGRhZWZjODJjNTJlZDEyYzk1MWU1ZWFmYmVhYyIsIm5iZiI6MTc4MzU0MTI2OS44NzUsInN1YiI6IjZhNGVhZTE1MzFhOWUyYmNhZjBmY2RlMiIsInNjb3BlcyI6WyJhcGlfcmVhZCJdLCJ2ZXJzaW9uIjoxfQ.GT6_b6NSJwjYCXlbaCi_djq09ug0rKDxY9iouqVrYWY";
           let searchUrl = "";
           if (isTV && seriesInfo.seriesTitle) {
-            searchUrl = `https://api.themoviedb.org/3/search/tv?query=${encodeURIComponent(seriesInfo.seriesTitle)}&include_adult=false`;
+            searchUrl = `https://api.tmdb.org/3/search/tv?query=${encodeURIComponent(seriesInfo.seriesTitle)}&include_adult=false`;
           } else {
-            searchUrl = `https://api.themoviedb.org/3/search/movie?query=${encodeURIComponent(seriesInfo.displayTitle)}&include_adult=false`;
+            const queryTitle = seriesInfo.cleanTitle || seriesInfo.displayTitle || video.title;
+            const yearParam = seriesInfo.year ? `&year=${seriesInfo.year}` : '';
+            searchUrl = `https://api.tmdb.org/3/search/movie?query=${encodeURIComponent(queryTitle)}${yearParam}&include_adult=false`;
           }
 
           logger.player(`[Bookmarks Sync] Querying TMDB search: "${searchUrl}"`);
-          const searchRes = await fetch(searchUrl, {
+          let searchRes = await fetch(searchUrl, {
             headers: { 'Authorization': `Bearer ${tmdbToken}`, 'accept': 'application/json' }
           });
 
           if (searchRes.ok) {
-            const searchData = await searchRes.json();
+            let searchData = await searchRes.json();
+            // Fallback retry without year if 0 results
+            if ((!searchData.results || searchData.results.length === 0) && !isTV && seriesInfo.year) {
+              const fallbackUrl = `https://api.tmdb.org/3/search/movie?query=${encodeURIComponent(seriesInfo.cleanTitle || seriesInfo.displayTitle || video.title)}&include_adult=false`;
+              const fallbackRes = await fetch(fallbackUrl, {
+                headers: { 'Authorization': `Bearer ${tmdbToken}`, 'accept': 'application/json' }
+              });
+              if (fallbackRes.ok) {
+                searchData = await fallbackRes.json();
+              }
+            }
+
             if (searchData.results && searchData.results.length > 0) {
               const matchedItem = searchData.results[0];
               resolvedTmdbId = matchedItem.id;
@@ -1221,24 +1352,38 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
       if (resolvedTmdbId && getOverlayDataFromTmdb) {
         try {
           const tmdbToken = "eyJhbGciOiJIUzI1NiJ9.eyJhdWQiOiJlMzQwMGRhZWZjODJjNTJlZDEyYzk1MWU1ZWFmYmVhYyIsIm5iZiI6MTc4MzU0MTI2OS44NzUsInN1YiI6IjZhNGVhZTE1MzFhOWUyYmNhZjBmY2RlMiIsInNjb3BlcyI6WyJhcGlfcmVhZCJdLCJ2ZXJzaW9uIjoxfQ.GT6_b6NSJwjYCXlbaCi_djq09ug0rKDxY9iouqVrYWY";
-          const detailsUrl = `https://api.themoviedb.org/3/${isTV ? 'tv' : 'movie'}/${resolvedTmdbId}`;
+          const detailsUrl = `https://api.tmdb.org/3/${isTV ? 'tv' : 'movie'}/${resolvedTmdbId}?append_to_response=watch/providers,credits`;
           const detailsRes = await fetch(detailsUrl, {
             headers: { 'Authorization': `Bearer ${tmdbToken}`, 'accept': 'application/json' }
           });
           const itemData = detailsRes.ok ? await detailsRes.json() : null;
 
           const mediaImg = itemData?.poster_path ? `https://image.tmdb.org/t/p/w500${itemData.poster_path}` : (itemData?.backdrop_path ? `https://image.tmdb.org/t/p/w500${itemData.backdrop_path}` : '');
+          
+          let formattedRuntime: string | undefined;
+          if (itemData?.runtime) {
+            const hrs = Math.floor(itemData.runtime / 60);
+            const mins = itemData.runtime % 60;
+            formattedRuntime = hrs > 0 ? `${hrs}h ${mins}m` : `${mins}m`;
+          }
+
+          const platformInfo = detectMediaPlatform(itemData, isTV);
+
           const details: MediaDetails = {
-            title: itemData?.name || itemData?.title || seriesInfo.seriesTitle || seriesInfo.displayTitle || 'Unknown Title',
+            title: itemData?.name || itemData?.title || seriesInfo.cleanTitle || seriesInfo.displayTitle || 'Unknown Title',
             overview: itemData?.overview || '',
             imageUrl: mediaImg,
-            releaseDate: itemData?.release_date ? itemData.release_date.split('-')[0] : (itemData?.first_air_date ? itemData.first_air_date.split('-')[0] : ''),
-            rating: itemData?.vote_average || undefined
+            releaseDate: itemData?.release_date ? itemData.release_date.split('-')[0] : (itemData?.first_air_date ? itemData.first_air_date.split('-')[0] : (seriesInfo.year ? String(seriesInfo.year) : '')),
+            rating: itemData?.vote_average || undefined,
+            runtime: formattedRuntime,
+            platform: platformInfo.platform,
+            platformBg: platformInfo.platformBg,
+            platformTextColor: platformInfo.platformTextColor
           };
 
           // Fetch show/movie logos from TMDB images endpoint
           try {
-            const imagesUrl = `https://api.themoviedb.org/3/${isTV ? 'tv' : 'movie'}/${resolvedTmdbId}/images`;
+            const imagesUrl = `https://api.tmdb.org/3/${isTV ? 'tv' : 'movie'}/${resolvedTmdbId}/images`;
             const imagesRes = await fetch(imagesUrl, {
               headers: { 'Authorization': `Bearer ${tmdbToken}`, 'accept': 'application/json' }
             });
@@ -1256,7 +1401,7 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
 
           if (isTV) {
             try {
-              const epUrl = `https://api.themoviedb.org/3/tv/${resolvedTmdbId}/season/${season}/episode/${episode}`;
+              const epUrl = `https://api.tmdb.org/3/tv/${resolvedTmdbId}/season/${season}/episode/${episode}`;
               const epRes = await fetch(epUrl, {
                 headers: { 'Authorization': `Bearer ${tmdbToken}`, 'accept': 'application/json' }
               });
@@ -1495,6 +1640,25 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
   const [volumeToast, setVolumeToast] = useState<{ volume: number; boost: number; visible: boolean; isMuted: boolean }>({ volume: 1, boost: 100, visible: false, isMuted: false });
   const volumeToastTimeoutRef = useRef<any>(null);
 
+  const [uiScale, setUiScale] = useState<number>(() => {
+    try {
+      const saved = localStorage.getItem('valor_player_ui_scale');
+      return saved ? Math.min(1.8, Math.max(0.6, parseFloat(saved))) : 1.0;
+    } catch {
+      return 1.0;
+    }
+  });
+  const [uiScaleToast, setUiScaleToast] = useState<{ scale: number; visible: boolean }>({ scale: 1, visible: false });
+  const uiScaleToastTimeoutRef = useRef<any>(null);
+
+  const triggerUiScaleToast = useCallback((scale: number) => {
+    if (uiScaleToastTimeoutRef.current) clearTimeout(uiScaleToastTimeoutRef.current);
+    setUiScaleToast({ scale, visible: true });
+    uiScaleToastTimeoutRef.current = setTimeout(() => {
+      setUiScaleToast(prev => ({ ...prev, visible: false }));
+    }, 1400);
+  }, []);
+
   const triggerVolumeToast = (vol: number, muted: boolean, boost: number = audioBoost) => {
     if (volumeToastTimeoutRef.current) clearTimeout(volumeToastTimeoutRef.current);
     setVolumeToast({ volume: vol, boost, visible: true, isMuted: muted });
@@ -1518,6 +1682,30 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
   const scrubTimeRef = useRef<number | null>(null);
   scrubTimeRef.current = scrubTime;
   const debouncedSeekTimeoutRef = useRef<any>(null);
+  const seekTargetRef = useRef<number | null>(null);
+  const seekTargetTimerRef = useRef<any>(null);
+
+  // Consecutive Skip Accumulator State (2-second window)
+  const [consecutiveSkipInfo, setConsecutiveSkipInfo] = useState<{
+    direction: 'forward' | 'rewind';
+    totalSeconds: number;
+    count: number;
+  } | null>(null);
+  const consecutiveSkipTimerRef = useRef<any>(null);
+  const consecutiveSkipAccumulatorRef = useRef<{
+    direction: 'forward' | 'rewind';
+    totalSeconds: number;
+    count: number;
+    lastTime: number;
+  }>({ direction: 'forward', totalSeconds: 0, count: 0, lastTime: 0 });
+
+  const getEffectiveTime = () => {
+    if (seekTargetRef.current !== null) {
+      return seekTargetRef.current;
+    }
+    return videoRef.current ? videoRef.current.currentTime : currentTime;
+  };
+
   const [systemTime, setSystemTime] = useState(new Date());
 
   useEffect(() => {
@@ -1527,33 +1715,37 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
     return () => clearInterval(timer);
   }, []);
 
-  // Global mouseup/touchend listener to safely complete scrubbing free hand with 500ms debounce
+  // Global mouseup/touchend listener to safely complete scrubbing immediately without snap-back
   useEffect(() => {
     if (!isScrubbing) return;
 
     const handleScrubEnd = () => {
+      const targetTime = scrubTimeRef.current;
       setIsScrubbing(false);
+      setScrubTime(null);
+
       if (debouncedSeekTimeoutRef.current) {
         clearTimeout(debouncedSeekTimeoutRef.current);
+        debouncedSeekTimeoutRef.current = null;
       }
-      const targetTime = scrubTimeRef.current;
+
       if (targetTime !== null && targetTime !== undefined && videoRef.current) {
-        debouncedSeekTimeoutRef.current = setTimeout(() => {
-          if (videoRef.current) {
-            videoRef.current.currentTime = targetTime;
-            setCurrentTime(targetTime);
-            if (playbackControllerRef.current) {
-              playbackControllerRef.current.seek(targetTime).catch(console.error);
-            }
-            onUpdateVideoRef.current((prev: any) => ({
-              ...prev,
-              currentTime: targetTime
-            }), false, video.id);
-          }
-          setScrubTime(null);
-        }, 250);
-      } else {
-        setScrubTime(null);
+        seekTargetRef.current = targetTime;
+        setCurrentTime(targetTime);
+        if (playbackControllerRef.current) {
+          playbackControllerRef.current.seek(targetTime).catch(console.error);
+        } else {
+          videoRef.current.currentTime = targetTime;
+        }
+        onUpdateVideoRef.current((prev: any) => ({
+          ...prev,
+          currentTime: targetTime
+        }), false, video.id);
+
+        if (seekTargetTimerRef.current) clearTimeout(seekTargetTimerRef.current);
+        seekTargetTimerRef.current = setTimeout(() => {
+          seekTargetRef.current = null;
+        }, 1000);
       }
     };
 
@@ -1715,32 +1907,84 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
   const hasSeekedRef = useRef(false);
   const wasPausedByFocusLossRef = useRef(false);
   const previewVideoRef = useRef<HTMLVideoElement>(null);
-  const [flashHud, setFlashHud] = useState<'play' | 'pause' | 'rewind' | 'forward' | null>(null);
-  const [skipRipple, setSkipRipple] = useState<{ x: number; y: number; id: number; direction: 'forward' | 'rewind' | 'playpause' } | null>(null);
-  const hudTimeoutRef = useRef<any>(null);
+  const [playPauseFeedback, setPlayPauseFeedback] = useState<{ action: 'play' | 'pause'; id: number } | null>(null);
+  const playPauseFeedbackTimeoutRef = useRef<any>(null);
 
-  const triggerHudFlash = (action: 'play' | 'pause' | 'rewind' | 'forward') => {
-    if (hudTimeoutRef.current) clearTimeout(hudTimeoutRef.current);
-    setFlashHud(action);
-    hudTimeoutRef.current = setTimeout(() => {
-      setFlashHud(null);
-    }, 600);
+  const triggerPlayPauseFeedback = (action: 'play' | 'pause') => {
+    if (playPauseFeedbackTimeoutRef.current) clearTimeout(playPauseFeedbackTimeoutRef.current);
+    setPlayPauseFeedback({ action, id: Date.now() });
+    playPauseFeedbackTimeoutRef.current = setTimeout(() => {
+      setPlayPauseFeedback(null);
+    }, 550);
   };
 
-  const [switchToast, setSwitchToast] = useState<{ text: string; visible: boolean }>({ text: '', visible: false });
+  const [switchToast, setSwitchToast] = useState<{ text: string; visible: boolean; duration?: number }>({ text: '', visible: false });
   const switchToastTimeoutRef = useRef<any>(null);
 
-  const triggerSwitchToast = (text: string) => {
+  const triggerSwitchToast = (text: string, customDuration?: number) => {
     if (switchToastTimeoutRef.current) clearTimeout(switchToastTimeoutRef.current);
-    setSwitchToast({ text, visible: true });
+    const dur = customDuration || toastDuration;
+    setSwitchToast({ text, visible: true, duration: dur });
     switchToastTimeoutRef.current = setTimeout(() => {
       setSwitchToast(prev => ({ ...prev, visible: false }));
-    }, toastDuration * 1000);
+    }, dur * 1000);
+  };
+
+  const [trackNotification, setTrackNotification] = useState<{ id: number; text: string } | null>(null);
+  const trackNotificationCounterRef = useRef<number>(0);
+  const trackNotificationTimeoutRef = useRef<any>(null);
+
+  const triggerTrackNotification = (text: string) => {
+    if (trackNotificationTimeoutRef.current) clearTimeout(trackNotificationTimeoutRef.current);
+    trackNotificationCounterRef.current += 1;
+    const currentId = trackNotificationCounterRef.current;
+    setTrackNotification({ id: currentId, text });
+    trackNotificationTimeoutRef.current = setTimeout(() => {
+      setTrackNotification(prev => (prev?.id === currentId ? null : prev));
+    }, 2600);
   };
   const audioRef = useRef<HTMLAudioElement>(null);
   const playbackControllerRef = useRef<PlaybackController | null>(null);
   const prevDestroyPromiseRef = useRef<Promise<void>>(Promise.resolve());
   const containerRef = useRef<HTMLDivElement>(null);
+
+  // Native wheel event handling: intercept Ctrl + Scroll for UI Scaling & prevent background page scrolling
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+
+    const handleNativeWheel = (e: WheelEvent) => {
+      if (e.ctrlKey || e.metaKey) {
+        e.preventDefault();
+        e.stopPropagation();
+
+        const delta = e.deltaY;
+        setUiScale(prev => {
+          const step = 0.05;
+          const next = delta < 0 
+            ? Math.min(1.8, Math.round((prev + step) * 100) / 100)
+            : Math.max(0.6, Math.round((prev - step) * 100) / 100);
+          try {
+            localStorage.setItem('valor_player_ui_scale', next.toString());
+          } catch {}
+          triggerUiScaleToast(next);
+          return next;
+        });
+        return;
+      }
+
+      const target = e.target as HTMLElement;
+      if (target.closest('.player-settings-panel') || target.closest('.bookmarks-popover') || target.closest('.audio-sub-popover') || target.closest('.speed-popover-container')) {
+        return;
+      }
+      e.preventDefault();
+    };
+
+    container.addEventListener('wheel', handleNativeWheel, { passive: false });
+    return () => {
+      container.removeEventListener('wheel', handleNativeWheel);
+    };
+  }, [triggerUiScaleToast]);
   const syncEngineRef = useRef<AudioSyncEngine | null>(null);
   const controlsTimeoutRef = useRef<any>(null);
   const audioSubTimeoutRef = useRef<any>(null);
@@ -2566,10 +2810,16 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
       });
     }
 
-    // Sync PlaybackController playhead on seek
-    if (playbackControllerRef.current) {
+    if (playbackControllerRef.current?.isNudgingVideo) return;
+
+    if (seekTargetRef.current !== null && Math.abs(seekTargetRef.current - newTime) < 0.5) {
+      seekTargetRef.current = null;
+    }
+
+    // Sync PlaybackController playhead on seek (avoiding re-entrant seek loop)
+    if (playbackControllerRef.current && !playbackControllerRef.current.session.isTransitioningState) {
       const ctrlTime = playbackControllerRef.current.getCurrentTime();
-      if (Math.abs(ctrlTime - newTime) > 0.2) {
+      if (Math.abs(ctrlTime - newTime) > 0.4) {
         logger.player(`Seek detected to ${newTime}s in player. Updating playback controller...`);
         activeAudioStartOffsetRef.current = Math.floor(newTime / 10) * 10;
         playbackControllerRef.current.seek(newTime).catch(console.error);
@@ -2604,7 +2854,7 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
   };
 
   // On-the-fly selection handlers for embedded streams selected in-player using container-direct chunk reading
-  const handleSelectEmbeddedAudio = async (streamIndex: number, codec: string, language?: string, skipLoad = false, title?: string) => {
+  const handleSelectEmbeddedAudio = async (streamIndex: number, codec: string, language?: string, skipLoad = false, title?: string, skipNotification = false) => {
     if (!isWasmSupported()) {
       triggerSwitchToast('WebAssembly unavailable on this browser. Client stream demuxing disabled.');
       return;
@@ -2630,13 +2880,16 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
       streamIndex,
       codec
     });
+    if (!skipNotification) {
+      triggerTrackNotification(`Audio track: Track ${streamIndex} - [${label}]`);
+    }
     syncAudioRef(null, streamIndex);
     if (!skipLoad) {
       await loadAudioChunk(currentTime, streamIndex, codec, false);
     }
   };
 
-  const handleSelectEmbeddedSubtitle = async (streamIndex: number, codec: string, language?: string, skipLoad = false) => {
+  const handleSelectEmbeddedSubtitle = async (streamIndex: number, codec: string, language?: string, skipLoad = false, skipNotification = false) => {
     if (!isWasmSupported()) {
       triggerSwitchToast('WebAssembly unavailable on this browser. Embedded subtitle extraction disabled.');
       return;
@@ -2656,6 +2909,9 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
       streamIndex,
       format: /ass|ssa/i.test(codec) ? 'ass' : (/webvtt/i.test(codec) ? 'vtt' : 'srt')
     });
+    if (!skipNotification) {
+      triggerTrackNotification(`Subtitle track: Track ${streamIndex} - [${label}]`);
+    }
     syncSubRef(null, streamIndex);
     if (!skipLoad) {
       await loadSubtitleChunk(currentTime, streamIndex);
@@ -2700,6 +2956,7 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
         videoRef.current.pause();
       }
       setIsPlaying(false);
+      triggerPlayPauseFeedback('pause');
     } else {
       if (playbackControllerRef.current) {
         playbackControllerRef.current.play().catch(console.error);
@@ -2707,33 +2964,103 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
         videoRef.current.play().catch(console.error);
       }
       setIsPlaying(true);
+      triggerPlayPauseFeedback('play');
     }
     resetControlsTimeout();
   };
 
-  const handleRewind = () => {
-    if (!videoRef.current) return;
-    const targetTime = Math.max(0, videoRef.current.currentTime - 10);
-    if (playbackControllerRef.current) {
-      playbackControllerRef.current.seek(targetTime);
+  const handleRewind = (seconds = 10) => {
+    if (uiConfig.blockSeekingCompletely) return;
+    const now = Date.now();
+    const acc = consecutiveSkipAccumulatorRef.current;
+    
+    // Consecutive skipping window (1.8s)
+    if (acc.direction === 'rewind' && now - acc.lastTime <= 1800 && acc.count > 0) {
+      acc.totalSeconds += seconds;
+      acc.count += 1;
     } else {
+      acc.direction = 'rewind';
+      acc.totalSeconds = seconds;
+      acc.count = 1;
+    }
+    acc.lastTime = now;
+
+    const baseTime = getEffectiveTime();
+    const targetTime = Math.max(0, baseTime - seconds);
+    seekTargetRef.current = targetTime;
+    setCurrentTime(targetTime);
+
+    if (playbackControllerRef.current) {
+      playbackControllerRef.current.seek(targetTime).catch(console.error);
+    } else if (videoRef.current) {
       videoRef.current.currentTime = targetTime;
     }
-    setCurrentTime(targetTime);
-    resetControlsTimeout();
+
+    if (showPauseMetadataOverlayRef.current) {
+      showPauseMetadataOverlayRef.current = false;
+      setShowPauseMetadataOverlay(false);
+    }
+
+    setConsecutiveSkipInfo({ direction: 'rewind', totalSeconds: acc.totalSeconds, count: acc.count });
+
+    if (consecutiveSkipTimerRef.current) {
+      clearTimeout(consecutiveSkipTimerRef.current);
+    }
+    // Each skip resets the timer! Resets smoothly after user stops skipping (1.8s window)
+    consecutiveSkipTimerRef.current = setTimeout(() => {
+      consecutiveSkipAccumulatorRef.current = { direction: 'rewind', totalSeconds: 0, count: 0, lastTime: 0 };
+      setConsecutiveSkipInfo(null);
+      seekTargetRef.current = null;
+    }, 1800);
+
     resetPauseOverlayTimer();
   };
 
-  const handleForward = () => {
-    if (!videoRef.current) return;
-    const targetTime = Math.min(duration, videoRef.current.currentTime + 10);
-    if (playbackControllerRef.current) {
-      playbackControllerRef.current.seek(targetTime);
+  const handleForward = (seconds = 10) => {
+    if (uiConfig.blockSeekingCompletely) return;
+    const now = Date.now();
+    const acc = consecutiveSkipAccumulatorRef.current;
+    
+    // Consecutive skipping window (1.8s)
+    if (acc.direction === 'forward' && now - acc.lastTime <= 1800 && acc.count > 0) {
+      acc.totalSeconds += seconds;
+      acc.count += 1;
     } else {
+      acc.direction = 'forward';
+      acc.totalSeconds = seconds;
+      acc.count = 1;
+    }
+    acc.lastTime = now;
+
+    const baseTime = getEffectiveTime();
+    const maxDuration = duration || (videoRef.current?.duration) || 0;
+    const targetTime = maxDuration > 0 ? Math.min(maxDuration, baseTime + seconds) : baseTime + seconds;
+    seekTargetRef.current = targetTime;
+    setCurrentTime(targetTime);
+
+    if (playbackControllerRef.current) {
+      playbackControllerRef.current.seek(targetTime).catch(console.error);
+    } else if (videoRef.current) {
       videoRef.current.currentTime = targetTime;
     }
-    setCurrentTime(targetTime);
-    resetControlsTimeout();
+
+    if (showPauseMetadataOverlayRef.current) {
+      showPauseMetadataOverlayRef.current = false;
+      setShowPauseMetadataOverlay(false);
+    }
+
+    setConsecutiveSkipInfo({ direction: 'forward', totalSeconds: acc.totalSeconds, count: acc.count });
+
+    if (consecutiveSkipTimerRef.current) {
+      clearTimeout(consecutiveSkipTimerRef.current);
+    }
+    // Each skip resets the timer! Resets smoothly after user stops skipping (1.8s window)
+    consecutiveSkipTimerRef.current = setTimeout(() => {
+      consecutiveSkipAccumulatorRef.current = { direction: 'forward', totalSeconds: 0, count: 0, lastTime: 0 };
+      setConsecutiveSkipInfo(null);
+      seekTargetRef.current = null;
+    }, 1800);
+
     resetPauseOverlayTimer();
   };
 
@@ -2755,14 +3082,8 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
 
     if (clickX < width * 0.24) {
       handleRewind();
-      triggerHudFlash('rewind');
-      setSkipRipple({ x: clickX, y: clickY, id: Date.now(), direction: 'rewind' });
-      setTimeout(() => setSkipRipple(null), 2000);
     } else if (clickX > width * 0.76) {
       handleForward();
-      triggerHudFlash('forward');
-      setSkipRipple({ x: clickX, y: clickY, id: Date.now(), direction: 'forward' });
-      setTimeout(() => setSkipRipple(null), 2000);
     }
   };
 
@@ -2776,16 +3097,21 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
         previewVideoRef.current.currentTime = seekTime;
       }
     } else {
+      seekTargetRef.current = seekTime;
+      setCurrentTime(seekTime);
       if (playbackControllerRef.current) {
-        playbackControllerRef.current.seek(seekTime);
+        playbackControllerRef.current.seek(seekTime).catch(console.error);
       } else if (videoRef.current) {
         videoRef.current.currentTime = seekTime;
       }
-      setCurrentTime(seekTime);
       resetControlsTimeout();
       if (previewVideoRef.current) {
         previewVideoRef.current.currentTime = seekTime;
       }
+      if (seekTargetTimerRef.current) clearTimeout(seekTargetTimerRef.current);
+      seekTargetTimerRef.current = setTimeout(() => {
+        seekTargetRef.current = null;
+      }, 1000);
     }
   };
 
@@ -3027,6 +3353,15 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
     const targetIdx = track === null ? -1 : (track.streamIndex !== undefined ? track.streamIndex : -1);
     setActiveAudioStreamIndex(targetIdx === -1 ? null : targetIdx);
     
+    if (track === null) {
+      triggerTrackNotification('Audio track: Default Audio');
+    } else if (track.streamIndex !== undefined) {
+      const label = getLangLabel(track.language, `Track #${track.streamIndex}`);
+      triggerTrackNotification(`Audio track: Track ${track.streamIndex} - [${label}]`);
+    } else {
+      triggerTrackNotification(`Audio track: [${track.name}]`);
+    }
+
     if (targetIdx !== -1) {
       playbackControllerRef.current?.switchAudioTrack(targetIdx);
     }
@@ -3047,8 +3382,15 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
     }
     if (track === null) {
       userExplicitlyTurnedOffSubRef.current = true;
+      triggerTrackNotification('Subtitle track: Off');
     } else {
       userExplicitlyTurnedOffSubRef.current = false;
+      if (track.streamIndex !== undefined) {
+        const label = getLangLabel(track.language, `Track #${track.streamIndex}`);
+        triggerTrackNotification(`Subtitle track: Track ${track.streamIndex} - [${label}]`);
+      } else {
+        triggerTrackNotification(`Subtitle track: [${track.name}]`);
+      }
     }
     setSelectedSubTrack(track);
     if (track === null) {
@@ -3093,6 +3435,7 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
       setSelectedSubTrack(null);
       setActiveSubStreamIndex(null);
       setIsKeyInitiated(false);
+      triggerTrackNotification('Subtitle track: Off');
     } else if (nextOpt.type === 'embedded') {
       handleSelectEmbeddedSubtitle(nextOpt.streamIndex, nextOpt.codec, nextOpt.language, true);
       subDebounceTimeoutRef.current = setTimeout(async () => {
@@ -3105,9 +3448,8 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
       setSelectedSubTrack(nextOpt.track);
       setActiveSubStreamIndex(null);
       setIsKeyInitiated(false);
+      triggerTrackNotification(`Subtitle track: [${nextOpt.name}]`);
     }
-
-    triggerSwitchToast(nextOpt.name);
   };
 
   const cycleAudio = () => {
@@ -3140,6 +3482,7 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
       setSelectedAudioTrack(null);
       setActiveAudioStreamIndex(null);
       setIsKeyInitiated(false);
+      triggerTrackNotification('Audio track: Default Audio');
     } else if (nextOpt.type === 'embedded') {
       handleSelectEmbeddedAudio(nextOpt.streamIndex, nextOpt.codec, nextOpt.language, true);
       audioDebounceTimeoutRef.current = setTimeout(async () => {
@@ -3152,9 +3495,8 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
       setSelectedAudioTrack(nextOpt.track);
       setActiveAudioStreamIndex(null);
       setIsKeyInitiated(false);
+      triggerTrackNotification(`Audio track: [${nextOpt.name}]`);
     }
-
-    triggerSwitchToast(nextOpt.name);
   };
 
   const handleKeyDownRef = useRef<((e: KeyboardEvent) => void) | undefined>(undefined);
@@ -3350,15 +3692,7 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
         triggerSwitchToast('Playback hotkeys are disabled');
         return;
       }
-      if (videoRef.current) {
-        if (videoRef.current.paused) {
-          videoRef.current.play().catch(console.error);
-          triggerHudFlash('play');
-        } else {
-          videoRef.current.pause();
-          triggerHudFlash('pause');
-        }
-      }
+      togglePlay();
     } else if (pressedKey === rewindKey) {
       e.preventDefault();
       if (showPlayBarMode === 'disable') {
@@ -3371,7 +3705,6 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
       }
       if (videoRef.current) {
         handleRewind();
-        triggerHudFlash('rewind');
       }
     } else if (pressedKey === forwardKey) {
       e.preventDefault();
@@ -3385,7 +3718,6 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
       }
       if (videoRef.current) {
         handleForward();
-        triggerHudFlash('forward');
       }
     } else if (pressedKey === 'c') {
       e.preventDefault();
@@ -3897,7 +4229,7 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
           if (stream) {
             audioSelected = true;
             logger.player(`Auto-selecting audio track: ${stream.language || stream.title}`);
-            handleSelectEmbeddedAudio(stream.index, stream.codec, stream.language, false, stream.title);
+            handleSelectEmbeddedAudio(stream.index, stream.codec, stream.language, false, stream.title, true);
           }
         }
 
@@ -3905,7 +4237,7 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
         if (!audioSelected && !selectedAudioTrack && audioStreams.length > 0) {
           const firstAudio = audioStreams[0];
           logger.player(`Auto-selecting first audio track: ${firstAudio.language || firstAudio.title || 'unknown'} (${firstAudio.codec})`);
-          handleSelectEmbeddedAudio(firstAudio.index, firstAudio.codec, firstAudio.language, false, firstAudio.title);
+          handleSelectEmbeddedAudio(firstAudio.index, firstAudio.codec, firstAudio.language, false, firstAudio.title, true);
         }
 
         // Auto-select subtitle stream
@@ -3913,7 +4245,7 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
           const stream = findPreferredStream(subtitleStreams, targetSub, 'subtitle');
           if (stream) {
             logger.player(`Auto-selecting subtitle track: ${stream.language || stream.title}`);
-            handleSelectEmbeddedSubtitle(stream.index, stream.codec, stream.language);
+            handleSelectEmbeddedSubtitle(stream.index, stream.codec, stream.language, false, true);
           }
         }
       } catch (err) {
@@ -4223,8 +4555,12 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
 
   const controlsVisible = showControls && !isLocked && !showPauseMetadataOverlay;
   const effectiveDuration = duration || parseDurationToSeconds(video.duration) || 0;
+  const displayTime = (isScrubbing && scrubTime !== null) 
+    ? scrubTime 
+    : (seekTargetRef.current !== null ? seekTargetRef.current : currentTime);
 
   const handleWheel = (e: React.WheelEvent) => {
+    if (e.ctrlKey || e.metaKey) return;
     if (showSettingsPanel || showAddDialog || showBookmarksPopover || showAudioSubMenu || showConsoleOverlay) return;
     
     const target = e.target as HTMLElement;
@@ -4241,6 +4577,9 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
     <div 
       ref={containerRef} 
       className={`player-container ${controlsVisible ? 'show-cursor' : 'hide-cursor'} ${hideUIOverlays ? 'keyboard-only' : ''} ${disableAnimations ? 'no-animations' : ''} ${hoveredSetting === 'lockModeActive' || hoveredSetting === 'pauseOnFocusChange' || hoveredSetting === 'disableAnimations' ? 'highlight-active' : ''} ${isPseudoFullscreen ? 'pseudo-fullscreen' : ''}`}
+      style={{
+        '--player-ui-scale': uiScale
+      } as React.CSSProperties}
       onMouseMove={(e) => {
         if (!isLocked && !showPauseMetadataOverlayRef.current) handleMouseMove(e);
       }}
@@ -4268,36 +4607,7 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
         }
       }}
     >
-      <svg width="0" height="0" style={{ position: 'absolute', pointerEvents: 'none' }}>
-        <defs>
-          <clipPath id="left-clip" clipPathUnits="objectBoundingBox">
-            <path d="M 0,0 L 0.10,0 Q 0.38,0.5 0.10,1 L 0,1 Z" />
-          </clipPath>
-          <clipPath id="right-clip" clipPathUnits="objectBoundingBox">
-            <path d="M 1,0 L 0.90,0 Q 0.62,0.5 0.90,1 L 1,1 Z" />
-          </clipPath>
-          <clipPath id="middle-clip" clipPathUnits="objectBoundingBox">
-            <path d="M 0.10,0 L 0.90,0 Q 0.62,0.5 0.90,1 L 0.10,1 Q 0.38,0.5 0.10,0 Z" />
-          </clipPath>
-        </defs>
-      </svg>
 
-      {/* Double Click Skip Ripple */}
-      {skipRipple && skipRipple.direction === 'rewind' && (
-        <div className="ripple-region-wrapper" style={{ clipPath: 'url(#left-clip)', WebkitClipPath: 'url(#left-clip)' }}>
-          <div key={`ripple-${skipRipple.id}`} className="skip-ripple-effect" style={{ left: skipRipple.x, top: skipRipple.y }} />
-        </div>
-      )}
-      {skipRipple && skipRipple.direction === 'forward' && (
-        <div className="ripple-region-wrapper" style={{ clipPath: 'url(#right-clip)', WebkitClipPath: 'url(#right-clip)' }}>
-          <div key={`ripple-${skipRipple.id}`} className="skip-ripple-effect" style={{ left: skipRipple.x, top: skipRipple.y }} />
-        </div>
-      )}
-      {skipRipple && skipRipple.direction === 'playpause' && (
-        <div className="ripple-region-wrapper" style={{ clipPath: 'url(#middle-clip)', WebkitClipPath: 'url(#middle-clip)' }}>
-          <div key={`ripple-${skipRipple.id}`} className="skip-ripple-effect" style={{ left: skipRipple.x, top: skipRipple.y }} />
-        </div>
-      )}
 
 
       {video.type === 'local' && (!activeFile || hasFileAccessError) && video.playbackMode !== 'advanced' && (
@@ -4415,8 +4725,6 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
 
           // Only middle 52% area toggles play/pause
           togglePlay();
-          setSkipRipple({ x: clickX, y: clickY, id: Date.now(), direction: 'playpause' });
-          setTimeout(() => setSkipRipple(null), 2000);
         }}
         onContextMenu={(e) => {
           e.preventDefault();
@@ -4471,7 +4779,7 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
             if (videoRef.current) {
               const time = videoRef.current.currentTime;
               const shouldUpdate = !video.currentTime || hasSeekedRef.current || time > 0;
-              if (shouldUpdate && !isScrubbingRef.current && !debouncedSeekTimeoutRef.current) {
+              if (shouldUpdate && !isScrubbingRef.current && !debouncedSeekTimeoutRef.current && seekTargetRef.current === null) {
                 setCurrentTime(time);
                 latestTimeRef.current = time;
 
@@ -4617,11 +4925,11 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
               textAlign: overlayPosition.includes('right') ? 'right' : 'left'
             }}
           >
-            {/* Netflix Header Badge */}
+            {/* Real Platform Header Badge */}
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '2px' }}>
               <span style={{ 
-                background: '#e50914', 
-                color: '#ffffff', 
+                background: mediaDetails.platformBg || '#e50914', 
+                color: mediaDetails.platformTextColor || '#ffffff', 
                 fontSize: '0.68rem', 
                 fontWeight: 900, 
                 letterSpacing: '1.5px', 
@@ -4629,7 +4937,7 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
                 borderRadius: '3px',
                 fontFamily: "'Outfit', 'Inter', sans-serif"
               }}>
-                NETFLIX
+                {mediaDetails.platform || (mediaDetails.episodeTitle || mediaDetails.season ? 'SERIES' : 'FILM')}
               </span>
               <span style={{ 
                 color: 'rgba(255, 255, 255, 0.7)', 
@@ -4712,7 +5020,7 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
               {mediaDetails.season ? (
                 <span>Season {mediaDetails.season}</span>
               ) : (
-                <span>{formatRuntime(duration)}</span>
+                <span>{mediaDetails.runtime || formatRuntime(duration)}</span>
               )}
               <span style={{ 
                 border: '1px solid rgba(255, 255, 255, 0.35)', 
@@ -4752,7 +5060,7 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
             )}
 
             {/* Overview / Plot */}
-            {overlayShowOverview && (mediaDetails.overview || video.title) && (
+            {overlayShowOverview && (mediaDetails.overview || mediaDetails.title) && (
               <p style={{ 
                 margin: '2px 0 0 0', 
                 fontSize: 'clamp(0.9rem, 1.05vw, 0.98rem)', 
@@ -4767,7 +5075,7 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
                 fontFamily: "'Inter', sans-serif",
                 textShadow: '0 1px 6px rgba(0,0,0,0.9)'
               }}>
-                {mediaDetails.overview || video.title}
+                {mediaDetails.overview || mediaDetails.title}
               </p>
             )}
 
@@ -4867,163 +5175,21 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
             pointerEvents: controlsVisible ? (showUIOverlaysMode === 'enable' ? 'auto' : 'none') : 'none'
           }}
         >
+          {/* Back Button */}
+          <button className="close-btn" onClick={handleExit} title="Back">
+            <ArrowLeft size={24} />
+          </button>
+          
+          <div style={{ flex: 1 }} />
+
           {/* Chromecast trigger (acting as native browser cast prompt) */}
           <button className="cast-btn" onClick={handleCast} title="Chromecast">
             <Cast size={24} />
           </button>
-          
-          {/* Centered video title & Playback mode badge */}
-          {(!hideVideoName || video.isRemote || hoveredSetting === 'showVideoName') && (
-            <div className={`top-title-container ${getHighlightClass('showVideoName')}`}>
-              {(showVideoNameMode === 'enable' || hoveredSetting === 'showVideoName') && video.playbackMode !== 'native' && (
-                <h2 
-                  className="top-title-clean" 
-                  style={{ 
-                    marginBottom: '0.2rem',
-                    opacity: showVideoNameMode === 'enable' ? 1 : 0.5
-                  }}
-                >
-                  {video.title}
-                </h2>
-              )}
-              {(showVideoNameMode === 'enable' || hoveredSetting === 'showVideoName') && (
-                <div style={{
-                  fontSize: '0.85rem',
-                  fontWeight: 700,
-                  color: '#00ffcc',
-                  fontFamily: "'Share Tech Mono', Courier, monospace",
-                  background: 'rgba(0, 255, 204, 0.05)',
-                  padding: '3px 10px',
-                  borderRadius: '4px',
-                  border: '1px solid rgba(0, 255, 204, 0.15)',
-                  marginTop: '6px',
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  gap: '6px',
-                  textShadow: '0 0 5px rgba(0, 255, 204, 0.4)',
-                  letterSpacing: '1px'
-                }}>
-                  <OdometerClock date={systemTime} />
-                </div>
-              )}
-              {video.isRemote && (
-                <div className="playback-mode-badge-container">
-                  {video.playbackMode === 'advanced' ? (
-                    <span className="playback-badge badge-advanced" title="FFmpeg-powered custom stream demuxing enabled">
-                      <span className="badge-dot"></span> Playback Mode: Advanced
-                    </span>
-                  ) : (
-                    <div className="native-badge-wrapper">
-                      <span 
-                        className="playback-badge badge-native"
-                      >
-                        <span className="badge-dot"></span> Playback Mode: Native Browser
-                        <span className="tooltip-text">Advanced metadata access is unavailable because the remote server blocks cross-origin byte access.</span>
-                      </span>
-                      <button 
-                        className="btn-enable-advanced" 
-                        onClick={() => triggerSwitchToast("Advanced Mode via proxy is a future feature. Currently playing in Native Mode.")}
-                      >
-                        Enable Advanced Mode
-                      </button>
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* Close Button */}
-          <button className="close-btn" onClick={handleExit} title="Close">
-            <X size={24} />
-          </button>
         </div>
       )}
 
-      {/* Center Screen HUD Controls */}
-      {!isLocked && !hideUIOverlays && (showPlayButton || uiConfig.allowUiSkipping || hoveredSetting === 'showPlayButton' || hoveredSetting === 'allowUiSkipping') && (
-        <div 
-          className={`center-controls-hud ${(controlsVisible || hoveredSetting === 'showPlayButton' || hoveredSetting === 'allowUiSkipping') ? 'visible' : 'hidden'} ${getHighlightClass('showPlayButton')}`} 
-          onDoubleClick={handlePlayerDoubleClick}
-          onClick={(e) => {
-            e.stopPropagation();
-            if (showPauseMetadataOverlayRef.current) {
-              showPauseMetadataOverlayRef.current = false;
-              setShowPauseMetadataOverlay(false);
-              togglePlay();
-              resetControlsTimeout();
-              return;
-            }
-            const rect = e.currentTarget.getBoundingClientRect();
-            const clickX = e.clientX - rect.left;
-            const clickY = e.clientY - rect.top;
-            const width = rect.width;
-            const height = rect.height;
 
-            resetControlsTimeout();
-
-            if (clickY > height * 0.8) return;
-
-            // In backward (left <= 24%) and forward (right >= 76%) areas, single click should NOT pause the video!
-            if (clickX <= width * 0.24 || clickX >= width * 0.76) {
-              return;
-            }
-
-            if (showPlayButtonMode === 'enable') togglePlay();
-          }}
-          style={{
-            opacity: (controlsVisible || hoveredSetting === 'showPlayButton' || hoveredSetting === 'allowUiSkipping') ? 1 : 0,
-            pointerEvents: (controlsVisible || hoveredSetting === 'showPlayButton' || hoveredSetting === 'allowUiSkipping') ? 'auto' : 'none',
-            transition: 'opacity 0.25s ease'
-          }}
-        >
-          {(uiConfig.allowUiSkipping || hoveredSetting === 'allowUiSkipping') && (
-            <button 
-              className={`hud-btn-clean ${getHighlightClass('allowUiSkipping')}`} 
-              onClick={(e) => { e.stopPropagation(); if (uiConfig.blockSeekingCompletely) return; handleRewind(); resetControlsTimeout(); }}
-              title="Rewind 10s"
-              style={{
-                opacity: uiConfig.allowUiSkipping ? 1 : 0.5,
-                pointerEvents: (controlsVisible && uiConfig.allowUiSkipping) ? 'auto' : 'none'
-              }}
-            >
-              <div className="seek-hud-container">
-                <RotateCcw size={64} strokeWidth={1.2} />
-                <span className="seek-hud-text">10</span>
-              </div>
-            </button>
-          )}
-          
-          <button 
-            className={`hud-btn-clean play-pause-hud-clean ${getHighlightClass('showPlayButton')}`} 
-            onClick={(e) => { e.stopPropagation(); togglePlay(); }} 
-            title={isPlaying ? "Pause" : "Play"}
-            style={{
-              opacity: showPlayButtonMode === 'enable' ? 1 : 0.5,
-              pointerEvents: (controlsVisible && showPlayButtonMode === 'enable') ? 'auto' : 'none'
-            }}
-          >
-            {isPlaying ? <Pause size={72} strokeWidth={1.2} /> : <Play size={72} strokeWidth={1.2} style={{ marginLeft: '6px' }} />}
-          </button>
-          
-          {(uiConfig.allowUiSkipping || hoveredSetting === 'allowUiSkipping') && (
-            <button 
-              className={`hud-btn-clean ${getHighlightClass('allowUiSkipping')}`} 
-              onClick={(e) => { e.stopPropagation(); if (uiConfig.blockSeekingCompletely) return; handleForward(); resetControlsTimeout(); }}
-              title="Forward 10s"
-              style={{
-                opacity: uiConfig.allowUiSkipping ? 1 : 0.5,
-                pointerEvents: (controlsVisible && uiConfig.allowUiSkipping) ? 'auto' : 'none'
-              }}
-            >
-              <div className="seek-hud-container">
-                <RotateCw size={64} strokeWidth={1.2} />
-                <span className="seek-hud-text">10</span>
-              </div>
-            </button>
-          )}
-        </div>
-      )}
 
       {/* Floating Rating Prompt Overlay */}
       {showRatingPrompt && (
@@ -5169,7 +5335,7 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
                 >
                   <div className="scrub-track-bg"></div>
                   <div className="scrub-track-buffered" style={{ width: `${effectiveDuration > 0 ? Math.min(100, Math.max(0, bufferedPercent)) : 0}%` }}></div>
-                  <div className="scrub-track-progress" style={{ width: `${effectiveDuration > 0 ? Math.min(100, Math.max(0, (currentTime / effectiveDuration) * 100)) : 0}%` }}></div>
+                  <div className="scrub-track-progress" style={{ width: `${effectiveDuration > 0 ? Math.min(100, Math.max(0, (displayTime / effectiveDuration) * 100)) : 0}%` }}></div>
 
                   {/* Bookmark Timeline Dots */}
                   {effectiveDuration > 0 && bookmarks.map((bm) => {
@@ -5200,10 +5366,17 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
                           onClick={(e) => {
                             e.stopPropagation();
                             if (uiConfig.blockSeekingCompletely) return;
-                            if (videoRef.current) {
+                            seekTargetRef.current = bm.time;
+                            setCurrentTime(bm.time);
+                            if (playbackControllerRef.current) {
+                              playbackControllerRef.current.seek(bm.time).catch(console.error);
+                            } else if (videoRef.current) {
                               videoRef.current.currentTime = bm.time;
-                              setCurrentTime(bm.time);
                             }
+                            if (seekTargetTimerRef.current) clearTimeout(seekTargetTimerRef.current);
+                            seekTargetTimerRef.current = setTimeout(() => {
+                              seekTargetRef.current = null;
+                            }, 1000);
                           }}
                         >
                           <div className="timeline-bookmark-tooltip">
@@ -5272,23 +5445,34 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
                      min={0}
                      max={effectiveDuration || 100}
                      step={0.1}
-                     value={isScrubbing && scrubTime !== null ? scrubTime : currentTime}
+                     value={displayTime}
                     onChange={handleSeek}
                     onMouseMove={handleProgressMouseMove}
                     onMouseLeave={handleProgressMouseLeave}
-                    onMouseDown={() => {
+                    onMouseDown={(e) => {
                       if (debouncedSeekTimeoutRef.current) {
                         clearTimeout(debouncedSeekTimeoutRef.current);
                       }
                       setIsScrubbing(true);
-                      setScrubTime(currentTime);
+                      const target = e.currentTarget as HTMLInputElement;
+                      const rect = target.getBoundingClientRect();
+                      const clickFraction = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+                      const clickTime = clickFraction * (effectiveDuration || 100);
+                      setScrubTime(clickTime);
                     }}
-                    onTouchStart={() => {
+                    onTouchStart={(e) => {
                       if (debouncedSeekTimeoutRef.current) {
                         clearTimeout(debouncedSeekTimeoutRef.current);
                       }
                       setIsScrubbing(true);
-                      setScrubTime(currentTime);
+                      const target = e.currentTarget as HTMLInputElement;
+                      const rect = target.getBoundingClientRect();
+                      const touch = e.touches[0];
+                      if (touch) {
+                        const clickFraction = Math.max(0, Math.min(1, (touch.clientX - rect.left) / rect.width));
+                        const clickTime = clickFraction * (effectiveDuration || 100);
+                        setScrubTime(clickTime);
+                      }
                     }}
                     className="scrub-bar-premium"
                   />
@@ -5301,7 +5485,7 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
                     opacity: showTimeDisplayMode === 'enable' ? 1 : 0.5
                   }}
                 >
-                  {formatTime(duration - currentTime)}
+                  {formatTime(Math.max(0, (duration || effectiveDuration) - displayTime))}
                 </div>
               )}
             </div>
@@ -5311,9 +5495,54 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
           {(!hideUIOverlays || hoveredSetting === 'showUIOverlays' || hoveredSetting === 'showVolumeControl' || hoveredSetting === 'showFullscreen') && (
             <div className={`bottom-controls-bar ${getHighlightClass('showUIOverlays')}`}>
               <div className="bottom-controls-left-spacer">
-                <button className="control-btn-pip" onClick={togglePiP} title="Picture in Picture">
-                  <MonitorPlay size={22} />
-                </button>                 {(showVolumeControl || hoveredSetting === 'showVolumeControl') && (
+                {/* Play / Pause Button */}
+                <button 
+                  className="control-btn-netflix control-btn-play-pause-bottom" 
+                  onClick={togglePlay} 
+                  title={isPlaying ? "Pause (Space)" : "Play (Space)"}
+                >
+                  {isPlaying ? (
+                    <Pause size={22} fill="currentColor" strokeWidth={0} />
+                  ) : (
+                    <Play size={22} fill="currentColor" strokeWidth={0} style={{ marginLeft: '2px' }} />
+                  )}
+                </button>
+
+                {/* Rewind 10s Button */}
+                <button 
+                  className="control-btn-netflix control-btn-rewind-bottom" 
+                  onClick={(e) => { 
+                    e.stopPropagation(); 
+                    if (uiConfig.blockSeekingCompletely) return; 
+                    handleRewind(); 
+                    resetControlsTimeout(); 
+                  }}
+                  title="Rewind 10s (Left Arrow)"
+                >
+                  <div className="seek-hud-container-bottom">
+                    <RotateCcw size={22} strokeWidth={1.8} />
+                    <span className="seek-hud-text-bottom">10</span>
+                  </div>
+                </button>
+
+                {/* Forward 10s Button */}
+                <button 
+                  className="control-btn-netflix control-btn-forward-bottom" 
+                  onClick={(e) => { 
+                    e.stopPropagation(); 
+                    if (uiConfig.blockSeekingCompletely) return; 
+                    handleForward(); 
+                    resetControlsTimeout(); 
+                  }}
+                  title="Forward 10s (Right Arrow)"
+                >
+                  <div className="seek-hud-container-bottom">
+                    <RotateCw size={22} strokeWidth={1.8} />
+                    <span className="seek-hud-text-bottom">10</span>
+                  </div>
+                </button>
+
+                {(showVolumeControl || hoveredSetting === 'showVolumeControl') && (
                   <div 
                     className={`volume-control-group-premium ${getHighlightClass('showVolumeControl')}`}
                     style={{
@@ -5369,112 +5598,9 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
               </div>
 
               <div className="bottom-controls-center-group">
-                {!isUndetectedLocalMedia && (
-                  <div 
-                    className="popover-wrapper"
-                    onMouseEnter={() => {
-                      if (audioSubTimeoutRef.current) clearTimeout(audioSubTimeoutRef.current);
-                      setShowAudioSubMenu(true);
-                    }}
-                    onMouseLeave={() => {
-                      audioSubTimeoutRef.current = setTimeout(() => {
-                        setShowAudioSubMenu(false);
-                      }, 150);
-                    }}
-                  >
-                    <button className="audio-sub-trigger-btn">
-                      <MessageSquare size={18} />
-                      <span>Audio & Subtitles</span>
-                    </button>
-                    
-                    {showAudioSubMenu && (
-                      <AudioSubPopover
-                        audioStreams={audioStreams}
-                        audioTracks={audioTracks}
-                        selectedAudioTrack={selectedAudioTrack}
-                        setSelectedAudioTrack={handleSelectAudioTrack}
-                        setActiveAudioStreamIndex={setActiveAudioStreamIndex}
-                        handleSelectEmbeddedAudio={handleSelectEmbeddedAudio}
-                        customAudioInputRef={customAudioInputRef}
-                        subtitleStreams={subtitleStreams}
-                        subtitleTracks={subtitleTracks}
-                        selectedSubTrack={selectedSubTrack}
-                        setSelectedSubTrack={handleSelectSubTrack}
-                        setActiveSubStreamIndex={setActiveSubStreamIndex}
-                        handleSelectEmbeddedSubtitle={handleSelectEmbeddedSubtitle}
-                        customSubInputRef={customSubInputRef}
-                        currentTime={currentTime}
-                        videoRef={videoRef}
-                        setCurrentTime={setCurrentTime}
-                        setShowAudioSubMenu={setShowAudioSubMenu}
-                        audioSubTimeoutRef={audioSubTimeoutRef}
-                        getLangLabel={getLangLabel}
-                        formatTime={formatTime}
-                        cleanSubtitleText={cleanSubtitleText}
-                        subSettings={subSettings}
-                        onUpdateSubSettings={onUpdateSubSettings}
-                        audioBoost={audioBoost}
-                        setAudioBoost={handleSetAudioBoost}
-                        openSubtitles={openSubtitles}
-                        isOpenSubLoading={isOpenSubLoading}
-                        onDownloadOpenSubtitle={downloadOpenSubtitle}
-                        hasFetchedOpenSubtitles={hasFetchedOpenSubtitles}
-                        onFetchOpenSubtitles={fetchOpenSubtitles}
-                      />
-                    )}
-                  </div>
-                )}
-
-                {!isUndetectedLocalMedia && (
-                  <div 
-                    className="popover-wrapper"
-                    style={{ marginLeft: '50px' }}
-                    onMouseEnter={() => {
-                      if (bookmarksTimeoutRef.current) clearTimeout(bookmarksTimeoutRef.current);
-                      setShowBookmarksPopover(true);
-                    }}
-                    onMouseLeave={() => {
-                      bookmarksTimeoutRef.current = setTimeout(() => {
-                        setShowBookmarksPopover(false);
-                      }, 150);
-                    }}
-                  >
-                    <button 
-                      className="control-btn-bookmark-list" 
-                      onClick={() => setShowBookmarksPopover(prev => !prev)} 
-                      title="Bookmarks"
-                    >
-                      <BookmarkIcon size={20} />
-                    </button>
-
-                    {showBookmarksPopover && (
-                      <BookmarkPanel
-                        bookmarks={bookmarks}
-                        onJump={(time) => {
-                          if (videoRef.current) {
-                            videoRef.current.currentTime = time;
-                            setCurrentTime(time);
-                          }
-                        }}
-                        onEdit={(bm) => {
-                          setEditingBookmark(bm);
-                          setShowAddDialog(true);
-                          setShowBookmarksPopover(false);
-                        }}
-                        onDelete={handleDeleteBookmark}
-                        onAdd={() => {
-                          if (videoRef.current) {
-                            setEditingBookmark(undefined);
-                            setMarkingStartTime(Math.round(videoRef.current.currentTime));
-                            setShowBookmarksPopover(false);
-                          }
-                        }}
-                        onClose={() => setShowBookmarksPopover(false)}
-                      />
-                    )}
-                  </div>
-                )}
-
+                <span className="bottom-media-title-netflix" title={video.title || video.fileName || ''}>
+                  {getRegexedTitleWithYear(video.title || video.fileName || '')}
+                </span>
               </div>
 
               <div className="bottom-controls-right-group">
@@ -5531,35 +5657,132 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
                   </button>
                 )}
                 
-                {/* Speed Button & Popover */}
+                {/* Bookmarks */}
+                {!isUndetectedLocalMedia && (
+                  <div 
+                    className="popover-wrapper"
+                    onMouseEnter={() => {
+                      if (bookmarksTimeoutRef.current) clearTimeout(bookmarksTimeoutRef.current);
+                      setShowBookmarksPopover(true);
+                    }}
+                    onMouseLeave={() => {
+                      bookmarksTimeoutRef.current = setTimeout(() => {
+                        setShowBookmarksPopover(false);
+                      }, 150);
+                    }}
+                  >
+                    <button 
+                      className="control-btn-netflix control-btn-bookmark-list" 
+                      onClick={() => setShowBookmarksPopover(prev => !prev)} 
+                      title="Bookmarks & Scenes"
+                    >
+                      <BookmarkIcon size={22} />
+                    </button>
+
+                    {showBookmarksPopover && (
+                      <BookmarkPanel
+                        bookmarks={bookmarks}
+                        onJump={(time) => {
+                          if (videoRef.current) {
+                            videoRef.current.currentTime = time;
+                            setCurrentTime(time);
+                          }
+                        }}
+                        onEdit={(bm) => {
+                          setEditingBookmark(bm);
+                          setShowAddDialog(true);
+                          setShowBookmarksPopover(false);
+                        }}
+                        onDelete={handleDeleteBookmark}
+                        onAdd={() => {
+                          if (videoRef.current) {
+                            setEditingBookmark(undefined);
+                            setMarkingStartTime(Math.round(videoRef.current.currentTime));
+                            setShowBookmarksPopover(false);
+                          }
+                        }}
+                        onClose={() => setShowBookmarksPopover(false)}
+                      />
+                    )}
+                  </div>
+                )}
+
+                {/* Netflix-style Audio & Subtitles Icon Button & Popover */}
+                {!isUndetectedLocalMedia && (
+                  <div 
+                    className="popover-wrapper"
+                    onMouseEnter={() => {
+                      if (audioSubTimeoutRef.current) clearTimeout(audioSubTimeoutRef.current);
+                      setShowAudioSubMenu(true);
+                    }}
+                    onMouseLeave={() => {
+                      audioSubTimeoutRef.current = setTimeout(() => {
+                        setShowAudioSubMenu(false);
+                      }, 150);
+                    }}
+                  >
+                    <button 
+                      className="control-btn-netflix control-btn-audio-sub"
+                      onClick={() => setShowAudioSubMenu(prev => !prev)}
+                      title="Audio & Subtitles"
+                    >
+                      <MessageSquareText size={22} />
+                    </button>
+                    
+                    {showAudioSubMenu && (
+                      <AudioSubPopover
+                        audioStreams={audioStreams}
+                        audioTracks={audioTracks}
+                        selectedAudioTrack={selectedAudioTrack}
+                        setSelectedAudioTrack={handleSelectAudioTrack}
+                        setActiveAudioStreamIndex={setActiveAudioStreamIndex}
+                        handleSelectEmbeddedAudio={handleSelectEmbeddedAudio}
+                        customAudioInputRef={customAudioInputRef}
+                        subtitleStreams={subtitleStreams}
+                        subtitleTracks={subtitleTracks}
+                        selectedSubTrack={selectedSubTrack}
+                        setSelectedSubTrack={handleSelectSubTrack}
+                        setActiveSubStreamIndex={setActiveSubStreamIndex}
+                        handleSelectEmbeddedSubtitle={handleSelectEmbeddedSubtitle}
+                        customSubInputRef={customSubInputRef}
+                        currentTime={currentTime}
+                        videoRef={videoRef}
+                        setCurrentTime={setCurrentTime}
+                        setShowAudioSubMenu={setShowAudioSubMenu}
+                        audioSubTimeoutRef={audioSubTimeoutRef}
+                        getLangLabel={getLangLabel}
+                        formatTime={formatTime}
+                        cleanSubtitleText={cleanSubtitleText}
+                        subSettings={subSettings}
+                        onUpdateSubSettings={onUpdateSubSettings}
+                        audioBoost={audioBoost}
+                        setAudioBoost={handleSetAudioBoost}
+                        openSubtitles={openSubtitles}
+                        isOpenSubLoading={isOpenSubLoading}
+                        onDownloadOpenSubtitle={downloadOpenSubtitle}
+                        hasFetchedOpenSubtitles={hasFetchedOpenSubtitles}
+                        onFetchOpenSubtitles={fetchOpenSubtitles}
+                      />
+                    )}
+                  </div>
+                )}
+                
+                {/* Netflix-style Speed Icon Button & Popover */}
                 <div 
-                  style={{ position: 'relative', marginRight: '50px' }}
+                  className="popover-wrapper"
+                  style={{ position: 'relative' }}
                   onMouseEnter={() => setShowSpeedMenu(true)}
                   onMouseLeave={() => setShowSpeedMenu(false)}
                 >
                   <button 
-                    className="control-btn-speed" 
+                    className="control-btn-netflix control-btn-speed" 
                     onClick={() => setShowSpeedMenu(prev => !prev)} 
-                    title="Playback Speed"
-                    style={{
-                      background: 'none',
-                      border: 'none',
-                      color: 'var(--text-primary, #fff)',
-                      cursor: 'pointer',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      padding: '8px',
-                      opacity: 0.8,
-                      transition: 'opacity 0.2s',
-                      outline: 'none',
-                      fontSize: '1rem',
-                      fontWeight: '600'
-                    }}
-                    onMouseEnter={(e) => e.currentTarget.style.opacity = '1'}
-                    onMouseLeave={(e) => e.currentTarget.style.opacity = '0.8'}
+                    title={`Playback Speed (${playbackRate}x)`}
                   >
-                    {playbackRate}x
+                    <CircleGauge size={22} />
+                    {playbackRate !== 1 && (
+                      <span className="netflix-speed-badge">{playbackRate}x</span>
+                    )}
                   </button>
                   {showSpeedMenu && (
                     <SpeedPopover
@@ -5572,31 +5795,24 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
                 </div>
 
                 <button 
-                  className="control-btn-settings" 
+                  className="control-btn-netflix control-btn-pip" 
+                  onClick={togglePiP} 
+                  title="Picture in Picture"
+                >
+                  <MonitorPlay size={22} />
+                </button>
+
+                <button 
+                  className="control-btn-netflix control-btn-settings" 
                   onClick={() => setShowSettingsPanel(prev => !prev)} 
                   title="Player Settings"
-                  style={{
-                    background: 'none',
-                    border: 'none',
-                    color: 'var(--text-primary, #fff)',
-                    cursor: 'pointer',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    padding: '8px',
-                    opacity: 0.8,
-                    transition: 'opacity 0.2s',
-                    outline: 'none'
-                  }}
-                  onMouseEnter={(e) => e.currentTarget.style.opacity = '1'}
-                  onMouseLeave={(e) => e.currentTarget.style.opacity = '0.8'}
                 >
                   <Settings size={22} />
                 </button>
 
                 {(showFullscreen || hoveredSetting === 'showFullscreen') && (
                   <button 
-                    className={`control-btn-fullscreen ${getHighlightClass('showFullscreen')}`} 
+                    className={`control-btn-netflix control-btn-fullscreen ${getHighlightClass('showFullscreen')}`} 
                     onClick={toggleFullscreen} 
                     title={isFullscreen || isPseudoFullscreen ? "Exit Fullscreen" : "Fullscreen"}
                     style={{
@@ -5862,23 +6078,32 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
         onChange={handleCustomSubUpload}
       />
 
-      {/* Flashing HUD for Keyboard Actions */}
-      {flashHud && (
-        <div className="flash-hud-overlay">
-          <div className="flash-hud-icon-wrapper animate-flash-hud">
-            {flashHud === 'play' && <Play size={40} fill="white" strokeWidth={1.2} style={{ marginLeft: '4px' }} />}
-            {flashHud === 'pause' && <Pause size={40} fill="white" strokeWidth={1.2} />}
-            {flashHud === 'rewind' && (
-              <div className="seek-hud-container">
-                <RotateCcw size={40} strokeWidth={1.2} />
-                <span className="seek-hud-text" style={{ fontSize: '9px', top: '55%' }}>10</span>
-              </div>
-            )}
-            {flashHud === 'forward' && (
-              <div className="seek-hud-container">
-                <RotateCw size={40} strokeWidth={1.2} />
-                <span className="seek-hud-text" style={{ fontSize: '9px', top: '55%' }}>10</span>
-              </div>
+      {/* Side Skip HUD (Left for rewind, Right for forward) */}
+      {consecutiveSkipInfo && (
+        <div className={`skip-side-hud-overlay ${consecutiveSkipInfo.direction === 'rewind' ? 'skip-left' : 'skip-right'}`}>
+          <div key={`${consecutiveSkipInfo.direction}-${consecutiveSkipInfo.count}-${consecutiveSkipInfo.totalSeconds}`} className="skip-hud-circle-compact animate-skip-pop">
+            <div className="skip-hud-icon-wrapper-compact">
+              {consecutiveSkipInfo.direction === 'rewind' ? (
+                <RotateCcw size={42} strokeWidth={1.8} className="skip-rotate-icon-compact" />
+              ) : (
+                <RotateCw size={42} strokeWidth={1.8} className="skip-rotate-icon-compact" />
+              )}
+              <span className="skip-hud-number-compact">
+                {consecutiveSkipInfo.totalSeconds}
+              </span>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Play / Resume & Pause Center Feedback Animation */}
+      {playPauseFeedback && (
+        <div className="play-pause-feedback-overlay">
+          <div key={playPauseFeedback.id} className="play-pause-feedback-circle animate-play-pause-feedback">
+            {playPauseFeedback.action === 'play' ? (
+              <Play size={40} fill="white" strokeWidth={0} style={{ marginLeft: '4px' }} />
+            ) : (
+              <Pause size={40} fill="white" strokeWidth={0} />
             )}
           </div>
         </div>
@@ -5888,11 +6113,20 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
       {switchToast.visible && (
         <div 
           className="switch-toast-overlay animate-switch-toast"
-          style={{ animationDuration: `${toastDuration}s` }}
+          style={{ animationDuration: `${switchToast.duration || toastDuration}s` }}
         >
           <div className="switch-toast-content">
             {switchToast.text}
           </div>
+        </div>
+      )}
+
+      {/* Big Track Change Notification at Top Right Corner (Image 3 Style) */}
+      {trackNotification && (
+        <div key={trackNotification.id} className="track-change-notification-overlay animate-track-notification">
+          <span className="track-change-notification-text">
+            {trackNotification.text}
+          </span>
         </div>
       )}
 
@@ -5916,6 +6150,14 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
           <span className="volume-toast-text-vertical">
             {volumeToast.isMuted ? 'MUTE' : (volumeToast.boost > 100 ? volumeToast.boost : Math.round(volumeToast.volume * 100))}
           </span>
+        </div>
+      </div>
+
+      {/* UI Scale Toast Overlay */}
+      <div className={`ui-scale-toast-overlay ${uiScaleToast.visible ? 'visible' : ''}`}>
+        <div className="ui-scale-toast-content">
+          <Sliders size={18} />
+          <span>UI Scale: {Math.round(uiScaleToast.scale * 100)}%</span>
         </div>
       </div>
 
@@ -6077,7 +6319,7 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
         .top-overlay-clean {
           top: 0;
           background: var(--player-overlay-gradient-top, linear-gradient(to bottom, rgba(0,0,0,0.85) 0%, rgba(0,0,0,0.4) 60%, transparent 100%));
-          padding: 2.5rem 3.5rem;
+          padding: calc(2.2rem * var(--player-ui-scale, 1)) calc(3.5rem * var(--player-ui-scale, 1));
           display: flex;
           align-items: center;
           justify-content: space-between;
@@ -6562,12 +6804,16 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
           border: none;
           color: var(--text-primary, white);
           cursor: pointer;
-          padding: 6px;
+          padding: calc(6px * var(--player-ui-scale, 1));
           display: flex;
           align-items: center;
           justify-content: center;
           transition: transform 0.15s ease, opacity 0.15s ease;
           flex-shrink: 0;
+        }
+        .cast-btn svg, .close-btn svg {
+          width: calc(24px * var(--player-ui-scale, 1)) !important;
+          height: calc(24px * var(--player-ui-scale, 1)) !important;
         }
         .cast-btn:hover, .close-btn:hover {
           transform: scale(1.15);
@@ -6664,10 +6910,10 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
         .bottom-overlay {
           bottom: 0;
           background: var(--player-overlay-gradient-bottom, linear-gradient(to top, rgba(0,0,0,0.85) 0%, rgba(0,0,0,0.4) 60%, transparent 100%));
-          padding: 2.5rem 3.5rem;
+          padding: calc(1.5rem * var(--player-ui-scale, 1)) calc(3.5rem * var(--player-ui-scale, 1)) calc(2rem * var(--player-ui-scale, 1)) calc(3.5rem * var(--player-ui-scale, 1));
           display: flex;
           flex-direction: column;
-          gap: 1rem;
+          gap: calc(0.25rem * var(--player-ui-scale, 1));
         }
         .player-overlay.visible {
           opacity: 1;
@@ -6745,10 +6991,10 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
           display: flex;
           align-items: center;
           width: 100%;
-          gap: 1.5rem;
+          gap: calc(1.5rem * var(--player-ui-scale, 1));
         }
         .time-display-clean {
-          font-size: 0.95rem;
+          font-size: calc(0.95rem * var(--player-ui-scale, 1));
           color: #ffffff;
           font-weight: 500;
           white-space: nowrap;
@@ -6757,7 +7003,7 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
         .scrub-container-premium {
           position: relative;
           width: 100%;
-          height: 8px;
+          height: calc(8px * var(--player-ui-scale, 1));
           display: flex;
           align-items: center;
         }
@@ -6765,26 +7011,26 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
           position: absolute;
           left: 0;
           right: 0;
-          height: 4px;
+          height: calc(4px * var(--player-ui-scale, 1));
           background: rgba(255, 255, 255, 0.2);
-          border-radius: 2px;
+          border-radius: calc(2px * var(--player-ui-scale, 1));
           z-index: 1;
         }
         .scrub-track-buffered {
           position: absolute;
           left: 0;
-          height: 4px;
+          height: calc(4px * var(--player-ui-scale, 1));
           background: rgba(255, 255, 255, 0.35);
-          border-radius: 2px;
+          border-radius: calc(2px * var(--player-ui-scale, 1));
           z-index: 2;
           transition: width 0.15s ease;
         }
         .scrub-track-progress {
           position: absolute;
           left: 0;
-          height: 4px;
+          height: calc(4px * var(--player-ui-scale, 1));
           background: var(--player-accent, #e50914);
-          border-radius: 2px 0 0 2px;
+          border-radius: calc(2px * var(--player-ui-scale, 1)) 0 0 calc(2px * var(--player-ui-scale, 1));
           z-index: 3;
         }
         .scrub-bar-premium {
@@ -6802,8 +7048,8 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
         .scrub-bar-premium::-webkit-slider-thumb {
           -webkit-appearance: none;
           appearance: none;
-          width: 22px;
-          height: 22px;
+          width: calc(22px * var(--player-ui-scale, 1));
+          height: calc(22px * var(--player-ui-scale, 1));
           border-radius: 50%;
           background: var(--player-accent, #e50914);
           cursor: pointer;
@@ -6819,8 +7065,8 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
           opacity: 1;
         }
         .scrub-bar-premium::-moz-range-thumb {
-          width: 22px;
-          height: 22px;
+          width: calc(22px * var(--player-ui-scale, 1));
+          height: calc(22px * var(--player-ui-scale, 1));
           border: none;
           border-radius: 50%;
           background: var(--player-accent, #e50914);
@@ -6841,7 +7087,7 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
         .scrub-container-premium:hover .scrub-track-progress,
         .scrub-container-premium:hover .scrub-track-progress,
         .scrub-container-premium:hover .timeline-bookmark-range {
-          height: 6px !important;
+          height: calc(6px * var(--player-ui-scale, 1)) !important;
         }
 
         .scrub-hover-tooltip {
@@ -6899,55 +7145,114 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
           display: flex;
           align-items: center;
           justify-content: space-between;
-          margin-top: 0.8rem;
+          margin-top: 0;
           width: 100%;
         }
         .bottom-controls-left-spacer {
           display: flex;
           align-items: center;
+          gap: calc(clamp(0.5rem, 1.1vw, 0.9rem) * var(--player-ui-scale, 1));
           flex: 1;
         }
         .bottom-controls-center-group {
           display: flex;
           align-items: center;
           justify-content: center;
-          flex: 1;
+          flex: 1.5;
         }
         .bottom-controls-right-group {
           display: flex;
           align-items: center;
           justify-content: flex-end;
+          gap: calc(clamp(0.85rem, 1.5vw, 1.35rem) * var(--player-ui-scale, 1));
           flex: 1;
         }
-        .audio-sub-trigger-btn {
-          background: rgba(255, 255, 255, 0.08);
-          border: 1px solid rgba(255, 255, 255, 0.15);
-          border-radius: 20px;
-          padding: 0.45rem 1.4rem;
-          color: white;
-          font-size: 0.85rem;
-          font-weight: 600;
+        .seek-hud-container-bottom {
+          position: relative;
           display: flex;
           align-items: center;
-          gap: 0.5rem;
+          justify-content: center;
+          width: calc(24px * var(--player-ui-scale, 1));
+          height: calc(24px * var(--player-ui-scale, 1));
+        }
+        .seek-hud-container-bottom svg {
+          width: calc(22px * var(--player-ui-scale, 1)) !important;
+          height: calc(22px * var(--player-ui-scale, 1)) !important;
+        }
+        .seek-hud-text-bottom {
+          position: absolute;
+          top: 52%;
+          left: 50%;
+          transform: translate(-50%, -50%);
+          font-size: calc(8px * var(--player-ui-scale, 1));
+          font-weight: 800;
+          font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+          color: currentColor;
+          letter-spacing: -0.5px;
+          line-height: 1;
+          pointer-events: none;
+        }
+        .control-btn-netflix {
+          background: none;
+          border: none;
+          color: rgba(255, 255, 255, 0.85);
           cursor: pointer;
-          transition: all 0.2s ease;
+          padding: calc(8px * var(--player-ui-scale, 1));
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          transition: color 0.2s, transform 0.2s, opacity 0.2s;
+          outline: none;
+          position: relative;
         }
-        .audio-sub-trigger-btn:hover {
-          background: rgba(255, 255, 255, 0.15);
-          border-color: rgba(255, 255, 255, 0.3);
-          transform: scale(1.03);
+        .control-btn-netflix svg {
+          width: calc(22px * var(--player-ui-scale, 1)) !important;
+          height: calc(22px * var(--player-ui-scale, 1)) !important;
         }
+        .control-btn-netflix:hover {
+          color: #ffffff;
+          transform: scale(1.15);
+          opacity: 1;
+        }
+        .netflix-speed-badge {
+          position: absolute;
+          bottom: 1px;
+          right: 1px;
+          font-size: calc(8.5px * var(--player-ui-scale, 1));
+          font-weight: 800;
+          color: #ffffff;
+          background: rgba(229, 9, 20, 0.95);
+          border-radius: 3px;
+          padding: calc(1px * var(--player-ui-scale, 1)) calc(3px * var(--player-ui-scale, 1));
+          line-height: 1;
+        }
+        .bottom-media-title-netflix {
+          color: rgba(255, 255, 255, 0.85);
+          font-size: calc(0.95rem * var(--player-ui-scale, 1));
+          font-weight: 500;
+          font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+          white-space: nowrap;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          max-width: 40vw;
+          pointer-events: none;
+          user-select: none;
+        }
+
         .control-btn-pip, .control-btn-fullscreen, .control-btn-bookmark-list {
           background: none;
           border: none;
           color: rgba(255, 255, 255, 0.8);
           cursor: pointer;
-          padding: 6px;
+          padding: calc(6px * var(--player-ui-scale, 1));
           display: flex;
           align-items: center;
           justify-content: center;
           transition: color 0.2s, transform 0.2s;
+        }
+        .control-btn-pip svg, .control-btn-fullscreen svg, .control-btn-bookmark-list svg {
+          width: calc(20px * var(--player-ui-scale, 1)) !important;
+          height: calc(20px * var(--player-ui-scale, 1)) !important;
         }
         .control-btn-pip:hover, .control-btn-fullscreen:hover, .control-btn-bookmark-list:hover {
           color: var(--text-primary, white);
@@ -6961,8 +7266,7 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
         .audio-sub-popover-center {
           position: absolute;
           bottom: 50px;
-          left: 50%;
-          translate: -50% 0;
+          right: -80px;
           max-width: calc(100vw - 32px);
           height: 380px;
           max-height: min(480px, calc(100vh - 120px));
@@ -6979,6 +7283,12 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
           box-sizing: border-box;
           display: flex;
           flex-direction: column;
+          transform: scale(var(--player-ui-scale, 1));
+          transform-origin: bottom right;
+        }
+        .speed-popover-container, .bookmarks-popover {
+          transform: scale(var(--player-ui-scale, 1));
+          transform-origin: bottom right;
         }
         .audio-sub-popover-center::before {
           content: '';
@@ -7561,105 +7871,155 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
           to { transform: rotate(360deg); }
         }
 
-        /* Flashing HUD styles */
-        .flash-hud-overlay {
+        /* Play / Resume & Pause Center Feedback Animation */
+        .play-pause-feedback-overlay {
           position: absolute;
           inset: 0;
           display: flex;
           align-items: center;
           justify-content: center;
           pointer-events: none;
-          z-index: 100;
+          z-index: 120;
         }
-        .flash-hud-icon-wrapper {
-          background: transparent;
-          border: none;
-          backdrop-filter: none;
-          -webkit-backdrop-filter: none;
-          width: 84px;
-          height: 84px;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          color: white;
-          box-shadow: none;
-        }
-        .animate-flash-hud {
-          animation: flashHudAnim 0.6s cubic-bezier(0.16, 1, 0.3, 1) forwards;
-        }
-        
-        .ripple-region-wrapper {
-          position: absolute;
-          inset: 0;
-          pointer-events: none;
-          z-index: 50;
-        }
-
-        .skip-ripple-effect {
-          position: absolute;
-          width: 80px;
-          height: 80px;
-          background: radial-gradient(circle, rgba(255,255,255,0.4) 0%, rgba(200,230,255,0.15) 40%, rgba(255,255,255,0) 70%);
-          box-shadow: 0 0 25px rgba(255, 255, 255, 0.4), inset 0 0 15px rgba(255, 255, 255, 0.6);
-          backdrop-filter: blur(12px) contrast(1.1);
-          -webkit-backdrop-filter: blur(12px) contrast(1.1);
+        .play-pause-feedback-circle {
+          width: 78px;
+          height: 78px;
           border-radius: 50%;
-          transform: translate(-50%, -50%) scale(0.2);
-          animation: skipRippleExpand 2s cubic-bezier(0.1, 0.9, 0.2, 1) forwards;
+          background: rgba(0, 0, 0, 0.68);
+          backdrop-filter: blur(16px);
+          -webkit-backdrop-filter: blur(16px);
+          border: 1.5px solid rgba(255, 255, 255, 0.25);
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          color: #ffffff;
+          box-shadow: 0 12px 36px rgba(0, 0, 0, 0.7);
           pointer-events: none;
-          z-index: 50;
         }
-
-        @keyframes skipRippleExpand {
-          0% {
-            transform: translate(-50%, -50%) scale(0.2);
-            opacity: 1;
-          }
-          100% {
-            transform: translate(-50%, -50%) scale(15);
-            opacity: 0;
-          }
+        .animate-play-pause-feedback {
+          animation: playPauseFeedbackPop 0.52s cubic-bezier(0.16, 1, 0.3, 1) forwards;
         }
-
-        @keyframes flashHudAnim {
+        @keyframes playPauseFeedbackPop {
           0% {
             opacity: 0;
-            transform: scale(0.6);
+            transform: scale(0.65);
           }
-          25% {
+          30% {
             opacity: 1;
             transform: scale(1.1);
           }
-          75% {
+          55% {
             opacity: 1;
             transform: scale(1);
           }
+          80% {
+            opacity: 0.9;
+            transform: scale(1.04);
+          }
           100% {
             opacity: 0;
-            transform: scale(0.85);
+            transform: scale(1.22);
+          }
+        }
+
+        /* Side Skip HUD (Left for rewind, Right for forward) */
+        .skip-side-hud-overlay {
+          position: absolute;
+          top: 50%;
+          transform: translateY(-50%);
+          z-index: 550;
+          pointer-events: none;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+        }
+        .skip-side-hud-overlay.skip-left {
+          left: clamp(2.5rem, 15vw, 8rem);
+        }
+        .skip-side-hud-overlay.skip-right {
+          right: clamp(2.5rem, 15vw, 8rem);
+        }
+        .skip-hud-circle-compact {
+          width: 58px;
+          height: 58px;
+          border-radius: 50%;
+          background: rgba(0, 0, 0, 0.72);
+          backdrop-filter: blur(14px);
+          -webkit-backdrop-filter: blur(14px);
+          border: 1.5px solid rgba(255, 255, 255, 0.25);
+          box-shadow: 0 10px 25px rgba(0, 0, 0, 0.6);
+          display: flex;
+          align-items: center;
+          justify-content: center;
+        }
+        .skip-hud-icon-wrapper-compact {
+          position: relative;
+          width: 44px;
+          height: 44px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          color: #ffffff;
+        }
+        .skip-rotate-icon-compact {
+          color: #ffffff;
+          filter: drop-shadow(0 2px 6px rgba(0, 0, 0, 0.8));
+        }
+        .skip-hud-number-compact {
+          position: absolute;
+          top: 52%;
+          left: 50%;
+          transform: translate(-50%, -50%);
+          color: #ffffff;
+          font-size: 11px;
+          font-weight: 800;
+          font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+          letter-spacing: -0.5px;
+          text-shadow: 0 1px 4px rgba(0, 0, 0, 0.9);
+          user-select: none;
+          line-height: 1;
+        }
+        .animate-skip-pop {
+          animation: skipPopAnim 0.32s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards;
+        }
+        @keyframes skipPopAnim {
+          0% {
+            transform: scale(0.65);
+            opacity: 0.3;
+          }
+          40% {
+            transform: scale(1.08);
+            opacity: 1;
+          }
+          100% {
+            transform: scale(1);
+            opacity: 1;
           }
         }
 
         /* Switch Toast CSS Styles */
         .switch-toast-overlay {
           position: absolute;
-          top: 40px;
+          top: 50%;
           left: 50%;
-          transform: translateX(-50%);
+          transform: translate(-50%, -50%);
           z-index: 600;
           pointer-events: none;
         }
         .switch-toast-content {
-          background: rgba(0, 0, 0, 0.75);
-          backdrop-filter: blur(8px);
-          -webkit-backdrop-filter: blur(8px);
-          border: 1px solid rgba(255, 255, 255, 0.12);
+          background: rgba(0, 0, 0, 0.85);
+          backdrop-filter: blur(12px);
+          -webkit-backdrop-filter: blur(12px);
+          border: 1px solid rgba(255, 255, 255, 0.15);
           color: white;
-          padding: 0.6rem 1.6rem;
-          border-radius: 20px;
-          font-size: 0.95rem;
-          font-weight: 600;
-          box-shadow: 0 10px 25px rgba(0, 0, 0, 0.6);
+          padding: 0.75rem 2rem;
+          border-radius: 28px;
+          font-size: 1.15rem;
+          font-weight: 700;
+          letter-spacing: 0.5px;
+          box-shadow: 0 10px 30px rgba(0, 0, 0, 0.7);
+          text-align: center;
+          white-space: nowrap;
         }
         .animate-switch-toast {
           animation: switchToastAnim 0.5s cubic-bezier(0.16, 1, 0.3, 1) forwards;
@@ -7667,19 +8027,67 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
         @keyframes switchToastAnim {
           0% {
             opacity: 0;
-            transform: translate(-50%, -10px) scale(0.95);
+            transform: translate(-50%, -50%) scale(0.9);
           }
           15% {
             opacity: 1;
-            transform: translate(-50%, 0) scale(1);
+            transform: translate(-50%, -50%) scale(1);
           }
           85% {
             opacity: 1;
-            transform: translate(-50%, 0) scale(1);
+            transform: translate(-50%, -50%) scale(1);
           }
           100% {
             opacity: 0;
-            transform: translate(-50%, -10px) scale(0.95);
+            transform: translate(-50%, -50%) scale(0.9);
+          }
+        }
+
+        /* Track Change Notification Overlay (Image 3 Style) */
+        .track-change-notification-overlay {
+          position: absolute;
+          top: 36px;
+          right: 48px;
+          z-index: 650;
+          pointer-events: none;
+          display: flex;
+          align-items: center;
+          justify-content: flex-end;
+        }
+        .track-change-notification-text {
+          color: #ffffff;
+          font-size: clamp(1.35rem, 2.2vw, 1.85rem);
+          font-weight: 700;
+          font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+          letter-spacing: 0.5px;
+          text-shadow: 
+            -1.5px -1.5px 0 #000, 
+             1.5px -1.5px 0 #000, 
+            -1.5px  1.5px 0 #000, 
+             1.5px  1.5px 0 #000,
+             0 2px 10px rgba(0, 0, 0, 0.95);
+          white-space: nowrap;
+          user-select: none;
+        }
+        .animate-track-notification {
+          animation: trackNotificationAnim 2.6s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+        }
+        @keyframes trackNotificationAnim {
+          0% {
+            opacity: 0;
+            transform: translateY(-8px);
+          }
+          10% {
+            opacity: 1;
+            transform: translateY(0);
+          }
+          85% {
+            opacity: 1;
+            transform: translateY(0);
+          }
+          100% {
+            opacity: 0;
+            transform: translateY(-8px);
           }
         }
 
@@ -7870,12 +8278,16 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
           flex-shrink: 0;
         }
         .volume-control-group-premium:hover .volume-slider-container-premium {
-          width: 130px;
+          width: calc(130px * var(--player-ui-scale, 1));
           opacity: 1;
         }
+        .control-btn-volume svg {
+          width: calc(20px * var(--player-ui-scale, 1)) !important;
+          height: calc(20px * var(--player-ui-scale, 1)) !important;
+        }
         .volume-slider-premium {
-          width: 130px;
-          height: 3px;
+          width: calc(130px * var(--player-ui-scale, 1));
+          height: calc(3px * var(--player-ui-scale, 1));
           -webkit-appearance: none;
           background: rgba(255, 255, 255, 0.15);
           border-radius: 2px;
@@ -7885,15 +8297,15 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
           flex-shrink: 0;
         }
         .volume-slider-premium::-webkit-slider-runnable-track {
-          height: 3px;
+          height: calc(3px * var(--player-ui-scale, 1));
         }
         .volume-slider-premium::-webkit-slider-thumb {
           -webkit-appearance: none;
-          width: 12px;
-          height: 12px;
+          width: calc(12px * var(--player-ui-scale, 1));
+          height: calc(12px * var(--player-ui-scale, 1));
           border-radius: 9999px !important;
           background: #ffffff !important;
-          margin-top: -4.5px; /* centers thumb on 3px track */
+          margin-top: calc(-4.5px * var(--player-ui-scale, 1)); /* centers thumb on track */
           box-shadow: 0 1px 4px rgba(0, 0, 0, 0.4);
           transition: transform 0.15s cubic-bezier(0.16, 1, 0.3, 1), background-color 0.15s;
           border: none !important;
@@ -7903,8 +8315,8 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
           background-color: #ffffff !important;
         }
         .volume-slider-premium::-moz-range-thumb {
-          width: 12px;
-          height: 12px;
+          width: calc(12px * var(--player-ui-scale, 1));
+          height: calc(12px * var(--player-ui-scale, 1));
           border: none !important;
           border-radius: 9999px !important;
           background: #ffffff !important;
@@ -7914,6 +8326,37 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
         .volume-slider-premium:hover::-moz-range-thumb {
           transform: scale(1.2);
           background-color: #ffffff !important;
+        }
+
+        .ui-scale-toast-overlay {
+          position: absolute;
+          top: 4.5rem;
+          left: 50%;
+          transform: translateX(-50%) translateY(-10px);
+          background: rgba(18, 18, 18, 0.9);
+          backdrop-filter: blur(16px);
+          -webkit-backdrop-filter: blur(16px);
+          border: 1px solid rgba(255, 255, 255, 0.18);
+          border-radius: 9999px;
+          padding: 8px 20px;
+          color: #ffffff;
+          font-size: 0.95rem;
+          font-weight: 600;
+          z-index: 100;
+          opacity: 0;
+          pointer-events: none;
+          transition: opacity 0.2s cubic-bezier(0.16, 1, 0.3, 1), transform 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+          box-shadow: 0 10px 30px rgba(0, 0, 0, 0.6);
+        }
+        .ui-scale-toast-overlay.visible {
+          opacity: 1;
+          transform: translateX(-50%) translateY(0);
+        }
+        .ui-scale-toast-content {
+          display: flex;
+          align-items: center;
+          gap: 10px;
+          white-space: nowrap;
         }
         .volume-percent-text-premium {
           color: #ffffff;

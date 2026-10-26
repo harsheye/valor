@@ -42,7 +42,7 @@ const getAudioBoostMultiplier = (boostPercent: number): number => {
   }
   return 1.0;
 };
-import { classifyVideoTitle } from '../utils/libraryClassifier';
+import { classifyVideoTitle, getRegexedTitleWithYear } from '../utils/libraryClassifier';
 import { syncTraktHistory, syncTraktRating, resolveTraktMetadata } from '../services/traktAuth';
 import { LoadingSpinner, BufferingOverlay } from './LoadingSpinner';
 import { RadialMenu } from './RadialMenu';
@@ -867,36 +867,34 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
   };
 
   const cycleSetting = (key: keyof typeof playerSettings) => {
-    setPlayerSettings(prev => {
-      const val = prev[key];
-      let nextVal: any;
-      if (key === 'hideUIOverlays' || key === 'hideVideoName') {
-        // Negative key names:
-        // false ('enable') -> true ('hide') -> 'disable' -> false ('enable')
-        if (val === false || val === 'enable') {
-          nextVal = true; // hide
-        } else if (val === true || val === 'hide') {
-          nextVal = 'disable';
-        } else {
-          nextVal = false; // enable
-        }
+    const val = playerSettings[key];
+    let nextVal: any;
+    if (key === 'hideUIOverlays' || key === 'hideVideoName') {
+      // Negative key names:
+      // false ('enable') -> true ('hide') -> 'disable' -> false ('enable')
+      if (val === false || val === 'enable') {
+        nextVal = true; // hide
+      } else if (val === true || val === 'hide') {
+        nextVal = 'disable';
       } else {
-        // Positive key names:
-        // true ('enable') -> false ('hide') -> 'disable' -> true ('enable')
-        if (val === true || val === 'enable') {
-          nextVal = false; // hide
-        } else if (val === false || val === 'hide') {
-          nextVal = 'disable';
-        } else {
-          nextVal = true; // enable
-        }
+        nextVal = false; // enable
       }
-      const next = { ...prev, [key]: nextVal };
-      if (onUpdateSettings) {
-        onUpdateSettings(next);
+    } else {
+      // Positive key names:
+      // true ('enable') -> false ('hide') -> 'disable' -> true ('enable')
+      if (val === true || val === 'enable') {
+        nextVal = false; // hide
+      } else if (val === false || val === 'hide') {
+        nextVal = 'disable';
+      } else {
+        nextVal = true; // enable
       }
-      return next;
-    });
+    }
+    const next = { ...playerSettings, [key]: nextVal };
+    setPlayerSettings(next);
+    if (onUpdateSettings) {
+      onUpdateSettings(next);
+    }
   };
 
   const getToggleBtnClass = (key: keyof typeof playerSettings): string => {
@@ -5573,7 +5571,7 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
                     opacity: showVideoNameMode === 'enable' ? 1 : 0.5
                   }}
                 >
-                  {video.title}
+                  {getRegexedTitleWithYear(video.title || video.fileName || '')}
                 </h2>
               )}
               {(showVideoNameMode === 'enable' || hoveredSetting === 'showVideoName') && (

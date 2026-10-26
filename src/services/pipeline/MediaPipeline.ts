@@ -5,7 +5,6 @@ export interface MediaStreamInfo {
   type: 'video' | 'audio' | 'subtitle';
   codec: string;
   language?: string;
-  title?: string;
   details: string;
 }
 
