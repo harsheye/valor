@@ -6808,7 +6808,7 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
           display: flex;
           align-items: center;
           justify-content: center;
-          transition: transform 0.15s ease, opacity 0.15s ease;
+          transition: transform 0.18s cubic-bezier(0.175, 0.885, 0.32, 1.275), opacity 0.18s ease, color 0.18s ease;
           flex-shrink: 0;
         }
         .cast-btn svg, .close-btn svg {
@@ -6816,8 +6816,11 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
           height: calc(24px * var(--player-ui-scale, 1)) !important;
         }
         .cast-btn:hover, .close-btn:hover {
-          transform: scale(1.15);
-          opacity: 0.8;
+          transform: scale(1.22);
+          opacity: 1;
+        }
+        .cast-btn:active, .close-btn:active {
+          transform: scale(0.95);
         }
         .floating-rating-prompt {
           position: absolute;
@@ -7151,8 +7154,13 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
         .bottom-controls-left-spacer {
           display: flex;
           align-items: center;
-          gap: calc(clamp(0.5rem, 1.1vw, 0.9rem) * var(--player-ui-scale, 1));
+          gap: calc(4px * var(--player-ui-scale, 1));
           flex: 1;
+        }
+        .control-btn-play-pause-bottom,
+        .control-btn-rewind-bottom,
+        .control-btn-forward-bottom {
+          padding: calc(6px * var(--player-ui-scale, 1)) calc(5px * var(--player-ui-scale, 1)) !important;
         }
         .bottom-controls-center-group {
           display: flex;
@@ -7164,7 +7172,7 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
           display: flex;
           align-items: center;
           justify-content: flex-end;
-          gap: calc(clamp(0.85rem, 1.5vw, 1.35rem) * var(--player-ui-scale, 1));
+          gap: calc(clamp(0.65rem, 1.2vw, 1.1rem) * var(--player-ui-scale, 1));
           flex: 1;
         }
         .seek-hud-container-bottom {
@@ -7197,11 +7205,11 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
           border: none;
           color: rgba(255, 255, 255, 0.85);
           cursor: pointer;
-          padding: calc(8px * var(--player-ui-scale, 1));
+          padding: calc(6px * var(--player-ui-scale, 1));
           display: flex;
           align-items: center;
           justify-content: center;
-          transition: color 0.2s, transform 0.2s, opacity 0.2s;
+          transition: color 0.18s ease, transform 0.18s cubic-bezier(0.175, 0.885, 0.32, 1.275), opacity 0.18s ease;
           outline: none;
           position: relative;
         }
@@ -7211,8 +7219,11 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
         }
         .control-btn-netflix:hover {
           color: #ffffff;
-          transform: scale(1.15);
+          transform: scale(1.22);
           opacity: 1;
+        }
+        .control-btn-netflix:active {
+          transform: scale(0.95);
         }
         .netflix-speed-badge {
           position: absolute;
@@ -7242,21 +7253,24 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
         .control-btn-pip, .control-btn-fullscreen, .control-btn-bookmark-list {
           background: none;
           border: none;
-          color: rgba(255, 255, 255, 0.8);
+          color: rgba(255, 255, 255, 0.85);
           cursor: pointer;
           padding: calc(6px * var(--player-ui-scale, 1));
           display: flex;
           align-items: center;
           justify-content: center;
-          transition: color 0.2s, transform 0.2s;
+          transition: color 0.18s ease, transform 0.18s cubic-bezier(0.175, 0.885, 0.32, 1.275);
         }
         .control-btn-pip svg, .control-btn-fullscreen svg, .control-btn-bookmark-list svg {
-          width: calc(20px * var(--player-ui-scale, 1)) !important;
-          height: calc(20px * var(--player-ui-scale, 1)) !important;
+          width: calc(22px * var(--player-ui-scale, 1)) !important;
+          height: calc(22px * var(--player-ui-scale, 1)) !important;
         }
         .control-btn-pip:hover, .control-btn-fullscreen:hover, .control-btn-bookmark-list:hover {
-          color: var(--text-primary, white);
-          transform: scale(1.15);
+          color: #ffffff;
+          transform: scale(1.22);
+        }
+        .control-btn-pip:active, .control-btn-fullscreen:active, .control-btn-bookmark-list:active {
+          transform: scale(0.95);
         }
 
         /* Popovers styling */
@@ -8252,11 +8266,17 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
           align-items: center;
           justify-content: center;
           cursor: pointer;
-          transition: background 0.25s ease, border-color 0.25s ease;
+          transition: background 0.25s ease, border-color 0.25s ease, color 0.18s ease, transform 0.18s cubic-bezier(0.175, 0.885, 0.32, 1.275);
           color: var(--text-secondary, rgba(255, 255, 255, 0.8)) !important;
           outline: none;
           padding: 0 !important;
           flex-shrink: 0;
+        }
+        .control-btn-volume:hover {
+          transform: scale(1.22);
+        }
+        .control-btn-volume:active {
+          transform: scale(0.95);
         }
         .volume-control-group-premium:hover .control-btn-volume {
           background: var(--border-subtle, rgba(255, 255, 255, 0.12)) !important;
@@ -8266,6 +8286,7 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
           background: var(--surface-hover, rgba(255, 255, 255, 0.18)) !important;
           color: var(--text-primary, #ffffff) !important;
           border-color: var(--border-color, rgba(255, 255, 255, 0.25)) !important;
+          transform: scale(1.22);
         }
         .volume-slider-container-premium {
           width: 0;
