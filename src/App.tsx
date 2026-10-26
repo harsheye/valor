@@ -682,6 +682,7 @@ function App() {
   const [isProcessing, setIsProcessing] = useState(false);
   const [processingStep, setProcessingStep] = useState('');
   const [processingUrl, setProcessingUrl] = useState('');
+  const [processingTitle, setProcessingTitle] = useState('');
 
   const renderMockPreviewButton = (key: string) => {
     const iconSize = 14;
@@ -2608,9 +2609,10 @@ function App() {
     }
   };
 
-  const processRemoteUrl = async (url: string, isLocalFile = false) => {
+  const processRemoteUrl = async (url: string, isLocalFile = false, titleHint?: string) => {
     setIsProcessing(true);
     setProcessingUrl(url);
+    setProcessingTitle(titleHint || '');
     setProcessingStep('Validating security protocols...');
     
     let localPathVal: string | undefined = undefined;
@@ -2672,10 +2674,9 @@ function App() {
         let probingError: string | undefined = undefined;
         if (capabilities.statusCode === 404) {
           probingError = 'The file server responded with a status of 404 (Not Found). The file does not exist at this URL.';
-        } else if (capabilities.statusCode === 403) {
-          probingError = 'The file server responded with a status of 403 (Forbidden). Access is denied.';
-        } else if (capabilities.authRequired) {
+        } else if (capabilities.authRequired || capabilities.statusCode === 401 || capabilities.statusCode === 403) {
           probingError = undefined;
+          capabilities.authRequired = true;
         } else if (capabilities.isCorsBlocked) {
           probingError = 'The remote server blocks cross-origin byte access (CORS).';
         } else {
@@ -2688,6 +2689,7 @@ function App() {
           url,
           type: isLocalFile ? 'local' : 'url',
           isRemote: !isLocalFile,
+          authRequired: capabilities.authRequired,
           fileName: isLocalFile ? title : undefined,
           containerType: 'unknown',
           audioTracks: match ? match.audioTracks : [],
@@ -3278,10 +3280,12 @@ function App() {
         isOpen={isProcessing}
         step={processingStep}
         url={processingUrl}
+        title={processingTitle}
         onCancel={() => {
           setIsProcessing(false);
           setProcessingStep('');
           setProcessingUrl('');
+          setProcessingTitle('');
         }}
       />
 

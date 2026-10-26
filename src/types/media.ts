@@ -43,6 +43,7 @@ export interface VideoItem {
   currentTime?: number;
   resumeTime?: number;
   probingError?: string;
+  authRequired?: boolean;
   playbackMode?: 'advanced' | 'native' | 'server' | 'simple';
   auth?: { username: string; password?: string };
   isCinema?: boolean;

@@ -2265,9 +2265,9 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
               })
             });
 
-            if (res.status === 401) {
-              const err: any = new Error('Remote media requires authentication (401 Unauthorized)');
-              err.statusCode = 401;
+            if (res.status === 401 || res.status === 403) {
+              const err: any = new Error(res.status === 403 ? 'Remote media access forbidden (403 Forbidden)' : 'Remote media requires authentication (401 Unauthorized)');
+              err.statusCode = res.status;
               throw err;
             }
 
@@ -2355,8 +2355,8 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
         })
       });
 
-      if (res.status === 401) {
-        throw new Error('Invalid username or password (401 Unauthorized). Please try again.');
+      if (res.status === 401 || res.status === 403) {
+        throw new Error('Invalid username or password or access forbidden (401/403). Please try again.');
       }
       if (!res.ok) {
         throw new Error(`Probe failed with status ${res.status}`);

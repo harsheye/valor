@@ -1,72 +1,76 @@
 import React, { useEffect, useState } from 'react';
-import { Film, Globe, ShieldCheck, Sparkles, X, Loader2, Play } from 'lucide-react';
+import { X } from 'lucide-react';
+import { getRegexedTitleWithYear } from '../utils/libraryClassifier';
 
 export interface StreamLoadingOverlayProps {
   isOpen: boolean;
   step?: string;
   url?: string;
+  title?: string;
   onCancel?: () => void;
 }
 
 export const StreamLoadingOverlay: React.FC<StreamLoadingOverlayProps> = ({
   isOpen,
-  step = 'Initializing remote stream...',
+  step = 'Connecting to stream...',
   url = '',
+  title = '',
   onCancel
 }) => {
-  const [displayHost, setDisplayHost] = useState('');
+  const [displayName, setDisplayName] = useState('');
   const [dots, setDots] = useState('');
 
-  // Extract friendly hostname or filename from URL
+  // Extract friendly display name from title or URL
   useEffect(() => {
+    if (title) {
+      setDisplayName(getRegexedTitleWithYear(title));
+      return;
+    }
     if (!url) {
-      setDisplayHost('');
+      setDisplayName('');
       return;
     }
     try {
       if (url.startsWith('http://') || url.startsWith('https://')) {
         const parsed = new URL(url);
-        const host = parsed.hostname;
         const lastPart = parsed.pathname.split('/').filter(Boolean).pop();
-        if (lastPart && !lastPart.includes('proxy') && lastPart.length < 40) {
-          setDisplayHost(`${host} • ${decodeURIComponent(lastPart)}`);
+        if (lastPart && !lastPart.includes('proxy') && lastPart.length > 2) {
+          const clean = decodeURIComponent(lastPart).replace(/\.[^/.]+$/, '');
+          setDisplayName(getRegexedTitleWithYear(clean));
         } else {
-          setDisplayHost(host);
+          setDisplayName(parsed.hostname);
         }
       } else {
-        const clean = url.split(/[/\\]/).pop() || url;
-        setDisplayHost(clean);
+        const clean = (url.split(/[/\\]/).pop() || url).replace(/\.[^/.]+$/, '');
+        setDisplayName(getRegexedTitleWithYear(clean));
       }
     } catch {
-      setDisplayHost(url.substring(0, 36));
+      setDisplayName(url.substring(0, 36));
     }
-  }, [url]);
+  }, [url, title]);
 
   // Animated dots for progress indicator
   useEffect(() => {
     if (!isOpen) return;
     const interval = setInterval(() => {
       setDots(prev => (prev.length >= 3 ? '' : prev + '.'));
-    }, 450);
+    }, 400);
     return () => clearInterval(interval);
   }, [isOpen]);
 
-  if (!isOpen) return null;
+  // Handle ESC key to cancel
+  useEffect(() => {
+    if (!isOpen || !onCancel) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        onCancel();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isOpen, onCancel]);
 
-  // Determine stage icon
-  const lowerStep = (step || '').toLowerCase();
-  const getStageIcon = () => {
-    if (lowerStep.includes('security') || lowerStep.includes('protocol')) {
-      return <ShieldCheck size={28} className="text-red-500 animate-pulse" />;
-    }
-    if (lowerStep.includes('prob') || lowerStep.includes('format') || lowerStep.includes('hls') || lowerStep.includes('mkv')) {
-      return <Film size={28} className="text-red-500 animate-pulse" />;
-    }
-    if (lowerStep.includes('connection') || lowerStep.includes('capabilit')) {
-      return <Globe size={28} className="text-red-500 animate-pulse" />;
-    }
-    return <Sparkles size={28} className="text-red-500 animate-pulse" />;
-  };
+  if (!isOpen) return null;
 
   return (
     <div
@@ -75,243 +79,172 @@ export const StreamLoadingOverlay: React.FC<StreamLoadingOverlayProps> = ({
         inset: 0,
         zIndex: 99999,
         display: 'flex',
+        flexDirection: 'column',
         alignItems: 'center',
         justifyContent: 'center',
-        background: 'radial-gradient(circle at 50% 45%, rgba(229, 9, 20, 0.15) 0%, rgba(8, 11, 18, 0.94) 60%, #04060a 100%)',
-        backdropFilter: 'blur(30px) saturate(180%)',
-        WebkitBackdropFilter: 'blur(30px) saturate(180%)',
-        animation: 'valorFadeIn 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards'
+        background: '#000000',
+        color: '#ffffff',
+        userSelect: 'none',
+        overflow: 'hidden'
       }}
     >
       <style>{`
-        @keyframes valorFadeIn {
-          from { opacity: 0; transform: scale(0.98); }
-          to { opacity: 1; transform: scale(1); }
+        @keyframes netflixRedPulse {
+          0% {
+            transform: scale(0.97);
+            filter: drop-shadow(0 0 10px rgba(229, 9, 20, 0.45));
+            opacity: 0.92;
+          }
+          50% {
+            transform: scale(1.025);
+            filter: drop-shadow(0 0 32px rgba(229, 9, 20, 0.95)) drop-shadow(0 0 65px rgba(229, 9, 20, 0.45));
+            opacity: 1;
+          }
+          100% {
+            transform: scale(0.97);
+            filter: drop-shadow(0 0 10px rgba(229, 9, 20, 0.45));
+            opacity: 0.92;
+          }
         }
-        @keyframes valorPulseRing {
-          0% { transform: scale(0.85); opacity: 0.8; }
-          50% { transform: scale(1.18); opacity: 0.25; }
-          100% { transform: scale(0.85); opacity: 0.8; }
+        @keyframes netflixSpin {
+          0% { transform: rotate(0deg); }
+          100% { transform: rotate(360deg); }
         }
-        @keyframes valorSpinSlow {
-          from { transform: rotate(0deg); }
-          to { transform: rotate(360deg); }
-        }
-        @keyframes valorShimmer {
-          0% { transform: translateX(-100%); }
-          100% { transform: translateX(200%); }
+        @keyframes nameFadePulse {
+          0%, 100% { opacity: 0.72; transform: translateY(0); }
+          50% { opacity: 1; transform: translateY(-1px); }
         }
       `}</style>
 
-      {/* Main Glassmorphic Card */}
+      {/* Center Cinematic Container */}
       <div
         style={{
-          width: '90%',
-          maxWidth: '460px',
-          background: 'rgba(18, 22, 34, 0.75)',
-          border: '1px solid rgba(255, 255, 255, 0.12)',
-          boxShadow: '0 24px 60px rgba(0, 0, 0, 0.85), 0 0 40px rgba(229, 9, 20, 0.2)',
-          borderRadius: '20px',
-          padding: '2.5rem 2rem 2rem 2rem',
           display: 'flex',
           flexDirection: 'column',
           alignItems: 'center',
+          justifyContent: 'center',
           textAlign: 'center',
-          position: 'relative',
-          overflow: 'hidden'
+          padding: '2rem',
+          maxWidth: '850px',
+          width: '90%'
         }}
       >
-        {/* Subtle top red glow line */}
+        {/* Netflix-style VALOR Wordmark */}
+        <h1
+          style={{
+            margin: 0,
+            fontSize: 'clamp(3.8rem, 9vw, 6.2rem)',
+            fontWeight: 900,
+            fontFamily: "'Bebas Neue', 'Impact', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
+            letterSpacing: '0.28em',
+            textTransform: 'uppercase',
+            color: '#E50914',
+            lineHeight: 1,
+            animation: 'netflixRedPulse 2.6s ease-in-out infinite',
+            textShadow: '0 0 40px rgba(229, 9, 20, 0.7), 0 0 80px rgba(229, 9, 20, 0.35)'
+          }}
+        >
+          VALOR
+        </h1>
+
+        {/* Netflix Circular Red Spinner */}
         <div
           style={{
-            position: 'absolute',
-            top: 0,
-            left: '10%',
-            right: '10%',
-            height: '2px',
-            background: 'linear-gradient(90deg, transparent, #e50914, #ff4b55, transparent)'
+            margin: '2.5rem 0 1.75rem 0',
+            width: '44px',
+            height: '44px',
+            borderRadius: '50%',
+            border: '3.5px solid rgba(229, 9, 20, 0.15)',
+            borderTopColor: '#E50914',
+            animation: 'netflixSpin 0.85s linear infinite',
+            boxShadow: '0 0 14px rgba(229, 9, 20, 0.4)'
           }}
         />
 
-        {/* Animated Cinema Radar Center */}
-        <div
-          style={{
-            position: 'relative',
-            width: '96px',
-            height: '96px',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            marginBottom: '1.75rem'
-          }}
-        >
-          {/* Outer Pulsing Aura Ring */}
+        {/* Media / Server Name */}
+        {displayName && (
           <div
             style={{
-              position: 'absolute',
-              inset: '-10px',
-              borderRadius: '50%',
-              border: '2px solid rgba(229, 9, 20, 0.35)',
-              animation: 'valorPulseRing 2.8s ease-in-out infinite'
-            }}
-          />
-
-          {/* Rotating Dashed Tech Ring */}
-          <div
-            style={{
-              position: 'absolute',
-              inset: 0,
-              borderRadius: '50%',
-              border: '2px dashed rgba(229, 9, 20, 0.65)',
-              animation: 'valorSpinSlow 12s linear infinite'
-            }}
-          />
-
-          {/* Inner Glowing Core */}
-          <div
-            style={{
-              width: '68px',
-              height: '68px',
-              borderRadius: '50%',
-              background: 'radial-gradient(circle at 35% 35%, rgba(229, 9, 20, 0.45) 0%, rgba(12, 16, 26, 0.95) 85%)',
-              border: '1px solid rgba(255, 255, 255, 0.2)',
-              boxShadow: '0 0 24px rgba(229, 9, 20, 0.5), inset 0 0 12px rgba(229, 9, 20, 0.3)',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center'
-            }}
-          >
-            {getStageIcon()}
-          </div>
-        </div>
-
-        {/* Title */}
-        <h2
-          style={{
-            margin: '0 0 0.4rem 0',
-            fontSize: '1.35rem',
-            fontWeight: 800,
-            color: '#ffffff',
-            letterSpacing: '-0.02em',
-            fontFamily: "'Outfit', 'Inter', sans-serif"
-          }}
-        >
-          Connecting to Stream
-        </h2>
-
-        {/* Friendly Stream Target Pill */}
-        {displayHost && (
-          <div
-            style={{
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: '6px',
-              background: 'rgba(255, 255, 255, 0.06)',
-              border: '1px solid rgba(255, 255, 255, 0.1)',
-              borderRadius: '20px',
-              padding: '4px 12px',
-              fontSize: '0.78rem',
-              color: 'rgba(255, 255, 255, 0.75)',
-              fontFamily: "'Share Tech Mono', Courier, monospace",
-              marginBottom: '1.25rem',
-              maxWidth: '92%',
+              fontSize: 'clamp(1.1rem, 2.2vw, 1.45rem)',
+              fontWeight: 700,
+              color: 'rgba(255, 255, 255, 0.95)',
+              letterSpacing: '-0.015em',
+              fontFamily: "'Outfit', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
+              marginBottom: '0.65rem',
+              maxWidth: '90%',
               overflow: 'hidden',
               textOverflow: 'ellipsis',
-              whiteSpace: 'nowrap'
+              whiteSpace: 'nowrap',
+              animation: 'nameFadePulse 2.8s ease-in-out infinite'
             }}
+            title={displayName}
           >
-            <span
-              style={{
-                width: '6px',
-                height: '6px',
-                borderRadius: '50%',
-                background: '#46d369',
-                boxShadow: '0 0 6px #46d369'
-              }}
-            />
-            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{displayHost}</span>
+            {displayName}
           </div>
         )}
 
         {/* Step Status Text */}
         <div
           style={{
-            fontSize: '0.92rem',
-            color: 'rgba(255, 255, 255, 0.92)',
-            fontWeight: 600,
-            minHeight: '24px',
-            marginBottom: '1rem',
-            fontFamily: "'Inter', sans-serif",
-            display: 'flex',
-            alignItems: 'center',
-            gap: '8px'
+            fontSize: '0.88rem',
+            color: 'rgba(255, 255, 255, 0.45)',
+            fontFamily: "'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
+            letterSpacing: '0.02em',
+            fontWeight: 500,
+            minHeight: '22px'
           }}
         >
-          <Loader2 size={14} className="animate-spin text-red-500" style={{ animation: 'valorSpinSlow 1.5s linear infinite' }} />
-          <span>{step}{dots}</span>
+          {step}{dots}
         </div>
+      </div>
 
-        {/* Glowing Progress Bar */}
+      {/* Cancel Button */}
+      {onCancel && (
         <div
           style={{
-            width: '100%',
-            height: '4px',
-            background: 'rgba(255, 255, 255, 0.08)',
-            borderRadius: '4px',
-            overflow: 'hidden',
-            position: 'relative',
-            marginBottom: '1.5rem'
+            position: 'absolute',
+            bottom: '2.8rem',
+            left: 0,
+            right: 0,
+            display: 'flex',
+            justifyContent: 'center'
           }}
         >
-          <div
-            style={{
-              position: 'absolute',
-              top: 0,
-              left: 0,
-              width: '50%',
-              height: '100%',
-              background: 'linear-gradient(90deg, transparent, #e50914 40%, #ff4b55 70%, #00ffcc 100%)',
-              boxShadow: '0 0 10px #e50914',
-              borderRadius: '4px',
-              animation: 'valorShimmer 1.8s cubic-bezier(0.4, 0, 0.2, 1) infinite'
-            }}
-          />
-        </div>
-
-        {/* Cancel Button */}
-        {onCancel && (
           <button
             onClick={onCancel}
             style={{
               background: 'transparent',
-              border: '1px solid rgba(255, 255, 255, 0.15)',
-              borderRadius: '8px',
-              padding: '6px 18px',
+              border: '1px solid rgba(255, 255, 255, 0.16)',
+              borderRadius: '24px',
+              padding: '7px 22px',
               color: 'rgba(255, 255, 255, 0.55)',
-              fontSize: '0.8rem',
+              fontSize: '0.82rem',
               fontWeight: 600,
               cursor: 'pointer',
               display: 'inline-flex',
               alignItems: 'center',
               gap: '6px',
-              transition: 'all 0.2s ease'
+              fontFamily: "'Inter', -apple-system, BlinkMacSystemFont, sans-serif",
+              letterSpacing: '0.03em',
+              transition: 'all 0.2s ease',
+              outline: 'none'
             }}
             onMouseEnter={e => {
-              e.currentTarget.style.color = '#fff';
-              e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.35)';
-              e.currentTarget.style.background = 'rgba(255, 255, 255, 0.05)';
+              e.currentTarget.style.color = '#ffffff';
+              e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.45)';
+              e.currentTarget.style.background = 'rgba(255, 255, 255, 0.08)';
             }}
             onMouseLeave={e => {
               e.currentTarget.style.color = 'rgba(255, 255, 255, 0.55)';
-              e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.15)';
+              e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.16)';
               e.currentTarget.style.background = 'transparent';
             }}
           >
-            <X size={13} />
+            <X size={14} />
             Cancel
           </button>
-        )}
-      </div>
+        </div>
+      )}
     </div>
   );
 };

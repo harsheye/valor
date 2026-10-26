@@ -1770,11 +1770,17 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
     initialUsername: string;
     errorMessage: string | null;
     isLoading: boolean;
-  }>({
-    isOpen: false,
-    initialUsername: '',
-    errorMessage: null,
-    isLoading: false
+  }>(() => {
+    const rawUrl = video.url || '';
+    const creds = (video as any).auth || getSavedCredentials(rawUrl);
+    const requiresAuth = (video as any).authRequired || 
+                         (video.probingError && (video.probingError.includes('401') || video.probingError.includes('403') || video.probingError.includes('Access is denied')));
+    return {
+      isOpen: Boolean(requiresAuth && !creds),
+      initialUsername: creds?.username || '',
+      errorMessage: requiresAuth ? 'Authentication credentials required to access this media.' : null,
+      isLoading: false
+    };
   });
 
   const getProxiedVideoUrl = useCallback((rawUrl: string): string => {
@@ -1793,8 +1799,8 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
     return proxyUrl;
   }, [video, isSidecarActive]);
 
-  const runRemoteProbe = useCallback(async (targetUrl: string, authOverride?: { username: string; password?: string }) => {
-    if (!targetUrl) return;
+  const runRemoteProbe = useCallback(async (targetUrl: string, authOverride?: { username: string; password?: string }): Promise<boolean> => {
+    if (!targetUrl) return false;
     try {
       const apiBase = sidecarService.getRemoteApiBase();
       const creds = authOverride || (video as any).auth || getSavedCredentials(targetUrl);
@@ -1807,14 +1813,16 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
         })
       });
 
-      if (res.status === 401) {
+      if (res.status === 401 || res.status === 403) {
         setAuthModalState({
           isOpen: true,
           initialUsername: creds?.username || '',
-          errorMessage: 'Authentication required. Please enter username and password.',
+          errorMessage: res.status === 403
+            ? 'Access forbidden (403). Authentication credentials required to access this media.'
+            : 'Authentication required. Please enter username and password.',
           isLoading: false
         });
-        return;
+        return false;
       }
 
       if (res.ok) {
@@ -1846,9 +1854,12 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
           streams: allStreams,
           duration: probeData.duration ? String(probeData.duration) : video.duration
         });
+        return true;
       }
+      return false;
     } catch (err) {
       console.warn('[RemoteServerPlayer] Probe error:', err);
+      return false;
     }
   }, [video, duration, onUpdateVideo]);
 
@@ -3002,14 +3013,17 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
       setPlaybackError(message);
     };
 
-    // If remote, verify if 401 basic authentication or 404 is returned before displaying error overlay
+    // If remote, verify if 401 or 403 authentication, or 404 is returned before displaying error overlay
     if (video.isRemote) {
-      fetch(getProxiedVideoUrl(video.url), { method: 'HEAD' }).then(async res => {
-        if (res.status === 401) {
+      fetch(getProxiedVideoUrl(video.url), { headers: { Range: 'bytes=0-15' } }).then(async res => {
+        if (res.status === 401 || res.status === 403) {
+          setPlaybackError(null);
           setAuthModalState({
             isOpen: true,
-            initialUsername: '',
-            errorMessage: 'Authentication required. Please enter username and password to access this media.',
+            initialUsername: (video as any).auth?.username || '',
+            errorMessage: res.status === 403
+              ? 'Access forbidden (HTTP 403). Authentication credentials required to access this media.'
+              : 'Authentication required. Please enter username and password to access this media.',
             isLoading: false
           });
           return;
@@ -3018,13 +3032,19 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
           triggerError('The remote media was not found on the server (HTTP 404 Not Found). The file may have been moved, renamed, or the URL path is incorrect.');
           return;
         }
-        if (res.status === 403) {
-          triggerError('Access forbidden (HTTP 403 Forbidden). The storage server rejected the request.');
-          return;
-        }
         if (res.status >= 500) {
           try {
             const errRes = await fetch(getProxiedVideoUrl(video.url), { headers: { Range: 'bytes=0-15' } });
+            if (errRes.status === 401 || errRes.status === 403) {
+              setPlaybackError(null);
+              setAuthModalState({
+                isOpen: true,
+                initialUsername: (video as any).auth?.username || '',
+                errorMessage: 'Authentication required to access this media.',
+                isLoading: false
+              });
+              return;
+            }
             const json = await errRes.json().catch(() => null);
             if (json?.message?.includes('404') || json?.error === 'NOT_FOUND') {
               triggerError('The remote media was not found on the server (HTTP 404 Not Found). Please verify the file URL.');
@@ -8660,7 +8680,16 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
               probingError: undefined
             });
 
-            await runRemoteProbe(video.url, creds);
+            const probeSuccess = await runRemoteProbe(video.url, creds);
+            if (probeSuccess === false) {
+              setAuthModalState(prev => ({
+                ...prev,
+                isOpen: true,
+                isLoading: false,
+                errorMessage: 'Authentication failed. Please verify username and password.'
+              }));
+              return;
+            }
 
             // 1. Invalidate stale unauthenticated session on backend & player
             sessionIdRef.current = Math.random().toString(36).substring(2, 10);
