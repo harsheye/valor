@@ -1856,9 +1856,23 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
         });
         return true;
       }
+
+      const errJson = await res.json().catch(() => null);
+      setAuthModalState(prev => ({
+        ...prev,
+        isOpen: true,
+        isLoading: false,
+        errorMessage: errJson?.error || `Remote server responded with error (${res.status}).`
+      }));
       return false;
-    } catch (err) {
+    } catch (err: any) {
       console.warn('[RemoteServerPlayer] Probe error:', err);
+      setAuthModalState(prev => ({
+        ...prev,
+        isOpen: true,
+        isLoading: false,
+        errorMessage: err?.message || 'Connection to remote server failed.'
+      }));
       return false;
     }
   }, [video, duration, onUpdateVideo]);
@@ -8682,12 +8696,6 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
 
             const probeSuccess = await runRemoteProbe(video.url, creds);
             if (probeSuccess === false) {
-              setAuthModalState(prev => ({
-                ...prev,
-                isOpen: true,
-                isLoading: false,
-                errorMessage: 'Authentication failed. Please verify username and password.'
-              }));
               return;
             }
 

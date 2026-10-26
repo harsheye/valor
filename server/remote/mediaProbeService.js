@@ -22,18 +22,18 @@ export class MediaProbeService {
     };
 
     let targetUrlStr = validated.toString();
-    if (options.auth && options.auth.username && options.auth.password) {
-      const creds = Buffer.from(`${options.auth.username}:${options.auth.password}`).toString('base64');
+    const effectiveUser = options.auth?.username || (validated.username ? decodeURIComponent(validated.username) : '');
+    const effectivePass = options.auth?.password !== undefined ? options.auth.password : (validated.password ? decodeURIComponent(validated.password) : '');
+
+    if (effectiveUser) {
+      const creds = Buffer.from(`${effectiveUser}:${effectivePass}`).toString('base64');
       headers['Authorization'] = `Basic ${creds}`;
       try {
         const u = new URL(targetUrlStr);
-        u.username = encodeURIComponent(options.auth.username);
-        u.password = encodeURIComponent(options.auth.password);
+        u.username = '';
+        u.password = '';
         targetUrlStr = u.toString();
       } catch {}
-    } else if (validated.username || validated.password) {
-      const creds = Buffer.from(`${decodeURIComponent(validated.username)}:${decodeURIComponent(validated.password)}`).toString('base64');
-      headers['Authorization'] = `Basic ${creds}`;
     }
 
     const headerLines = Object.entries(headers)

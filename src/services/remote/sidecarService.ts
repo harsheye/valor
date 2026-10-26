@@ -134,7 +134,7 @@ class SidecarService {
     }
   }
 
-  public startPolling(intervalMs: number = 10000) {
+  public startPolling(intervalMs: number = 30000) {
     this.stopPolling();
     this.pollTimer = setInterval(() => {
       this.checkHealth();
