@@ -3232,6 +3232,10 @@ function App() {
                   videos={videos}
                   onPlayVideo={handlePlayVideo}
                   isInstantlyPlayable={isInstantlyPlayable}
+                  onNavigateToSelectMedia={() => setActiveTab('home')}
+                  onRemoveVideo={handleRemoveVideo}
+                  addToast={addToast}
+                  setVideos={setVideos}
                 />
               )}
 

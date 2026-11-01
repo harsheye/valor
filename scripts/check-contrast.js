@@ -6,6 +6,8 @@
  * - text-1, text-2, text-3, accent, status colours on bg and every surface
  * - on-accent on accent-fill
  * - control-border on bg and surface-1
+ * - tile glyph on tile (>= 3:1 across hues)
+ * - chip text on chip over white image (>= 4.5:1)
  */
 
 import fs from 'fs';
@@ -20,6 +22,15 @@ function hexToRgb(hex) {
   if (c.length === 3) c = c.split('').map(x => x + x).join('');
   const num = parseInt(c, 16);
   return [(num >> 16) & 255, (num >> 8) & 255, num & 255];
+}
+
+function hslToRgb(h, s, l) {
+  s /= 100;
+  l /= 100;
+  const k = n => (n + h / 30) % 12;
+  const a = s * Math.min(l, 1 - l);
+  const f = n => l - a * Math.max(-1, Math.min(k(n) - 3, Math.min(9 - k(n), 1)));
+  return [Math.round(f(0) * 255), Math.round(f(8) * 255), Math.round(f(4) * 255)];
 }
 
 function luminance(r, g, b) {
@@ -40,28 +51,34 @@ function contrastRatio(hex1, hex2) {
   return (lighter + 0.05) / (darker + 0.05);
 }
 
+function contrastRatioRgb(rgb1, rgb2) {
+  const l1 = luminance(rgb1[0], rgb1[1], rgb1[2]);
+  const l2 = luminance(rgb2[0], rgb2[1], rgb2[2]);
+  const lighter = Math.max(l1, l2);
+  const darker = Math.min(l1, l2);
+  return (lighter + 0.05) / (darker + 0.05);
+}
+
 // Parse themes directly from _semantic.css to ensure single source of truth
 function parseThemesFromCss() {
   const cssPath = path.resolve(__dirname, '../src/styles/01-tokens/_semantic.css');
   const content = fs.readFileSync(cssPath, 'utf8');
 
-  // Match each theme block: [data-theme="..."] { ... }
   const themeRegex = /\[data-theme=["']([^"']+)["']\][^{]*\{([^}]+)\}/g;
   const themes = {};
   let match;
 
   while ((match = themeRegex.exec(content)) !== null) {
     const themeName = match[1];
-    // skip legacy aliases if already captured
     if (['dark', 'dim', 'cyberpunk', 'abyss', 'aqua', 'teal', 'light', 'garden', 'valentine', 'black', 'black-and-white', 'oled'].includes(themeName)) {
       continue;
     }
     const block = match[2];
-    const tokenRegex = /--([a-z0-9-]+)\s*:\s*(#[0-9a-fA-F]{3,8})/g;
+    const tokenRegex = /--([a-z0-9-]+)\s*:\s*([^;]+);/g;
     const tokens = {};
     let propMatch;
     while ((propMatch = tokenRegex.exec(block)) !== null) {
-      tokens[propMatch[1]] = propMatch[2];
+      tokens[propMatch[1]] = propMatch[2].trim();
     }
     if (tokens['bg'] && tokens['text-1']) {
       themes[themeName] = tokens;
@@ -145,6 +162,39 @@ function runAudit() {
           console.error('  [' + name + '] FAIL: ' + item.key + ' (' + hex + ') on ' + surface.name + ' (' + surface.val + ') = ' + cr.toFixed(2) + ':1 (target >= ' + item.min + ':1)');
           themeFails++;
         }
+      }
+    }
+
+    // 4. Tile glyph contrast on flat tile across hues (Target >= 3.0:1)
+    const tileL = parseFloat(t['tile-l'] || '22');
+    const glyphL = parseFloat(t['tile-glyph-l'] || '74');
+    const sampleHues = [0, 45, 90, 135, 180, 225, 270, 315];
+
+    for (const h of sampleHues) {
+      totalChecks++;
+      const tileRgb = hslToRgb(h, 22, tileL);
+      const glyphRgb = hslToRgb(h, 38, glyphL);
+      const tileCr = contrastRatioRgb(glyphRgb, tileRgb);
+      if (tileCr < 3.0) {
+        console.error('  [' + name + '] FAIL: tile glyph on tile at hue ' + h + ' = ' + tileCr.toFixed(2) + ':1 (target >= 3.0:1)');
+        themeFails++;
+      }
+    }
+
+    // 5. Chip text (--text-1) on chip (--surface-1 at 90% opacity over white image, Target >= 4.5:1)
+    if (t['surface-1'] && t['text-1']) {
+      totalChecks++;
+      const [s1R, s1G, s1B] = hexToRgb(t['surface-1']);
+      const isLightTheme = name === 'soft-paper';
+      const bgImageColor = isLightTheme ? 0 : 255;
+      const chipR = Math.round(0.9 * s1R + 0.1 * bgImageColor);
+      const chipG = Math.round(0.9 * s1G + 0.1 * bgImageColor);
+      const chipB = Math.round(0.9 * s1B + 0.1 * bgImageColor);
+      const textRgb = hexToRgb(t['text-1']);
+      const chipCr = contrastRatioRgb(textRgb, [chipR, chipG, chipB]);
+      if (chipCr < 4.5) {
+        console.error('  [' + name + '] FAIL: chip text on chip over image = ' + chipCr.toFixed(2) + ':1 (target >= 4.5:1)');
+        themeFails++;
       }
     }
 

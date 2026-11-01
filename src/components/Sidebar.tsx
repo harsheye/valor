@@ -1,4 +1,5 @@
 import { classifyVideoTitle } from '../utils/libraryClassifier';
+import { smartTitleCase } from '../utils/libraryViewModel';
 import React, { useState, useEffect } from 'react';
 import { Home, History, Play, Settings, Film, X, Activity, Zap } from 'lucide-react';
 import type { VideoItem } from '../types/media';
@@ -112,7 +113,17 @@ export const Sidebar: React.FC<SidebarProps> = ({
         ) : (
           <div className="sidebar-history-list">
             {videos.slice(0, 3).map((video) => {
-              const cleaned = classifyVideoTitle(video.title).displayTitle;
+              const info = classifyVideoTitle(video.title);
+              let cleaned = info.displayTitle;
+              if (info.type === 'series' && info.season !== undefined && info.episode !== undefined) {
+                const sTitle = smartTitleCase(info.seriesTitle || 'Unknown Series').replace(/\s*\(\d{4}\)$/, '').trim();
+                const sStr = String(info.season).padStart(2, '0');
+                const eStr = String(info.episode).padStart(2, '0');
+                cleaned = `${sTitle} S${sStr}E${eStr}`;
+              } else {
+                const base = smartTitleCase(info.cleanTitle || video.title);
+                cleaned = info.year ? `${base} (${info.year})` : base;
+              }
               return (
                 <div 
                   key={`sidebar-${video.id}`} 
