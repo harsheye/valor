@@ -32,6 +32,9 @@ const frontendOnly = args.includes('--frontend-only');
 const autoShutdown = args.includes('--auto-shutdown');
 const shouldOpen = args.includes('--open');
 const isProd = process.env.NODE_ENV === 'production' || args.includes('--prod');
+const disableOnline = args.includes('--disable-online') || args.includes('--no-online') || args.includes('--offline') || process.env.DISABLE_ONLINE === 'true' || process.env.VITE_DISABLE_ONLINE === 'true';
+const disableEngine = args.includes('--disable-engine') || args.includes('--no-engine') || process.env.DISABLE_ENGINE === 'true' || process.env.VITE_DISABLE_ENGINE === 'true';
+const disableApp = args.includes('--disable-app') || args.includes('--no-app') || args.includes('--maintenance') || process.env.DISABLE_APP === 'true' || process.env.VITE_DISABLE_APP === 'true';
 const hostArg = args.find(a => a.startsWith('--host='))?.split('=')[1];
 const HOST = process.env.HOST || hostArg || '127.0.0.1';
 const filePath = args.find(arg => !arg.startsWith('--'));
@@ -720,13 +723,13 @@ const backendServer = http.createServer(async (req, res) => {
         if (fs.existsSync(configPath)) {
           data = JSON.parse(fs.readFileSync(configPath, 'utf8'));
         }
-        if (process.env.VALOR_DISABLE_APP === 'true') {
+        if (process.env.VALOR_DISABLE_APP === 'true' || disableApp) {
           if (data.app) data.app.enabled = false;
         }
-        if (process.env.VALOR_DISABLE_ONLINE === 'true') {
+        if (process.env.VALOR_DISABLE_ONLINE === 'true' || disableOnline) {
           if (data.onlineStream) data.onlineStream.enabled = false;
         }
-        if (process.env.VALOR_DISABLE_ENGINE === 'true') {
+        if (process.env.VALOR_DISABLE_ENGINE === 'true' || disableEngine) {
           if (data.localEngine) data.localEngine.enabled = false;
         }
         res.setHeader('Content-Type', 'application/json');

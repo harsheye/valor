@@ -26,20 +26,7 @@ class FeatureFlagService {
     // 1. Start with config file defaults
     this.features = JSON.parse(JSON.stringify(defaultFeatures));
 
-    // 2. Check build-time environment variables
-    if (typeof import.meta !== 'undefined' && import.meta.env) {
-      if (import.meta.env.VITE_DISABLE_APP === 'true') {
-        this.features.app.enabled = false;
-      }
-      if (import.meta.env.VITE_DISABLE_ONLINE === 'true') {
-        this.features.onlineStream.enabled = false;
-      }
-      if (import.meta.env.VITE_DISABLE_ENGINE === 'true') {
-        this.features.localEngine.enabled = false;
-      }
-    }
-
-    // 3. Check client localStorage overrides if present
+    // 2. Check client localStorage overrides if present (developer / testing overrides)
     if (typeof window !== 'undefined' && window.localStorage) {
       try {
         const stored = localStorage.getItem(STORAGE_KEY);
@@ -51,6 +38,19 @@ class FeatureFlagService {
           };
         }
       } catch {}
+    }
+
+    // 3. Build-time environment variables (takes precedence over localStorage)
+    if (typeof import.meta !== 'undefined' && import.meta.env) {
+      if (import.meta.env.VITE_DISABLE_APP === 'true') {
+        this.features.app.enabled = false;
+      }
+      if (import.meta.env.VITE_DISABLE_ONLINE === 'true') {
+        this.features.onlineStream.enabled = false;
+      }
+      if (import.meta.env.VITE_DISABLE_ENGINE === 'true') {
+        this.features.localEngine.enabled = false;
+      }
     }
 
     // 4. Check URL query parameters (highest priority for testing & manual links)

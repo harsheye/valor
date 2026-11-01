@@ -6,7 +6,12 @@
   "scripts": {
     "dev": "vite",
     "start": "node start-app.js",
-    "build": "tsc -b && vite build",
+    "build": "node scripts/build.mjs",
+    "build:raw": "tsc -b && vite build",
+    "build:no-online": "node scripts/build.mjs --disable-online",
+    "build:no-engine": "node scripts/build.mjs --disable-engine",
+    "build:no-app": "node scripts/build.mjs --disable-app",
+    "build:offline": "node scripts/build.mjs --disable-online",
     "lint": "eslint .",
     "preview": "vite preview",
     "check:contrast": "node scripts/check-contrast.js",

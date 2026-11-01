@@ -69,6 +69,28 @@ npm run build
 ```
 This runs TypeScript checks (`tsc -b`), bundles assets via Vite with vendor chunk splitting (`vendor-react`, `vendor-hls`, `vendor-icons`, `vendor-radix`), strips debug statements, and generates minified assets in `dist/`.
 
+### Build with Service Control
+You can disable specific services directly when invoking the build command:
+```bash
+# Pass flags directly to npm run build:
+npm run build -- --disable-online     # Build with Online Stream disabled
+npm run build -- --disable-engine     # Build with Local Companion Engine disabled
+npm run build -- --disable-app        # Build with Entire Application in Maintenance mode
+npm run build -- --disable=online,engine # Disable multiple services simultaneously
+
+# Or use dedicated shortcut npm scripts:
+npm run build:no-online   # Disables Online Stream in the compiled bundle
+npm run build:no-engine   # Disables Local Engine in the compiled bundle
+npm run build:no-app      # Compiles entire app into Maintenance mode
+npm run build:offline     # Offline mode (Local files only, Online Stream disabled)
+
+# Or via environment variables:
+DISABLE_ONLINE=true npm run build
+DISABLE_ENGINE=true npm run build
+DISABLE_APP=true npm run build
+```
+When a service is disabled during build, the compiled distribution in `dist/` is permanently locked to render clean Under Construction views for those modules.
+
 ### Start the Production Server
 ```bash
 npm start
