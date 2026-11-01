@@ -115,7 +115,7 @@ export const PauseDetailsOverlay: React.FC<PauseDetailsOverlayProps> = ({
         {/* Real Platform Header Badge */}
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '2px' }}>
           <span style={{ 
-            background: mediaDetails.platformBg || 'var(--accent-color, #e50914)', 
+            background: mediaDetails.platformBg || 'var(--accent)', 
             color: mediaDetails.platformTextColor || '#ffffff', 
             fontSize: '0.68rem', 
             fontWeight: 900, 

@@ -54,7 +54,7 @@ export const PlayerTopBar: React.FC<PlayerTopBarProps> = ({
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'space-between',
-        background: 'var(--player-overlay-gradient-top, linear-gradient(to bottom, rgba(0,0,0,0.85) 0%, rgba(0,0,0,0.4) 60%, transparent 100%))',
+        background: 'var(--player-overlay-gradient-top, linear-gradient(to bottom, var(--scrim) 0%, transparent 100%))',
         zIndex: 100,
         pointerEvents: 'auto',
         userSelect: 'none'
@@ -81,7 +81,7 @@ export const PlayerTopBar: React.FC<PlayerTopBarProps> = ({
           }}
           onMouseEnter={e => {
             e.currentTarget.style.background = 'var(--card-hover-bg, rgba(255, 255, 255, 0.18))';
-            e.currentTarget.style.borderColor = 'var(--accent-color, #e50914)';
+            e.currentTarget.style.borderColor = 'var(--accent)';
           }}
           onMouseLeave={e => {
             e.currentTarget.style.background = 'rgba(255, 255, 255, 0.08)';
@@ -139,7 +139,7 @@ export const PlayerTopBar: React.FC<PlayerTopBarProps> = ({
               transition: 'all 0.15s ease'
             }}
             onMouseEnter={e => {
-              e.currentTarget.style.borderColor = 'var(--accent-color, #e50914)';
+              e.currentTarget.style.borderColor = 'var(--accent)';
               e.currentTarget.style.color = '#ffffff';
             }}
             onMouseLeave={e => {
@@ -148,7 +148,7 @@ export const PlayerTopBar: React.FC<PlayerTopBarProps> = ({
             }}
             title={currentMode === 'simple' ? 'Switch to Server Player (AC3/DTS audio & advanced subs)' : 'Switch to Fast Simple HTML5'}
           >
-            {currentMode === 'simple' ? <Tv size={14} color="var(--accent-color, #e50914)" /> : <Zap size={14} color="#06b6d4" />}
+            {currentMode === 'simple' ? <Tv size={14} color="var(--accent)" /> : <Zap size={14} color="#06b6d4" />}
             <span>{currentMode === 'simple' ? 'Switch to Movies/TV Engine' : 'Simple Player'}</span>
           </button>
         )}
@@ -160,7 +160,7 @@ export const PlayerTopBar: React.FC<PlayerTopBarProps> = ({
             style={{
               background: 'transparent',
               border: 'none',
-              color: isLocked ? 'var(--accent-color, #e50914)' : 'rgba(255, 255, 255, 0.7)',
+              color: isLocked ? 'var(--accent)' : 'rgba(255, 255, 255, 0.7)',
               cursor: 'pointer',
               padding: '8px',
               borderRadius: '8px'
@@ -240,7 +240,7 @@ export const PlayerTopBar: React.FC<PlayerTopBarProps> = ({
             style={{
               background: 'transparent',
               border: 'none',
-              color: showConsole ? 'var(--accent-color, #e50914)' : 'rgba(255, 255, 255, 0.7)',
+              color: showConsole ? 'var(--accent)' : 'rgba(255, 255, 255, 0.7)',
               cursor: 'pointer',
               padding: '8px',
               borderRadius: '8px'

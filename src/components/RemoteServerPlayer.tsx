@@ -836,8 +836,8 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
       const seriesInfo = classifyVideoTitle(video.title);
       const isTV = seriesInfo.type === 'series';
       const resolvedTmdbId = video.tmdbId || tmdbIdRef.current;
-      if (!resolvedTmdbId) {
-        logger.player('[Bookmark Sync] Skipping sync: tmdbId is not resolved yet.');
+      if (!resolvedTmdbId && !video.id) {
+        logger.player('[Bookmark Sync] Skipping sync: neither tmdbId nor videoId is available.');
         return;
       }
 
@@ -847,7 +847,7 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
       });
 
       const mutation = `
-        mutation SaveBookmarks($userId: String!, $videoId: String!, $tmdbId: Int!, $season: Int, $episode: Int, $bookmarks: [BookmarkInput!]!) {
+        mutation SaveBookmarks($userId: String!, $videoId: String!, $tmdbId: Int, $season: Int, $episode: Int, $bookmarks: [BookmarkInput!]!) {
           saveBookmarks(userId: $userId, videoId: $videoId, tmdbId: $tmdbId, season: $season, episode: $episode, bookmarks: $bookmarks) {
             success
             count
@@ -883,7 +883,7 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
           variables: { 
             userId: activeUserId, 
             videoId: video.id, 
-            tmdbId: resolvedTmdbId,
+            tmdbId: resolvedTmdbId || null,
             season: isTV ? (seriesInfo.season || 1) : null,
             episode: isTV ? (seriesInfo.episode || 1) : null,
             bookmarks: serializedBookmarks 
@@ -1397,8 +1397,8 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
         }
       }
 
-      if (!resolvedTmdbId) {
-        logger.player('[Bookmarks Sync] Could not resolve TMDB ID, skipping global bookmarks fetch.');
+      if (!resolvedTmdbId && !video.id) {
+        logger.player('[Bookmarks Sync] Could not resolve TMDB ID or video ID, skipping global bookmarks fetch.');
         return;
       }
 
@@ -1406,11 +1406,11 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
       let tidbBms: any[] = [];
       hadTidbDataRef.current = false;
 
-      // 1. Fetch from our SQLite server using tmdbId
+      // 1. Fetch from our server using tmdbId or videoId
       try {
         const queryStr = `
-          query GetVideoBookmarks($tmdbId: Int!, $season: Int, $episode: Int) {
-            videoBookmarks(tmdbId: $tmdbId, season: $season, episode: $episode) {
+          query GetVideoBookmarks($tmdbId: Int, $season: Int, $episode: Int, $videoId: String) {
+            videoBookmarks(tmdbId: $tmdbId, season: $season, episode: $episode, videoId: $videoId) {
               id
               time
               endTime
@@ -1443,9 +1443,10 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
           body: JSON.stringify({
             query: queryStr,
             variables: { 
-              tmdbId: resolvedTmdbId,
+              tmdbId: resolvedTmdbId || null,
               season: isTV ? season : null,
-              episode: isTV ? episode : null
+              episode: isTV ? episode : null,
+              videoId: video.id || null
             }
           })
         });
@@ -2519,7 +2520,7 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
         showPauseMetadataOverlayRef.current = true;
         setShowPauseMetadataOverlay(true);
         setShowControls(false);
-      }, 10000);
+      }, 30000);
     }
   }, [isPlaying, isBuffering]);
 
@@ -2531,7 +2532,7 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
         showPauseMetadataOverlayRef.current = true;
         setShowPauseMetadataOverlay(true);
         setShowControls(false);
-      }, 10000);
+      }, 30000);
     } else {
       if (pauseOverlayTimerRef.current) {
         clearTimeout(pauseOverlayTimerRef.current);
@@ -5662,11 +5663,13 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
                 )}
               </div>
 
-              <div className="bottom-controls-center-group">
-                <span className="bottom-media-title-netflix" title={video.title || video.fileName || ''}>
-                  {getRegexedTitleWithYear(video.title || video.fileName || '')}
-                </span>
-              </div>
+              {!hideVideoName && (
+                <div className="bottom-controls-center-group">
+                  <span className="bottom-media-title-netflix" title={video.title || video.fileName || ''}>
+                    {getRegexedTitleWithYear(video.title || video.fileName || '')}
+                  </span>
+                </div>
+              )}
 
               <div className="bottom-controls-right-group">
                 {markingStartTime !== null && (
@@ -5691,34 +5694,11 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
                       }
                     }}
                     className="marking-hud-button-controls marking-hud-button-desktop"
-                    style={{
-                      background: 'var(--player-accent, #e50914)',
-                      color: 'var(--text-primary, #ffffff)',
-                      border: 'none',
-                      borderRadius: '20px',
-                      padding: '6px 14px',
-                      fontSize: '0.85rem',
-                      fontWeight: 'bold',
-                      cursor: 'pointer',
-                      boxShadow: '0 2px 8px rgba(229, 9, 20, 0.4)',
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '8px',
-                      fontFamily: 'Outfit, sans-serif',
-                      animation: 'pulseMarking 1.5s infinite alternate',
-                      height: '36px',
-                      marginRight: '15px'
-                    }}
+                    title={`Recording (${formatTime(markingStartTime)} - ${formatTime(currentTime)}) - Click to finish mark`}
+                    aria-label="Recording scene - click to finish mark"
                   >
-                    <span style={{
-                      display: 'inline-block',
-                      width: '6px',
-                      height: '6px',
-                      borderRadius: '50%',
-                      background: '#fff',
-                      animation: 'flashDot 1s infinite'
-                    }} />
-                    <span>Marking... tap to end ({formatTime(markingStartTime)} - {formatTime(currentTime)})</span>
+                    <span className="marking-rec-dot" />
+                    <span className="marking-rec-text">Recording</span>
                   </button>
                 )}
                 
@@ -5909,34 +5889,107 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
         </div>
       )}
 
-      {/* Centered UI Settings Modal */}
-      {showSettingsPanel && (
-        <div 
-          className="settings-modal-overlay animate-overlay-fade-in" 
-          onClick={() => {
-            setShowSettingsPanel(false);
-            setIsSettingsExpanded(false);
+      {/* Edge Slide-In Button (visible when settings panel is closed) */}
+      {!hideUIOverlays && !showSettingsPanel && (
+        <button
+          className="ui-settings-edge-slide-btn"
+          onClick={(e) => {
+            e.stopPropagation();
+            e.preventDefault();
+            setShowSettingsPanel(true);
           }}
+          title="Slide in UI Settings (Del)"
+          aria-label="Slide in UI Settings"
+          style={{
+            position: 'absolute',
+            right: 0,
+            top: '50%',
+            transform: 'translateY(-50%)',
+            zIndex: 120,
+            width: '26px',
+            height: '64px',
+            background: 'var(--dropdown-bg, rgba(18, 18, 18, 0.92))',
+            backdropFilter: 'blur(8px)',
+            WebkitBackdropFilter: 'blur(8px)',
+            border: '1px solid var(--dropdown-border, rgba(255, 255, 255, 0.15))',
+            borderRight: 'none',
+            borderRadius: '12px 0 0 12px',
+            padding: 0,
+            margin: 0,
+            cursor: 'pointer',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            boxShadow: '-4px 0 16px rgba(0, 0, 0, 0.45)',
+            opacity: showControls ? 0.95 : 0.35,
+            color: 'var(--text-primary, #ffffff)',
+            outline: 'none',
+            transition: 'opacity 0.2s ease, background 0.2s'
+          }}
+        >
+          <ChevronLeft size={18} />
+        </button>
+      )}
+
+      {/* UI Settings Modal Drawer (visible when open) */}
+      {!hideUIOverlays && showSettingsPanel && (
+        <div 
+          className="ui-settings-slideout-drawer" 
           style={{
             position: 'absolute',
             top: 0,
-            left: 0,
-            right: 0,
             bottom: 0,
-            background: 'none',
-            backdropFilter: 'none',
-            WebkitBackdropFilter: 'none',
+            right: 0,
             zIndex: 150,
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'flex-end',
-            paddingRight: '0'
+            pointerEvents: 'none'
           }}
         >
+          {/* The slide-out / collapse handle attached to the left edge of the modal */}
+          <button
+            className="ui-settings-modal-collapse-btn"
+            onClick={(e) => {
+              e.stopPropagation();
+              e.preventDefault();
+              setShowSettingsPanel(false);
+              setIsSettingsExpanded(false);
+            }}
+            title="Slide out / Collapse UI Settings (Del)"
+            aria-label="Collapse UI Settings"
+            style={{
+              pointerEvents: 'auto',
+              width: '26px',
+              height: '64px',
+              background: 'var(--dropdown-bg, rgba(18, 18, 18, 0.96))',
+              backdropFilter: 'blur(8px)',
+              WebkitBackdropFilter: 'blur(8px)',
+              border: '1px solid var(--dropdown-border, rgba(255, 255, 255, 0.15))',
+              borderRight: 'none',
+              borderRadius: '12px 0 0 12px',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              color: 'var(--text-primary, #ffffff)',
+              boxShadow: '-4px 0 16px rgba(0, 0, 0, 0.45)',
+              outline: 'none',
+              padding: 0,
+              zIndex: 160,
+              marginRight: '-1px'
+            }}
+          >
+            <ChevronRight size={18} />
+          </button>
+
           <div 
             className="settings-modal-card animate-slide-in-right" 
             onClick={(e) => e.stopPropagation()}
             style={{
+              position: 'relative',
+              pointerEvents: 'auto',
+              overflow: 'visible',
               background: 'var(--dropdown-bg, rgba(18, 18, 18, 0.96))',
               border: '1px solid var(--dropdown-border, rgba(255, 255, 255, 0.1))',
               borderRight: 'none',
@@ -5951,18 +6004,28 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
               transition: 'width 0.3s cubic-bezier(0.16, 1, 0.3, 1), background 0.3s'
             }}
           >
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%' }}>
               <h3 style={{ margin: 0, fontSize: '1rem', fontWeight: 600, color: 'var(--text-primary, #ffffff)' }}>UI Settings</h3>
-              <button 
-                onClick={() => {
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
                   setShowSettingsPanel(false);
                   setIsSettingsExpanded(false);
                 }}
-                style={{ background: 'none', border: 'none', color: 'var(--text-secondary, rgba(255, 255, 255, 0.6))', cursor: 'pointer', padding: '4px', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'color 0.15s ease' }}
-                onMouseEnter={(e) => e.currentTarget.style.color = 'var(--text-primary)'}
-                onMouseLeave={(e) => e.currentTarget.style.color = 'var(--text-secondary)'}
+                style={{
+                  background: 'none',
+                  border: 'none',
+                  color: 'var(--text-muted, rgba(255, 255, 255, 0.6))',
+                  cursor: 'pointer',
+                  padding: '4px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  borderRadius: '6px'
+                }}
+                title="Close UI Settings"
               >
-                <X size={18} />
+                <X size={16} />
               </button>
             </div>
             
@@ -6112,7 +6175,7 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
             position: 'absolute',
             bottom: controlsVisible ? '120px' : '45px',
             right: '1.5rem',
-            background: 'var(--player-accent, #e50914)',
+            background: 'var(--accent)',
             color: 'var(--text-primary, #ffffff)',
             border: 'none',
             borderRadius: '24px',
@@ -6341,7 +6404,7 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
           bottom: 0;
           left: 0;
           height: 3px;
-          background: var(--player-accent, #e50914);
+          background: var(--accent);
           animation: skipProgressPremium 7s linear forwards;
         }
 
@@ -6428,7 +6491,7 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
           z-index: 30;
         }
         .timeline-bookmark-dot:not(.intro-dot):not(.outro-dot):hover {
-          background-color: var(--player-accent, #e50914) !important;
+          background-color: var(--accent) !important;
         }
         .timeline-bookmark-dot.intro-dot {
           background-color: #3b82f6;
@@ -6585,7 +6648,7 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
           transform: translateX(18px);
         }
         .drawer-add-btn {
-          background: var(--player-accent, #e50914);
+          background: var(--accent);
           border: none;
           color: #ffffff;
           padding: 4px 10px;
@@ -7085,7 +7148,8 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
           left: 0;
           right: 0;
           height: calc(4px * var(--player-ui-scale, 1));
-          background: rgba(255, 255, 255, 0.2);
+          background: var(--player-scrub-bg, rgba(255, 255, 255, 0.22));
+          box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(0, 0, 0, 0.25);
           border-radius: calc(2px * var(--player-ui-scale, 1));
           z-index: 1;
         }
@@ -7093,7 +7157,7 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
           position: absolute;
           left: 0;
           height: calc(4px * var(--player-ui-scale, 1));
-          background: rgba(255, 255, 255, 0.35);
+          background: var(--player-scrub-buffered, rgba(255, 255, 255, 0.42));
           border-radius: calc(2px * var(--player-ui-scale, 1));
           z-index: 2;
           transition: width 0.15s ease;
@@ -7102,7 +7166,8 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
           position: absolute;
           left: 0;
           height: calc(4px * var(--player-ui-scale, 1));
-          background: var(--player-accent, #e50914);
+          background: var(--accent);
+          box-shadow: 0 0 8px var(--player-accent, rgba(229, 9, 20, 0.6));
           border-radius: calc(2px * var(--player-ui-scale, 1)) 0 0 calc(2px * var(--player-ui-scale, 1));
           z-index: 3;
         }
@@ -7124,12 +7189,13 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
           width: calc(22px * var(--player-ui-scale, 1));
           height: calc(22px * var(--player-ui-scale, 1));
           border-radius: 50%;
-          background: var(--player-accent, #e50914);
+          background: var(--accent);
+          border: 2px solid rgba(0, 0, 0, 0.85);
           cursor: pointer;
           transform: scale(0);
           opacity: 0;
           transition: transform 0.15s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.15s ease;
-          box-shadow: 0 0 10px rgba(229, 9, 20, 0.8);
+          box-shadow: 0 0 10px rgba(0, 0, 0, 0.8), 0 0 6px var(--player-accent, rgba(229, 9, 20, 0.8));
           z-index: 10;
         }
         .scrub-container-premium:hover .scrub-bar-premium::-webkit-slider-thumb,
@@ -7140,12 +7206,16 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
         .scrub-bar-premium::-moz-range-thumb {
           width: calc(22px * var(--player-ui-scale, 1));
           height: calc(22px * var(--player-ui-scale, 1));
-          border: none;
+          border: 2px solid rgba(0, 0, 0, 0.85);
           border-radius: 50%;
-          background: var(--player-accent, #e50914);
+          background: var(--accent);
           cursor: pointer;
           transform: scale(0);
           opacity: 0;
+          transition: transform 0.15s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.15s ease;
+          box-shadow: 0 0 10px rgba(0, 0, 0, 0.8), 0 0 6px var(--player-accent, rgba(229, 9, 20, 0.8));
+          z-index: 10;
+        }
           transition: transform 0.15s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.15s ease;
           box-shadow: 0 0 10px rgba(229, 9, 20, 0.8);
           z-index: 10;
@@ -7319,6 +7389,11 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
           pointer-events: none;
           user-select: none;
         }
+        @media (max-width: 820px) {
+          .bottom-controls-center-group, .bottom-media-title-netflix {
+            display: none !important;
+          }
+        }
 
         .control-btn-pip, .control-btn-fullscreen, .control-btn-bookmark-list {
           background: none;
@@ -7416,61 +7491,251 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
           overflow: hidden;
         }
         .popover-style-col {
-          border-left: 1px solid var(--border-subtle);
-          padding-left: 1.25rem;
-          padding-right: 0.5rem;
-          min-width: 290px;
-          box-sizing: border-box;
+          border-left: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.08));
+          padding-left: 0.85rem;
           display: flex;
           flex-direction: column;
           height: 100%;
           min-height: 0;
-          overflow-x: hidden;
-          overflow-y: auto;
+          overflow: hidden;
         }
-        .style-header-row {
+        .popover-col-header {
+          height: 32px;
+          min-height: 32px;
+          max-height: 32px;
           display: flex;
           align-items: center;
           justify-content: space-between;
-          border-bottom: 1px solid var(--border-subtle);
-          padding-bottom: 0.35rem;
-          margin-bottom: 0.25rem;
+          border-bottom: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.08));
+          padding-bottom: 6px;
+          margin-bottom: 10px;
+          flex-shrink: 0;
+          box-sizing: border-box;
         }
-        .style-header-row h4 {
-          margin: 0 !important;
-          border-bottom: none !important;
-          padding-bottom: 0 !important;
-          color: var(--text-primary) !important;
+        .popover-col-title {
+          margin: 0;
+          padding: 0;
+          font-size: 0.82rem;
+          font-weight: 700;
+          color: #ffffff;
+          letter-spacing: 0.02em;
+          line-height: 1;
         }
-        .style-reset-btn-header {
-          background: var(--surface);
-          border: 1px solid var(--border-color);
-          border-radius: 4px;
-          color: var(--text-muted);
-          font-size: 0.72rem;
-          font-weight: 600;
-          padding: 0.2rem 0.5rem;
+        .popover-header-btn-group {
+          display: flex;
+          align-items: center;
+          gap: 5px;
+        }
+        .popover-header-toggle-btn {
+          background: var(--surface-hover, rgba(255, 255, 255, 0.08));
+          color: var(--text-secondary, rgba(255, 255, 255, 0.75));
+          border: 1px solid var(--border-color, rgba(255, 255, 255, 0.12));
+          border-radius: 6px;
+          padding: 2px 7px;
+          font-size: 0.65rem;
+          font-weight: 700;
+          letter-spacing: 0.04em;
+          cursor: pointer;
+          transition: all 0.15s ease;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          height: 22px;
+          line-height: 1;
+        }
+        .popover-header-toggle-btn:hover {
+          background: var(--surface-hover, rgba(255, 255, 255, 0.15));
+          color: var(--text-primary, #ffffff);
+          border-color: var(--border-focus, rgba(255, 255, 255, 0.22));
+        }
+        .popover-header-toggle-btn.active {
+          background: var(--accent) !important;
+          border-color: var(--accent) !important;
+          color: var(--player-accent-text, #ffffff) !important;
+          font-weight: 800;
+          box-shadow: 0 2px 8px var(--accent-soft);
+        }
+        .popover-header-action-btn {
+          background: var(--surface-hover, rgba(255, 255, 255, 0.08));
+          border: 1px solid var(--border-color, rgba(255, 255, 255, 0.12));
+          border-radius: 6px;
+          color: var(--text-secondary, rgba(255, 255, 255, 0.75));
+          font-size: 0.65rem;
+          font-weight: 700;
+          padding: 2px 7px;
           cursor: pointer;
           transition: all 0.15s ease;
           text-transform: uppercase;
-          letter-spacing: 0.03em;
+          letter-spacing: 0.04em;
+          height: 22px;
+          line-height: 1;
+          display: flex;
+          align-items: center;
+          justify-content: center;
         }
-        .style-reset-btn-header:hover {
-          background: var(--card-hover-bg);
-          color: var(--text-primary);
-          border-color: var(--border-focus);
+        .popover-header-action-btn:hover {
+          background: var(--surface-hover, rgba(255, 255, 255, 0.15));
+          color: var(--text-primary, #ffffff);
+          border-color: var(--border-focus, rgba(255, 255, 255, 0.22));
         }
-        .style-customizer {
+          color: rgba(255, 255, 255, 0.75);
+          font-size: 0.65rem;
+          font-weight: 700;
+          padding: 2px 7px;
+          cursor: pointer;
+          transition: all 0.15s ease;
+          text-transform: uppercase;
+          letter-spacing: 0.04em;
+          height: 22px;
+          line-height: 1;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+        }
+        .popover-header-action-btn:hover {
+          background: rgba(255, 255, 255, 0.15);
+          color: #ffffff;
+          border-color: rgba(255, 255, 255, 0.22);
+        }
+        .style-customizer-clean {
           flex: 1 1 auto;
           min-height: 0;
           display: flex;
           flex-direction: column;
-          gap: 0.85rem;
-          margin-top: 0.5rem;
+          gap: 12px;
           overflow-y: auto;
           overflow-x: hidden;
-          padding-right: 4px;
+          padding-right: 2px;
           scrollbar-width: thin;
+          scrollbar-color: rgba(255, 255, 255, 0.2) transparent;
+        }
+        .style-customizer-clean::-webkit-scrollbar {
+          width: 4px;
+        }
+        .style-customizer-clean::-webkit-scrollbar-thumb {
+          background: rgba(255, 255, 255, 0.2);
+          border-radius: 2px;
+        }
+        .style-block {
+          display: flex;
+          flex-direction: column;
+          gap: 5px;
+          width: 100%;
+        }
+        .style-block-label {
+          font-size: 0.72rem;
+          font-weight: 700;
+          letter-spacing: 0.04em;
+          color: rgba(255, 255, 255, 0.75);
+        }
+        .size-control-group {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          background: rgba(0, 0, 0, 0.35);
+          border: 1px solid rgba(255, 255, 255, 0.12);
+          border-radius: 8px;
+          padding: 3px;
+          width: 100%;
+          box-sizing: border-box;
+        }
+        .size-step-btn {
+          background: transparent;
+          border: none;
+          color: #ffffff;
+          width: 32px;
+          height: 28px;
+          font-size: 1.1rem;
+          font-weight: 600;
+          cursor: pointer;
+          border-radius: 6px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          transition: all 0.15s ease;
+        }
+        .size-step-btn:hover {
+          background: rgba(255, 255, 255, 0.12);
+        }
+        .size-step-btn:active {
+          background: rgba(255, 255, 255, 0.2);
+        }
+        .size-step-value {
+          font-size: 0.85rem;
+          font-weight: 700;
+          color: #ffffff;
+          text-align: center;
+        }
+        .style-colors-grid {
+          display: grid;
+          grid-template-columns: 1fr 1.2fr;
+          gap: 10px;
+          align-items: flex-start;
+          width: 100%;
+        }
+        .style-color-col {
+          display: flex;
+          flex-direction: column;
+          gap: 5px;
+        }
+        .color-swatch-wrapper {
+          display: flex;
+          align-items: center;
+          min-height: 32px;
+        }
+        .style-color-circle {
+          -webkit-appearance: none;
+          appearance: none;
+          border: 2px solid rgba(255, 255, 255, 0.3);
+          width: 30px;
+          height: 30px;
+          border-radius: 50%;
+          cursor: pointer;
+          background: none;
+          padding: 0;
+          transition: transform 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
+          box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
+          box-sizing: border-box;
+        }
+        .style-color-circle:hover {
+          transform: scale(1.1);
+          border-color: #ffffff;
+          box-shadow: 0 0 10px rgba(255, 255, 255, 0.4);
+        }
+        .style-color-circle:disabled {
+          opacity: 0.25;
+          cursor: not-allowed;
+          transform: none;
+        }
+        .style-none-circle-btn {
+          width: 30px;
+          height: 30px;
+          border-radius: 50%;
+          border: 1.5px solid rgba(255, 255, 255, 0.25);
+          background: rgba(255, 255, 255, 0.06);
+          cursor: pointer;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          padding: 0;
+          transition: all 0.15s ease;
+          flex-shrink: 0;
+        }
+        .style-none-circle-btn:hover {
+          transform: scale(1.1);
+          border-color: rgba(255, 255, 255, 0.5);
+        }
+        .style-none-circle-btn.active {
+          border-color: #ef4444;
+          background: rgba(239, 68, 68, 0.2);
+        }
+        .style-color-circle::-webkit-color-swatch-wrapper {
+          padding: 0;
+        }
+        .style-color-circle::-webkit-color-swatch {
+          border: none;
+          border-radius: 50%;
+        }
           scrollbar-color: rgba(255, 255, 255, 0.2) transparent;
         }
         .style-customizer::-webkit-scrollbar {
@@ -7690,7 +7955,7 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
           box-sizing: border-box;
         }
         .transcript-search-input:focus {
-          border-color: var(--player-accent, #e50914);
+          border-color: var(--accent);
         }
         .transcript-cues-list {
           flex: 1 1 auto;
@@ -7729,12 +7994,12 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
         }
         .transcript-cue-item.active {
           background: rgba(229, 9, 20, 0.12);
-          border-left: 2px solid var(--player-accent, #e50914);
+          border-left: 2px solid var(--accent);
           color: white;
           font-weight: 500;
         }
         .cue-time {
-          color: var(--player-accent, #e50914);
+          color: var(--accent);
           font-size: 0.75rem;
           font-family: monospace;
           font-weight: 600;
@@ -7786,43 +8051,47 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
           display: flex;
           align-items: center;
           justify-content: space-between;
-          padding: 0.55rem 0.75rem;
-          border-radius: 6px;
+          padding: 0.38rem 0.6rem;
+          border-radius: 8px;
           cursor: pointer;
-          font-size: 0.95rem;
-          color: var(--text-secondary, rgba(255, 255, 255, 0.7));
+          font-size: 0.78rem;
+          color: var(--text-secondary, rgba(255, 255, 255, 0.75));
           transition: all 0.15s ease;
           border: 1px solid transparent;
         }
         .popover-option:hover {
           background: rgba(255, 255, 255, 0.06);
           color: #ffffff;
+          border-color: rgba(255, 255, 255, 0.08);
         }
         .popover-option.active {
-          background: rgba(229, 9, 20, 0.08);
-          border-color: rgba(229, 9, 20, 0.2);
+          background: rgba(229, 9, 20, 0.12);
+          border-color: rgba(229, 9, 20, 0.35);
           color: #ffffff;
-          font-weight: 500;
+          font-weight: 600;
+          box-shadow: 0 2px 8px rgba(229, 9, 20, 0.15);
         }
         .popover-option input {
           display: none;
         }
         .check-icon {
-          color: var(--player-accent, #e50914);
+          color: var(--accent);
         }
         .add-custom-btn {
-          color: var(--player-accent, #e50914) !important;
+          color: var(--accent) !important;
           font-weight: 600 !important;
-          border-top: 1px solid rgba(255, 255, 255, 0.08);
+          border: 1px dashed rgba(229, 9, 20, 0.35) !important;
+          background: rgba(229, 9, 20, 0.04) !important;
           margin-top: 0.35rem;
-          padding-top: 0.6rem !important;
-          border-radius: 0 !important;
+          padding: 0.42rem 0.6rem !important;
+          border-radius: 8px !important;
           justify-content: center !important;
+          transition: all 0.15s ease !important;
         }
         .add-custom-btn:hover {
-          background: transparent !important;
+          background: rgba(229, 9, 20, 0.12) !important;
+          border-color: var(--accent) !important;
           color: #ffffff !important;
-          text-decoration: underline;
         }
 
         /* Animations */
@@ -7946,7 +8215,7 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
           box-shadow: 0 4px 15px rgba(0,0,0,0.5);
         }
         .fly-loader-spin {
-          color: var(--player-accent, #e50914);
+          color: var(--accent);
           animation: spin 1s linear infinite;
         }
         
@@ -8486,7 +8755,7 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
           box-shadow: 0 10px 30px rgba(0, 0, 0, 0.8);
         }
         .playback-error-box .error-icon {
-          color: var(--player-accent, #e50914);
+          color: var(--accent);
         }
         .playback-error-box h3 {
           margin: 0;
@@ -8512,62 +8781,68 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
         .marking-hud-button:hover {
           background: #f40b17 !important;
         }
+        .marking-hud-button-controls {
+          background: #e50914;
+          color: #ffffff;
+          border: none;
+          border-radius: 50%;
+          width: calc(34px * var(--player-ui-scale, 1));
+          height: calc(34px * var(--player-ui-scale, 1));
+          min-width: calc(34px * var(--player-ui-scale, 1));
+          padding: 0;
+          cursor: pointer;
+          display: flex;
+          align-items: center;
+          justifyContent: center;
+          box-shadow: 0 0 10px rgba(229, 9, 20, 0.6);
+          animation: pulseMarking 1.5s infinite alternate;
+          transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+          overflow: hidden;
+          white-space: nowrap;
+          outline: none;
+          margin-right: calc(6px * var(--player-ui-scale, 1));
+          box-sizing: border-box;
+        }
+        .marking-rec-dot {
+          display: inline-block;
+          width: calc(10px * var(--player-ui-scale, 1));
+          height: calc(10px * var(--player-ui-scale, 1));
+          border-radius: 50%;
+          background: #ffffff;
+          box-shadow: 0 0 8px #ffffff;
+          animation: flashDot 1s infinite;
+          flex-shrink: 0;
+        }
+        .marking-rec-text {
+          max-width: 0;
+          opacity: 0;
+          margin-left: 0;
+          font-size: calc(0.82rem * var(--player-ui-scale, 1));
+          font-weight: 700;
+          letter-spacing: 0.02em;
+          font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+          transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+          overflow: hidden;
+          color: #ffffff;
+        }
+        .marking-hud-button-controls:hover {
+          width: auto;
+          min-width: 0;
+          border-radius: 20px;
+          padding: 0 calc(10px * var(--player-ui-scale, 1));
+          background: #f40b17;
+        }
+        .marking-hud-button-controls:hover .marking-rec-text {
+          max-width: 100px;
+          opacity: 1;
+          margin-left: calc(6px * var(--player-ui-scale, 1));
+        }
       `}</style>
 
       {/* Render EsportsLiveOverlay here so it shows in Fullscreen */}
       <EsportsLiveOverlay />
 
-      {/* Little Slide Button on player edge that slides out the Delete UI Settings Menu */}
-      {!hideUIOverlays && (
-        <button
-          className="ui-settings-edge-slide-btn"
-          onClick={(e) => {
-            e.stopPropagation();
-            e.preventDefault();
-            setShowSettingsPanel(prev => {
-              const next = !prev;
-              if (!next) setIsSettingsExpanded(false);
-              return next;
-            });
-          }}
-          title={showSettingsPanel ? "Close UI Settings (Del)" : "Slide out UI Settings (Del)"}
-          aria-label="Toggle UI Settings"
-          style={{
-            position: 'absolute',
-            right: 0,
-            top: '50%',
-            transform: 'translateY(-50%)',
-            zIndex: 85,
-            width: '26px',
-            height: '64px',
-            background: 'var(--dropdown-bg, rgba(18, 18, 18, 0.9))',
-            backdropFilter: 'blur(8px)',
-            WebkitBackdropFilter: 'blur(8px)',
-            border: '1px solid var(--dropdown-border, rgba(255, 255, 255, 0.15))',
-            borderRight: 'none',
-            borderRadius: '12px 0 0 12px',
-            padding: 0,
-            margin: 0,
-            cursor: 'pointer',
-            display: 'flex',
-            flexDirection: 'column',
-            alignItems: 'center',
-            justifyContent: 'center',
-            gap: '5px',
-            boxShadow: '-4px 0 16px rgba(0, 0, 0, 0.45)',
-            opacity: showControls || showSettingsPanel ? 0.95 : 0.35,
-            color: showSettingsPanel ? 'var(--text-primary, #ffffff)' : 'rgba(255, 255, 255, 0.85)',
-            outline: 'none'
-          }}
-        >
-          {showSettingsPanel ? (
-            <ChevronRight size={15} />
-          ) : (
-            <ChevronLeft size={15} />
-          )}
-          <Settings size={13} style={{ opacity: 0.85 }} />
-        </button>
-      )}
+
 
       {radialMenuState.visible && (() => {
         // Max 5 items: 1 mid (Pause/Play) and 4 on outer

@@ -154,8 +154,8 @@ export const RadialMenu: React.FC<RadialMenuProps> = ({ x, y, items, centerItem,
               const textPathData = describeTextArc(center, center, textRadius, startAngle, endAngle);
               
               const isHovered = hoveredId === item.id && !item.disabled;
-              const defaultColor = 'rgba(20, 20, 24, 0.95)';
-              const hoverDefaultColor = 'rgba(40, 40, 48, 0.95)';
+              const defaultColor = item.color || 'var(--surface-2)';
+              const hoverDefaultColor = 'var(--surface-3)';
               
               return (
                 <g 
@@ -184,7 +184,7 @@ export const RadialMenu: React.FC<RadialMenuProps> = ({ x, y, items, centerItem,
                   <path
                     d={pathData}
                     fill={isHovered ? hoverDefaultColor : defaultColor}
-                    stroke="rgba(255, 255, 255, 0.15)"
+                    stroke="var(--border)"
                     strokeWidth="1"
                     style={{ transition: 'fill 0.15s ease' }}
                   />
@@ -194,10 +194,10 @@ export const RadialMenu: React.FC<RadialMenuProps> = ({ x, y, items, centerItem,
                   
                   {/* Curved Text */}
                   <text 
-                    fill="white" 
+                    fill="var(--text-1)" 
                     fontSize="11px" 
                     fontWeight="600"
-                    fontFamily="Inter, system-ui, sans-serif"
+                    fontFamily="var(--font-ui)"
                     textAnchor="middle"
                     style={{
                       pointerEvents: 'none',
@@ -225,7 +225,7 @@ export const RadialMenu: React.FC<RadialMenuProps> = ({ x, y, items, centerItem,
                         justifyContent: 'center',
                         width: '100%',
                         height: '100%',
-                        color: 'white',
+                        color: 'var(--text-1)',
                         transform: isHovered ? 'scale(1.15)' : 'scale(1)',
                         transition: 'transform 0.15s cubic-bezier(0.175, 0.885, 0.32, 1.275)'
                       }}>
@@ -265,8 +265,8 @@ export const RadialMenu: React.FC<RadialMenuProps> = ({ x, y, items, centerItem,
                   cx={center} 
                   cy={center} 
                   r={innerRadius - 4} 
-                  fill={hoveredId === 'center' && !centerItem.disabled ? 'rgba(60, 60, 68, 0.95)' : 'rgba(20, 20, 24, 0.95)'}
-                  stroke="rgba(255, 255, 255, 0.2)"
+                  fill={hoveredId === 'center' && !centerItem.disabled ? 'var(--surface-3)' : 'var(--surface-2)'}
+                  stroke="var(--border)"
                   strokeWidth="2"
                   style={{ transition: 'fill 0.15s ease' }}
                 />

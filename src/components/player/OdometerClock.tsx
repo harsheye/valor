@@ -66,7 +66,7 @@ export const OdometerClock: React.FC<{ date: Date }> = ({ date }) => {
           margin: 0 1px;
         }
       `}</style>
-      <span className="odo-hours-group" style={{ color: 'var(--player-accent, #e50914)', display: 'inline-flex' }}>
+      <span className="odo-hours-group" style={{ color: 'var(--accent)', display: 'inline-flex' }}>
         <OdometerDigit val={hh[0]} />
         <OdometerDigit val={hh[1]} />
       </span>

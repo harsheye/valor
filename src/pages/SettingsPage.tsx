@@ -7,7 +7,7 @@ import { RadialMenu } from '../components/RadialMenu';
 import { LocalServicePage } from './LocalServicePage';
 import { 
   RotateCcw, UserPlus, LogOut, Trash2, Volume2, X, ChevronRight, ChevronLeft,
-  Terminal, MessageSquare, Maximize, Bookmark, FastForward, Unlock, Play, LogIn, Zap
+  Terminal, MessageSquare, Maximize, Bookmark, FastForward, Unlock, Play, LogIn, Zap, Check
 } from 'lucide-react';
 import { 
   audioOptions, subOptions, calendarStyleOptions, limitOptions, 
@@ -164,27 +164,211 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                 <div className="settings-grid-col">
 
                   <div className="settings-section">
-                    <h3>Visual Theme Engine</h3>
-                    <p className="settings-section-desc">Select your preferred color theme for the entire application.</p>
+                    <h3>Appearance & Themes</h3>
+                    <p className="settings-section-desc">Select a calibrated, accessible theme designed for low-fatigue viewing.</p>
+                    
+                    {/* Theme Cards Radio Group Gallery */}
+                    <div 
+                      role="radiogroup" 
+                      aria-label="Application theme"
+                      style={{ 
+                        display: 'grid', 
+                        gridTemplateColumns: 'repeat(auto-fill, minmax(135px, 1fr))', 
+                        gap: '0.75rem',
+                        marginTop: '0.75rem' 
+                      }}
+                    >
+                      {[
+                        { id: 'auto', name: 'Auto (System)', desc: 'Follows OS mode', bg: '#0F1217', surface: '#1B212A', text: '#E4E8EE', accent: '#8CA9EE' },
+                        { id: 'midnight-slate', name: 'Midnight Slate', desc: 'Cool, quiet dark', bg: '#0F1217', surface: '#1B212A', text: '#E4E8EE', accent: '#8CA9EE' },
+                        { id: 'ember-night', name: 'Ember Night', desc: 'Warm, low-blue', bg: '#14110F', surface: '#231E1A', text: '#EBE3D8', accent: '#E5A86D' },
+                        { id: 'forest-mist', name: 'Forest Mist', desc: 'Muted green-grey', bg: '#0E1412', surface: '#1A2420', text: '#E0E9E4', accent: '#7CC3A1' },
+                        { id: 'valor-crimson', name: 'Valor Crimson', desc: 'Softened red brand', bg: '#131114', surface: '#221E24', text: '#E9E4E9', accent: '#E57C86' },
+                        { id: 'soft-paper', name: 'Soft Paper', desc: 'Warm light theme', bg: '#ECE7DD', surface: '#FAF7F0', text: '#25221D', accent: '#3A5CB0' },
+                        { id: 'black-ops', name: 'Black-Ops', desc: 'Calibrated OLED', bg: '#050506', surface: '#14161C', text: '#E6E6E6', accent: '#E57C86' },
+                      ].map((t) => {
+                        const isSelected = (settings.theme || 'midnight-slate') === t.id;
+                        return (
+                          <div
+                            key={t.id}
+                            role="radio"
+                            aria-checked={isSelected}
+                            tabIndex={0}
+                            onClick={() => {
+                              handleDefaultLangChange('theme' as any, t.id);
+                              let resolved = t.id;
+                              if (t.id === 'auto') {
+                                const dark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+                                resolved = dark ? 'midnight-slate' : 'soft-paper';
+                              }
+                              document.documentElement.setAttribute('data-theme', resolved);
+                            }}
+                            onKeyDown={(e) => {
+                              if (e.key === ' ' || e.key === 'Enter') {
+                                e.preventDefault();
+                                handleDefaultLangChange('theme' as any, t.id);
+                                let resolved = t.id;
+                                if (t.id === 'auto') {
+                                  const dark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+                                  resolved = dark ? 'midnight-slate' : 'soft-paper';
+                                }
+                                document.documentElement.setAttribute('data-theme', resolved);
+                              }
+                            }}
+                            style={{
+                              background: 'var(--surface-1)',
+                              border: isSelected ? '2px solid var(--accent)' : '1px solid var(--border)',
+                              borderRadius: 'var(--radius-sm)',
+                              padding: '0.65rem',
+                              cursor: 'pointer',
+                              display: 'flex',
+                              flexDirection: 'column',
+                              gap: '0.5rem',
+                              position: 'relative',
+                              outline: 'none',
+                              transition: 'border-color 0.15s ease'
+                            }}
+                          >
+                            {/* Live mini preview swatch */}
+                            <div style={{
+                              height: '42px',
+                              borderRadius: '4px',
+                              background: t.bg,
+                              border: '1px solid rgba(128,128,128,0.2)',
+                              padding: '5px',
+                              display: 'flex',
+                              flexDirection: 'column',
+                              justifyContent: 'space-between',
+                              boxSizing: 'border-box'
+                            }}>
+                              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                                <div style={{ height: '5px', width: '30px', background: t.surface, borderRadius: '2px' }} />
+                                <div style={{ width: '6px', height: '6px', borderRadius: '50%', background: t.accent }} />
+                              </div>
+                              <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
+                                <div style={{ height: '3px', width: '50px', background: t.text, borderRadius: '2px', opacity: 0.9 }} />
+                                <div style={{ height: '3px', width: '35px', background: t.text, borderRadius: '2px', opacity: 0.5 }} />
+                              </div>
+                            </div>
+
+                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                              <span style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-1)' }}>{t.name}</span>
+                              {isSelected && (
+                                <div style={{ width: '14px', height: '14px', borderRadius: '50%', background: 'var(--accent)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                                  <Check size={10} color="var(--on-accent)" />
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* Comfort Controls */}
+                  <div className="settings-section">
+                    <h3>Comfort Controls</h3>
+                    <p className="settings-section-desc">Fine-tune viewing ergonomics for prolonged sessions in dark environments.</p>
+                    
                     <div className="pref-row">
-                      <span className="pref-label">Application Theme</span>
-                      <CustomSelect 
-                        value={settings.theme || 'black-ops'} 
-                        onChange={(val) => handleDefaultLangChange('theme' as any, val)}
-                        options={[
-                          { value: 'black-ops', label: '🥷 Black-Ops (Stealth Codex)' },
-                          { value: 'dark', label: '🍿 Cinematic Dark' },
-                          { value: 'black-and-white', label: '🏁 Monochrome Noir' },
-                          { value: 'light', label: '🧪 Custom Teal' },
-                          { value: 'garden', label: '🏡 Cozy Garden' },
-                          { value: 'black', label: '🖤 OLED Black' },
-                          { value: 'luxury', label: '👑 Luxury Gold' },
-                          { value: 'dim', label: '🌑 Dim Slate' },
-                          { value: 'abyss', label: '🌌 Deep Abyss' },
-                          { value: 'aqua', label: '🌊 Aqua Ocean' },
-                          { value: 'valentine', label: '💖 Sweet Valentine' }
-                        ]}
-                      />
+                      <span className="pref-label">UI Dimmer (Chrome Only)</span>
+                      <div style={{ display: 'flex', gap: '6px' }}>
+                        {[85, 90, 95, 100].map((dim) => {
+                          const active = (settings.uiDimmer || 100) === dim;
+                          return (
+                            <button
+                              key={dim}
+                              type="button"
+                              onClick={() => {
+                                handleDefaultLangChange('uiDimmer' as any, dim);
+                                document.documentElement.style.setProperty('--ui-dimmer', (dim / 100).toString());
+                              }}
+                              style={{
+                                padding: '4px 8px',
+                                fontSize: '0.75rem',
+                                fontWeight: 600,
+                                borderRadius: 'var(--radius-sm)',
+                                background: active ? 'var(--surface-3)' : 'transparent',
+                                color: active ? 'var(--text-1)' : 'var(--text-2)',
+                                border: '1px solid ' + (active ? 'var(--control-border)' : 'var(--border)'),
+                                cursor: 'pointer'
+                              }}
+                            >
+                              {dim}%
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    <div className="pref-row">
+                      <span className="pref-label">Text Scale</span>
+                      <div style={{ display: 'flex', gap: '6px' }}>
+                        {[90, 100, 110, 120].map((scale) => {
+                          const active = (settings.textSize || 100) === scale;
+                          return (
+                            <button
+                              key={scale}
+                              type="button"
+                              onClick={() => {
+                                handleDefaultLangChange('textSize' as any, scale);
+                                document.documentElement.style.setProperty('--text-scale', (scale / 100).toString());
+                              }}
+                              style={{
+                                padding: '4px 8px',
+                                fontSize: '0.75rem',
+                                fontWeight: 600,
+                                borderRadius: 'var(--radius-sm)',
+                                background: active ? 'var(--surface-3)' : 'transparent',
+                                color: active ? 'var(--text-1)' : 'var(--text-2)',
+                                border: '1px solid ' + (active ? 'var(--control-border)' : 'var(--border)'),
+                                cursor: 'pointer'
+                              }}
+                            >
+                              {scale}%
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    <div className="pref-row">
+                      <span className="pref-label">Reduce Motion</span>
+                      <div style={{ display: 'flex', gap: '6px' }}>
+                        {[
+                          { val: 'system', label: 'System' },
+                          { val: 'on', label: 'On' },
+                          { val: 'off', label: 'Off' }
+                        ].map((m) => {
+                          const active = (settings.reduceMotion || 'system') === m.val;
+                          return (
+                            <button
+                              key={m.val}
+                              type="button"
+                              onClick={() => {
+                                handleDefaultLangChange('reduceMotion' as any, m.val);
+                                if (m.val === 'on') {
+                                  document.documentElement.setAttribute('data-reduce-motion', 'true');
+                                } else {
+                                  document.documentElement.removeAttribute('data-reduce-motion');
+                                }
+                              }}
+                              style={{
+                                padding: '4px 8px',
+                                fontSize: '0.75rem',
+                                fontWeight: 600,
+                                borderRadius: 'var(--radius-sm)',
+                                background: active ? 'var(--surface-3)' : 'transparent',
+                                color: active ? 'var(--text-1)' : 'var(--text-2)',
+                                border: '1px solid ' + (active ? 'var(--control-border)' : 'var(--border)'),
+                                cursor: 'pointer'
+                              }}
+                            >
+                              {m.label}
+                            </button>
+                          );
+                        })}
+                      </div>
                     </div>
                   </div>
 
@@ -248,7 +432,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                         style={{ 
                           padding: '8px 16px', 
                           fontSize: '0.85rem', 
-                          background: isMonochrome ? '#ffffff' : '#e50914', 
+                          background: 'var(--accent)', 
                           color: isMonochrome ? '#000000' : '#fff', 
                           border: 'none', 
                           borderRadius: '4px', 
@@ -303,70 +487,56 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                 </div>
 
                 <div className="settings-grid-col">
+                  {/* Group 1: Overlays */}
                   <div className="settings-section">
-                    <h3>Player Display & Controls</h3>
-                    <p className="settings-section-desc">Toggle display components visible on the video screen.</p>
+                    <h3>Overlays</h3>
+                    <p className="settings-section-desc">Control metadata and overlay HUDs layered on top of video playback.</p>
                     <div className="pref-row">
-                      <span className="pref-label">Disable All Overlays (Keyboard Only Mode)</span>
+                      <span className="pref-label">Show Video Title</span>
                       <ToggleSwitch 
-                        checked={settings.hideUIOverlays} 
-                        onChange={(checked) => handleDefaultLangChange('hideUIOverlays', checked)}
+                        checked={!settings.hideVideoName} 
+                        onChange={(checked) => handleDefaultLangChange('hideVideoName', !checked)}
                       />
                     </div>
                     <div className="pref-row">
-                      <span className="pref-label">Disable Video Name Display</span>
+                      <span className="pref-label">Show Play Button Overlay</span>
                       <ToggleSwitch 
-                        checked={settings.hideVideoName} 
-                        onChange={(checked) => handleDefaultLangChange('hideVideoName', checked)}
+                        checked={settings.showPlayButton} 
+                        onChange={(checked) => handleDefaultLangChange('showPlayButton', checked)}
                       />
                     </div>
                     <div className="pref-row">
-                      <span className="pref-label">Disable Play Button Overlay</span>
+                      <span className="pref-label">Show Time Display</span>
                       <ToggleSwitch 
-                        checked={!settings.showPlayButton} 
-                        onChange={(checked) => handleDefaultLangChange('showPlayButton', !checked)}
+                        checked={settings.showTimeDisplay} 
+                        onChange={(checked) => handleDefaultLangChange('showTimeDisplay', checked)}
+                      />
+                    </div>
+                  </div>
+
+                  {/* Group 2: Controls */}
+                  <div className="settings-section">
+                    <h3>Controls</h3>
+                    <p className="settings-section-desc">Interactive transport elements and on-screen playback utilities.</p>
+                    <div className="pref-row">
+                      <span className="pref-label">Show Timeline Scrub Bar</span>
+                      <ToggleSwitch 
+                        checked={settings.showPlayBar} 
+                        onChange={(checked) => handleDefaultLangChange('showPlayBar', checked)}
                       />
                     </div>
                     <div className="pref-row">
-                      <span className="pref-label">Disable Time Display</span>
+                      <span className="pref-label">Show Volume Control</span>
                       <ToggleSwitch 
-                        checked={!settings.showTimeDisplay} 
-                        onChange={(checked) => handleDefaultLangChange('showTimeDisplay', !checked)}
+                        checked={settings.showVolumeControl} 
+                        onChange={(checked) => handleDefaultLangChange('showVolumeControl', checked)}
                       />
                     </div>
                     <div className="pref-row">
-                      <span className="pref-label">Disable Timeline Scrub Bar</span>
+                      <span className="pref-label">Show Fullscreen Button</span>
                       <ToggleSwitch 
-                        checked={!settings.showPlayBar} 
-                        onChange={(checked) => handleDefaultLangChange('showPlayBar', !checked)}
-                      />
-                    </div>
-                    <div className="pref-row">
-                      <span className="pref-label">Disable Volume Control</span>
-                      <ToggleSwitch 
-                        checked={!settings.showVolumeControl} 
-                        onChange={(checked) => handleDefaultLangChange('showVolumeControl', !checked)}
-                      />
-                    </div>
-                    <div className="pref-row">
-                      <span className="pref-label">Disable Fullscreen Toggle Button</span>
-                      <ToggleSwitch 
-                        checked={!settings.showFullscreen} 
-                        onChange={(checked) => handleDefaultLangChange('showFullscreen', !checked)}
-                      />
-                    </div>
-                    <div className="pref-row">
-                      <span className="pref-label">Disable Floating & Hover Animations</span>
-                      <ToggleSwitch 
-                        checked={settings.disableAnimations} 
-                        onChange={(checked) => handleDefaultLangChange('disableAnimations', checked)}
-                      />
-                    </div>
-                    <div className="pref-row">
-                      <span className="pref-label">Disable Focus Loss Auto-Pause</span>
-                      <ToggleSwitch 
-                        checked={!settings.pauseOnFocusChange} 
-                        onChange={(checked) => handleDefaultLangChange('pauseOnFocusChange', !checked)}
+                        checked={settings.showFullscreen} 
+                        onChange={(checked) => handleDefaultLangChange('showFullscreen', checked)}
                       />
                     </div>
                     <div className="pref-row" style={{ opacity: settings.blockSeekingCompletely ? 0.5 : 1 }}>
@@ -377,8 +547,41 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                         onChange={(checked) => handleDefaultLangChange('allowUiSkipping', checked)}
                       />
                     </div>
+                  </div>
+
+                  {/* Group 3: Behaviour */}
+                  <div className="settings-section">
+                    <h3>Behaviour</h3>
+                    <p className="settings-section-desc">Playback automation and user attention responses.</p>
                     <div className="pref-row">
-                      <span className="pref-label" style={{ color: '#ff4444' }}>Block Seeking / Skipping Completely</span>
+                      <span className="pref-label">Enable Animations</span>
+                      <ToggleSwitch 
+                        checked={!settings.disableAnimations} 
+                        onChange={(checked) => handleDefaultLangChange('disableAnimations', !checked)}
+                      />
+                    </div>
+                    <div className="pref-row">
+                      <span className="pref-label">Pause on Focus Loss</span>
+                      <ToggleSwitch 
+                        checked={settings.pauseOnFocusChange} 
+                        onChange={(checked) => handleDefaultLangChange('pauseOnFocusChange', checked)}
+                      />
+                    </div>
+                    <div className="pref-row">
+                      <span className="pref-label">Auto-Skip Intros & Outros</span>
+                      <ToggleSwitch 
+                        checked={settings.autoSkipIntroOutro} 
+                        onChange={(checked) => handleDefaultLangChange('autoSkipIntroOutro', checked)}
+                      />
+                    </div>
+                  </div>
+
+                  {/* Group 4: Advanced */}
+                  <div className="settings-section">
+                    <h3>Advanced</h3>
+                    <p className="settings-section-desc">Specialized kiosk restrictions and global overlay suppressions.</p>
+                    <div className="pref-row">
+                      <span className="pref-label">Block Seeking / Skipping Completely</span>
                       <ToggleSwitch 
                         checked={settings.blockSeekingCompletely}
                         onChange={(checked) => {
@@ -395,16 +598,16 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                       />
                     </div>
                     <div className="pref-row">
-                      <span className="pref-label">Auto-Skip Intros & Outros</span>
+                      <span className="pref-label">Disable All Overlays (Keyboard Only Mode)</span>
                       <ToggleSwitch 
-                        checked={settings.autoSkipIntroOutro}
-                        onChange={(checked) => handleDefaultLangChange('autoSkipIntroOutro', checked)}
+                        checked={settings.hideUIOverlays} 
+                        onChange={(checked) => handleDefaultLangChange('hideUIOverlays', checked)}
                       />
                     </div>
                     <div className="pref-row">
-                      <span className="pref-label">Lock Mode Active (Lock Controls on Startup)</span>
+                      <span className="pref-label">Lock Controls on Startup</span>
                       <ToggleSwitch 
-                        checked={settings.lockModeActive}
+                        checked={settings.lockModeActive} 
                         onChange={(checked) => handleDefaultLangChange('lockModeActive', checked)}
                       />
                     </div>
@@ -458,7 +661,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                               minHeight: '42px',
                               boxSizing: 'border-box',
                               borderRadius: '8px',
-                              background: hoveredHotkey === key ? 'var(--accent-glow)' : 'var(--surface)',
+                              background: hoveredHotkey === key ? 'var(--accent-soft)' : 'var(--surface)',
                               border: hoveredHotkey === key ? '1px solid var(--accent-color)' : '1px solid var(--border-color)',
                               boxShadow: 'var(--shadow-sm)',
                               transition: 'all 0.15s ease'
@@ -521,7 +724,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                           alignItems: 'center',
                           gap: '0.4rem',
                           background: hoveredHotkey === 'exit' ? 'rgba(229, 9, 20, 0.25)' : 'rgba(255,255,255,0.03)',
-                          border: hoveredHotkey === 'exit' ? '1px solid #e50914' : '1px solid rgba(255,255,255,0.08)',
+                          border: hoveredHotkey === 'exit' ? '1px solid var(--accent)' : '1px solid rgba(255,255,255,0.08)',
                           borderRadius: '6px',
                           padding: '3px 8px',
                           boxShadow: hoveredHotkey === 'exit' ? '0 0 10px rgba(229,9,20,0.4)' : 'none',
@@ -538,7 +741,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                           alignItems: 'center',
                           gap: '0.4rem',
                           background: hoveredHotkey === 'lockControls' ? 'rgba(229, 9, 20, 0.25)' : 'rgba(255,255,255,0.03)',
-                          border: hoveredHotkey === 'lockControls' ? '1px solid #e50914' : '1px solid rgba(255,255,255,0.08)',
+                          border: hoveredHotkey === 'lockControls' ? '1px solid var(--accent)' : '1px solid rgba(255,255,255,0.08)',
                           borderRadius: '6px',
                           padding: '3px 8px',
                           boxShadow: hoveredHotkey === 'lockControls' ? '0 0 10px rgba(229,9,20,0.4)' : 'none',
@@ -559,7 +762,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                           alignItems: 'center',
                           gap: '0.2rem',
                           background: hoveredHotkey === 'rewind' ? 'rgba(229, 9, 20, 0.25)' : 'rgba(255,255,255,0.03)',
-                          border: hoveredHotkey === 'rewind' ? '1px solid #e50914' : '1px solid rgba(255,255,255,0.06)',
+                          border: hoveredHotkey === 'rewind' ? '1px solid var(--accent)' : '1px solid rgba(255,255,255,0.06)',
                           padding: '6px 12px',
                           borderRadius: '8px',
                           boxShadow: hoveredHotkey === 'rewind' ? '0 0 10px rgba(229,9,20,0.4)' : 'none',
@@ -577,7 +780,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                           alignItems: 'center',
                           gap: '0.2rem',
                           background: hoveredHotkey === 'playPause' ? 'rgba(229, 9, 20, 0.25)' : 'rgba(255,255,255,0.03)',
-                          border: hoveredHotkey === 'playPause' ? '1px solid #e50914' : '1px solid rgba(255,255,255,0.06)',
+                          border: hoveredHotkey === 'playPause' ? '1px solid var(--accent)' : '1px solid rgba(255,255,255,0.06)',
                           padding: '8px 16px',
                           borderRadius: '8px',
                           boxShadow: hoveredHotkey === 'playPause' ? '0 0 12px rgba(229,9,20,0.4)' : 'none',
@@ -595,7 +798,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                           alignItems: 'center',
                           gap: '0.2rem',
                           background: hoveredHotkey === 'forward' ? 'rgba(229, 9, 20, 0.25)' : 'rgba(255,255,255,0.03)',
-                          border: hoveredHotkey === 'forward' ? '1px solid #e50914' : '1px solid rgba(255,255,255,0.06)',
+                          border: hoveredHotkey === 'forward' ? '1px solid var(--accent)' : '1px solid rgba(255,255,255,0.06)',
                           padding: '6px 12px',
                           borderRadius: '8px',
                           boxShadow: hoveredHotkey === 'forward' ? '0 0 10px rgba(229,9,20,0.4)' : 'none',
@@ -616,7 +819,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                         bottom: '25%',
                         width: '50px',
                         background: hoveredHotkey === 'openSettings' ? 'rgba(229, 9, 20, 0.25)' : 'rgba(255,255,255,0.03)',
-                        border: hoveredHotkey === 'openSettings' ? '1px solid #e50914' : '1px solid rgba(255,255,255,0.08)',
+                        border: hoveredHotkey === 'openSettings' ? '1px solid var(--accent)' : '1px solid rgba(255,255,255,0.08)',
                         borderRadius: '6px 0 0 6px',
                         display: 'flex',
                         flexDirection: 'column',
@@ -652,7 +855,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                               alignItems: 'center',
                               gap: '0.25rem',
                               background: hoveredHotkey === 'toggleMute' ? 'rgba(229, 9, 20, 0.25)' : 'rgba(255,255,255,0.02)',
-                              border: hoveredHotkey === 'toggleMute' ? '1px solid #e50914' : '1px solid rgba(255,255,255,0.06)',
+                              border: hoveredHotkey === 'toggleMute' ? '1px solid var(--accent)' : '1px solid rgba(255,255,255,0.06)',
                               borderRadius: '4px',
                               padding: '2px 6px',
                               transition: 'all 0.15s ease'
@@ -666,7 +869,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                               alignItems: 'center',
                               gap: '0.25rem',
                               background: hoveredHotkey === 'audioBoost' ? 'rgba(229, 9, 20, 0.25)' : 'rgba(255,255,255,0.02)',
-                              border: hoveredHotkey === 'audioBoost' ? '1px solid #e50914' : '1px solid rgba(255,255,255,0.06)',
+                              border: hoveredHotkey === 'audioBoost' ? '1px solid var(--accent)' : '1px solid rgba(255,255,255,0.06)',
                               borderRadius: '4px',
                               padding: '2px 6px',
                               transition: 'all 0.15s ease'
@@ -681,7 +884,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                             alignItems: 'center',
                             gap: '0.25rem',
                             background: hoveredHotkey === 'screenshot' ? 'rgba(229, 9, 20, 0.25)' : 'rgba(255,255,255,0.02)',
-                            border: hoveredHotkey === 'screenshot' ? '1px solid #e50914' : '1px solid rgba(255,255,255,0.06)',
+                            border: hoveredHotkey === 'screenshot' ? '1px solid var(--accent)' : '1px solid rgba(255,255,255,0.06)',
                             borderRadius: '4px',
                             padding: '2px 6px',
                             transition: 'all 0.15s ease'
@@ -697,10 +900,10 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                           borderRadius: '2px',
                           position: 'relative',
                           background: hoveredHotkey === 'frameStep' ? 'rgba(229, 9, 20, 0.3)' : 'rgba(255, 255, 255, 0.1)',
-                          border: hoveredHotkey === 'frameStep' ? '1px solid #e50914' : 'none',
+                          border: hoveredHotkey === 'frameStep' ? '1px solid var(--accent)' : 'none',
                           transition: 'all 0.15s ease'
                         }}>
-                          <div style={{ position: 'absolute', left: '0', top: '0', bottom: '0', width: '35%', background: '#e50914', borderRadius: '2px' }}></div>
+                          <div style={{ position: 'absolute', left: '0', top: '0', bottom: '0', width: '35%', background: 'var(--accent)', borderRadius: '2px' }}></div>
                           {hoveredHotkey === 'frameStep' && (
                             <div style={{
                               position: 'absolute',
@@ -708,7 +911,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                               left: '35%',
                               transform: 'translateX(-50%)',
                               background: '#222',
-                              border: '1px solid #e50914',
+                              border: '1px solid var(--accent)',
                               borderRadius: '4px',
                               padding: '2px 6px',
                               fontSize: '0.55rem',
@@ -730,7 +933,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                           <div style={{ display: 'flex', gap: '0.4rem' }}>
                             <div style={{
                               background: hoveredHotkey === 'nextAudio' ? 'rgba(229, 9, 20, 0.25)' : 'transparent',
-                              border: hoveredHotkey === 'nextAudio' ? '1px solid #e50914' : '1px solid transparent',
+                              border: hoveredHotkey === 'nextAudio' ? '1px solid var(--accent)' : '1px solid transparent',
                               borderRadius: '4px',
                               padding: '1px 5px',
                               transition: 'all 0.15s ease'
@@ -740,7 +943,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                             
                             <div style={{
                               background: hoveredHotkey === 'nextSubtitle' ? 'rgba(229, 9, 20, 0.25)' : 'transparent',
-                              border: hoveredHotkey === 'nextSubtitle' ? '1px solid #e50914' : '1px solid transparent',
+                              border: hoveredHotkey === 'nextSubtitle' ? '1px solid var(--accent)' : '1px solid transparent',
                               borderRadius: '4px',
                               padding: '1px 5px',
                               transition: 'all 0.15s ease'
@@ -752,7 +955,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                           <div style={{ display: 'flex', gap: '0.4rem' }}>
                             <div style={{
                               background: hoveredHotkey === 'addBookmark' ? 'rgba(229, 9, 20, 0.25)' : 'transparent',
-                              border: hoveredHotkey === 'addBookmark' ? '1px solid #e50914' : '1px solid transparent',
+                              border: hoveredHotkey === 'addBookmark' ? '1px solid var(--accent)' : '1px solid transparent',
                               borderRadius: '4px',
                               padding: '1px 5px',
                               transition: 'all 0.15s ease'
@@ -762,7 +965,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
 
                             <div style={{
                               background: hoveredHotkey === 'fullscreen' ? 'rgba(229, 9, 20, 0.25)' : 'transparent',
-                              border: hoveredHotkey === 'fullscreen' ? '1px solid #e50914' : '1px solid transparent',
+                              border: hoveredHotkey === 'fullscreen' ? '1px solid var(--accent)' : '1px solid transparent',
                               borderRadius: '4px',
                               padding: '1px 5px',
                               transition: 'all 0.15s ease'
@@ -1085,7 +1288,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                                     fontWeight: 600,
                                     borderRadius: '6px',
                                     cursor: 'pointer',
-                                    background: isMonochrome ? '#ffffff' : 'var(--accent-color, #e50914)',
+                                    background: isMonochrome ? '#ffffff' : 'var(--accent)',
                                     color: isMonochrome ? '#000000' : '#fff',
                                     border: 'none',
                                     transition: 'all 0.2s',
@@ -1549,7 +1752,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                                 display: 'flex',
                                 alignItems: 'center',
                                 justifyContent: 'space-between',
-                                background: index < 5 ? 'var(--accent-glow)' : 'var(--surface)',
+                                background: index < 5 ? 'var(--accent-soft)' : 'var(--surface)',
                                 border: index < 5 ? '1px dashed var(--accent-color)' : '1px solid var(--border-color)',
                                 padding: '0.65rem 0.85rem',
                                 borderRadius: '8px',
@@ -1565,7 +1768,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                                 <span>{labelMap[key] || key}</span>
                               </div>
                               {index < 5 ? (
-                                <span style={{ fontSize: '0.7rem', color: 'var(--accent-color)', fontWeight: 600, background: 'var(--accent-glow)', padding: '1px 6px', borderRadius: '3px' }}>
+                                <span style={{ fontSize: '0.7rem', color: 'var(--accent-color)', fontWeight: 600, background: 'var(--accent-soft)', padding: '1px 6px', borderRadius: '3px' }}>
                                   Pinned
                                 </span>
                               ) : index === 5 ? (
@@ -1593,7 +1796,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                           style={{
                             padding: '0.4rem 1rem',
                             fontSize: '0.8rem',
-                            background: !previewExpanded ? (isMonochrome ? '#ffffff' : '#e50914') : 'rgba(255,255,255,0.08)',
+                            background: !previewExpanded ? 'var(--accent)' : 'rgba(255,255,255,0.08)',
                             color: !previewExpanded ? (isMonochrome ? '#000000' : '#fff') : '#fff',
                             border: 'none',
                             borderRadius: '4px',
@@ -1609,7 +1812,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                           style={{
                             padding: '0.4rem 1rem',
                             fontSize: '0.8rem',
-                            background: previewExpanded ? (isMonochrome ? '#ffffff' : '#e50914') : 'rgba(255,255,255,0.08)',
+                            background: previewExpanded ? 'var(--accent)' : 'rgba(255,255,255,0.08)',
                             color: previewExpanded ? (isMonochrome ? '#000000' : '#fff') : '#fff',
                             border: 'none',
                             borderRadius: '4px',
@@ -1855,7 +2058,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                                   width: '16px',
                                   height: '16px',
                                   borderRadius: '50%',
-                                  border: isSel ? (isMonochrome ? '2px solid #ffffff' : '2px solid #e50914') : '2px dashed rgba(255,255,255,0.3)',
+                                  border: isSel ? (isMonochrome ? '2px solid #ffffff' : '2px solid var(--accent)') : '2px dashed rgba(255,255,255,0.3)',
                                   background: isSel ? (isMonochrome ? 'rgba(255, 255, 255, 0.4)' : 'rgba(229, 9, 20, 0.4)') : 'transparent',
                                   zIndex: 20,
                                   transition: 'all 0.2s ease',

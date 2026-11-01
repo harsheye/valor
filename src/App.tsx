@@ -317,7 +317,7 @@ const defaultSettings = {
   defaultSub: 'ENG',
   historyLimit: 10 as number | 'Infinite',
   historySaveInterval: 5 as number,
-  theme: 'black-ops' as 'black-ops' | 'dark' | 'black-and-white' | 'light' | 'garden' | 'black' | 'luxury' | 'dim' | 'abyss' | 'aqua' | 'valentine',
+  theme: 'midnight-slate' as 'midnight-slate' | 'ember-night' | 'forest-mist' | 'valor-crimson' | 'soft-paper' | 'black-ops' | 'auto' | string,
   hideUIOverlays: false,
   hideVideoName: false,
   uiHideTimeout: 1.5,
@@ -1143,14 +1143,18 @@ function App() {
 
 
 
-  const formatTime = (secs: number) => {
-    if (isNaN(secs) || secs < 0) return '00:00';
-    const h = Math.floor(secs / 3600);
-    const m = Math.floor((secs % 3600) / 60);
-    const s = Math.floor(secs % 60);
-    const mStr = m.toString().padStart(2, '0');
+  const formatTime = (secs: number | string | undefined) => {
+    const num = typeof secs === 'number' ? secs : Number(secs);
+    if (isNaN(num) || num < 0) return '0:00';
+    const rounded = Math.round(num);
+    const h = Math.floor(rounded / 3600);
+    const m = Math.floor((rounded % 3600) / 60);
+    const s = Math.floor(rounded % 60);
     const sStr = s.toString().padStart(2, '0');
-    if (h > 0) return `${h}:${mStr}:${sStr}`;
+    if (h > 0) {
+      const mStr = m.toString().padStart(2, '0');
+      return `${h}:${mStr}:${sStr}`;
+    }
     return `${m}:${sStr}`;
   };
 
@@ -1262,19 +1266,23 @@ function App() {
     isPaused: boolean 
   }[]>([]);
   
-  const addToast = useCallback((text: string, type: 'success' | 'error' | 'warning' = 'success') => {
+  const addToast = useCallback((text: string, type: 'success' | 'error' | 'warning' = 'success', actionOrMessage?: { actionLabel: string; onAction: () => void } | string) => {
     const id = Math.random().toString(36).substring(2, 9);
     const title = type === 'success' ? 'Changes saved' : type === 'error' ? 'Error' : 'Warning';
     const durationMs = (settingsRef.current.toastDuration || 4.0) * 1000;
+    const action = typeof actionOrMessage === 'object' && actionOrMessage !== null ? actionOrMessage : undefined;
+    const displayText = typeof actionOrMessage === 'string' ? actionOrMessage : text;
     setToasts(prev => [...prev, { 
       id, 
       title, 
-      text, 
+      text: displayText, 
       type, 
       duration: durationMs, 
       timeLeft: durationMs, 
-      isPaused: false 
-    }]);
+      isPaused: false,
+      actionLabel: action?.actionLabel,
+      onAction: action?.onAction
+    } as any]);
   }, []);
 
   useEffect(() => {
@@ -2598,6 +2606,7 @@ function App() {
 
   const handleRemoveVideo = async (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
+    const removedItem = videos.find(v => v.id === id);
     setVideos(prev => prev.filter(v => v.id !== id));
     try {
       await removeFileHandle(id);
@@ -2606,6 +2615,14 @@ function App() {
     }
     if (playingVideo && playingVideo.id === id) {
       setPlayingVideo(null);
+    }
+    if (removedItem) {
+      addToast('Removed from history', 'success', {
+        actionLabel: 'Undo',
+        onAction: () => {
+          setVideos(prev => [removedItem, ...prev]);
+        }
+      });
     }
   };
 
@@ -3018,6 +3035,18 @@ function App() {
           saveSettingsToStorage(updated);
           return updated;
         });
+      },
+      onOpenFile: async (file: File) => {
+        await processLocalVideo(file);
+      },
+      onOpenUrl: async (url: string) => {
+        await processRemoteUrl(url, false);
+      },
+      onAddToPlaylist: async (file: File) => {
+        await processLocalVideo(file);
+      },
+      onPlayVideo: (video: VideoItem) => {
+        handlePlayVideo(video);
       },
       onReassociate: async (videoId: string) => {
         pendingLocalReassociateIdRef.current = videoId;
@@ -3447,14 +3476,38 @@ function App() {
                 </button>
               </div>
 
-              {/* Subtitle text */}
+              {/* Subtitle text and optional Action */}
               <div style={{
-                fontSize: '0.8rem',
-                color: 'rgba(255, 255, 255, 0.65)',
-                lineHeight: 1.4,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                gap: '12px',
                 padding: '0 18px 12px 46px'
               }}>
-                {t.text}
+                <span style={{ fontSize: '0.82rem', color: 'rgba(255, 255, 255, 0.75)', lineHeight: 1.4 }}>{t.text}</span>
+                {(t as any).onAction && (
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      (t as any).onAction();
+                      setToasts(prev => prev.filter(item => item.id !== t.id));
+                    }}
+                    style={{
+                      background: 'var(--surface-3, #232b36)',
+                      border: '1px solid var(--control-border, #6c778a)',
+                      color: 'var(--text-1, #ffffff)',
+                      borderRadius: '6px',
+                      padding: '4px 10px',
+                      fontSize: '0.75rem',
+                      fontWeight: 700,
+                      cursor: 'pointer',
+                      flexShrink: 0
+                    }}
+                  >
+                    {(t as any).actionLabel || 'Undo'}
+                  </button>
+                )}
               </div>
 
               {/* Bottom countdown strip */}
@@ -4119,7 +4172,7 @@ function App() {
             {/* Header */}
             <div style={{ textAlign: 'center', display: 'flex', flexDirection: 'column', gap: '6px' }}>
               <div style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto', width: '42px', height: '42px', borderRadius: '12px', background: 'rgba(255, 255, 255, 0.06)', border: '1px solid var(--border-color, rgba(255, 255, 255, 0.1))' }}>
-                <UserPlus size={20} color={createProfileType === 'cloud' ? 'var(--accent-color, #e50914)' : '#10b981'} />
+                <UserPlus size={20} color={createProfileType === 'cloud' ? 'var(--accent)' : '#10b981'} />
               </div>
               <h3 style={{ margin: 0, fontSize: '1.35rem', fontWeight: 700, color: 'var(--text-primary, #ffffff)', fontFamily: 'Outfit, sans-serif' }}>
                 Create Account
@@ -4202,7 +4255,7 @@ function App() {
                 onClick={() => { setCreateProfileType('cloud'); setCreateProfileError(''); }}
                 style={{
                   background: createProfileType === 'cloud' ? 'rgba(229, 9, 20, 0.08)' : 'var(--card-bg, #161622)',
-                  border: createProfileType === 'cloud' ? '1.5px solid var(--accent-color, #e50914)' : '1px solid var(--border-color, rgba(255, 255, 255, 0.1))',
+                  border: createProfileType === 'cloud' ? '1.5px solid var(--accent)' : '1px solid var(--border-color, rgba(255, 255, 255, 0.1))',
                   boxShadow: createProfileType === 'cloud' ? '0 0 16px rgba(229, 9, 20, 0.15)' : 'none',
                   borderRadius: '12px',
                   padding: '14px',
@@ -4232,7 +4285,7 @@ function App() {
                     height: '18px',
                     borderRadius: '50%',
                     border: createProfileType === 'cloud' ? 'none' : '1.5px solid var(--border-color, rgba(255, 255, 255, 0.3))',
-                    background: createProfileType === 'cloud' ? 'var(--accent-color, #e50914)' : 'transparent',
+                    background: createProfileType === 'cloud' ? 'var(--accent)' : 'transparent',
                     display: 'flex',
                     alignItems: 'center',
                     justifyContent: 'center'
@@ -4494,7 +4547,7 @@ function App() {
                 style={{
                   flex: 2,
                   background: createProfileType === 'cloud' 
-                    ? 'linear-gradient(135deg, var(--accent-color, #e50914), #9b040c)' 
+                    ? 'linear-gradient(135deg, var(--accent), #9b040c)' 
                     : 'linear-gradient(135deg, #10b981, #059669)',
                   border: 'none',
                   color: '#ffffff',

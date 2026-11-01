@@ -170,7 +170,9 @@ export const HomePage: React.FC<HomePageProps> = ({
       boxSizing: 'border-box',
       width: '100%',
       position: 'relative',
-      background: 'radial-gradient(ellipse at 50% 0%, rgba(229, 9, 20, 0.07) 0%, transparent 65%)'
+      background: 'transparent',
+      maxWidth: '1400px',
+      margin: '0 auto'
     }}>
       {/* Paste Modal */}
       {isPasteModalOpen && (
@@ -197,7 +199,7 @@ export const HomePage: React.FC<HomePageProps> = ({
             gap: '1.25rem'
           }} onClick={e => e.stopPropagation()}>
             <h3 style={{ margin: 0, fontSize: '1.25rem', color: '#fff', display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <Radio size={20} color="var(--accent-color, #e50914)" />
+              <Radio size={20} color="var(--accent)" />
               Pasted Link Detected
             </h3>
             
@@ -230,7 +232,7 @@ export const HomePage: React.FC<HomePageProps> = ({
                 style={{
                   flex: 1,
                   padding: '12px',
-                  background: 'var(--accent-color, #e50914)',
+                  background: 'var(--accent)',
                   color: '#fff',
                   border: 'none',
                   borderRadius: '8px',
@@ -270,7 +272,7 @@ export const HomePage: React.FC<HomePageProps> = ({
       {primaryContinue && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', width: '100%' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px', paddingBottom: '0.5rem', borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
-            <Play size={20} color="var(--accent-color, #e50914)" />
+            <Play size={20} color="var(--accent)" />
             <h2 style={{ fontSize: '1.2rem', fontWeight: 800, margin: 0, color: '#ffffff' }}>Continue Watching</h2>
           </div>
 
@@ -278,40 +280,40 @@ export const HomePage: React.FC<HomePageProps> = ({
             onClick={() => handlePlayVideo(primaryContinue)}
             style={{ 
               width: '100%', 
-              background: 'linear-gradient(135deg, #e50914 0%, #8b0000 100%)', 
-              borderRadius: '14px', 
-              padding: '1.5rem 1.75rem', 
+              background: 'linear-gradient(135deg, var(--surface-1) 0%, var(--accent-soft) 100%), var(--surface-1)',
+              borderRadius: 'var(--radius-md)',
+              padding: '1.5rem 1.75rem',
               display: 'flex',
               justifyContent: 'space-between',
               alignItems: 'center',
               cursor: 'pointer',
-              boxShadow: '0 10px 28px rgba(229, 9, 20, 0.35)',
-              border: '1px solid rgba(255, 255, 255, 0.2)',
+              boxShadow: 'none',
+              border: '1px solid var(--border)',
               transition: 'transform 0.2s, box-shadow 0.2s',
               boxSizing: 'border-box'
             }}
           >
             <div style={{ flex: 1, minWidth: '0', paddingRight: '1.5rem' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '0.4rem' }}>
-                <span style={{ fontSize: '0.7rem', fontWeight: 800, letterSpacing: '1px', background: 'rgba(255,255,255,0.25)', color: '#fff', padding: '2px 8px', borderRadius: '4px', textTransform: 'uppercase' }}>
-                  Resume Playback
+                <span style={{ fontSize: '0.7rem', fontWeight: 800, letterSpacing: '1px', background: 'var(--surface-2)', color: 'var(--text-2)', padding: '2px 8px', borderRadius: 'var(--radius-sm)' }}>
+                  Resume playback
                 </span>
                 {primaryContinue.duration && (
-                  <span style={{ fontSize: '0.75rem', color: 'rgba(255,255,255,0.85)', fontWeight: 500 }}>
+                  <span style={{ fontSize: '0.75rem', color: 'var(--text-2)', fontWeight: 500 }}>
                     {(() => {
                       const dur = parseDurationToSeconds(primaryContinue.duration);
-                      return dur > 0 ? `${Math.round(((primaryContinue.currentTime || 0) / dur) * 100)}% Watched` : '';
+                      return dur > 0 ? `${Math.round(((primaryContinue.currentTime || 0) / dur) * 100)}% watched` : '';
                     })()}
                   </span>
                 )}
               </div>
               
-              <h3 style={{ margin: 0, fontSize: '1.35rem', fontWeight: 800, color: '#fff', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              <h3 style={{ margin: 0, fontSize: '1.35rem', fontWeight: 600, color: 'var(--text-1)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                 {classifyVideoTitle(primaryContinue.title).displayTitle}
               </h3>
               
-              <p style={{ margin: '6px 0 0 0', fontSize: '0.9rem', color: 'rgba(255,255,255,0.9)' }}>
-                Position: <b>{formatTime(primaryContinue.currentTime || 0)}</b>
+              <p style={{ margin: '6px 0 0 0', fontSize: '0.9rem', color: 'var(--text-2)' }}>
+                Position: <b style={{ fontVariantNumeric: 'tabular-nums', color: 'var(--text-1)' }}>{formatTime(primaryContinue.currentTime || 0)}</b>
               </p>
 
               {/* Progress bar */}
@@ -319,8 +321,8 @@ export const HomePage: React.FC<HomePageProps> = ({
                 const dur = parseDurationToSeconds(primaryContinue.duration);
                 const progress = dur > 0 && primaryContinue.currentTime ? Math.round((primaryContinue.currentTime / dur) * 100) : 0;
                 return progress > 0 ? (
-                  <div style={{ height: '5px', width: '100%', background: 'rgba(255,255,255,0.25)', borderRadius: '3px', overflow: 'hidden', marginTop: '0.85rem' }}>
-                    <div style={{ height: '100%', width: `${progress}%`, background: '#ffffff', boxShadow: '0 0 8px #ffffff' }} />
+                  <div style={{ height: '4px', width: '100%', background: 'var(--surface-3)', borderRadius: '2px', overflow: 'hidden', marginTop: '0.85rem' }}>
+                    <div style={{ height: '100%', width: `${progress}%`, background: 'var(--accent)' }} />
                   </div>
                 ) : null;
               })()}
@@ -328,17 +330,17 @@ export const HomePage: React.FC<HomePageProps> = ({
             
             <button 
               style={{ 
-                background: '#ffffff', 
-                color: '#e50914', 
+                background: 'var(--accent-fill)',
+                color: 'var(--on-accent)',
                 border: 'none',
                 padding: '0.75rem 1.6rem',
                 fontSize: '0.95rem',
-                fontWeight: 800,
-                borderRadius: '8px',
+                fontWeight: 600,
+                borderRadius: 'var(--radius-sm)',
                 display: 'flex',
                 alignItems: 'center',
                 gap: '8px',
-                boxShadow: '0 4px 15px rgba(0,0,0,0.2)',
+                boxShadow: 'none',
                 cursor: 'pointer',
                 flexShrink: 0
               }}
@@ -363,18 +365,18 @@ export const HomePage: React.FC<HomePageProps> = ({
           MEDIA SELECTION WORKSPACE & DROP ZONE
           ========================================================================= */}
       <div style={{
-        background: 'var(--card-bg, #161622)',
-        borderRadius: '16px',
+        background: 'var(--surface-1)',
+        borderRadius: 'var(--radius-md)',
         padding: '1.75rem',
-        border: '1px solid rgba(255, 255, 255, 0.1)',
-        boxShadow: '0 10px 30px rgba(0,0,0,0.35)',
+        border: '1px solid var(--border)',
+        boxShadow: 'none',
         display: 'flex',
         flexDirection: 'column',
         gap: '1.5rem'
       }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: '1px solid rgba(255,255,255,0.08)', paddingBottom: '0.75rem' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-            <UploadCloud size={22} color="var(--accent-color, #e50914)" />
+            <UploadCloud size={22} color="var(--accent)" />
             <h2 style={{ fontSize: '1.25rem', fontWeight: 800, margin: 0, color: '#ffffff' }}>Select Media</h2>
           </div>
           <span style={{ fontSize: '0.8rem', color: 'rgba(255,255,255,0.5)' }}>
@@ -391,9 +393,9 @@ export const HomePage: React.FC<HomePageProps> = ({
           onDrop={handleDrop}
           onClick={handleSelectLocalFile}
           style={{
-            background: isDragActive ? 'rgba(229, 9, 20, 0.1)' : 'rgba(255, 255, 255, 0.02)',
-            border: `2px dashed ${isDragActive ? '#e50914' : 'rgba(255, 255, 255, 0.18)'}`,
-            borderRadius: '14px',
+            background: isDragActive ? 'var(--accent-soft)' : 'var(--surface-2)',
+            border: `2px dashed ${isDragActive ? 'var(--accent)' : 'var(--border)'}`,
+            borderRadius: 'var(--radius-md)',
             padding: '2.5rem 1.5rem',
             display: 'flex',
             flexDirection: 'column',
@@ -428,7 +430,7 @@ export const HomePage: React.FC<HomePageProps> = ({
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
-              color: 'var(--accent-color, #e50914)',
+              color: 'var(--accent)',
               border: '1px solid rgba(229, 9, 20, 0.3)'
             }}>
               <UploadCloud size={32} />
@@ -447,10 +449,10 @@ export const HomePage: React.FC<HomePageProps> = ({
               style={{
                 marginTop: '6px',
                 padding: '8px 20px',
-                background: 'rgba(255, 255, 255, 0.1)',
-                border: '1px solid rgba(255, 255, 255, 0.2)',
-                borderRadius: '8px',
-                color: '#fff',
+                background: 'var(--surface-3)',
+                border: '1px solid var(--control-border)',
+                borderRadius: 'var(--radius-sm)',
+                color: 'var(--text-1)',
                 fontWeight: 600,
                 cursor: 'pointer'
               }}
@@ -483,10 +485,10 @@ export const HomePage: React.FC<HomePageProps> = ({
                 style={{
                   flex: 1,
                   padding: '12px 16px',
-                  borderRadius: '8px',
-                  border: '1px solid rgba(255,255,255,0.2)',
-                  background: 'rgba(0,0,0,0.5)',
-                  color: '#fff',
+                  borderRadius: 'var(--radius-sm)',
+                  border: '1px solid var(--control-border)',
+                  background: 'var(--surface-1)',
+                  color: 'var(--text-1)',
                   fontSize: '0.9rem',
                   outline: 'none'
                 }}
@@ -497,19 +499,19 @@ export const HomePage: React.FC<HomePageProps> = ({
                 disabled={isProcessing}
                 style={{
                   padding: '12px 24px',
-                  background: 'var(--accent-color, #e50914)',
-                  color: '#fff',
-                  border: 'none',
-                  borderRadius: '8px',
-                  fontWeight: 700,
+                  background: 'var(--surface-3)',
+                  color: 'var(--text-1)',
+                  border: '1px solid var(--control-border)',
+                  borderRadius: 'var(--radius-sm)',
+                  fontWeight: 600,
                   fontSize: '0.9rem',
                   cursor: isProcessing ? 'not-allowed' : 'pointer',
                   display: 'flex',
                   alignItems: 'center',
                   gap: '8px',
-                  boxShadow: '0 4px 14px rgba(229, 9, 20, 0.35)',
+                  boxShadow: 'none',
                   opacity: isProcessing ? 0.8 : 1,
-                  transition: 'all 0.2s ease'
+                  transition: 'all 0.15s ease'
                 }}
               >
                 {isProcessing ? (
@@ -520,7 +522,7 @@ export const HomePage: React.FC<HomePageProps> = ({
                 ) : (
                   <>
                     <Play size={15} fill="currentColor" stroke="none" />
-                    <span>Play</span>
+                    <span>Stream</span>
                   </>
                 )}
               </button>
@@ -573,7 +575,7 @@ export const HomePage: React.FC<HomePageProps> = ({
         <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', width: '100%' }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: '1px solid rgba(255,255,255,0.08)', paddingBottom: '0.5rem' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <Film size={20} color="var(--accent-color, #e50914)" />
+              <Film size={20} color="var(--accent)" />
               <h2 style={{ fontSize: '1.2rem', fontWeight: 800, margin: 0, color: '#ffffff' }}>Recent History</h2>
             </div>
             <span style={{ fontSize: '0.8rem', color: 'rgba(255,255,255,0.5)' }}>
@@ -587,14 +589,14 @@ export const HomePage: React.FC<HomePageProps> = ({
             gap: '1rem',
             width: '100%'
           }}>
-            {sortedVideos.slice(0, 6).map((video) => (
+            {sortedVideos.filter(v => !primaryContinue || v.id !== primaryContinue.id).slice(0, 6).map((video) => (
               <div
                 key={video.id}
                 onClick={() => handlePlayVideo(video)}
                 style={{
-                  background: 'rgba(255, 255, 255, 0.03)',
-                  border: '1px solid rgba(255, 255, 255, 0.08)',
-                  borderRadius: '12px',
+                  background: 'var(--surface-1)',
+                  border: '1px solid var(--border)',
+                  borderRadius: 'var(--radius-sm)',
                   padding: '1rem',
                   display: 'flex',
                   alignItems: 'center',
@@ -611,7 +613,7 @@ export const HomePage: React.FC<HomePageProps> = ({
                   display: 'flex',
                   alignItems: 'center',
                   justifyContent: 'center',
-                  color: '#e50914',
+                  color: 'var(--accent)',
                   flexShrink: 0
                 }}>
                   <Play size={18} fill="currentColor" />

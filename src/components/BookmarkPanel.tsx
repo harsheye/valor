@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useRef, useEffect } from 'react';
 import { Pencil, Trash, Play, Bookmark as BookmarkIcon, Heart, Clock, X } from 'lucide-react';
 import type { Bookmark } from '../types/media';
 
@@ -12,6 +12,8 @@ interface BookmarkPanelProps {
 }
 
 export const BookmarkPanel: React.FC<BookmarkPanelProps> = ({ bookmarks, onJump, onEdit, onDelete, onAdd, onClose }) => {
+  const panelRef = useRef<HTMLDivElement>(null);
+
   const sortedBookmarks = useMemo(() => {
     return [...bookmarks].sort((a, b) => a.time - b.time);
   }, [bookmarks]);
@@ -24,19 +26,47 @@ export const BookmarkPanel: React.FC<BookmarkPanelProps> = ({ bookmarks, onJump,
     return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
   };
 
+  useEffect(() => {
+    const handleReposition = () => {
+      const el = panelRef.current;
+      if (!el) return;
+      el.style.transform = '';
+      const rect = el.getBoundingClientRect();
+      const viewportWidth = window.innerWidth;
+      
+      // If overflowing the right edge of viewport, pull left
+      if (rect.right > viewportWidth - 16) {
+        const overflow = rect.right - (viewportWidth - 16);
+        el.style.transform = `translateX(-${overflow}px)`;
+      } else if (rect.left < 16) {
+        const overflow = 16 - rect.left;
+        el.style.transform = `translateX(${overflow}px)`;
+      }
+    };
+
+    handleReposition();
+    const timer = setTimeout(handleReposition, 50);
+    window.addEventListener('resize', handleReposition);
+    return () => {
+      clearTimeout(timer);
+      window.removeEventListener('resize', handleReposition);
+    };
+  }, [bookmarks]);
+
   return (
     <div 
-      className="animate-fade-in"
+      ref={panelRef}
+      className="bookmarks-popover animate-fade-in"
       onClick={(e) => e.stopPropagation()}
       style={{
         position: 'absolute',
         bottom: '50px',
-        left: '50%',
-        translate: '-50% 0',
+        right: '-16px',
         zIndex: 150,
-        width: '380px',
-        maxHeight: '400px',
-        background: 'var(--dropdown-bg, rgba(18, 18, 18, 0.88))',
+        width: '360px',
+        maxWidth: 'calc(100vw - 32px)',
+        maxHeight: 'min(380px, calc(100vh - 120px))',
+        background: 'var(--dropdown-bg, rgba(18, 18, 18, 0.95))',
         backdropFilter: 'blur(25px)',
         WebkitBackdropFilter: 'blur(25px)',
         border: '1px solid var(--dropdown-border, rgba(255, 255, 255, 0.12))',
@@ -46,22 +76,23 @@ export const BookmarkPanel: React.FC<BookmarkPanelProps> = ({ bookmarks, onJump,
         flexDirection: 'column',
         color: 'var(--dropdown-text, white)',
         padding: '0',
-        overflow: 'hidden'
+        overflow: 'hidden',
+        boxSizing: 'border-box'
       }}
     >
       {/* Hover bridge spacer to keep popover open when cursor moves from button to popover */}
       <div style={{ position: 'absolute', bottom: '-25px', left: 0, right: 0, height: '25px', background: 'transparent', pointerEvents: 'auto' }} />
-      <div style={{ padding: '32px 24px 24px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid var(--border-subtle, rgba(255,255,255,0.05))' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-          <BookmarkIcon size={22} color="var(--accent-color, #e50914)" />
-          <h2 style={{ margin: 0, fontSize: '20px', fontWeight: 600 }}>Bookmarks</h2>
+      <div style={{ padding: '14px 16px 12px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid var(--border-subtle, rgba(255,255,255,0.08))' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <BookmarkIcon size={18} color="var(--accent)" />
+          <h2 style={{ margin: 0, fontSize: '1rem', fontWeight: 600 }}>Bookmarks</h2>
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
           <button 
             onClick={onAdd}
-            style={{ background: 'var(--accent-glow, rgba(229, 9, 20, 0.1))', color: 'var(--accent-color, #e50914)', border: 'none', padding: '6px 14px', borderRadius: '20px', fontSize: '13px', fontWeight: 600, cursor: 'pointer', transition: 'all 0.2s' }}
-            onMouseEnter={e => e.currentTarget.style.background = 'var(--accent-glow)'}
-            onMouseLeave={e => e.currentTarget.style.background = 'var(--accent-glow)'}
+            style={{ background: 'var(--accent-soft)', color: 'var(--accent)', border: '1px solid var(--border-color, rgba(255, 255, 255, 0.12))', padding: '4px 10px', borderRadius: '16px', fontSize: '12px', fontWeight: 700, cursor: 'pointer', transition: 'all 0.2s' }}
+            onMouseEnter={e => e.currentTarget.style.background = 'var(--accent-soft)'}
+            onMouseLeave={e => e.currentTarget.style.background = 'var(--accent-soft)'}
           >
             + New
           </button>
@@ -72,12 +103,12 @@ export const BookmarkPanel: React.FC<BookmarkPanelProps> = ({ bookmarks, onJump,
             onMouseLeave={e => e.currentTarget.style.color = 'var(--text-secondary)'}
             title="Close Panel"
           >
-            <X size={20} />
+            <X size={16} />
           </button>
         </div>
       </div>
 
-      <div style={{ flex: 1, overflowY: 'auto', padding: '16px 24px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
+      <div style={{ flex: 1, overflowY: 'auto', padding: '10px 14px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
         {sortedBookmarks.length === 0 ? (
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', color: 'var(--text-muted, rgba(255,255,255,0.4))', textAlign: 'center', gap: '12px' }}>
             <BookmarkIcon size={48} strokeWidth={1} />
@@ -87,9 +118,9 @@ export const BookmarkPanel: React.FC<BookmarkPanelProps> = ({ bookmarks, onJump,
             </div>
             <button 
               onClick={onAdd}
-              style={{ marginTop: '16px', background: 'var(--accent-color, #e50914)', color: 'var(--btn-text-color, white)', border: 'none', padding: '10px 20px', borderRadius: '12px', fontSize: '14px', fontWeight: 600, cursor: 'pointer', transition: 'background 0.2s', boxShadow: '0 4px 12px rgba(229, 9, 20, 0.3)' }}
+              style={{ marginTop: '16px', background: 'var(--accent)', color: 'var(--player-accent-text, #ffffff)', border: 'none', padding: '10px 20px', borderRadius: '12px', fontSize: '14px', fontWeight: 700, cursor: 'pointer', transition: 'background 0.2s', boxShadow: '0 4px 12px var(--accent-soft)' }}
               onMouseEnter={e => e.currentTarget.style.background = 'var(--accent-hover, #f40b17)'}
-              onMouseLeave={e => e.currentTarget.style.background = 'var(--accent-color, #e50914)'}
+              onMouseLeave={e => e.currentTarget.style.background = 'var(--accent)'}
             >
               Create First Bookmark
             </button>
@@ -101,12 +132,12 @@ export const BookmarkPanel: React.FC<BookmarkPanelProps> = ({ bookmarks, onJump,
               style={{ 
                 background: 'var(--border-subtle, rgba(255,255,255,0.03))', 
                 border: '1px solid var(--border-subtle, rgba(255,255,255,0.05))', 
-                borderRadius: '16px', 
-                padding: '16px',
+                borderRadius: '10px', 
+                padding: '10px 12px',
                 transition: 'all 0.2s',
                 display: 'flex',
                 flexDirection: 'column',
-                gap: '12px'
+                gap: '8px'
               }}
               onMouseEnter={e => {
                 e.currentTarget.style.background = 'var(--surface-hover)';
@@ -133,7 +164,7 @@ export const BookmarkPanel: React.FC<BookmarkPanelProps> = ({ bookmarks, onJump,
                       {bm.category === 'Gore' && '🩸 '}
                       {bm.title || bm.label || 'Untitled Bookmark'}
                     </span>
-                    {bm.favorite && <Heart size={14} fill="var(--accent-color, #e50914)" color="var(--accent-color, #e50914)" style={{ flexShrink: 0 }} />}
+                    {bm.favorite && <Heart size={14} fill="var(--accent)" color="var(--accent)" style={{ flexShrink: 0 }} />}
                     {(() => {
                       const createdBy = bm.createdBy;
                       let label = 'Manual';
@@ -173,7 +204,7 @@ export const BookmarkPanel: React.FC<BookmarkPanelProps> = ({ bookmarks, onJump,
                       );
                     })()}
                   </div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px', color: 'var(--accent-color, #e50914)', fontSize: '13px', fontWeight: 600 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px', color: 'var(--accent)', fontSize: '13px', fontWeight: 600 }}>
                     <Clock size={12} />
                     {formatTime(bm.time)}
                     {bm.endTime ? ` → ${formatTime(bm.endTime)}` : ''}

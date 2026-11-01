@@ -89,7 +89,7 @@
 
 .os2-search-input:focus {
   border-color: var(--accent-color);
-  box-shadow: 0 0 12px var(--accent-glow);
+  box-shadow: 0 0 12px var(--accent-soft);
   background: var(--card-bg);
 }
 

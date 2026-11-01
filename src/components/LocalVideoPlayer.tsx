@@ -42,6 +42,7 @@ import { classifyVideoTitle, getRegexedTitleWithYear } from '../utils/libraryCla
 import { syncTraktHistory, syncTraktRating, resolveTraktMetadata } from '../services/traktAuth';
 import { LoadingSpinner, BufferingOverlay } from './LoadingSpinner';
 import { RadialMenu } from './RadialMenu';
+import { VlcContextMenu } from './player/VlcContextMenu';
 import { ConsoleOverlay } from './ConsoleOverlay';
 import { SpeedPopover } from './SpeedPopover';
 import { EsportsLiveOverlay } from './EsportsLiveOverlay';
@@ -88,6 +89,10 @@ interface VideoPlayerProps {
   radialMenuConfig?: any;
   uiHideTimeout?: number;
   onReassociate?: (videoId: string) => void;
+  onOpenFile?: (file: File) => void;
+  onOpenUrl?: (url: string) => void;
+  onAddToPlaylist?: (file: File) => void;
+  onPlayVideo?: (video: VideoItem) => void;
 }
 
 const OdometerDigit: React.FC<{ val: string }> = ({ val }) => {
@@ -126,7 +131,7 @@ const OdometerClock: React.FC<{ date: Date }> = ({ date }) => {
 
   return (
     <div className="odo-clock-container">
-      <span className="odo-hours-group" style={{ color: 'var(--player-accent, #e50914)', display: 'inline-flex' }}>
+      <span className="odo-hours-group" style={{ color: 'var(--accent)', display: 'inline-flex' }}>
         <OdometerDigit val={hh[0]} />
         <OdometerDigit val={hh[1]} />
       </span>
@@ -296,7 +301,11 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
   settingsOrder,
   radialMenuConfig,
   uiHideTimeout = 1.5,
-  onReassociate
+  onReassociate,
+  onOpenFile,
+  onOpenUrl,
+  onAddToPlaylist,
+  onPlayVideo
 }) => {
   const isFile = (obj: any): obj is File => obj instanceof File || (obj && typeof obj.size === 'number' && typeof obj.slice === 'function');
   const video = useMemo(() => ({
@@ -957,8 +966,8 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
       const seriesInfo = classifyVideoTitle(video.title);
       const isTV = seriesInfo.type === 'series';
       const resolvedTmdbId = video.tmdbId || tmdbIdRef.current;
-      if (!resolvedTmdbId) {
-        logger.player('[Bookmark Sync] Skipping sync: tmdbId is not resolved yet.');
+      if (!resolvedTmdbId && !video.id) {
+        logger.player('[Bookmark Sync] Skipping sync: neither tmdbId nor videoId is available.');
         return;
       }
 
@@ -968,7 +977,7 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
       });
 
       const mutation = `
-        mutation SaveBookmarks($userId: String!, $videoId: String!, $tmdbId: Int!, $season: Int, $episode: Int, $bookmarks: [BookmarkInput!]!) {
+        mutation SaveBookmarks($userId: String!, $videoId: String!, $tmdbId: Int, $season: Int, $episode: Int, $bookmarks: [BookmarkInput!]!) {
           saveBookmarks(userId: $userId, videoId: $videoId, tmdbId: $tmdbId, season: $season, episode: $episode, bookmarks: $bookmarks) {
             success
             count
@@ -1004,7 +1013,7 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
           variables: { 
             userId: activeUserId, 
             videoId: video.id, 
-            tmdbId: resolvedTmdbId,
+            tmdbId: resolvedTmdbId || null,
             season: isTV ? (seriesInfo.season || 1) : null,
             episode: isTV ? (seriesInfo.episode || 1) : null,
             bookmarks: serializedBookmarks 
@@ -1423,8 +1432,8 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
         }
       }
 
-      if (!resolvedTmdbId) {
-        logger.player('[Bookmarks Sync] Could not resolve TMDB ID, skipping global bookmarks fetch.');
+      if (!resolvedTmdbId && !video.id) {
+        logger.player('[Bookmarks Sync] Could not resolve TMDB ID or video ID, skipping global bookmarks fetch.');
         return;
       }
 
@@ -1432,11 +1441,11 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
       let tidbBms: any[] = [];
       hadTidbDataRef.current = false;
 
-      // 1. Fetch from our SQLite server using tmdbId
+      // 1. Fetch from our server using tmdbId or videoId
       try {
         const queryStr = `
-          query GetVideoBookmarks($tmdbId: Int!, $season: Int, $episode: Int) {
-            videoBookmarks(tmdbId: $tmdbId, season: $season, episode: $episode) {
+          query GetVideoBookmarks($tmdbId: Int, $season: Int, $episode: Int, $videoId: String) {
+            videoBookmarks(tmdbId: $tmdbId, season: $season, episode: $episode, videoId: $videoId) {
               id
               time
               endTime
@@ -1469,9 +1478,10 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
           body: JSON.stringify({
             query: queryStr,
             variables: { 
-              tmdbId: resolvedTmdbId,
+              tmdbId: resolvedTmdbId || null,
               season: isTV ? season : null,
-              episode: isTV ? episode : null
+              episode: isTV ? episode : null,
+              videoId: video.id || null
             }
           })
         });
@@ -1673,6 +1683,89 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [isPseudoFullscreen, setIsPseudoFullscreen] = useState(false);
   const [radialMenuState, setRadialMenuState] = useState<{ visible: boolean; x: number; y: number }>({ visible: false, x: 0, y: 0 });
+  const [vlcContextMenuState, setVlcContextMenuState] = useState<{ visible: boolean; x: number; y: number }>({ visible: false, x: 0, y: 0 });
+  const vlcContextMenuClosedTimestampRef = useRef<number>(0);
+  const prevVlcVisibleRef = useRef<boolean>(false);
+  useEffect(() => {
+    if (prevVlcVisibleRef.current && !vlcContextMenuState.visible) {
+      vlcContextMenuClosedTimestampRef.current = Date.now();
+    }
+    prevVlcVisibleRef.current = vlcContextMenuState.visible;
+  }, [vlcContextMenuState.visible]);
+  const [timelineOnlyMode, setTimelineOnlyMode] = useState(false);
+  const [aspectRatio, setAspectRatio] = useState<string>(() => {
+    try {
+      if (video.id) {
+        const savedById = localStorage.getItem(`valor_aspect_ratio_${video.id}`);
+        if (savedById) return savedById;
+      }
+      const mediaMapStr = localStorage.getItem('valor_media_aspect_ratios');
+      if (mediaMapStr) {
+        const mediaMap = JSON.parse(mediaMapStr);
+        if (video.id && mediaMap[video.id]) return mediaMap[video.id];
+        if (video.url && mediaMap[video.url]) return mediaMap[video.url];
+        if (video.title && mediaMap[video.title]) return mediaMap[video.title];
+      }
+      if (video.aspectRatio) {
+        return video.aspectRatio;
+      }
+      const globalSaved = localStorage.getItem('valor_aspect_ratio');
+      if (globalSaved) return globalSaved;
+    } catch {}
+    return 'default';
+  });
+
+  // Persist aspect ratio per media whenever it changes
+  useEffect(() => {
+    if (!aspectRatio) return;
+    try {
+      if (video.id) {
+        localStorage.setItem(`valor_aspect_ratio_${video.id}`, aspectRatio);
+      }
+      const mediaMapStr = localStorage.getItem('valor_media_aspect_ratios');
+      const mediaMap = mediaMapStr ? JSON.parse(mediaMapStr) : {};
+      if (video.id) mediaMap[video.id] = aspectRatio;
+      if (video.url) mediaMap[video.url] = aspectRatio;
+      if (video.title) mediaMap[video.title] = aspectRatio;
+      localStorage.setItem('valor_media_aspect_ratios', JSON.stringify(mediaMap));
+      localStorage.setItem('valor_aspect_ratio', aspectRatio);
+
+      if (onUpdateVideo && video.aspectRatio !== aspectRatio) {
+        onUpdateVideo((prev: VideoItem) => ({
+          ...prev,
+          aspectRatio
+        }));
+      }
+    } catch (e) {
+      console.warn('[LocalVideoPlayer] Failed saving aspect ratio to localStorage:', e);
+    }
+  }, [aspectRatio, video.id, video.url, video.title, onUpdateVideo]);
+
+  // Synchronize aspect ratio if video changes
+  useEffect(() => {
+    try {
+      let savedRatio = 'default';
+      if (video.id) {
+        const savedById = localStorage.getItem(`valor_aspect_ratio_${video.id}`);
+        if (savedById) savedRatio = savedById;
+      }
+      if (savedRatio === 'default') {
+        const mediaMapStr = localStorage.getItem('valor_media_aspect_ratios');
+        if (mediaMapStr) {
+          const mediaMap = JSON.parse(mediaMapStr);
+          if (video.id && mediaMap[video.id]) savedRatio = mediaMap[video.id];
+          else if (video.url && mediaMap[video.url]) savedRatio = mediaMap[video.url];
+          else if (video.title && mediaMap[video.title]) savedRatio = mediaMap[video.title];
+        }
+      }
+      if (savedRatio === 'default' && video.aspectRatio) {
+        savedRatio = video.aspectRatio;
+      }
+      if (savedRatio !== aspectRatio) {
+        setAspectRatio(savedRatio);
+      }
+    } catch {}
+  }, [video.id, video.url]);
   const [hoverTime, setHoverTime] = useState<string | null>(null);
   const [hoverPercent, setHoverPercent] = useState(0);
   const [isScrubbing, setIsScrubbing] = useState(false);
@@ -1930,6 +2023,50 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
     }, dur * 1000);
   };
 
+  const cycleAspectRatio = useCallback(() => {
+    const ratios = [
+      { id: 'default', label: 'Default (Fit)' },
+      { id: 'stretch', label: 'Stretch to Screen (0% Detail Lost)' },
+      { id: '14:9', label: 'Smart Crop (14:9 - Minimal Loss)' },
+      { id: '16:10', label: '16:10 Minimal Crop' },
+      { id: '16:9', label: '16:9 Widescreen' },
+      { id: '1.85:1', label: '1.85:1 Cinema' },
+      { id: '21:9', label: '21:9 Ultrawide Cinema' },
+      { id: 'cover', label: 'Fill / Crop Screen (Full Zoom)' },
+      { id: '4:3', label: '4:3 Standard' }
+    ];
+    setAspectRatio(prev => {
+      const idx = ratios.findIndex(r => r.id === prev);
+      const nextItem = ratios[(idx + 1) % ratios.length];
+      triggerSwitchToast(`Aspect Ratio: ${nextItem.label}`);
+      return nextItem.id;
+    });
+  }, [triggerSwitchToast]);
+
+  const getVideoTransformStyle = useCallback((): React.CSSProperties => {
+    switch (aspectRatio) {
+      case 'stretch':
+        return { objectFit: 'fill', width: '100%', height: '100%', transform: 'none' };
+      case '14:9':
+        return { objectFit: 'contain', width: '100%', height: '100%', transform: 'scale(1.15)', transformOrigin: 'center center' };
+      case '16:10':
+        return { objectFit: 'contain', width: '100%', height: '100%', transform: 'scale(1.22)', transformOrigin: 'center center' };
+      case '16:9':
+        return { objectFit: 'cover', aspectRatio: '16/9', width: '100%', height: '100%', transform: 'none' };
+      case '1.85:1':
+        return { objectFit: 'cover', aspectRatio: '1.85/1', width: '100%', height: '100%', transform: 'none' };
+      case '21:9':
+        return { objectFit: 'cover', aspectRatio: '21/9', width: '100%', height: '100%', transform: 'none' };
+      case 'cover':
+        return { objectFit: 'cover', width: '100%', height: '100%', transform: 'none' };
+      case '4:3':
+        return { objectFit: 'contain', aspectRatio: '4/3', width: '100%', height: '100%', transform: 'none' };
+      case 'default':
+      default:
+        return { objectFit: 'contain', width: '100%', height: '100%', transform: 'none' };
+    }
+  }, [aspectRatio]);
+
   const [trackNotification, setTrackNotification] = useState<{ id: number; text: string } | null>(null);
   const trackNotificationCounterRef = useRef<number>(0);
   const trackNotificationTimeoutRef = useRef<any>(null);
@@ -1974,7 +2111,14 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
       }
 
       const target = e.target as HTMLElement;
-      if (target.closest('.player-settings-panel') || target.closest('.bookmarks-popover') || target.closest('.audio-sub-popover') || target.closest('.speed-popover-container')) {
+      if (
+        target.closest('.player-settings-panel') || 
+        target.closest('.bookmarks-popover') || 
+        target.closest('.audio-sub-popover') || 
+        target.closest('.audio-sub-popover-center') || 
+        target.closest('.speed-popover-container') ||
+        target.closest('.vlc-context-menu')
+      ) {
         return;
       }
       e.preventDefault();
@@ -1991,6 +2135,62 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
   const bookmarksTimeoutRef = useRef<any>(null);
   const customAudioInputRef = useRef<HTMLInputElement>(null);
   const customSubInputRef = useRef<HTMLInputElement>(null);
+  const openMediaFileInputRef = useRef<HTMLInputElement>(null);
+  const addToPlaylistFileInputRef = useRef<HTMLInputElement>(null);
+  const [showNetworkStreamModal, setShowNetworkStreamModal] = useState(false);
+  const [networkStreamUrl, setNetworkStreamUrl] = useState('');
+
+  const handleOpenMediaFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (onOpenFile) {
+      onOpenFile(file);
+    } else {
+      const blobUrl = URL.createObjectURL(file);
+      if (videoRef.current) {
+        videoRef.current.src = blobUrl;
+        videoRef.current.currentTime = 0;
+        videoRef.current.play().catch(console.warn);
+      }
+    }
+    triggerSwitchToast(`Opened: ${file.name}`);
+    e.target.value = '';
+  };
+
+  const handleAddToPlaylistFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
+    for (let i = 0; i < files.length; i++) {
+      const f = files[i];
+      if (onAddToPlaylist) {
+        onAddToPlaylist(f);
+      }
+    }
+    triggerSwitchToast(files.length === 1 ? `Added to Playlist: ${files[0].name}` : `Added ${files.length} files to Playlist`);
+    e.target.value = '';
+  };
+
+  const handlePlayNetworkStream = (asPlaylistAdd: boolean = false) => {
+    const trimmed = networkStreamUrl.trim();
+    if (!trimmed) return;
+    setShowNetworkStreamModal(false);
+    setNetworkStreamUrl('');
+    if (asPlaylistAdd) {
+      if (onOpenUrl) {
+        onOpenUrl(trimmed);
+      }
+      triggerSwitchToast('Network stream added to Playlist');
+    } else {
+      if (onOpenUrl) {
+        onOpenUrl(trimmed);
+      } else if (videoRef.current) {
+        videoRef.current.src = trimmed;
+        videoRef.current.currentTime = 0;
+        videoRef.current.play().catch(console.warn);
+      }
+      triggerSwitchToast(`Opening Stream: ${trimmed.slice(0, 32)}...`);
+    }
+  };
 
   const cachedSourceRef = useRef<CachedByteSource | null>(null);
   const audioAbortControllerRef = useRef<AbortController | null>(null);
@@ -2383,7 +2583,7 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
         showPauseMetadataOverlayRef.current = true;
         setShowPauseMetadataOverlay(true);
         setShowControls(false);
-      }, 10000);
+      }, 30000);
     }
   }, [isPlaying]);
 
@@ -2395,7 +2595,7 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
         showPauseMetadataOverlayRef.current = true;
         setShowPauseMetadataOverlay(true);
         setShowControls(false);
-      }, 10000);
+      }, 30000);
     } else {
       if (pauseOverlayTimerRef.current) {
         clearTimeout(pauseOverlayTimerRef.current);
@@ -3220,25 +3420,75 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
     }
   };
 
-  const handleCast = () => {
+  const handleCast = async () => {
     if (!videoRef.current) return;
-    const video = videoRef.current as any;
+    const videoEl = videoRef.current as any;
     
-    // HTML5 Remote Playback Web API (Chrome/Edge Native Cast)
-    if (video.remote && typeof video.remote.prompt === 'function') {
-      video.remote.prompt().catch((err: any) => {
-        logger.player('Failed to trigger remote playback prompt:', err);
-      });
+    // 1. Google Cast Web SDK
+    const cast = (window as any).cast;
+    const chrome = (window as any).chrome;
+    if (cast && cast.framework && chrome && chrome.cast) {
+      try {
+        const castContext = cast.framework.CastContext.getInstance();
+        let session = castContext.getCurrentSession();
+        if (!session) {
+          await castContext.requestSession();
+          session = castContext.getCurrentSession();
+        }
+        if (session) {
+          const mediaUrl = video.url || videoEl.src || '';
+          const mediaInfo = new chrome.cast.media.MediaInfo(mediaUrl, 'video/mp4');
+          mediaInfo.metadata = new chrome.cast.media.GenericMediaMetadata();
+          mediaInfo.metadata.title = video.title || video.fileName || 'Video';
+          const request = new chrome.cast.media.LoadRequest(mediaInfo);
+          request.currentTime = videoEl.currentTime || 0;
+          request.autoplay = !videoEl.paused;
+          await session.loadMedia(request);
+          triggerSwitchToast('Casting to TV / Chromecast');
+          return;
+        }
+      } catch (err: any) {
+        if (err?.name !== 'AbortError' && err !== 'cancel') {
+          console.warn('Google Cast request error:', err);
+        }
+      }
     }
-    // Safari / iOS AirPlay target picker
-    else if (typeof video.webkitShowPlaybackTargetPicker === 'function') {
-      video.webkitShowPlaybackTargetPicker();
+
+    // 2. HTML5 Remote Playback Web API (Chrome/Edge Native Cast to Device)
+    if (videoEl.remote && typeof videoEl.remote.prompt === 'function') {
+      try {
+        await videoEl.remote.prompt();
+        triggerSwitchToast('Connecting to Device...');
+        return;
+      } catch (err: any) {
+        if (err?.name !== 'NotFoundError' && err?.name !== 'AbortError') {
+          console.warn('Remote playback prompt error:', err);
+        }
+      }
     }
-    // Fallback: use togglePiP
-    else {
-      logger.player('Cast API not supported in this browser. Falling back to Picture-in-Picture.');
-      togglePiP();
+
+    // 3. Apple AirPlay target picker
+    if (typeof videoEl.webkitShowPlaybackTargetPicker === 'function') {
+      videoEl.webkitShowPlaybackTargetPicker();
+      return;
     }
+
+    // 4. W3C Presentation API
+    if (typeof (window as any).PresentationRequest === 'function') {
+      try {
+        const presReq = new (window as any).PresentationRequest([video.url || window.location.href]);
+        await presReq.start();
+        triggerSwitchToast('Presentation Started');
+        return;
+      } catch (err: any) {
+        if (err?.name !== 'AbortError') {
+          console.warn('Presentation API error:', err);
+        }
+      }
+    }
+
+    triggerSwitchToast('Cast device picker opening...');
+    togglePiP();
   };
 
   useEffect(() => {
@@ -3499,6 +3749,32 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
     }
   };
 
+  const handleTakeSnapshot = useCallback(() => {
+    if (videoRef.current) {
+      try {
+        const v = videoRef.current;
+        const canvas = document.createElement('canvas');
+        canvas.width = v.videoWidth || v.clientWidth;
+        canvas.height = v.videoHeight || v.clientHeight;
+        const ctx = canvas.getContext('2d');
+        if (ctx) {
+          ctx.drawImage(v, 0, 0, canvas.width, canvas.height);
+          const dataUrl = canvas.toDataURL('image/png');
+          const link = document.createElement('a');
+          const videoTitle = video.title || 'video';
+          const sanitizedTitle = videoTitle.replace(/[^a-z0-9]/gi, '_').toLowerCase();
+          link.download = `${sanitizedTitle}_snapshot_${Math.floor(v.currentTime)}s.png`;
+          link.href = dataUrl;
+          link.click();
+          triggerSwitchToast('Snapshot Saved!');
+        }
+      } catch (err) {
+        console.error('Failed to capture snapshot:', err);
+        triggerSwitchToast('Snapshot capture blocked by security policy');
+      }
+    }
+  }, [video.title, triggerSwitchToast]);
+
   const handleKeyDownRef = useRef<((e: KeyboardEvent) => void) | undefined>(undefined);
   handleKeyDownRef.current = (e: KeyboardEvent) => {
     const pressedKey = e.key.toLowerCase();
@@ -3626,6 +3902,19 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
       return;
     }
     
+    if ((e.ctrlKey || e.metaKey) && pressedKey === 'o') {
+      e.preventDefault();
+      e.stopPropagation();
+      openMediaFileInputRef.current?.click();
+      return;
+    }
+    if ((e.ctrlKey || e.metaKey) && pressedKey === 'n') {
+      e.preventDefault();
+      e.stopPropagation();
+      setShowNetworkStreamModal(true);
+      return;
+    }
+
     if (pressedKey === lockControlsKey) {
       e.preventDefault();
       e.stopPropagation();
@@ -3721,7 +4010,10 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
       }
     } else if (pressedKey === 'c') {
       e.preventDefault();
+      cycleAspectRatio();
+    } else if (pressedKey === 's') {
       if (activeSkipBookmarkRef.current) {
+        e.preventDefault();
         const bm = activeSkipBookmarkRef.current;
         const targetTime = (bm.isOutro || bm.category === 'Outro') 
           ? duration 
@@ -3773,29 +4065,14 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
       }
     } else if (pressedKey === screenshotKey) {
       e.preventDefault();
-      if (videoRef.current) {
-        try {
-          const video = videoRef.current;
-          const canvas = document.createElement('canvas');
-          canvas.width = video.videoWidth || video.clientWidth;
-          canvas.height = video.videoHeight || video.clientHeight;
-          const ctx = canvas.getContext('2d');
-          if (ctx) {
-            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-            const dataUrl = canvas.toDataURL('image/png');
-            const link = document.createElement('a');
-            const videoTitle = video.title || 'video';
-            const sanitizedTitle = videoTitle.replace(/[^a-z0-9]/gi, '_').toLowerCase();
-            link.download = `${sanitizedTitle}_screenshot_${Math.floor(video.currentTime)}s.png`;
-            link.href = dataUrl;
-            link.click();
-            triggerSwitchToast('Screenshot Saved!');
-          }
-        } catch (err) {
-          console.error('Failed to capture screenshot:', err);
-          triggerSwitchToast('Screenshot capture blocked by security policy');
-        }
-      }
+      handleTakeSnapshot();
+    } else if (pressedKey === 'g') {
+      e.preventDefault();
+      setTimelineOnlyMode(prev => {
+        const next = !prev;
+        triggerSwitchToast(next ? 'Timeline Only (VLC Mode)' : 'Standard Controls');
+        return next;
+      });
     } else if (pressedKey === 'arrowup') {
       e.preventDefault();
       if (showVolumeControlMode === 'disable') {
@@ -3856,6 +4133,8 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
         target.closest('.volume-control-group-premium') ||
         target.closest('.popover-wrapper') ||
         target.closest('.audio-sub-popover') ||
+        target.closest('.audio-sub-popover-center') ||
+        target.closest('.vlc-context-menu') ||
         target.closest('.floating-rating-prompt') ||
         target.closest('.settings-panel')
       ) {
@@ -4553,7 +4832,8 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
   const activeSkipBookmarkRef = useRef<Bookmark | null>(null);
   activeSkipBookmarkRef.current = activeSkipBookmark;
 
-  const controlsVisible = showControls && !isLocked && !showPauseMetadataOverlay;
+  const isFileAccessBlocked = video.type === 'local' && (!activeFile || hasFileAccessError) && video.playbackMode !== 'advanced';
+  const controlsVisible = (showControls && !isLocked && !showPauseMetadataOverlay) || isFileAccessBlocked;
   const effectiveDuration = duration || parseDurationToSeconds(video.duration) || 0;
   const displayTime = (isScrubbing && scrubTime !== null) 
     ? scrubTime 
@@ -4564,7 +4844,14 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
     if (showSettingsPanel || showAddDialog || showBookmarksPopover || showAudioSubMenu || showConsoleOverlay) return;
     
     const target = e.target as HTMLElement;
-    if (target.closest('.player-settings-panel') || target.closest('.bookmarks-popover') || target.closest('.audio-sub-popover') || target.closest('.speed-popover-container')) return;
+    if (
+      target.closest('.player-settings-panel') || 
+      target.closest('.bookmarks-popover') || 
+      target.closest('.audio-sub-popover') || 
+      target.closest('.audio-sub-popover-center') || 
+      target.closest('.speed-popover-container') ||
+      target.closest('.vlc-context-menu')
+    ) return;
 
     if (e.deltaY < 0) {
       handleKeyDownRef.current?.(new KeyboardEvent('keydown', { key: 'ArrowUp' }));
@@ -4576,7 +4863,7 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
   return (
     <div 
       ref={containerRef} 
-      className={`player-container ${controlsVisible ? 'show-cursor' : 'hide-cursor'} ${hideUIOverlays ? 'keyboard-only' : ''} ${disableAnimations ? 'no-animations' : ''} ${hoveredSetting === 'lockModeActive' || hoveredSetting === 'pauseOnFocusChange' || hoveredSetting === 'disableAnimations' ? 'highlight-active' : ''} ${isPseudoFullscreen ? 'pseudo-fullscreen' : ''}`}
+      className={`player-container ${isFileAccessBlocked ? 'has-file-access-blocked show-cursor' : (controlsVisible ? 'show-cursor' : 'hide-cursor')} ${hideUIOverlays ? 'keyboard-only' : ''} ${disableAnimations ? 'no-animations' : ''} ${hoveredSetting === 'lockModeActive' || hoveredSetting === 'pauseOnFocusChange' || hoveredSetting === 'disableAnimations' ? 'highlight-active' : ''} ${isPseudoFullscreen ? 'pseudo-fullscreen' : ''}`}
       style={{
         '--player-ui-scale': uiScale
       } as React.CSSProperties}
@@ -4587,6 +4874,13 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
         if (!isScrubbing) setShowControls(false);
       }}
       onClick={() => {
+        if (vlcContextMenuState.visible || (Date.now() - vlcContextMenuClosedTimestampRef.current < 350)) {
+          if (vlcContextMenuState.visible) {
+            setVlcContextMenuState({ visible: false, x: 0, y: 0 });
+          }
+          return;
+        }
+
         if (showPauseMetadataOverlayRef.current) {
           showPauseMetadataOverlayRef.current = false;
           setShowPauseMetadataOverlay(false);
@@ -4599,48 +4893,61 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
       onContextMenu={(e) => {
         e.preventDefault();
         if (!hideUIOverlays) {
-          if (radialMenuState.visible) {
-            setRadialMenuState({ visible: false, x: 0, y: 0 });
-          } else {
-            setRadialMenuState({ visible: true, x: e.clientX, y: e.clientY });
-          }
+          setVlcContextMenuState(prev => prev.visible ? { visible: false, x: 0, y: 0 } : { visible: true, x: e.clientX, y: e.clientY });
         }
       }}
     >
 
 
 
-      {video.type === 'local' && (!activeFile || hasFileAccessError) && video.playbackMode !== 'advanced' && (
-        <div style={{
-          position: 'absolute',
-          inset: 0,
-          background: 'rgba(0, 0, 0, 0.85)',
-          backdropFilter: 'blur(10px)',
-          display: 'flex',
-          flexDirection: 'column',
-          alignItems: 'center',
-          justifyContent: 'center',
-          zIndex: 600,
-          color: 'var(--text-primary, #ffffff)',
-          fontFamily: "'Inter', sans-serif"
-        }}>
-          <div style={{
-            background: 'rgba(255, 255, 255, 0.05)',
-            border: '1px solid var(--dropdown-border, rgba(255, 255, 255, 0.1))',
-            padding: '2.5rem',
-            borderRadius: '16px',
-            textAlign: 'center',
-            maxWidth: '450px',
-            boxShadow: '0 20px 40px rgba(0,0,0,0.5)',
+      {isFileAccessBlocked && (
+        <div 
+          className="file-access-blocked-overlay"
+          style={{
+            position: 'absolute',
+            inset: 0,
+            background: 'rgba(0, 0, 0, 0.88)',
+            backdropFilter: 'blur(12px)',
+            WebkitBackdropFilter: 'blur(12px)',
             display: 'flex',
             flexDirection: 'column',
             alignItems: 'center',
-            gap: '1.25rem'
+            justifyContent: 'center',
+            zIndex: 600,
+            color: 'var(--text-primary, #ffffff)',
+            fontFamily: "'Inter', sans-serif",
+            cursor: 'default',
+            pointerEvents: 'auto'
+          }}
+          onClick={(e) => e.stopPropagation()}
+          onMouseMove={(e) => e.stopPropagation()}
+        >
+          <div style={{
+            background: 'rgba(255, 255, 255, 0.05)',
+            border: '1px solid var(--dropdown-border, rgba(255, 255, 255, 0.12))',
+            padding: '2.5rem',
+            borderRadius: '16px',
+            textAlign: 'center',
+            maxWidth: '480px',
+            width: '90%',
+            boxShadow: '0 20px 40px rgba(0,0,0,0.6)',
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            gap: '1.25rem',
+            cursor: 'default'
           }}>
             <Lock size={48} color="#ff7a00" />
-            <h2 style={{ fontSize: '1.5rem', fontWeight: 800, margin: 0 }}>Restore Access to File</h2>
-            <p style={{ fontSize: '0.95rem', color: 'rgba(255, 255, 255, 0.7)', margin: 0, lineHeight: 1.5 }}>
-              To resume watching <strong>{video.title}</strong>, please restore permission to access the local file.
+            <h2 style={{ fontSize: '1.5rem', fontWeight: 800, margin: 0, color: '#ffffff' }}>Restore Access to File</h2>
+            <p style={{ 
+              fontSize: '0.92rem', 
+              color: 'rgba(255, 255, 255, 0.75)', 
+              margin: 0, 
+              lineHeight: 1.6,
+              wordBreak: 'break-word',
+              maxWidth: '420px'
+            }}>
+              To resume watching <strong style={{ color: '#ffffff', display: 'inline' }}>{video.title}</strong>, please restore permission to access the local file.
             </p>
             <button 
               className="btn btn-primary"
@@ -4656,8 +4963,9 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
                 display: 'flex',
                 alignItems: 'center',
                 gap: '8px',
-                boxShadow: '0 4px 12px rgba(255, 122, 0, 0.3)',
-                marginTop: '0.5rem'
+                boxShadow: '0 4px 14px rgba(255, 122, 0, 0.4)',
+                marginTop: '0.5rem',
+                transition: 'transform 0.15s ease, background 0.15s'
               }}
               onClick={(e) => {
                 e.stopPropagation();
@@ -4674,7 +4982,7 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
               style={{
                 background: 'transparent',
                 border: 'none',
-                color: 'rgba(255, 255, 255, 0.5)',
+                color: 'rgba(255, 255, 255, 0.55)',
                 cursor: 'pointer',
                 fontSize: '0.85rem',
                 textDecoration: 'underline'
@@ -4694,11 +5002,25 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
         style={{ 
           position: 'absolute', 
           inset: 0, 
-          zIndex: 10 
+          zIndex: 10,
+          overflow: 'hidden',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center'
         }}
         onDoubleClick={handlePlayerDoubleClick}
         onClick={(e) => {
           e.stopPropagation();
+
+          // If VLC context menu is visible or was just closed within 350ms, do NOT toggle play/pause!
+          if (vlcContextMenuState.visible || (Date.now() - vlcContextMenuClosedTimestampRef.current < 350)) {
+            if (vlcContextMenuState.visible) {
+              setVlcContextMenuState({ visible: false, x: 0, y: 0 });
+            }
+            resetControlsTimeout();
+            return;
+          }
+
           if (showPauseMetadataOverlayRef.current) {
             showPauseMetadataOverlayRef.current = false;
             setShowPauseMetadataOverlay(false);
@@ -4729,11 +5051,7 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
         onContextMenu={(e) => {
           e.preventDefault();
           e.stopPropagation();
-          if (radialMenuState.visible) {
-            setRadialMenuState({ visible: false, x: 0, y: 0 });
-          } else {
-            setRadialMenuState({ visible: true, x: e.clientX, y: e.clientY });
-          }
+          setVlcContextMenuState(prev => prev.visible ? { visible: false, x: 0, y: 0 } : { visible: true, x: e.clientX, y: e.clientY });
         }}
       >
         <video
@@ -4743,7 +5061,11 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
           controls={false}
           crossOrigin={video.playbackMode === 'advanced' ? 'anonymous' : undefined}
           className="main-video-element"
-           onLoadedMetadata={() => {
+          style={{
+            ...getVideoTransformStyle(),
+            transition: 'transform 0.25s cubic-bezier(0.16, 1, 0.3, 1), object-fit 0.25s ease'
+          }}
+          onLoadedMetadata={() => {
             if (videoRef.current) {
               const videoDuration = videoRef.current.duration;
               setDuration(videoDuration);
@@ -5079,24 +5401,35 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
               </p>
             )}
 
-            {/* Netflix-style Paused Tag */}
-            <div style={{
+          </div>
+
+          {/* Netflix-style Paused Tag at Bottom Right */}
+          <div 
+            className="animate-fade-in"
+            style={{
+              position: 'absolute',
+              bottom: '36px',
+              right: videoLayout.left > 0 ? `${videoLayout.left + 36}px` : '36px',
+              zIndex: 55,
               display: 'inline-flex',
               alignItems: 'center',
-              gap: '6px',
-              marginTop: '4px',
-              padding: '3px 8px',
-              borderRadius: '4px',
-              background: 'rgba(0, 0, 0, 0.45)',
-              border: '1px solid rgba(255, 255, 255, 0.15)',
-              fontSize: '0.72rem',
-              fontWeight: 700,
-              letterSpacing: '1px',
-              color: 'rgba(255, 255, 255, 0.7)'
-            }}>
-              <Pause size={12} fill="currentColor" />
-              PAUSED
-            </div>
+              gap: '8px',
+              padding: '6px 14px',
+              borderRadius: '6px',
+              background: 'rgba(0, 0, 0, 0.65)',
+              backdropFilter: 'blur(10px)',
+              WebkitBackdropFilter: 'blur(10px)',
+              border: '1px solid rgba(255, 255, 255, 0.2)',
+              fontSize: '0.82rem',
+              fontWeight: 800,
+              letterSpacing: '1.5px',
+              color: 'rgba(255, 255, 255, 0.9)',
+              boxShadow: '0 4px 20px rgba(0, 0, 0, 0.6)',
+              pointerEvents: 'none'
+            }}
+          >
+            <Pause size={13} fill="currentColor" />
+            PAUSED
           </div>
         </>
       )}
@@ -5124,11 +5457,7 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
           onContextMenu={(e) => {
             e.preventDefault();
             e.stopPropagation();
-            if (radialMenuState.visible) {
-              setRadialMenuState({ visible: false, x: 0, y: 0 });
-            } else {
-              setRadialMenuState({ visible: true, x: e.clientX, y: e.clientY });
-            }
+            setVlcContextMenuState(prev => prev.visible ? { visible: false, x: 0, y: 0 } : { visible: true, x: e.clientX, y: e.clientY });
           }}
           style={{
             position: 'absolute',
@@ -5166,7 +5495,7 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
       />
 
       {/* Top Header Overlay */}
-      {!isLocked && (!hideUIOverlays || hoveredSetting === 'showUIOverlays') && (
+      {!isLocked && (!hideUIOverlays || hoveredSetting === 'showUIOverlays') && !timelineOnlyMode && (
         <div 
           className={`player-overlay top-overlay-clean ${controlsVisible ? 'visible' : 'hidden'} ${getHighlightClass('showUIOverlays')}`} 
           onClick={(e) => e.stopPropagation()}
@@ -5179,13 +5508,18 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
           <button className="close-btn" onClick={handleExit} title="Back">
             <ArrowLeft size={24} />
           </button>
-          
+
           <div style={{ flex: 1 }} />
 
-          {/* Chromecast trigger (acting as native browser cast prompt) */}
-          <button className="cast-btn" onClick={handleCast} title="Chromecast">
-            <Cast size={24} />
-          </button>
+          {/* Top Actions: PiP and Chromecast */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+            <button className="cast-btn" onClick={togglePiP} title="Picture in Picture">
+              <MonitorPlay size={24} />
+            </button>
+            <button className="cast-btn" onClick={handleCast} title="Cast to TV / Chromecast">
+              <Cast size={24} />
+            </button>
+          </div>
         </div>
       )}
 
@@ -5314,7 +5648,7 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
       {!isLocked && (((!hideUIOverlays && (showPlayBar || showTimeDisplay || showVolumeControl || showFullscreen || video.isRemote)) ||
         (hoveredSetting === 'showUIOverlays' || hoveredSetting === 'showPlayBar' || hoveredSetting === 'showTimeDisplay' || hoveredSetting === 'showVolumeControl' || hoveredSetting === 'showFullscreen'))) && (
         <div 
-          className={`player-overlay bottom-overlay ${controlsVisible ? 'visible' : 'hidden'} ${getHighlightClass('showUIOverlays')}`} 
+          className={`player-overlay bottom-overlay ${controlsVisible ? 'visible' : 'hidden'} ${timelineOnlyMode ? 'timeline-only-mode' : ''} ${getHighlightClass('showUIOverlays')}`} 
           onClick={(e) => e.stopPropagation()}
           style={{
             opacity: controlsVisible ? (showUIOverlaysMode === 'enable' ? 1 : 0.5) : 0,
@@ -5492,7 +5826,7 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
           )}
 
           {/* Bottom controls bar: PiP on left, Audio & Subtitles in center, Fullscreen on right */}
-          {(!hideUIOverlays || hoveredSetting === 'showUIOverlays' || hoveredSetting === 'showVolumeControl' || hoveredSetting === 'showFullscreen') && (
+          {(!hideUIOverlays || hoveredSetting === 'showUIOverlays' || hoveredSetting === 'showVolumeControl' || hoveredSetting === 'showFullscreen') && !timelineOnlyMode && (
             <div className={`bottom-controls-bar ${getHighlightClass('showUIOverlays')}`}>
               <div className="bottom-controls-left-spacer">
                 {/* Play / Pause Button */}
@@ -5597,11 +5931,13 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
                 )}
               </div>
 
-              <div className="bottom-controls-center-group">
-                <span className="bottom-media-title-netflix" title={video.title || video.fileName || ''}>
-                  {getRegexedTitleWithYear(video.title || video.fileName || '')}
-                </span>
-              </div>
+              {!hideVideoName && (
+                <div className="bottom-controls-center-group">
+                  <span className="bottom-media-title-netflix" title={video.title || video.fileName || ''}>
+                    {getRegexedTitleWithYear(video.title || video.fileName || '')}
+                  </span>
+                </div>
+              )}
 
               <div className="bottom-controls-right-group">
                 {markingStartTime !== null && (
@@ -5626,34 +5962,11 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
                       }
                     }}
                     className="marking-hud-button-controls marking-hud-button-desktop"
-                    style={{
-                      background: 'var(--player-accent, #e50914)',
-                      color: 'var(--text-primary, #ffffff)',
-                      border: 'none',
-                      borderRadius: '20px',
-                      padding: '6px 14px',
-                      fontSize: '0.85rem',
-                      fontWeight: 'bold',
-                      cursor: 'pointer',
-                      boxShadow: '0 2px 8px rgba(229, 9, 20, 0.4)',
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '8px',
-                      fontFamily: 'Outfit, sans-serif',
-                      animation: 'pulseMarking 1.5s infinite alternate',
-                      height: '36px',
-                      marginRight: '15px'
-                    }}
+                    title={`Recording (${formatTime(markingStartTime)} - ${formatTime(currentTime)}) - Click to finish mark`}
+                    aria-label="Recording scene - click to finish mark"
                   >
-                    <span style={{
-                      display: 'inline-block',
-                      width: '6px',
-                      height: '6px',
-                      borderRadius: '50%',
-                      background: '#fff',
-                      animation: 'flashDot 1s infinite'
-                    }} />
-                    <span>Marking... tap to end ({formatTime(markingStartTime)} - {formatTime(currentTime)})</span>
+                    <span className="marking-rec-dot" />
+                    <span className="marking-rec-text">Recording</span>
                   </button>
                 )}
                 
@@ -5795,14 +6108,6 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
                 </div>
 
                 <button 
-                  className="control-btn-netflix control-btn-pip" 
-                  onClick={togglePiP} 
-                  title="Picture in Picture"
-                >
-                  <MonitorPlay size={22} />
-                </button>
-
-                <button 
                   className="control-btn-netflix control-btn-settings" 
                   onClick={() => setShowSettingsPanel(prev => !prev)} 
                   title="Player Settings"
@@ -5830,34 +6135,107 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
         </div>
       )}
 
-      {/* Centered UI Settings Modal */}
-      {showSettingsPanel && (
-        <div 
-          className="settings-modal-overlay animate-overlay-fade-in" 
-          onClick={() => {
-            setShowSettingsPanel(false);
-            setIsSettingsExpanded(false);
+      {/* Edge Slide-In Button (visible when settings panel is closed) */}
+      {!hideUIOverlays && !showSettingsPanel && (
+        <button
+          className="ui-settings-edge-slide-btn"
+          onClick={(e) => {
+            e.stopPropagation();
+            e.preventDefault();
+            setShowSettingsPanel(true);
           }}
+          title="Slide in UI Settings (Del)"
+          aria-label="Slide in UI Settings"
+          style={{
+            position: 'absolute',
+            right: 0,
+            top: '50%',
+            transform: 'translateY(-50%)',
+            zIndex: 120,
+            width: '26px',
+            height: '64px',
+            background: 'var(--dropdown-bg, rgba(18, 18, 18, 0.92))',
+            backdropFilter: 'blur(8px)',
+            WebkitBackdropFilter: 'blur(8px)',
+            border: '1px solid var(--dropdown-border, rgba(255, 255, 255, 0.15))',
+            borderRight: 'none',
+            borderRadius: '12px 0 0 12px',
+            padding: 0,
+            margin: 0,
+            cursor: 'pointer',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            boxShadow: '-4px 0 16px rgba(0, 0, 0, 0.45)',
+            opacity: showControls ? 0.95 : 0.35,
+            color: 'var(--text-primary, #ffffff)',
+            outline: 'none',
+            transition: 'opacity 0.2s ease, background 0.2s'
+          }}
+        >
+          <ChevronLeft size={18} />
+        </button>
+      )}
+
+      {/* UI Settings Modal Drawer (visible when open) */}
+      {!hideUIOverlays && showSettingsPanel && (
+        <div 
+          className="ui-settings-slideout-drawer" 
           style={{
             position: 'absolute',
             top: 0,
-            left: 0,
-            right: 0,
             bottom: 0,
-            background: 'none',
-            backdropFilter: 'none',
-            WebkitBackdropFilter: 'none',
+            right: 0,
             zIndex: 150,
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'flex-end',
-            paddingRight: '0'
+            pointerEvents: 'none'
           }}
         >
+          {/* The slide-out / collapse handle attached to the left edge of the modal */}
+          <button
+            className="ui-settings-modal-collapse-btn"
+            onClick={(e) => {
+              e.stopPropagation();
+              e.preventDefault();
+              setShowSettingsPanel(false);
+              setIsSettingsExpanded(false);
+            }}
+            title="Slide out / Collapse UI Settings (Del)"
+            aria-label="Collapse UI Settings"
+            style={{
+              pointerEvents: 'auto',
+              width: '26px',
+              height: '64px',
+              background: 'var(--dropdown-bg, rgba(18, 18, 18, 0.96))',
+              backdropFilter: 'blur(8px)',
+              WebkitBackdropFilter: 'blur(8px)',
+              border: '1px solid var(--dropdown-border, rgba(255, 255, 255, 0.15))',
+              borderRight: 'none',
+              borderRadius: '12px 0 0 12px',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              color: 'var(--text-primary, #ffffff)',
+              boxShadow: '-4px 0 16px rgba(0, 0, 0, 0.45)',
+              outline: 'none',
+              padding: 0,
+              zIndex: 160,
+              marginRight: '-1px'
+            }}
+          >
+            <ChevronRight size={18} />
+          </button>
+
           <div 
             className="settings-modal-card animate-slide-in-right" 
             onClick={(e) => e.stopPropagation()}
             style={{
+              position: 'relative',
+              pointerEvents: 'auto',
+              overflow: 'visible',
               background: 'var(--dropdown-bg, rgba(18, 18, 18, 0.96))',
               border: '1px solid var(--dropdown-border, rgba(255, 255, 255, 0.1))',
               borderRight: 'none',
@@ -5872,18 +6250,28 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
               transition: 'width 0.3s cubic-bezier(0.16, 1, 0.3, 1), background 0.3s'
             }}
           >
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%' }}>
               <h3 style={{ margin: 0, fontSize: '1rem', fontWeight: 600, color: 'var(--text-primary, #ffffff)' }}>UI Settings</h3>
-              <button 
-                onClick={() => {
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
                   setShowSettingsPanel(false);
                   setIsSettingsExpanded(false);
                 }}
-                style={{ background: 'none', border: 'none', color: 'var(--text-secondary, rgba(255, 255, 255, 0.6))', cursor: 'pointer', padding: '4px', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'color 0.15s ease' }}
-                onMouseEnter={(e) => e.currentTarget.style.color = 'var(--text-primary)'}
-                onMouseLeave={(e) => e.currentTarget.style.color = 'var(--text-secondary)'}
+                style={{
+                  background: 'none',
+                  border: 'none',
+                  color: 'var(--text-muted, rgba(255, 255, 255, 0.6))',
+                  cursor: 'pointer',
+                  padding: '4px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  borderRadius: '6px'
+                }}
+                title="Close UI Settings"
               >
-                <X size={18} />
+                <X size={16} />
               </button>
             </div>
             
@@ -5903,33 +6291,7 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
                     'showFullscreen', 'disableAnimations', 'pauseOnFocusChange', 'allowUiSkipping', 'blockSeekingCompletely', 'autoSkipIntroOutro', 'lockModeActive'
                   ]).slice(0, 5).map((key) => renderSettingsButton(key))}
                   
-                  {/* Esports Overlay Toggle */}
-                  <button
-                    onClick={() => {
-                      const nextVal = !vctOverlayEnabled;
-                      setVctOverlayEnabled(nextVal);
-                      localStorage.setItem('vct_overlay_enabled', nextVal ? 'true' : 'false');
-                      window.dispatchEvent(new Event('storage'));
-                    }}
-                    title="Toggle Esports Live Overlay"
-                    className="settings-icon-toggle"
-                    style={{
-                      background: vctOverlayEnabled ? 'rgba(46, 204, 113, 0.2)' : 'var(--border-subtle, rgba(255, 255, 255, 0.05))',
-                      border: `1px solid ${vctOverlayEnabled ? 'rgba(46, 204, 113, 0.5)' : 'var(--border-color, rgba(255, 255, 255, 0.1))'}`,
-                      color: vctOverlayEnabled ? '#2ecc71' : 'var(--text-secondary, rgba(255, 255, 255, 0.8))',
-                      borderRadius: '12px',
-                      padding: '8px',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      cursor: 'pointer',
-                      transition: 'all 0.2s ease'
-                    }}
-                  >
-                    <Activity size={22} />
-                  </button>
-
-                  {/* 7th item is the uncollapse button */}
+                  {/* 6th item is the show more (uncollapse) button */}
                   <button
                     onClick={() => setIsSettingsExpanded(true)}
                     title="Show More Settings"
@@ -5959,7 +6321,35 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
                     'showFullscreen', 'disableAnimations', 'pauseOnFocusChange', 'allowUiSkipping', 'blockSeekingCompletely', 'autoSkipIntroOutro', 'lockModeActive'
                   ]).map((key) => renderSettingsButton(key))}
 
-                  {/* Collapse button inside the 4x4 grid */}
+                  {/* Esports Overlay Toggle */}
+                  <button
+                    onClick={() => {
+                      const nextVal = !vctOverlayEnabled;
+                      setVctOverlayEnabled(nextVal);
+                      localStorage.setItem('vct_overlay_enabled', nextVal ? 'true' : 'false');
+                      window.dispatchEvent(new Event('storage'));
+                    }}
+                    title="Toggle Esports Live Overlay"
+                    className="settings-icon-toggle"
+                    style={{
+                      background: vctOverlayEnabled ? 'rgba(46, 204, 113, 0.2)' : 'var(--border-subtle, rgba(255, 255, 255, 0.05))',
+                      border: `1px solid ${vctOverlayEnabled ? 'rgba(46, 204, 113, 0.5)' : 'var(--border-color, rgba(255, 255, 255, 0.1))'}`,
+                      color: vctOverlayEnabled ? '#2ecc71' : 'var(--text-secondary, rgba(255, 255, 255, 0.8))',
+                      borderRadius: '12px',
+                      padding: '8px',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      cursor: 'pointer',
+                      transition: 'all 0.2s ease',
+                      height: '54px',
+                      width: '54px'
+                    }}
+                  >
+                    <Activity size={22} />
+                  </button>
+
+                  {/* Collapse button inside the grid */}
                   <button
                     onClick={() => setIsSettingsExpanded(false)}
                     title="Show Less Settings"
@@ -6033,8 +6423,8 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
             position: 'absolute',
             bottom: controlsVisible ? '120px' : '45px',
             right: '1.5rem',
-            background: 'var(--player-accent, #e50914)',
-            color: 'var(--text-primary, #ffffff)',
+            background: 'var(--accent)',
+            color: 'var(--player-accent-text, #ffffff)',
             border: 'none',
             borderRadius: '24px',
             padding: '10px 20px',
@@ -6077,6 +6467,161 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
         accept=".srt,.vtt" 
         onChange={handleCustomSubUpload}
       />
+      <input 
+        type="file" 
+        ref={openMediaFileInputRef} 
+        style={{ display: 'none' }} 
+        accept="video/*" 
+        onChange={handleOpenMediaFile}
+      />
+      <input 
+        type="file" 
+        ref={addToPlaylistFileInputRef} 
+        style={{ display: 'none' }} 
+        accept="video/*" 
+        multiple
+        onChange={handleAddToPlaylistFile}
+      />
+
+      {/* VLC-Style Open Network Stream Modal */}
+      {showNetworkStreamModal && (
+        <div 
+          className="network-stream-modal-backdrop"
+          onClick={() => setShowNetworkStreamModal(false)}
+          style={{
+            position: 'absolute',
+            inset: 0,
+            zIndex: 99999,
+            background: 'rgba(0, 0, 0, 0.75)',
+            backdropFilter: 'blur(8px)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: '16px'
+          }}
+        >
+          <div 
+            className="network-stream-modal-dialog animate-fade-in"
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              background: 'var(--card-bg, #14141c)',
+              border: '1px solid var(--border-color, rgba(255, 255, 255, 0.15))',
+              borderRadius: '12px',
+              padding: '24px',
+              width: '100%',
+              maxWidth: '480px',
+              boxShadow: '0 20px 40px rgba(0,0,0,0.8)',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '16px',
+              color: '#ffffff'
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <span style={{ fontSize: '20px' }}>🌐</span>
+                <h3 style={{ margin: 0, fontSize: '1.1rem', fontWeight: 700 }}>Open Network Stream</h3>
+              </div>
+              <button 
+                type="button"
+                onClick={() => setShowNetworkStreamModal(false)}
+                style={{
+                  background: 'none',
+                  border: 'none',
+                  color: 'rgba(255, 255, 255, 0.5)',
+                  fontSize: '18px',
+                  cursor: 'pointer',
+                  padding: '4px'
+                }}
+              >
+                ✕
+              </button>
+            </div>
+
+            <p style={{ margin: 0, fontSize: '0.82rem', color: 'rgba(255, 255, 255, 0.7)', lineHeight: '1.4' }}>
+              Please enter a network URL (HTTP, HTTPS, or HLS <code>.m3u8</code>) to stream media directly:
+            </p>
+
+            <input 
+              type="url"
+              autoFocus
+              placeholder="https://example.com/live/stream.m3u8"
+              value={networkStreamUrl}
+              onChange={(e) => setNetworkStreamUrl(e.target.value)}
+              onKeyDown={(e) => {
+                e.stopPropagation();
+                if (e.key === 'Enter') handlePlayNetworkStream(false);
+                if (e.key === 'Escape') setShowNetworkStreamModal(false);
+              }}
+              style={{
+                width: '100%',
+                background: 'rgba(0, 0, 0, 0.5)',
+                border: '1px solid rgba(255, 255, 255, 0.2)',
+                borderRadius: '8px',
+                padding: '10px 14px',
+                color: '#ffffff',
+                fontSize: '0.9rem',
+                outline: 'none',
+                boxSizing: 'border-box'
+              }}
+            />
+
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: '10px', marginTop: '6px' }}>
+              <button 
+                type="button"
+                onClick={() => setShowNetworkStreamModal(false)}
+                style={{
+                  background: 'rgba(255, 255, 255, 0.08)',
+                  border: '1px solid rgba(255, 255, 255, 0.15)',
+                  borderRadius: '6px',
+                  padding: '8px 16px',
+                  color: '#ffffff',
+                  fontSize: '0.82rem',
+                  fontWeight: 600,
+                  cursor: 'pointer'
+                }}
+              >
+                Cancel
+              </button>
+              <button 
+                type="button"
+                disabled={!networkStreamUrl.trim()}
+                onClick={() => handlePlayNetworkStream(true)}
+                style={{
+                  background: 'rgba(255, 255, 255, 0.12)',
+                  border: '1px solid rgba(255, 255, 255, 0.25)',
+                  borderRadius: '6px',
+                  padding: '8px 16px',
+                  color: networkStreamUrl.trim() ? '#ffffff' : 'rgba(255,255,255,0.4)',
+                  fontSize: '0.82rem',
+                  fontWeight: 600,
+                  cursor: networkStreamUrl.trim() ? 'pointer' : 'not-allowed'
+                }}
+              >
+                Add to Playlist
+              </button>
+              <button 
+                type="button"
+                disabled={!networkStreamUrl.trim()}
+                onClick={() => handlePlayNetworkStream(false)}
+                style={{
+                  background: networkStreamUrl.trim() ? 'var(--accent)' : 'rgba(229, 9, 20, 0.4)',
+                  border: 'none',
+                  borderRadius: '6px',
+                  padding: '8px 20px',
+                  color: 'var(--player-accent-text, #ffffff)',
+                  fontSize: '0.82rem',
+                  fontWeight: 700,
+                  cursor: networkStreamUrl.trim() ? 'pointer' : 'not-allowed',
+                  boxShadow: networkStreamUrl.trim() ? '0 2px 10px var(--accent-soft)' : 'none'
+                }}
+              >
+                Play
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Side Skip HUD (Left for rewind, Right for forward) */}
       {consecutiveSkipInfo && (
@@ -6130,25 +6675,29 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
         </div>
       )}
 
-      {/* Volume Toast Overlay */}
+      {/* Volume Toast Overlay (Horizontal Layout) */}
       <div className={`volume-toast-overlay ${volumeToast.visible ? 'visible' : ''}`}>
-        <div className="volume-toast-content-vertical">
-          <div className="volume-toast-bar-vertical">
-            {volumeToast.boost > 100 ? (
-              <div 
-                className="volume-toast-bar-fill-vertical" 
-                style={{ height: `${volumeToast.boost - 100}%`, background: '#ff7a00', backgroundColor: '#ff7a00' }}
-              >
-                <div className="volume-toast-bar-cap-vertical" style={{ background: '#ffffff', backgroundColor: '#ffffff' }} />
-              </div>
+        <div className="volume-toast-content-horizontal">
+          <div className="volume-toast-icon">
+            {volumeToast.isMuted || volumeToast.volume === 0 ? (
+              <VolumeX size={18} color="#ef4444" />
+            ) : volumeToast.volume < 0.5 ? (
+              <Volume1 size={18} color="#ffffff" />
             ) : (
-              <div className="volume-toast-bar-fill-vertical" style={{ height: `${volumeToast.volume * 100}%` }}>
-                {volumeToast.volume > 0 && <div className="volume-toast-bar-cap-vertical" />}
-              </div>
+              <Volume2 size={18} color="#ffffff" />
             )}
           </div>
-          <span className="volume-toast-text-vertical">
-            {volumeToast.isMuted ? 'MUTE' : (volumeToast.boost > 100 ? volumeToast.boost : Math.round(volumeToast.volume * 100))}
+          <div className="volume-toast-bar-horizontal">
+            <div 
+              className="volume-toast-bar-fill-horizontal" 
+              style={{ 
+                width: volumeToast.boost > 100 ? `${Math.min(100, volumeToast.boost - 100)}%` : `${volumeToast.volume * 100}%`,
+                background: volumeToast.boost > 100 ? '#ff7a00' : '#007aff' 
+              }}
+            />
+          </div>
+          <span className="volume-toast-text-horizontal">
+            {volumeToast.isMuted ? 'MUTE' : (volumeToast.boost > 100 ? `${volumeToast.boost}%` : `${Math.round(volumeToast.volume * 100)}%`)}
           </span>
         </div>
       </div>
@@ -6271,7 +6820,7 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
           bottom: 0;
           left: 0;
           height: 3px;
-          background: var(--player-accent, #e50914);
+          background: var(--accent);
           animation: skipProgressPremium 7s linear forwards;
         }
 
@@ -6358,7 +6907,7 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
           z-index: 30;
         }
         .timeline-bookmark-dot:not(.intro-dot):not(.outro-dot):hover {
-          background-color: var(--player-accent, #e50914) !important;
+          background-color: var(--accent) !important;
         }
         .timeline-bookmark-dot.intro-dot {
           background-color: #3b82f6;
@@ -6515,13 +7064,13 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
           transform: translateX(18px);
         }
         .drawer-add-btn {
-          background: var(--player-accent, #e50914);
+          background: var(--accent);
           border: none;
-          color: #ffffff;
+          color: var(--player-accent-text, #ffffff) !important;
           padding: 4px 10px;
           border-radius: 4px;
           font-size: 0.75rem;
-          font-weight: 600;
+          font-weight: 700;
           cursor: pointer;
           transition: background-color 0.15s ease;
         }
@@ -6918,6 +7467,14 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
           flex-direction: column;
           gap: calc(0.25rem * var(--player-ui-scale, 1));
         }
+        .bottom-overlay.timeline-only-mode {
+          background: transparent !important;
+          padding-bottom: calc(1rem * var(--player-ui-scale, 1)) !important;
+          padding-top: calc(0.5rem * var(--player-ui-scale, 1)) !important;
+        }
+        .bottom-overlay.timeline-only-mode .bottom-controls-bar {
+          display: none !important;
+        }
         .player-overlay.visible {
           opacity: 1;
           transform: translateY(0);
@@ -7015,7 +7572,8 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
           left: 0;
           right: 0;
           height: calc(4px * var(--player-ui-scale, 1));
-          background: rgba(255, 255, 255, 0.2);
+          background: var(--player-scrub-bg, rgba(255, 255, 255, 0.22));
+          box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(0, 0, 0, 0.25);
           border-radius: calc(2px * var(--player-ui-scale, 1));
           z-index: 1;
         }
@@ -7023,7 +7581,7 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
           position: absolute;
           left: 0;
           height: calc(4px * var(--player-ui-scale, 1));
-          background: rgba(255, 255, 255, 0.35);
+          background: var(--player-scrub-buffered, rgba(255, 255, 255, 0.42));
           border-radius: calc(2px * var(--player-ui-scale, 1));
           z-index: 2;
           transition: width 0.15s ease;
@@ -7032,7 +7590,8 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
           position: absolute;
           left: 0;
           height: calc(4px * var(--player-ui-scale, 1));
-          background: var(--player-accent, #e50914);
+          background: var(--accent);
+          box-shadow: 0 0 8px var(--player-accent, rgba(229, 9, 20, 0.6));
           border-radius: calc(2px * var(--player-ui-scale, 1)) 0 0 calc(2px * var(--player-ui-scale, 1));
           z-index: 3;
         }
@@ -7054,12 +7613,13 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
           width: calc(22px * var(--player-ui-scale, 1));
           height: calc(22px * var(--player-ui-scale, 1));
           border-radius: 50%;
-          background: var(--player-accent, #e50914);
+          background: var(--accent);
+          border: 2px solid rgba(0, 0, 0, 0.85);
           cursor: pointer;
           transform: scale(0);
           opacity: 0;
           transition: transform 0.15s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.15s ease;
-          box-shadow: 0 0 10px rgba(229, 9, 20, 0.8);
+          box-shadow: 0 0 10px rgba(0, 0, 0, 0.8), 0 0 6px var(--player-accent, rgba(229, 9, 20, 0.8));
           z-index: 10;
         }
         .scrub-container-premium:hover .scrub-bar-premium::-webkit-slider-thumb,
@@ -7070,12 +7630,16 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
         .scrub-bar-premium::-moz-range-thumb {
           width: calc(22px * var(--player-ui-scale, 1));
           height: calc(22px * var(--player-ui-scale, 1));
-          border: none;
+          border: 2px solid rgba(0, 0, 0, 0.85);
           border-radius: 50%;
-          background: var(--player-accent, #e50914);
+          background: var(--accent);
           cursor: pointer;
           transform: scale(0);
           opacity: 0;
+          transition: transform 0.15s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.15s ease;
+          box-shadow: 0 0 10px rgba(0, 0, 0, 0.8), 0 0 6px var(--player-accent, rgba(229, 9, 20, 0.8));
+          z-index: 10;
+        }
           transition: transform 0.15s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.15s ease;
           box-shadow: 0 0 10px rgba(229, 9, 20, 0.8);
           z-index: 10;
@@ -7249,6 +7813,11 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
           pointer-events: none;
           user-select: none;
         }
+        @media (max-width: 820px) {
+          .bottom-controls-center-group, .bottom-media-title-netflix {
+            display: none !important;
+          }
+        }
 
         .control-btn-pip, .control-btn-fullscreen, .control-btn-bookmark-list {
           background: none;
@@ -7280,17 +7849,17 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
         .audio-sub-popover-center {
           position: absolute;
           bottom: 50px;
-          right: -80px;
-          max-width: calc(100vw - 32px);
-          height: 380px;
-          max-height: min(480px, calc(100vh - 120px));
-          overflow: hidden;
+          right: -20px;
+          max-width: calc(100vw - 24px);
+          height: 330px;
+          max-height: min(390px, calc(100vh - 100px));
+          overflow: visible;
           background: var(--card-bg);
           backdrop-filter: blur(25px);
           -webkit-backdrop-filter: blur(25px);
           border: 1px solid var(--border-color);
           border-radius: 12px;
-          padding: 1.1rem;
+          padding: 0.85rem;
           box-shadow: var(--shadow-xl);
           z-index: 100;
           transition: width 0.3s cubic-bezier(0.16, 1, 0.3, 1);
@@ -7316,7 +7885,7 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
         }
         .popover-cols {
           display: grid;
-          gap: 1.25rem;
+          gap: 0.85rem;
           height: 100%;
           min-height: 0;
           align-items: stretch;
@@ -7330,194 +7899,246 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
             flex-direction: column !important;
           }
         }
-        @media (min-width: 1025px) {
-          .control-btn-settings {
-            display: none !important;
-          }
+        .control-btn-settings {
+          display: none !important;
         }
         .popover-transcript-col {
-          border-left: 1px solid var(--border-subtle);
-          padding-left: 1.25rem;
+          border-left: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.08));
+          padding-left: 0.85rem;
           display: flex;
           flex-direction: column;
           height: 100%;
           min-height: 0;
+          min-width: 200px;
           overflow: hidden;
+          box-sizing: border-box;
         }
         .popover-style-col {
-          border-left: 1px solid var(--border-subtle);
-          padding-left: 1.25rem;
+          border-left: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.08));
+          padding-left: 0.85rem;
           display: flex;
           flex-direction: column;
           height: 100%;
           min-height: 0;
+          min-width: 215px;
           overflow: hidden;
+          box-sizing: border-box;
         }
-        .style-header-row {
+        .popover-col-header {
+          height: 32px;
+          min-height: 32px;
+          max-height: 32px;
           display: flex;
           align-items: center;
           justify-content: space-between;
-          border-bottom: 1px solid var(--border-subtle);
-          padding-bottom: 0.35rem;
-          margin-bottom: 0.25rem;
+          border-bottom: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.08));
+          padding-bottom: 6px;
+          margin-bottom: 10px;
+          flex-shrink: 0;
+          box-sizing: border-box;
         }
-        .style-header-row h4 {
-          margin: 0 !important;
-          border-bottom: none !important;
-          padding-bottom: 0 !important;
-          color: var(--text-primary) !important;
+        .popover-col-title {
+          margin: 0;
+          padding: 0;
+          font-size: 0.82rem;
+          font-weight: 700;
+          color: #ffffff;
+          letter-spacing: 0.02em;
+          line-height: 1;
         }
-        .style-reset-btn-header {
-          background: var(--surface);
-          border: 1px solid var(--border-color);
-          border-radius: 4px;
-          color: var(--text-muted);
-          font-size: 0.72rem;
-          font-weight: 600;
-          padding: 0.2rem 0.5rem;
+        .popover-header-btn-group {
+          display: flex;
+          align-items: center;
+          gap: 5px;
+        }
+        .popover-header-toggle-btn {
+          background: var(--surface-hover, rgba(255, 255, 255, 0.08));
+          color: var(--text-secondary, rgba(255, 255, 255, 0.75));
+          border: 1px solid var(--border-color, rgba(255, 255, 255, 0.12));
+          border-radius: 6px;
+          padding: 2px 7px;
+          font-size: 0.65rem;
+          font-weight: 700;
+          letter-spacing: 0.04em;
+          cursor: pointer;
+          transition: all 0.15s ease;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          height: 22px;
+          line-height: 1;
+        }
+        .popover-header-toggle-btn:hover {
+          background: var(--surface-hover, rgba(255, 255, 255, 0.15));
+          color: var(--text-primary, #ffffff);
+          border-color: var(--border-focus, rgba(255, 255, 255, 0.22));
+        }
+        .popover-header-toggle-btn.active {
+          background: var(--accent) !important;
+          border-color: var(--accent) !important;
+          color: var(--player-accent-text, #ffffff) !important;
+          font-weight: 800;
+          box-shadow: 0 2px 8px var(--accent-soft);
+        }
+        .popover-header-action-btn {
+          background: var(--surface-hover, rgba(255, 255, 255, 0.08));
+          border: 1px solid var(--border-color, rgba(255, 255, 255, 0.12));
+          border-radius: 6px;
+          color: var(--text-secondary, rgba(255, 255, 255, 0.75));
+          font-size: 0.65rem;
+          font-weight: 700;
+          padding: 2px 7px;
           cursor: pointer;
           transition: all 0.15s ease;
           text-transform: uppercase;
-          letter-spacing: 0.03em;
+          letter-spacing: 0.04em;
+          height: 22px;
+          line-height: 1;
+          display: flex;
+          align-items: center;
+          justify-content: center;
         }
-        .style-reset-btn-header:hover {
-          background: var(--card-hover-bg);
-          color: var(--text-primary);
-          border-color: var(--border-focus);
+        .popover-header-action-btn:hover {
+          background: var(--surface-hover, rgba(255, 255, 255, 0.15));
+          color: var(--text-primary, #ffffff);
+          border-color: var(--border-focus, rgba(255, 255, 255, 0.22));
         }
-        .style-customizer {
+        .style-customizer-clean {
           flex: 1 1 auto;
           min-height: 0;
           display: flex;
           flex-direction: column;
-          gap: 0.85rem;
-          margin-top: 0.5rem;
+          gap: 12px;
           overflow-y: auto;
           overflow-x: hidden;
-          padding-right: 4px;
+          padding-right: 2px;
           scrollbar-width: thin;
           scrollbar-color: rgba(255, 255, 255, 0.2) transparent;
         }
-        .style-customizer::-webkit-scrollbar {
+        .style-customizer-clean::-webkit-scrollbar {
           width: 4px;
         }
-        .style-customizer::-webkit-scrollbar-thumb {
+        .style-customizer-clean::-webkit-scrollbar-thumb {
           background: rgba(255, 255, 255, 0.2);
           border-radius: 2px;
         }
-        .style-font-size-row {
-          display: grid;
-          grid-template-columns: 1.2fr 1fr;
-          gap: 0.85rem;
-        }
-        .style-row {
+        .style-block {
           display: flex;
           flex-direction: column;
-          gap: 0.35rem;
+          gap: 5px;
+          width: 100%;
         }
-        .style-label {
-          font-size: 0.7rem;
-          color: var(--text-muted, rgba(255, 255, 255, 0.45));
-          text-transform: uppercase;
-          letter-spacing: 0.05em;
-          font-weight: 600;
+        .style-block-label {
+          font-size: 0.72rem;
+          font-weight: 700;
+          letter-spacing: 0.04em;
+          color: var(--text-secondary, rgba(255, 255, 255, 0.75));
         }
-        
-        /* Font Size Control - Premium Button Group */
-        .size-btn-group {
+        .size-control-group {
           display: flex;
           align-items: center;
-          background: var(--input-bg, rgba(0, 0, 0, 0.25));
-          border: 1px solid var(--border-color, rgba(255, 255, 255, 0.15));
-          border-radius: 6px;
-          overflow: hidden;
-          padding: 2px;
-          align-self: flex-start;
+          justify-content: space-between;
+          background: var(--input-bg, rgba(0, 0, 0, 0.35));
+          border: 1px solid var(--border-color, rgba(255, 255, 255, 0.12));
+          border-radius: 8px;
+          padding: 3px;
+          width: 100%;
+          box-sizing: border-box;
         }
-        .size-action-btn {
+        .size-step-btn {
           background: transparent;
           border: none;
           color: var(--text-primary, #ffffff);
-          width: 28px;
-          height: 24px;
-          font-size: 0.95rem;
-          font-weight: 500;
+          width: 32px;
+          height: 28px;
+          font-size: 1.1rem;
+          font-weight: 600;
           cursor: pointer;
-          transition: background 0.15s ease, color 0.15s;
+          border-radius: 6px;
           display: flex;
           align-items: center;
           justify-content: center;
-          border-radius: 4px;
+          transition: all 0.15s ease;
         }
-        .size-action-btn:hover {
-          background: var(--surface-hover, rgba(255, 255, 255, 0.08));
+        .size-step-btn:hover {
+          background: var(--surface-hover, rgba(255, 255, 255, 0.12));
         }
-        .size-action-btn:active {
-          background: var(--border-subtle, rgba(255, 255, 255, 0.15));
+        .size-step-btn:active {
+          background: var(--surface-hover, rgba(255, 255, 255, 0.2));
         }
-        .size-value-display {
-          font-size: 0.8rem;
-          font-weight: 600;
+        .size-step-value {
+          font-size: 0.85rem;
+          font-weight: 700;
           color: var(--text-primary, #ffffff);
-          padding: 0 0.6rem;
-          min-width: 38px;
           text-align: center;
         }
-        
-        /* Font Family Select Premium override for popover style col */
-        .popover-style-col .custom-select-trigger {
-          font-size: 0.95rem;
-          padding: 0.55rem 0.9rem;
-          background: var(--dropdown-bg, rgba(0, 0, 0, 0.35));
-        }
-        .style-row .custom-select-container {
-          width: 100% !important;
-        }
-        
-        /* Subtitle Color Selector - 1 line Text & Background */
-        .style-colors-row {
+        .style-colors-grid {
           display: grid;
-          grid-template-columns: 1.2fr 2fr;
-          gap: 1rem;
+          grid-template-columns: 1fr 1.2fr;
+          gap: 10px;
+          align-items: flex-start;
+          width: 100%;
         }
-        .color-picker-item {
+        .style-color-col {
           display: flex;
           flex-direction: column;
-          gap: 0.35rem;
+          gap: 5px;
         }
-        .picker-wrapper {
+        .color-swatch-wrapper {
           display: flex;
           align-items: center;
-          gap: 0.45rem;
+          min-height: 32px;
         }
-        .color-picker-input-premium {
+        .style-color-circle {
           -webkit-appearance: none;
           appearance: none;
-          border: 1px solid rgba(255, 255, 255, 0.2);
+          border: 2px solid rgba(255, 255, 255, 0.3);
           width: 30px;
           height: 30px;
           border-radius: 50%;
           cursor: pointer;
           background: none;
           padding: 0;
-          transition: transform 0.2s cubic-bezier(0.175, 0.885, 0.32, 1.275), border-color 0.2s, box-shadow 0.2s;
-          box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+          transition: transform 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
+          box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
+          box-sizing: border-box;
         }
-        .color-picker-input-premium:hover {
-          transform: scale(1.15);
-          border-color: var(--text-muted, rgba(255, 255, 255, 0.45));
-          box-shadow: 0 0 12px rgba(59, 130, 246, 0.5), 0 4px 15px rgba(0,0,0,0.6);
+        .style-color-circle:hover {
+          transform: scale(1.1);
+          border-color: #ffffff;
+          box-shadow: 0 0 10px rgba(255, 255, 255, 0.4);
         }
-        .color-picker-input-premium:disabled {
-          opacity: 0.3;
+        .style-color-circle:disabled {
+          opacity: 0.25;
           cursor: not-allowed;
           transform: none;
-          box-shadow: none;
         }
-        .color-picker-input-premium::-webkit-color-swatch-wrapper {
+        .style-none-circle-btn {
+          width: 30px;
+          height: 30px;
+          border-radius: 50%;
+          border: 1.5px solid rgba(255, 255, 255, 0.25);
+          background: rgba(255, 255, 255, 0.06);
+          cursor: pointer;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          padding: 0;
+          transition: all 0.15s ease;
+          flex-shrink: 0;
+        }
+        .style-none-circle-btn:hover {
+          transform: scale(1.1);
+          border-color: rgba(255, 255, 255, 0.5);
+        }
+        .style-none-circle-btn.active {
+          border-color: #ef4444;
+          background: rgba(239, 68, 68, 0.2);
+        }
+        .style-color-circle::-webkit-color-swatch-wrapper {
           padding: 0;
         }
-        .color-picker-input-premium::-webkit-color-swatch {
+        .style-color-circle::-webkit-color-swatch {
           border: none;
           border-radius: 50%;
         }
@@ -7527,8 +8148,9 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
           border: 1px solid var(--border-color, rgba(255, 255, 255, 0.12));
           border-radius: 6px;
           color: var(--text-secondary, rgba(255, 255, 255, 0.55));
-          padding: 0 0.75rem;
-          height: 30px;
+          padding: 0 0.5rem;
+          height: 24px;
+          font-size: 0.72rem;
           font-size: 0.8rem;
           font-weight: 600;
           cursor: pointer;
@@ -7605,7 +8227,7 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
           box-sizing: border-box;
         }
         .transcript-search-input:focus {
-          border-color: var(--player-accent, #e50914);
+          border-color: var(--accent);
         }
         .transcript-cues-list {
           flex: 1 1 auto;
@@ -7644,12 +8266,12 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
         }
         .transcript-cue-item.active {
           background: rgba(229, 9, 20, 0.12);
-          border-left: 2px solid var(--player-accent, #e50914);
+          border-left: 2px solid var(--accent);
           color: white;
           font-weight: 500;
         }
         .cue-time {
-          color: var(--player-accent, #e50914);
+          color: var(--accent);
           font-size: 0.75rem;
           font-family: monospace;
           font-weight: 600;
@@ -7669,21 +8291,12 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
           overflow: hidden;
           box-sizing: border-box;
         }
-        .popover-col h4 {
-          margin: 0 0 0.6rem 0;
-          font-size: 0.95rem;
-          border-bottom: 1px solid rgba(255, 255, 255, 0.08);
-          padding-bottom: 0.35rem;
-          color: #ffffff;
-          font-weight: 600;
-          flex-shrink: 0;
-        }
         .popover-options {
           flex: 1 1 auto;
           min-height: 0;
           display: flex;
           flex-direction: column;
-          gap: 0.4rem;
+          gap: 0.25rem;
           overflow-y: auto;
           overflow-x: hidden;
           padding-right: 4px;
@@ -7701,43 +8314,47 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
           display: flex;
           align-items: center;
           justify-content: space-between;
-          padding: 0.55rem 0.75rem;
-          border-radius: 6px;
+          padding: 0.38rem 0.6rem;
+          border-radius: 8px;
           cursor: pointer;
-          font-size: 0.95rem;
-          color: var(--text-secondary, rgba(255, 255, 255, 0.7));
+          font-size: 0.78rem;
+          color: var(--text-secondary, rgba(255, 255, 255, 0.75));
           transition: all 0.15s ease;
           border: 1px solid transparent;
         }
         .popover-option:hover {
-          background: rgba(255, 255, 255, 0.06);
-          color: #ffffff;
+          background: var(--surface-hover, rgba(255, 255, 255, 0.08));
+          color: var(--text-primary, #ffffff);
+          border-color: var(--border-color, rgba(255, 255, 255, 0.12));
         }
         .popover-option.active {
-          background: rgba(229, 9, 20, 0.08);
-          border-color: rgba(229, 9, 20, 0.2);
-          color: #ffffff;
-          font-weight: 500;
+          background: var(--accent-soft);
+          border-color: var(--accent);
+          color: var(--text-primary, #ffffff);
+          font-weight: 600;
+          box-shadow: 0 2px 8px var(--accent-soft);
         }
         .popover-option input {
           display: none;
         }
         .check-icon {
-          color: var(--player-accent, #e50914);
+          color: var(--accent);
         }
         .add-custom-btn {
-          color: var(--player-accent, #e50914) !important;
+          color: var(--accent) !important;
           font-weight: 600 !important;
-          border-top: 1px solid rgba(255, 255, 255, 0.08);
+          border: 1px dashed var(--border-focus, rgba(229, 9, 20, 0.35)) !important;
+          background: var(--accent-soft) !important;
           margin-top: 0.35rem;
-          padding-top: 0.6rem !important;
-          border-radius: 0 !important;
+          padding: 0.42rem 0.6rem !important;
+          border-radius: 8px !important;
           justify-content: center !important;
+          transition: all 0.15s ease !important;
         }
         .add-custom-btn:hover {
-          background: transparent !important;
-          color: #ffffff !important;
-          text-decoration: underline;
+          background: var(--accent-soft) !important;
+          border-color: var(--accent) !important;
+          color: var(--text-primary, #ffffff) !important;
         }
 
         /* Animations */
@@ -7861,7 +8478,7 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
           box-shadow: 0 4px 15px rgba(0,0,0,0.5);
         }
         .fly-loader-spin {
-          color: var(--player-accent, #e50914);
+          color: var(--accent);
           animation: spin 1s linear infinite;
         }
         
@@ -8057,11 +8674,11 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
           }
         }
 
-        /* Track Change Notification Overlay (Image 3 Style) */
+        /* Track Change Notification Overlay (Positioned below top-bar icons) */
         .track-change-notification-overlay {
           position: absolute;
-          top: 36px;
-          right: 48px;
+          top: 76px;
+          right: 36px;
           z-index: 650;
           pointer-events: none;
           display: flex;
@@ -8110,27 +8727,43 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
             padding: 1.2rem 1.8rem;
           }
           .audio-sub-popover-center {
-            width: 280px;
-          }
-          .audio-sub-popover-center.has-transcript {
-            width: 90vw;
-          }
-          .audio-sub-popover-center.has-transcript .popover-cols {
-            grid-template-columns: 1fr;
-            max-height: 350px;
-            overflow-y: auto;
+            right: 8px !important;
+            left: auto !important;
+            max-width: calc(100vw - 16px) !important;
+            width: min(92vw, 440px) !important;
+            max-height: min(420px, calc(100vh - 90px)) !important;
+            bottom: 60px !important;
+            transform-origin: bottom right;
+            padding: 0.9rem !important;
           }
           .popover-cols {
-            grid-template-columns: 1fr;
+            display: flex !important;
+            flex-direction: column !important;
+            gap: 0.9rem !important;
+            overflow-y: auto !important;
+            max-height: 100% !important;
           }
-          .popover-transcript-col {
-            border-left: none;
-            border-top: 1px solid rgba(255, 255, 255, 0.08);
-            padding-left: 0;
-            padding-top: 1rem;
-            margin-top: 0.5rem;
-            max-height: 200px;
+          .popover-transcript-col, .popover-style-col {
+            border-left: none !important;
+            border-top: 1px solid rgba(255, 255, 255, 0.08) !important;
+            padding-left: 0 !important;
+            padding-top: 0.75rem !important;
+            margin-top: 0.35rem !important;
+            min-height: 140px !important;
           }
+        }
+
+        @media (max-width: 520px) {
+          .audio-sub-popover-center {
+            left: 50% !important;
+            right: auto !important;
+            transform: translateX(-50%) scale(var(--player-ui-scale, 1)) !important;
+            transform-origin: bottom center !important;
+            width: calc(100vw - 16px) !important;
+            padding: 0.75rem !important;
+            bottom: 55px !important;
+          }
+        }
           /* Touch-safety thumb size scaling */
           .scrub-container-premium:hover .scrub-bar-premium::-webkit-slider-thumb,
           .scrub-bar-premium:active::-webkit-slider-thumb {
@@ -8169,69 +8802,86 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
           }
           .volume-toast-overlay {
             top: 25px !important;
-            left: 25px !important;
-            bottom: auto !important;
+            left: 50% !important;
+            transform: translateX(-50%) !important;
           }
         }
 
-        /* Volume Toast HUD (Vertical Metro Style) */
+        /* Volume Toast HUD (Horizontal Centered Style) */
         .volume-toast-overlay {
           position: absolute;
-          top: 40px;
-          left: 40px;
+          top: 36px;
+          left: 50%;
+          transform: translateX(-50%) translateY(-10px);
           z-index: 600;
           opacity: 0;
           pointer-events: none;
-          transition: opacity 0.2s ease, transform 0.2s ease;
-          transform: translateY(-10px);
+          transition: opacity 0.2s ease, transform 0.2s cubic-bezier(0.16, 1, 0.3, 1);
         }
         .volume-toast-overlay.visible {
           opacity: 1;
-          transform: translateY(0);
+          transform: translateX(-50%) translateY(0);
         }
-        .volume-toast-content-vertical {
-          background: #141414;
-          width: 50px;
-          height: 180px;
-          border-radius: 2px;
-          box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+        .volume-toast-content-horizontal {
+          background: rgba(18, 18, 18, 0.92);
+          backdrop-filter: blur(16px);
+          -webkit-backdrop-filter: blur(16px);
+          border: 1px solid rgba(255, 255, 255, 0.15);
+          border-radius: 30px;
+          padding: 8px 18px;
           display: flex;
-          flex-direction: column;
           align-items: center;
-          justify-content: space-between;
-          padding: 18px 0 12px 0;
-          box-sizing: border-box;
+          gap: 12px;
+          min-width: 220px;
+          box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
         }
-        .volume-toast-bar-vertical {
-          width: 12px;
-          height: 120px;
-          background: rgba(255, 255, 255, 0.15);
-          position: relative;
-          margin: 0 auto;
+        .volume-toast-icon {
+          display: flex;
+          align-items: center;
+          justify-content: center;
         }
-        .volume-toast-bar-fill-vertical {
-          width: 100%;
-          background: #0078d4; /* Metro Blue */
-          position: absolute;
-          bottom: 0;
-          left: 0;
-          right: 0;
-          transition: height 0.1s ease;
-        }
-        .volume-toast-bar-cap-vertical {
-          position: absolute;
-          top: 0;
-          left: 0;
-          right: 0;
+        .volume-toast-bar-horizontal {
+          flex: 1;
           height: 6px;
-          background: #ffffff; /* White handle cap */
+          background: rgba(255, 255, 255, 0.2);
+          border-radius: 3px;
+          overflow: hidden;
+          position: relative;
         }
-        .volume-toast-text-vertical {
+        .volume-toast-bar-fill-horizontal {
+          height: 100%;
+          border-radius: 3px;
+          transition: width 0.08s ease-out;
+        }
+        .volume-toast-text-horizontal {
           font-family: inherit;
           font-size: 0.85rem;
           font-weight: 700;
-          text-align: center;
-          color: rgba(255, 255, 255, 0.95);
+          color: #ffffff;
+          min-width: 44px;
+          text-align: right;
+        }
+        .player-container.has-file-access-blocked,
+        .player-container.has-file-access-blocked * {
+          cursor: default !important;
+        }
+        .cast-btn {
+          background: transparent;
+          border: none;
+          color: rgba(255, 255, 255, 0.85);
+          cursor: pointer;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          padding: 6px;
+          border-radius: 50%;
+          transition: color 0.15s ease, background 0.15s ease, transform 0.15s ease;
+          outline: none;
+        }
+        .cast-btn:hover {
+          color: #ffffff;
+          background: rgba(255, 255, 255, 0.15);
+          transform: scale(1.1);
         }
         .control-btn-volume:hover {
           color: white !important;
@@ -8451,7 +9101,7 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
           box-shadow: 0 10px 30px rgba(0, 0, 0, 0.8);
         }
         .playback-error-box .error-icon {
-          color: var(--player-accent, #e50914);
+          color: var(--accent);
         }
         .playback-error-box h3 {
           margin: 0;
@@ -8477,118 +9127,194 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
         .marking-hud-button:hover {
           background: #f40b17 !important;
         }
+        .marking-hud-button-controls {
+          background: #e50914;
+          color: #ffffff;
+          border: none;
+          border-radius: 50%;
+          width: calc(34px * var(--player-ui-scale, 1));
+          height: calc(34px * var(--player-ui-scale, 1));
+          min-width: calc(34px * var(--player-ui-scale, 1));
+          padding: 0;
+          cursor: pointer;
+          display: flex;
+          align-items: center;
+          justifyContent: center;
+          box-shadow: 0 0 10px rgba(229, 9, 20, 0.6);
+          animation: pulseMarking 1.5s infinite alternate;
+          transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+          overflow: hidden;
+          white-space: nowrap;
+          outline: none;
+          margin-right: calc(6px * var(--player-ui-scale, 1));
+          box-sizing: border-box;
+        }
+        .marking-rec-dot {
+          display: inline-block;
+          width: calc(10px * var(--player-ui-scale, 1));
+          height: calc(10px * var(--player-ui-scale, 1));
+          border-radius: 50%;
+          background: #ffffff;
+          box-shadow: 0 0 8px #ffffff;
+          animation: flashDot 1s infinite;
+          flex-shrink: 0;
+        }
+        .marking-rec-text {
+          max-width: 0;
+          opacity: 0;
+          margin-left: 0;
+          font-size: calc(0.82rem * var(--player-ui-scale, 1));
+          font-weight: 700;
+          letter-spacing: 0.02em;
+          font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+          transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+          overflow: hidden;
+          color: #ffffff;
+        }
+        .marking-hud-button-controls:hover {
+          width: auto;
+          min-width: 0;
+          border-radius: 20px;
+          padding: 0 calc(10px * var(--player-ui-scale, 1));
+          background: #f40b17;
+        }
+        .marking-hud-button-controls:hover .marking-rec-text {
+          max-width: 100px;
+          opacity: 1;
+          margin-left: calc(6px * var(--player-ui-scale, 1));
+        }
       `}</style>
 
       {/* Render EsportsLiveOverlay here so it shows in Fullscreen */}
       <EsportsLiveOverlay />
 
-      {/* Little Slide Button on player edge that slides out the Delete UI Settings Menu */}
-      {!hideUIOverlays && (
-        <button
-          className="ui-settings-edge-slide-btn"
-          onClick={(e) => {
-            e.stopPropagation();
-            e.preventDefault();
-            setShowSettingsPanel(prev => {
+
+      {vlcContextMenuState.visible && (
+        <VlcContextMenu
+          x={vlcContextMenuState.x}
+          y={vlcContextMenuState.y}
+          onClose={() => setVlcContextMenuState({ visible: false, x: 0, y: 0 })}
+          onOpenFile={() => openMediaFileInputRef.current?.click()}
+          onOpenNetworkStream={() => setShowNetworkStreamModal(true)}
+          onAddToPlaylist={() => addToPlaylistFileInputRef.current?.click()}
+          playlist={videos}
+          onSelectPlaylistItem={(item) => {
+            if (onPlayVideo) {
+              onPlayVideo(item);
+            } else if (onReassociate) {
+              onReassociate(item.id);
+            }
+          }}
+          isPlaying={isPlaying}
+          onPlayPause={togglePlay}
+          onStop={() => {
+            if (videoRef.current) {
+              videoRef.current.pause();
+              videoRef.current.currentTime = 0;
+              setCurrentTime(0);
+            }
+          }}
+          onPrevious={handleRewind}
+          onNext={handleForward}
+          onJumpForward={handleForward}
+          onJumpBackward={handleRewind}
+          playbackRate={playbackRate}
+          onSetPlaybackRate={setPlaybackRate}
+          audioStreams={audioStreams}
+          audioTracks={audioTracks}
+          selectedAudioTrack={selectedAudioTrack}
+          onSelectAudioStream={handleSelectEmbeddedAudio}
+          onSelectAudioTrack={setSelectedAudioTrack}
+          volume={volume}
+          isMuted={isMuted}
+          onIncreaseVolume={() => {
+            setIsMuted(false);
+            setVolume(prev => {
+              const nextVol = Math.min(1.0, prev + 0.05);
+              triggerVolumeToast(nextVol, false, 100);
+              return nextVol;
+            });
+          }}
+          onDecreaseVolume={() => {
+            setIsMuted(false);
+            setVolume(prev => {
+              const nextVol = Math.max(0.0, prev - 0.05);
+              triggerVolumeToast(nextVol, false, 100);
+              return nextVol;
+            });
+          }}
+          onToggleMute={() => {
+            setIsMuted(prev => {
+              const nextMuted = !prev;
+              triggerVolumeToast(volume, nextMuted);
+              return nextMuted;
+            });
+          }}
+          isFullscreen={isFullscreen || isPseudoFullscreen}
+          onToggleFullscreen={toggleFullscreen}
+          onTakeSnapshot={handleTakeSnapshot}
+          subtitleStreams={subtitleStreams}
+          subtitleTracks={subtitleTracks}
+          selectedSubTrack={selectedSubTrack}
+          onSelectSubStream={handleSelectEmbeddedSubtitle}
+          onSelectSubTrack={setSelectedSubTrack}
+          onAddSubtitleFile={() => customSubInputRef.current?.click()}
+          onOpenSubtitleSettings={() => {
+            onUpdateSubSettings({ ...subSettings, showStyleColumn: true });
+            setShowAudioSubMenu(true);
+          }}
+          onOpenSubtitleTranscript={() => {
+            onUpdateSubSettings({ ...subSettings, showViewColumn: true });
+            setShowAudioSubMenu(true);
+          }}
+          isTimelineOnly={timelineOnlyMode}
+          onToggleTimelineOnly={() => {
+            setTimelineOnlyMode(prev => {
               const next = !prev;
-              if (!next) setIsSettingsExpanded(false);
+              triggerSwitchToast(next ? 'Timeline Only (VLC Mode)' : 'Standard Controls');
               return next;
             });
           }}
-          title={showSettingsPanel ? "Close UI Settings (Del)" : "Slide out UI Settings (Del)"}
-          aria-label="Toggle UI Settings"
-          style={{
-            position: 'absolute',
-            right: 0,
-            top: '50%',
-            transform: 'translateY(-50%)',
-            zIndex: 85,
-            width: '26px',
-            height: '64px',
-            background: 'var(--dropdown-bg, rgba(18, 18, 18, 0.9))',
-            backdropFilter: 'blur(8px)',
-            WebkitBackdropFilter: 'blur(8px)',
-            border: '1px solid var(--dropdown-border, rgba(255, 255, 255, 0.15))',
-            borderRight: 'none',
-            borderRadius: '12px 0 0 12px',
-            padding: 0,
-            margin: 0,
-            cursor: 'pointer',
-            display: 'flex',
-            flexDirection: 'column',
-            alignItems: 'center',
-            justifyContent: 'center',
-            gap: '5px',
-            boxShadow: '-4px 0 16px rgba(0, 0, 0, 0.45)',
-            opacity: showControls || showSettingsPanel ? 0.95 : 0.35,
-            color: showSettingsPanel ? 'var(--text-primary, #ffffff)' : 'rgba(255, 255, 255, 0.85)',
-            outline: 'none'
+          aspectRatio={aspectRatio}
+          onSetAspectRatio={(ratio) => {
+            setAspectRatio(ratio);
+            const labels: Record<string, string> = {
+              'default': 'Default (Fit)',
+              'stretch': 'Stretch to Screen (0% Detail Lost)',
+              '14:9': 'Smart Crop (14:9 - Minimal Loss)',
+              '16:10': '16:10 Minimal Crop',
+              '16:9': '16:9 Widescreen',
+              '1.85:1': '1.85:1 Cinema',
+              '21:9': '21:9 Ultrawide Cinema',
+              'cover': 'Fill / Crop Screen (Full Zoom)',
+              '4:3': '4:3 Standard'
+            };
+            triggerSwitchToast(`Aspect Ratio: ${labels[ratio] || ratio}`);
           }}
-        >
-          {showSettingsPanel ? (
-            <ChevronRight size={15} />
-          ) : (
-            <ChevronLeft size={15} />
-          )}
-          <Settings size={13} style={{ opacity: 0.85 }} />
-        </button>
+          onOpenSettings={() => setShowSettingsPanel(true)}
+          onOpenAudioSubMenu={() => setShowAudioSubMenu(true)}
+          bookmarks={bookmarks}
+          onSeekToBookmark={(t) => {
+            if (videoRef.current) videoRef.current.currentTime = t;
+            setCurrentTime(t);
+          }}
+          onAddBookmark={() => {
+            if (videoRef.current) {
+              setEditingBookmark({
+                id: '',
+                time: Math.round(videoRef.current.currentTime),
+                title: '',
+                label: '',
+                category: 'Default',
+                description: '',
+                createdAt: '',
+                updatedAt: ''
+              });
+              setShowAddDialog(true);
+            }
+          }}
+        />
       )}
-
-      {radialMenuState.visible && (() => {
-        // Max 5 items: 1 mid (Pause/Play) and 4 on outer
-        const rItems = [
-          {
-            id: 'settings',
-            label: 'Settings (Del)',
-            icon: <Settings size={22} />,
-            onClick: () => {
-              setShowSettingsPanel(true);
-            },
-            disabled: isLocked
-          },
-          {
-            id: 'audio',
-            label: 'Audio/Subs',
-            icon: <MessageSquare size={22} />,
-            onClick: () => setShowAudioSubMenu(true),
-            disabled: isLocked
-          },
-          {
-            id: 'fullscreen',
-            label: (isFullscreen || isPseudoFullscreen) ? 'Exit Screen' : 'Fullscreen',
-            icon: (isFullscreen || isPseudoFullscreen) ? <Minimize size={22} /> : <Maximize size={22} />,
-            onClick: toggleFullscreen,
-            disabled: isLocked
-          },
-          isLocked ? {
-            id: 'unlock',
-            label: 'Unlock UI',
-            icon: <Unlock size={22} />,
-            onClick: () => setIsLocked(false),
-            disabled: false
-          } : {
-            id: 'mute',
-            label: isMuted ? 'Unmute' : 'Mute',
-            icon: isMuted ? <VolumeX size={22} /> : <Volume2 size={22} />,
-            onClick: () => setIsMuted(prev => !prev),
-            disabled: false
-          }
-        ];
-
-        return (
-          <RadialMenu
-            x={radialMenuState.x}
-            y={radialMenuState.y}
-            onClose={() => setRadialMenuState({ visible: false, x: 0, y: 0 })}
-            items={rItems}
-            centerItem={{
-              icon: isPlaying ? <Pause size={24} fill="white" /> : <Play size={24} fill="white" />,
-              onClick: togglePlay,
-              disabled: isLocked
-            }}
-          />
-        );
-      })()}
 
       {showConsoleOverlay && (
         <ConsoleOverlay onClose={() => setShowConsoleOverlay(false)} />

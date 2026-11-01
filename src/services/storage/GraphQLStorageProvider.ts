@@ -133,6 +133,12 @@ export class GraphQLStorageProvider implements StorageProvider {
         hasScrobbledTrakt: v.hasScrobbledTrakt
       }));
 
+      // Mirror to browser cache (localStorage)
+      try {
+        const videosKey = this.userId === 'local' || !this.userId ? 'valor_videos' : `valor_videos_${this.userId}`;
+        localStorage.setItem(videosKey, JSON.stringify(serialized));
+      } catch (e) {}
+
       const saveHistoryMut = `
         mutation SaveHistory($userId: String!, $history: [HistoryInput!]!) {
           saveHistory(userId: $userId, history: $history) {

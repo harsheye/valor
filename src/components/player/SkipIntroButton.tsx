@@ -43,14 +43,14 @@ export const SkipIntroButton: React.FC<SkipIntroButtonProps> = ({ bookmark, onSk
       }}
       onMouseEnter={e => {
         e.currentTarget.style.transform = 'scale(1.04)';
-        e.currentTarget.style.borderColor = 'var(--accent-color, #e50914)';
+        e.currentTarget.style.borderColor = 'var(--accent)';
       }}
       onMouseLeave={e => {
         e.currentTarget.style.transform = 'scale(1)';
         e.currentTarget.style.borderColor = 'var(--border-color, rgba(255, 255, 255, 0.25))';
       }}
     >
-      <SkipForward size={16} color="var(--accent-color, #e50914)" />
+      <SkipForward size={16} color="var(--accent)" />
       Skip {displayLabel}
       {shortcutHint && (
         <span style={{ fontSize: '11px', opacity: 0.6, marginLeft: '4px', padding: '2px 5px', borderRadius: '4px', background: 'rgba(255,255,255,0.1)' }}>

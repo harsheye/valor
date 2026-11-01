@@ -38,7 +38,7 @@ const SexyCheckbox: React.FC<{
         alignItems: 'center',
         justifyContent: 'center',
         transition: 'all 0.2s ease-in-out',
-        boxShadow: checked ? '0 0 6px var(--accent-glow)' : 'none'
+        boxShadow: checked ? '0 0 6px var(--accent-soft)' : 'none'
       }}
     >
       {checked && (

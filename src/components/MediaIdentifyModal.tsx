@@ -317,8 +317,8 @@ export const MediaIdentifyModal: React.FC<MediaIdentifyModalProps> = ({
         <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: '16px' }}>
           <div>
             <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '4px' }}>
-              <Sparkles size={16} color="var(--accent-color, #e50914)" />
-              <span style={{ fontSize: '11px', fontWeight: 700, color: 'var(--accent-color, #e50914)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+              <Sparkles size={16} color="var(--accent)" />
+              <span style={{ fontSize: '11px', fontWeight: 700, color: 'var(--accent)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
                 Media Identification
               </span>
             </div>
@@ -387,9 +387,9 @@ export const MediaIdentifyModal: React.FC<MediaIdentifyModalProps> = ({
                 flex: 1,
                 padding: '9px 12px',
                 borderRadius: '8px',
-                border: isTvShow ? '1px solid var(--accent-color, #e50914)' : '1px solid var(--border-color, rgba(255, 255, 255, 0.1))',
-                background: isTvShow ? 'var(--accent-glow, rgba(229, 9, 20, 0.25))' : 'var(--surface, #12121a)',
-                color: isTvShow ? 'var(--accent-color, #e50914)' : 'var(--text-secondary, #d1d5db)',
+                border: isTvShow ? '1px solid var(--accent)' : '1px solid var(--border-color, rgba(255, 255, 255, 0.1))',
+                background: isTvShow ? 'var(--accent-soft)' : 'var(--surface, #12121a)',
+                color: isTvShow ? 'var(--accent)' : 'var(--text-secondary, #d1d5db)',
                 fontWeight: 600,
                 fontSize: '12px',
                 cursor: 'pointer',
@@ -409,9 +409,9 @@ export const MediaIdentifyModal: React.FC<MediaIdentifyModalProps> = ({
                 flex: 1,
                 padding: '9px 12px',
                 borderRadius: '8px',
-                border: !isTvShow ? '1px solid var(--accent-color, #e50914)' : '1px solid var(--border-color, rgba(255, 255, 255, 0.1))',
-                background: !isTvShow ? 'var(--accent-glow, rgba(229, 9, 20, 0.25))' : 'var(--surface, #12121a)',
-                color: !isTvShow ? 'var(--accent-color, #e50914)' : 'var(--text-secondary, #d1d5db)',
+                border: !isTvShow ? '1px solid var(--accent)' : '1px solid var(--border-color, rgba(255, 255, 255, 0.1))',
+                background: !isTvShow ? 'var(--accent-soft)' : 'var(--surface, #12121a)',
+                color: !isTvShow ? 'var(--accent)' : 'var(--text-secondary, #d1d5db)',
                 fontWeight: 600,
                 fontSize: '12px',
                 cursor: 'pointer',
@@ -478,7 +478,7 @@ export const MediaIdentifyModal: React.FC<MediaIdentifyModalProps> = ({
 
           {/* Status / Error Message */}
           {statusMsg && (
-            <div style={{ fontSize: '12px', color: 'var(--accent-color, #e50914)', display: 'flex', alignItems: 'center', gap: '6px' }}>
+            <div style={{ fontSize: '12px', color: 'var(--accent)', display: 'flex', alignItems: 'center', gap: '6px' }}>
               <Loader2 size={13} className="animate-spin" />
               <span>{statusMsg}</span>
             </div>
@@ -506,7 +506,7 @@ export const MediaIdentifyModal: React.FC<MediaIdentifyModalProps> = ({
             onClick={handleEnter}
             disabled={isLoading}
             style={{
-              background: 'var(--accent-color, #e50914)',
+              background: 'var(--accent)',
               color: '#ffffff',
               fontWeight: 700,
               fontSize: '13px',

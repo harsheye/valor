@@ -61,8 +61,8 @@ export const PlaybackModeModal: React.FC<PlaybackModeModalProps> = ({
         <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: '16px' }}>
           <div>
             <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '4px' }}>
-              <Film size={16} color="var(--accent-color, #e50914)" />
-              <span style={{ fontSize: '11px', fontWeight: 700, color: 'var(--accent-color, #e50914)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+              <Film size={16} color="var(--accent)" />
+              <span style={{ fontSize: '11px', fontWeight: 700, color: 'var(--accent)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
                 Playback Engine
               </span>
             </div>
@@ -120,7 +120,7 @@ export const PlaybackModeModal: React.FC<PlaybackModeModalProps> = ({
             }}
             onMouseEnter={e => {
               e.currentTarget.style.background = 'var(--card-hover-bg, #222234)';
-              e.currentTarget.style.borderColor = 'var(--accent-color, #e50914)';
+              e.currentTarget.style.borderColor = 'var(--accent)';
               e.currentTarget.style.transform = 'translateY(-1px)';
             }}
             onMouseLeave={e => {
@@ -133,11 +133,11 @@ export const PlaybackModeModal: React.FC<PlaybackModeModalProps> = ({
               width: '40px',
               height: '40px',
               borderRadius: '10px',
-              background: 'var(--accent-glow, rgba(229, 9, 20, 0.25))',
+              background: 'var(--accent-soft)',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
-              color: 'var(--accent-color, #e50914)',
+              color: 'var(--accent)',
               flexShrink: 0
             }}>
               <Tv size={20} />
@@ -210,7 +210,7 @@ export const PlaybackModeModal: React.FC<PlaybackModeModalProps> = ({
             type="checkbox"
             checked={rememberChoice}
             onChange={e => setRememberChoice(e.target.checked)}
-            style={{ accentColor: 'var(--accent-color, #e50914)', width: '15px', height: '15px', cursor: 'pointer' }}
+            style={{ accentColor: 'var(--accent)', width: '15px', height: '15px', cursor: 'pointer' }}
           />
           <span style={{ fontSize: '12px', color: 'var(--text-muted, #9ca3af)' }}>
             Remember choice for unrecognized videos

@@ -58,12 +58,11 @@ export const ScrubBar: React.FC<ScrubBarProps> = ({
   }, [isScrubbing]);
 
   const getBookmarkColor = (bm: Bookmark) => {
-    if (bm.isIntro || bm.category === 'Intro') return '#fbbf24'; // amber/yellow
-    if (bm.category === 'Preview' || bm.category === 'Recap') return '#a78bfa'; // purple
-    if (bm.isOutro || bm.category === 'Outro') return '#34d399'; // green
-    if (bm.category === 'Nudity' || bm.category === 'Sex') return '#f43f5e'; // rose/red
-    if (bm.category === 'Gore') return '#ef4444'; // red
-    return 'var(--accent-color, #e50914)';
+    if (bm.isIntro || bm.category === 'Intro') return 'var(--warning)';
+    if (bm.category === 'Preview' || bm.category === 'Recap') return 'var(--accent)';
+    if (bm.isOutro || bm.category === 'Outro') return 'var(--success)';
+    if (bm.category === 'Nudity' || bm.category === 'Sex' || bm.category === 'Gore') return 'var(--danger)';
+    return 'var(--accent)';
   };
 
   return (
@@ -91,7 +90,7 @@ export const ScrubBar: React.FC<ScrubBarProps> = ({
       <div style={{
         width: '100%',
         height: isHovering || isScrubbing ? '6px' : '4px',
-        backgroundColor: 'rgba(255, 255, 255, 0.2)',
+        backgroundColor: 'var(--surface-3)',
         borderRadius: '3px',
         position: 'relative',
         overflow: 'hidden',
@@ -107,7 +106,7 @@ export const ScrubBar: React.FC<ScrubBarProps> = ({
               bottom: 0,
               left: `${duration > 0 ? (r.start / duration) * 100 : 0}%`,
               width: `${duration > 0 ? ((r.end - r.start) / duration) * 100 : 0}%`,
-              backgroundColor: 'rgba(255, 255, 255, 0.35)'
+              backgroundColor: 'rgba(255, 255, 255, 0.25)'
             }}
           />
         ))}
@@ -116,7 +115,7 @@ export const ScrubBar: React.FC<ScrubBarProps> = ({
         <div style={{
           width: `${progressPercent}%`,
           height: '100%',
-          backgroundColor: 'var(--accent-color, #e50914)',
+          backgroundColor: 'var(--accent)',
           position: 'relative'
         }} />
       </div>
@@ -171,8 +170,9 @@ export const ScrubBar: React.FC<ScrubBarProps> = ({
         width: isHovering || isScrubbing ? '14px' : '10px',
         height: isHovering || isScrubbing ? '14px' : '10px',
         borderRadius: '50%',
-        backgroundColor: '#ffffff',
-        boxShadow: '0 0 10px rgba(0, 0, 0, 0.6), 0 0 6px var(--accent-color, #e50914)',
+        backgroundColor: 'var(--accent)',
+        border: '2px solid var(--surface-1)',
+        boxShadow: '0 2px 4px rgba(0, 0, 0, 0.4)',
         zIndex: 4,
         transition: 'width 0.15s ease, height 0.15s ease',
         pointerEvents: 'none'
@@ -185,18 +185,19 @@ export const ScrubBar: React.FC<ScrubBarProps> = ({
           left: `${hoverPercent}%`,
           bottom: '22px',
           transform: 'translateX(-50%)',
-          background: 'var(--dropdown-bg, rgba(15, 23, 42, 0.95))',
-          border: '1px solid var(--border-color, rgba(255, 255, 255, 0.2))',
-          borderRadius: '6px',
+          background: 'var(--surface-2)',
+          border: '1px solid var(--border)',
+          borderRadius: 'var(--radius-sm)',
           padding: '3px 8px',
           fontSize: '11px',
-          fontWeight: 700,
-          color: 'var(--text-primary, #ffffff)',
+          fontWeight: 600,
+          color: 'var(--text-1)',
           pointerEvents: 'none',
           whiteSpace: 'nowrap',
-          boxShadow: '0 4px 12px rgba(0, 0, 0, 0.6)',
+          boxShadow: '0 4px 12px rgba(0, 0, 0, 0.4)',
           zIndex: 10,
-          fontFamily: 'var(--font-sans)'
+          fontFamily: 'var(--font-ui)',
+          fontVariantNumeric: 'tabular-nums'
         }}>
           {hoverTime}
         </div>

@@ -59,8 +59,8 @@ export const SpeedMenu: React.FC<SpeedMenuProps> = ({ currentSpeed, onSelectSpee
               justifyContent: 'space-between',
               padding: '8px 10px',
               borderRadius: '6px',
-              background: isSelected ? 'var(--accent-glow, rgba(229, 9, 20, 0.25))' : 'transparent',
-              color: isSelected ? 'var(--accent-color, #e50914)' : 'var(--text-primary, #ffffff)',
+              background: isSelected ? 'var(--accent-soft)' : 'transparent',
+              color: isSelected ? 'var(--accent)' : 'var(--text-primary, #ffffff)',
               border: 'none',
               cursor: 'pointer',
               fontSize: '13px',
@@ -75,7 +75,7 @@ export const SpeedMenu: React.FC<SpeedMenuProps> = ({ currentSpeed, onSelectSpee
             }}
           >
             <span>{s === 1.0 ? 'Normal (1.0x)' : `${s}x`}</span>
-            {isSelected && <Check size={14} color="var(--accent-color, #e50914)" />}
+            {isSelected && <Check size={14} color="var(--accent)" />}
           </button>
         );
       })}

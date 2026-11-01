@@ -54,6 +54,7 @@ export interface VideoItem {
   totalTimeWatched?: number;
   timeToFinish?: number;
   bookmarks?: Bookmark[];
+  aspectRatio?: string;
   tmdbId?: number;
   traktId?: number;
   imdbId?: string;

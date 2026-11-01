@@ -291,7 +291,7 @@ export const SpinnerSettingsView: React.FC<SpinnerSettingsViewProps> = ({
                       borderRadius: '12px',
                       cursor: 'pointer',
                       transition: 'all 0.2s ease',
-                      boxShadow: isActive ? '0 0 12px var(--accent-glow)' : 'none',
+                      boxShadow: isActive ? '0 0 12px var(--accent-soft)' : 'none',
                       overflow: 'hidden',
                       padding: '8px'
                     }}
@@ -376,7 +376,7 @@ export const SpinnerSettingsView: React.FC<SpinnerSettingsViewProps> = ({
                     ? '1.5px solid rgba(34,197,94,0.35)'
                     : '1.5px dashed var(--border-color)',
                 background: isDragging
-                  ? 'var(--accent-glow)'
+                  ? 'var(--accent-soft)'
                   : isCustomActive
                     ? 'rgba(34,197,94,0.04)'
                     : 'var(--surface)',

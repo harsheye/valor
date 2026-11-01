@@ -138,7 +138,7 @@ const OdometerClock: React.FC<{ date: Date }> = ({ date }) => {
 
   return (
     <div className="odo-clock-container">
-      <span className="odo-hours-group" style={{ color: 'var(--player-accent, #e50914)', display: 'inline-flex' }}>
+      <span className="odo-hours-group" style={{ color: 'var(--accent)', display: 'inline-flex' }}>
         <OdometerDigit val={hh[0]} />
         <OdometerDigit val={hh[1]} />
       </span>
@@ -2555,7 +2555,7 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
         showPauseMetadataOverlayRef.current = true;
         setShowPauseMetadataOverlay(true);
         setShowControls(false);
-      }, 10000);
+      }, 30000);
     }
   }, [isPlaying, isBuffering]);
 
@@ -2567,7 +2567,7 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
         showPauseMetadataOverlayRef.current = true;
         setShowPauseMetadataOverlay(true);
         setShowControls(false);
-      }, 10000);
+      }, 30000);
     } else {
       if (pauseOverlayTimerRef.current) {
         clearTimeout(pauseOverlayTimerRef.current);
@@ -6231,34 +6231,11 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
                       }
                     }}
                     className="marking-hud-button-controls marking-hud-button-desktop"
-                    style={{
-                      background: 'var(--player-accent, #e50914)',
-                      color: 'var(--text-primary, #ffffff)',
-                      border: 'none',
-                      borderRadius: '20px',
-                      padding: '6px 14px',
-                      fontSize: '0.85rem',
-                      fontWeight: 'bold',
-                      cursor: 'pointer',
-                      boxShadow: '0 2px 8px rgba(229, 9, 20, 0.4)',
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '8px',
-                      fontFamily: 'Outfit, sans-serif',
-                      animation: 'pulseMarking 1.5s infinite alternate',
-                      height: '36px',
-                      marginRight: '15px'
-                    }}
+                    title={`Recording (${formatTime(markingStartTime)} - ${formatTime(currentTime)}) - Click to finish mark`}
+                    aria-label="Recording scene - click to finish mark"
                   >
-                    <span style={{
-                      display: 'inline-block',
-                      width: '6px',
-                      height: '6px',
-                      borderRadius: '50%',
-                      background: '#fff',
-                      animation: 'flashDot 1s infinite'
-                    }} />
-                    <span>Marking... tap to end ({formatTime(markingStartTime)} - {formatTime(currentTime)})</span>
+                    <span className="marking-rec-dot" />
+                    <span className="marking-rec-text">Recording</span>
                   </button>
                 )}
                 
@@ -6369,10 +6346,49 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
             paddingRight: '0'
           }}
         >
+          {/* The slide-out / collapse handle attached to the left edge of the modal */}
+          <button
+            className="ui-settings-modal-collapse-btn"
+            onClick={(e) => {
+              e.stopPropagation();
+              e.preventDefault();
+              setShowSettingsPanel(false);
+              setIsSettingsExpanded(false);
+            }}
+            title="Slide out / Collapse UI Settings (Del)"
+            aria-label="Collapse UI Settings"
+            style={{
+              pointerEvents: 'auto',
+              width: '26px',
+              height: '64px',
+              background: 'var(--dropdown-bg, rgba(18, 18, 18, 0.96))',
+              backdropFilter: 'blur(8px)',
+              WebkitBackdropFilter: 'blur(8px)',
+              border: '1px solid var(--dropdown-border, rgba(255, 255, 255, 0.15))',
+              borderRight: 'none',
+              borderRadius: '12px 0 0 12px',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              color: 'var(--text-primary, #ffffff)',
+              boxShadow: '-4px 0 16px rgba(0, 0, 0, 0.45)',
+              outline: 'none',
+              padding: 0,
+              zIndex: 160,
+              marginRight: '-1px'
+            }}
+          >
+            <ChevronRight size={18} />
+          </button>
+
           <div 
             className="settings-modal-card animate-slide-in-right" 
             onClick={(e) => e.stopPropagation()}
             style={{
+              position: 'relative',
+              pointerEvents: 'auto',
+              overflow: 'visible',
               background: 'var(--dropdown-bg, rgba(18, 18, 18, 0.96))',
               border: '1px solid var(--dropdown-border, rgba(255, 255, 255, 0.1))',
               borderRight: 'none',
@@ -6548,7 +6564,7 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
             position: 'absolute',
             bottom: controlsVisible ? '120px' : '45px',
             right: '1.5rem',
-            background: 'var(--player-accent, #e50914)',
+            background: 'var(--accent)',
             color: 'var(--text-primary, #ffffff)',
             border: 'none',
             borderRadius: '24px',
@@ -6797,7 +6813,7 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
           bottom: 0;
           left: 0;
           height: 3px;
-          background: var(--player-accent, #e50914);
+          background: var(--accent);
           animation: skipProgressPremium 7s linear forwards;
         }
 
@@ -6940,7 +6956,7 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
           z-index: 30;
         }
         .timeline-bookmark-dot:not(.intro-dot):not(.outro-dot):hover {
-          background-color: var(--player-accent, #e50914) !important;
+          background-color: var(--accent) !important;
         }
         .timeline-bookmark-dot.intro-dot {
           background-color: #3b82f6;
@@ -7097,7 +7113,7 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
           transform: translateX(18px);
         }
         .drawer-add-btn {
-          background: var(--player-accent, #e50914);
+          background: var(--accent);
           border: none;
           color: #ffffff;
           padding: 4px 10px;
@@ -7583,7 +7599,8 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
           left: 0;
           right: 0;
           height: 4px;
-          background: rgba(255, 255, 255, 0.2);
+          background: var(--player-scrub-bg, rgba(255, 255, 255, 0.22));
+          box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(0, 0, 0, 0.25);
           border-radius: 2px;
           z-index: 1;
         }
@@ -7591,7 +7608,7 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
           position: absolute;
           left: 0;
           height: 4px;
-          background: rgba(255, 255, 255, 0.35);
+          background: var(--player-scrub-buffered, rgba(255, 255, 255, 0.42));
           border-radius: 2px;
           z-index: 2;
           transition: width 0.15s ease;
@@ -7600,7 +7617,8 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
           position: absolute;
           left: 0;
           height: 4px;
-          background: var(--player-accent, #e50914);
+          background: var(--accent);
+          box-shadow: 0 0 8px var(--player-accent, rgba(229, 9, 20, 0.6));
           border-radius: 2px 0 0 2px;
           z-index: 3;
         }
@@ -7622,12 +7640,13 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
           width: 22px;
           height: 22px;
           border-radius: 50%;
-          background: var(--player-accent, #e50914);
+          background: var(--accent);
+          border: 2px solid rgba(0, 0, 0, 0.85);
           cursor: pointer;
           transform: scale(0);
           opacity: 0;
           transition: transform 0.15s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.15s ease;
-          box-shadow: 0 0 10px rgba(229, 9, 20, 0.8);
+          box-shadow: 0 0 10px rgba(0, 0, 0, 0.8), 0 0 6px var(--player-accent, rgba(229, 9, 20, 0.8));
           z-index: 10;
         }
         .scrub-container-premium:hover .scrub-bar-premium::-webkit-slider-thumb,
@@ -7638,12 +7657,16 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
         .scrub-bar-premium::-moz-range-thumb {
           width: 22px;
           height: 22px;
-          border: none;
+          border: 2px solid rgba(0, 0, 0, 0.85);
           border-radius: 50%;
-          background: var(--player-accent, #e50914);
+          background: var(--accent);
           cursor: pointer;
           transform: scale(0);
           opacity: 0;
+          transition: transform 0.15s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.15s ease;
+          box-shadow: 0 0 10px rgba(0, 0, 0, 0.8), 0 0 6px var(--player-accent, rgba(229, 9, 20, 0.8));
+          z-index: 10;
+        }
           transition: transform 0.15s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.15s ease;
           box-shadow: 0 0 10px rgba(229, 9, 20, 0.8);
           z-index: 10;
@@ -8098,7 +8121,7 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
           box-sizing: border-box;
         }
         .transcript-search-input:focus {
-          border-color: var(--player-accent, #e50914);
+          border-color: var(--accent);
         }
         .transcript-cues-list {
           flex: 1 1 auto;
@@ -8137,12 +8160,12 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
         }
         .transcript-cue-item.active {
           background: rgba(229, 9, 20, 0.12);
-          border-left: 2px solid var(--player-accent, #e50914);
+          border-left: 2px solid var(--accent);
           color: white;
           font-weight: 500;
         }
         .cue-time {
-          color: var(--player-accent, #e50914);
+          color: var(--accent);
           font-size: 0.75rem;
           font-family: monospace;
           font-weight: 600;
@@ -8216,10 +8239,10 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
           display: none;
         }
         .check-icon {
-          color: var(--player-accent, #e50914);
+          color: var(--accent);
         }
         .add-custom-btn {
-          color: var(--player-accent, #e50914) !important;
+          color: var(--accent) !important;
           font-weight: 600 !important;
           border-top: 1px solid rgba(255, 255, 255, 0.08);
           margin-top: 0.35rem;
@@ -8354,7 +8377,7 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
           box-shadow: 0 4px 15px rgba(0,0,0,0.5);
         }
         .fly-loader-spin {
-          color: var(--player-accent, #e50914);
+          color: var(--accent);
           animation: spin 1s linear infinite;
         }
         
@@ -8804,7 +8827,7 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
           box-shadow: 0 10px 30px rgba(0, 0, 0, 0.8);
         }
         .playback-error-box .error-icon {
-          color: var(--player-accent, #e50914);
+          color: var(--accent);
         }
         .playback-error-box h3 {
           margin: 0;
@@ -8829,6 +8852,62 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
         }
         .marking-hud-button:hover {
           background: #f40b17 !important;
+        }
+        .marking-hud-button-controls {
+          background: #e50914;
+          color: #ffffff;
+          border: none;
+          border-radius: 50%;
+          width: calc(34px * var(--player-ui-scale, 1));
+          height: calc(34px * var(--player-ui-scale, 1));
+          min-width: calc(34px * var(--player-ui-scale, 1));
+          padding: 0;
+          cursor: pointer;
+          display: flex;
+          align-items: center;
+          justifyContent: center;
+          box-shadow: 0 0 10px rgba(229, 9, 20, 0.6);
+          animation: pulseMarking 1.5s infinite alternate;
+          transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+          overflow: hidden;
+          white-space: nowrap;
+          outline: none;
+          margin-right: calc(6px * var(--player-ui-scale, 1));
+          box-sizing: border-box;
+        }
+        .marking-rec-dot {
+          display: inline-block;
+          width: calc(10px * var(--player-ui-scale, 1));
+          height: calc(10px * var(--player-ui-scale, 1));
+          border-radius: 50%;
+          background: #ffffff;
+          box-shadow: 0 0 8px #ffffff;
+          animation: flashDot 1s infinite;
+          flex-shrink: 0;
+        }
+        .marking-rec-text {
+          max-width: 0;
+          opacity: 0;
+          margin-left: 0;
+          font-size: calc(0.82rem * var(--player-ui-scale, 1));
+          font-weight: 700;
+          letter-spacing: 0.02em;
+          font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+          transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+          overflow: hidden;
+          color: #ffffff;
+        }
+        .marking-hud-button-controls:hover {
+          width: auto;
+          min-width: 0;
+          border-radius: 20px;
+          padding: 0 calc(10px * var(--player-ui-scale, 1));
+          background: #f40b17;
+        }
+        .marking-hud-button-controls:hover .marking-rec-text {
+          max-width: 100px;
+          opacity: 1;
+          margin-left: calc(6px * var(--player-ui-scale, 1));
         }
       `}</style>
 

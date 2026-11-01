@@ -236,14 +236,14 @@ export const SimpleRemotePlayer: React.FC<SimpleRemotePlayerProps> = ({
     }
   }, [isPlaying, isLocked, showAudioSubMenu, showBookmarksPopover, showBookmarkModal, uiHideTimeout]);
 
-  // Handle Pause Screen Timer (Show after 10s of continuous pause)
+  // Handle Pause Screen Timer (Show after 30s of continuous pause / inactivity)
   useEffect(() => {
     if (!isPlaying && !isBuffering) {
       setShowPauseMetadataOverlay(false);
       pauseOverlayTimerRef.current = setTimeout(() => {
         setShowPauseMetadataOverlay(true);
         setControlsVisible(false);
-      }, 10000);
+      }, 30000);
     } else {
       if (pauseOverlayTimerRef.current) clearTimeout(pauseOverlayTimerRef.current);
       setShowPauseMetadataOverlay(false);

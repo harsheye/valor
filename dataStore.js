@@ -20,12 +20,17 @@ export class DataStore {
     this.isPgConnected = false;
     this.isRedisConnected = false;
 
+    // Multi-tier L1 In-Memory Cache with TTL & Eviction
+    this.memoryCache = new Map();
+    this.cacheStats = { hits: 0, misses: 0 };
+
     this.CACHE_TTL = {
       PROFILES: 300,        // 5 minutes
       PROFILE_DATA: 3600,   // 1 hour
       SETTINGS: 3600,       // 1 hour
       SESSION: 86400,       // 24 hours
-      ACCOUNT: 1800         // 30 minutes
+      ACCOUNT: 1800,        // 30 minutes
+      BOOKMARKS: 3600       // 1 hour
     };
   }
 
@@ -311,6 +316,81 @@ export class DataStore {
     if (this.sqliteDb) {
       try {
         this.sqliteDb.exec(`
+          CREATE TABLE IF NOT EXISTS profiles (
+            userId TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            username TEXT,
+            password TEXT,
+            createdAt TEXT DEFAULT (datetime('now'))
+          );
+
+          CREATE TABLE IF NOT EXISTS settings (
+            userId TEXT PRIMARY KEY,
+            settingsJson TEXT NOT NULL,
+            updatedAt TEXT DEFAULT (datetime('now'))
+          );
+
+          CREATE TABLE IF NOT EXISTS history (
+            userId TEXT NOT NULL,
+            videoId TEXT NOT NULL,
+            title TEXT NOT NULL,
+            url TEXT,
+            type TEXT,
+            fileName TEXT,
+            duration REAL,
+            currentTime REAL,
+            lastPlayedDate TEXT,
+            totalTimeWatched REAL,
+            rating INTEGER,
+            timeToFinish REAL,
+            sessions TEXT,
+            localFilePath TEXT,
+            playedDates TEXT,
+            format TEXT,
+            streams TEXT,
+            audioTracks TEXT,
+            subtitleTracks TEXT,
+            episode INTEGER,
+            season INTEGER,
+            color TEXT,
+            tmdbId INTEGER,
+            hasScrobbledTrakt INTEGER DEFAULT 0,
+            PRIMARY KEY (userId, videoId)
+          );
+
+          CREATE TABLE IF NOT EXISTS bookmarks (
+            userId TEXT NOT NULL,
+            videoId TEXT NOT NULL,
+            id TEXT NOT NULL,
+            time REAL NOT NULL,
+            endTime REAL,
+            label TEXT NOT NULL,
+            isIntro INTEGER DEFAULT 0,
+            isOutro INTEGER DEFAULT 0,
+            skipEnabled INTEGER DEFAULT 0,
+            title TEXT,
+            description TEXT,
+            category TEXT,
+            startTime REAL,
+            thumbnail TEXT,
+            favorite INTEGER DEFAULT 0,
+            createdAt TEXT DEFAULT (datetime('now')),
+            updatedAt TEXT DEFAULT (datetime('now')),
+            episode INTEGER,
+            season INTEGER,
+            color TEXT,
+            tmdbId INTEGER,
+            userName TEXT,
+            userTime TEXT,
+            mediaName TEXT,
+            createdBy TEXT DEFAULT 'manual',
+            PRIMARY KEY (userId, videoId, id)
+          );
+
+          CREATE INDEX IF NOT EXISTS idx_bookmarks_tmdb ON bookmarks(tmdbId, season, episode);
+          CREATE INDEX IF NOT EXISTS idx_bookmarks_videoId ON bookmarks(videoId);
+          CREATE INDEX IF NOT EXISTS idx_bookmarks_userId ON bookmarks(userId);
+
           CREATE TABLE IF NOT EXISTS blocked_ips (
             ip TEXT PRIMARY KEY,
             reason TEXT,
@@ -500,45 +580,107 @@ export class DataStore {
   }
 
   // --------------------------------------------------------------------------
-  // Redis Lazy Cache Helpers
+  // Multi-Tier Cache Helpers (L1 In-Memory + L2 Redis)
   // --------------------------------------------------------------------------
   async cacheGet(key) {
-    if (!this.isRedisConnected || !this.redis) return null;
-    try {
-      const data = await this.redis.get(key);
-      if (data) {
-        // Increment hit counter asynchronously
-        this.redis.incr('valor:stats:cache_hits').catch(() => {});
-        return JSON.parse(data);
+    const now = Date.now();
+    // 1. Check L1 Memory Cache first
+    if (this.memoryCache.has(key)) {
+      const entry = this.memoryCache.get(key);
+      if (entry.expiresAt > now) {
+        this.cacheStats.hits++;
+        if (this.isRedisConnected && this.redis) {
+          this.redis.incr('valor:stats:cache_hits').catch(() => {});
+        }
+        return JSON.parse(JSON.stringify(entry.value));
+      } else {
+        this.memoryCache.delete(key);
       }
-      this.redis.incr('valor:stats:cache_misses').catch(() => {});
-      return null;
-    } catch (e) {
-      return null;
     }
+
+    // 2. Check L2 Redis cache if connected
+    if (this.isRedisConnected && this.redis) {
+      try {
+        const data = await this.redis.get(key);
+        if (data) {
+          const parsed = JSON.parse(data);
+          // Populate L1 cache with remaining or default TTL
+          this.memoryCache.set(key, { value: parsed, expiresAt: now + 3600000 });
+          this.cacheStats.hits++;
+          this.redis.incr('valor:stats:cache_hits').catch(() => {});
+          return parsed;
+        }
+        this.cacheStats.misses++;
+        this.redis.incr('valor:stats:cache_misses').catch(() => {});
+        return null;
+      } catch (e) {
+        this.cacheStats.misses++;
+        return null;
+      }
+    }
+
+    this.cacheStats.misses++;
+    return null;
   }
 
   async cacheSet(key, value, ttlSeconds = 3600) {
-    if (!this.isRedisConnected || !this.redis) return;
-    try {
-      await this.redis.set(key, JSON.stringify(value), 'EX', ttlSeconds);
-    } catch (e) {
-      // Ignore cache write error
+    const now = Date.now();
+    const effectiveTtl = ttlSeconds && ttlSeconds > 0 ? ttlSeconds : 3600;
+
+    // 1. Store in L1 In-Memory Cache
+    if (this.memoryCache.size > 3000) {
+      // Evict expired or oldest keys
+      const keysToDelete = [];
+      for (const [k, v] of this.memoryCache.entries()) {
+        if (v.expiresAt <= now || keysToDelete.length < 300) {
+          keysToDelete.push(k);
+        }
+      }
+      keysToDelete.forEach(k => this.memoryCache.delete(k));
+    }
+
+    this.memoryCache.set(key, {
+      value: JSON.parse(JSON.stringify(value)),
+      expiresAt: now + (effectiveTtl * 1000)
+    });
+
+    // 2. Store in L2 Redis if connected
+    if (this.isRedisConnected && this.redis) {
+      try {
+        await this.redis.set(key, JSON.stringify(value), 'EX', effectiveTtl);
+      } catch (e) {
+        // Ignore cache write error
+      }
     }
   }
 
   async cacheDel(patternOrKey) {
-    if (!this.isRedisConnected || !this.redis) return;
-    try {
-      if (patternOrKey.includes('*')) {
-        const keys = await this.redis.keys(patternOrKey);
-        if (keys.length > 0) {
-          await this.redis.del(...keys);
+    // 1. Delete from L1 In-Memory Cache
+    if (patternOrKey.includes('*')) {
+      const regexStr = '^' + patternOrKey.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&').replace(/\\\*/g, '.*') + '$';
+      const regex = new RegExp(regexStr);
+      for (const key of Array.from(this.memoryCache.keys())) {
+        if (regex.test(key)) {
+          this.memoryCache.delete(key);
         }
-      } else {
-        await this.redis.del(patternOrKey);
       }
-    } catch (e) {}
+    } else {
+      this.memoryCache.delete(patternOrKey);
+    }
+
+    // 2. Delete from L2 Redis if connected
+    if (this.isRedisConnected && this.redis) {
+      try {
+        if (patternOrKey.includes('*')) {
+          const keys = await this.redis.keys(patternOrKey);
+          if (keys.length > 0) {
+            await this.redis.del(...keys);
+          }
+        } else {
+          await this.redis.del(patternOrKey);
+        }
+      } catch (e) {}
+    }
   }
 
   // --------------------------------------------------------------------------
@@ -618,12 +760,13 @@ export class DataStore {
   }
 
   // --------------------------------------------------------------------------
-  // User Profile Data & Playback History (with Lazy Loading)
+  // User Profile Data & Playback History (with Multi-Tier Cache)
   // --------------------------------------------------------------------------
   async getProfileData(userId) {
-    const cacheKey = `valor:cache:profile_data:${userId}`;
+    const activeUserId = userId || 'local';
+    const cacheKey = `valor:cache:profile_data:${activeUserId}`;
 
-    // 1. Check Redis Cache
+    // 1. Check Multi-Tier Cache (L1 Memory + L2 Redis)
     const cached = await this.cacheGet(cacheKey);
     if (cached) {
       return cached;
@@ -633,14 +776,14 @@ export class DataStore {
     if (this.isPgConnected) {
       try {
         // Fetch Settings
-        const settingsRes = await this.pgPool.query('SELECT settings_json FROM settings WHERE user_id = $1', [userId]);
+        const settingsRes = await this.pgPool.query('SELECT settings_json FROM settings WHERE user_id = $1', [activeUserId]);
         const settings = settingsRes.rows.length > 0 ? settingsRes.rows[0].settings_json : {};
 
         // Fetch History
-        const historyRes = await this.pgPool.query('SELECT * FROM history WHERE user_id = $1 ORDER BY last_played_date DESC NULLS LAST', [userId]);
+        const historyRes = await this.pgPool.query('SELECT * FROM history WHERE user_id = $1 ORDER BY last_played_date DESC NULLS LAST', [activeUserId]);
         
         // Fetch Bookmarks
-        const bookmarksRes = await this.pgPool.query('SELECT * FROM bookmarks WHERE user_id = $1', [userId]);
+        const bookmarksRes = await this.pgPool.query('SELECT * FROM bookmarks WHERE user_id = $1', [activeUserId]);
         const bookmarksRows = bookmarksRes.rows;
 
         const videos = historyRes.rows.map(row => {
@@ -648,17 +791,17 @@ export class DataStore {
             .filter(bm => bm.video_id === row.video_id)
             .map(bm => ({
               id: bm.id,
-              time: bm.time,
-              endTime: bm.end_time,
+              time: Number(bm.time) || 0,
+              endTime: bm.end_time !== null && bm.end_time !== undefined ? Number(bm.end_time) : undefined,
               label: bm.label,
-              isIntro: bm.is_intro,
-              isOutro: bm.is_outro,
-              skipEnabled: bm.skip_enabled,
+              isIntro: Boolean(bm.is_intro),
+              isOutro: Boolean(bm.is_outro),
+              skipEnabled: Boolean(bm.skip_enabled),
               title: bm.title,
               description: bm.description,
               category: bm.category,
               thumbnail: bm.thumbnail,
-              favorite: bm.favorite,
+              favorite: Boolean(bm.favorite),
               createdAt: bm.created_at,
               updatedAt: bm.updated_at,
               userName: bm.user_name,
@@ -678,10 +821,10 @@ export class DataStore {
             url: row.url || '',
             type: row.type || 'local',
             fileName: row.file_name || '',
-            duration: row.duration,
-            currentTime: row.currentTime || row.current_time || 0,
+            duration: Number(row.duration) || 0,
+            currentTime: Number(row.currentTime ?? row.current_time ?? 0),
             lastPlayedDate: row.last_played_date,
-            totalTimeWatched: row.total_time_watched,
+            totalTimeWatched: Number(row.total_time_watched ?? row.totalTimeWatched ?? row.watchTime ?? row.watchtime ?? 0),
             rating: row.rating,
             timeToFinish: row.time_to_finish,
             sessions: row.sessions || [],
@@ -695,14 +838,14 @@ export class DataStore {
             season: row.season,
             color: row.color,
             tmdbId: row.tmdb_id,
-            hasScrobbledTrakt: row.has_scrobbled_trakt,
+            hasScrobbledTrakt: Boolean(row.has_scrobbled_trakt),
             bookmarks: videoBookmarks
           };
         });
 
         const result = { settings, history: videos };
 
-        // 3. Lazy Load into Redis Cache
+        // 3. Store into Multi-Tier Cache
         await this.cacheSet(cacheKey, result, this.CACHE_TTL.PROFILE_DATA);
         return result;
       } catch (err) {
@@ -713,10 +856,10 @@ export class DataStore {
     // Fallback to SQLite
     if (this.sqliteDb) {
       try {
-        const settingsRow = this.sqliteDb.prepare('SELECT settingsJson FROM settings WHERE userId = ?').get(userId);
+        const settingsRow = this.sqliteDb.prepare('SELECT settingsJson FROM settings WHERE userId = ?').get(activeUserId);
         const settings = settingsRow ? JSON.parse(settingsRow.settingsJson) : {};
-        const historyRows = this.sqliteDb.prepare('SELECT * FROM history WHERE userId = ?').all(userId);
-        const bookmarksRows = this.sqliteDb.prepare('SELECT * FROM bookmarks WHERE userId = ?').all(userId);
+        const historyRows = this.sqliteDb.prepare('SELECT * FROM history WHERE userId = ?').all(activeUserId);
+        const bookmarksRows = this.sqliteDb.prepare('SELECT * FROM bookmarks WHERE userId = ?').all(activeUserId);
 
         const videos = historyRows.map(row => ({
           id: row.videoId,
@@ -724,28 +867,56 @@ export class DataStore {
           url: row.url || '',
           type: row.type || 'local',
           fileName: row.fileName || '',
-          duration: row.duration,
-          currentTime: row.currentTime,
+          duration: Number(row.duration) || 0,
+          currentTime: Number(row.currentTime ?? row.current_time ?? 0),
           lastPlayedDate: row.lastPlayedDate,
-          totalTimeWatched: row.totalTimeWatched,
+          totalTimeWatched: Number(row.totalTimeWatched ?? row.total_time_watched ?? row.watchTime ?? row.watchtime ?? 0),
           rating: row.rating,
           timeToFinish: row.timeToFinish,
-          sessions: row.sessions ? JSON.parse(row.sessions) : [],
+          sessions: row.sessions ? (typeof row.sessions === 'string' ? JSON.parse(row.sessions) : row.sessions) : [],
           localFilePath: row.localFilePath,
-          playedDates: row.playedDates ? JSON.parse(row.playedDates) : [],
+          playedDates: row.playedDates ? (typeof row.playedDates === 'string' ? JSON.parse(row.playedDates) : row.playedDates) : [],
           format: row.format || null,
-          streams: row.streams ? JSON.parse(row.streams) : [],
-          audioTracks: row.audioTracks ? JSON.parse(row.audioTracks) : [],
-          subtitleTracks: row.subtitleTracks ? JSON.parse(row.subtitleTracks) : [],
+          streams: row.streams ? (typeof row.streams === 'string' ? JSON.parse(row.streams) : row.streams) : [],
+          audioTracks: row.audioTracks ? (typeof row.audioTracks === 'string' ? JSON.parse(row.audioTracks) : row.audioTracks) : [],
+          subtitleTracks: row.subtitleTracks ? (typeof row.subtitleTracks === 'string' ? JSON.parse(row.subtitleTracks) : row.subtitleTracks) : [],
           episode: row.episode,
           season: row.season,
           color: row.color,
           tmdbId: row.tmdbId,
           hasScrobbledTrakt: row.hasScrobbledTrakt === 1,
-          bookmarks: bookmarksRows.filter(bm => bm.videoId === row.videoId)
+          bookmarks: bookmarksRows.filter(bm => bm.videoId === row.videoId).map(bm => ({
+            id: bm.id,
+            time: Number(bm.time) || 0,
+            endTime: bm.endTime !== null && bm.endTime !== undefined ? Number(bm.endTime) : undefined,
+            label: bm.label,
+            isIntro: bm.isIntro === 1 || Boolean(bm.isIntro),
+            isOutro: bm.isOutro === 1 || Boolean(bm.isOutro),
+            skipEnabled: bm.skipEnabled === 1 || Boolean(bm.skipEnabled),
+            title: bm.title || '',
+            description: bm.description || '',
+            category: bm.category || (bm.isIntro ? 'Intro' : bm.isOutro ? 'Outro' : 'Custom'),
+            startTime: bm.startTime !== null && bm.startTime !== undefined ? Number(bm.startTime) : Number(bm.time),
+            thumbnail: bm.thumbnail || '',
+            favorite: bm.favorite === 1 || Boolean(bm.favorite),
+            createdAt: bm.createdAt,
+            updatedAt: bm.updatedAt,
+            userName: bm.userName || '',
+            userTime: bm.userTime || '',
+            mediaName: bm.mediaName || '',
+            tmdbId: bm.tmdbId,
+            episode: bm.episode,
+            season: bm.season,
+            color: bm.color || '',
+            userId: bm.userId,
+            createdBy: bm.createdBy || 'manual'
+          }))
         }));
 
-        return { settings, history: videos };
+        const result = { settings, history: videos };
+        // Store into Multi-Tier Cache!
+        await this.cacheSet(cacheKey, result, this.CACHE_TTL.PROFILE_DATA);
+        return result;
       } catch (e) {
         return { settings: {}, history: [] };
       }
@@ -755,18 +926,15 @@ export class DataStore {
   }
 
   async saveSettings(userId, settings) {
-    if (!userId || userId === 'local' || userId.startsWith('local_')) return;
+    const activeUserId = userId || 'local';
 
     if (this.isPgConnected) {
       try {
         await this.pgPool.query(
           `INSERT INTO settings (user_id, settings_json, updated_at) VALUES ($1, $2, NOW())
            ON CONFLICT (user_id) DO UPDATE SET settings_json = EXCLUDED.settings_json, updated_at = NOW()`,
-          [userId, JSON.stringify(settings)]
+          [activeUserId, JSON.stringify(settings)]
         );
-        // Invalidate Redis profile data cache
-        await this.cacheDel(`valor:cache:profile_data:${userId}`);
-        await this.cacheDel(`valor:cache:settings:${userId}`);
       } catch (e) {
         console.error('[PostgreSQL] saveSettings error:', e.message);
       }
@@ -774,19 +942,25 @@ export class DataStore {
 
     if (this.sqliteDb) {
       try {
-        this.sqliteDb.prepare('INSERT OR REPLACE INTO settings (userId, settingsJson) VALUES (?, ?)').run(userId, JSON.stringify(settings));
+        this.sqliteDb.prepare('INSERT OR REPLACE INTO settings (userId, settingsJson) VALUES (?, ?)').run(activeUserId, JSON.stringify(settings));
       } catch (e) {}
     }
+
+    // Invalidate and refresh cache
+    await this.cacheDel(`valor:cache:profile_data:${activeUserId}`);
+    await this.cacheDel(`valor:cache:settings:${activeUserId}`);
+    await this.cacheSet(`valor:cache:settings:${activeUserId}`, settings, this.CACHE_TTL.SETTINGS);
   }
 
   async saveHistory(userId, history) {
-    if (!userId || userId === 'local' || userId.startsWith('local_')) return;
+    const activeUserId = userId || 'local';
+    if (!Array.isArray(history)) return;
 
-    if (this.isPgConnected) {
+    if (this.isPgConnected && this.pgPool) {
       const client = await this.pgPool.connect();
       try {
         await client.query('BEGIN');
-        await client.query('DELETE FROM history WHERE user_id = $1', [userId]);
+        await client.query('DELETE FROM history WHERE user_id = $1', [activeUserId]);
 
         const insertQuery = `
           INSERT INTO history (
@@ -803,17 +977,20 @@ export class DataStore {
         `;
 
         for (const v of history) {
+          const cTime = Number(v.currentTime ?? v.current_time ?? 0);
+          const wTime = Number(v.totalTimeWatched ?? v.total_time_watched ?? v.watchTime ?? v.watchtime ?? 0);
+
           await client.query(insertQuery, [
-            userId,
+            activeUserId,
             v.id,
             v.title || '',
             v.url || '',
             v.type || 'local',
             v.fileName || '',
-            v.duration || 0,
-            v.currentTime || 0,
+            Number(v.duration) || 0,
+            cTime,
             v.lastPlayedDate ? new Date(v.lastPlayedDate) : new Date(),
-            v.totalTimeWatched || 0,
+            wTime,
             v.rating || null,
             v.timeToFinish || null,
             JSON.stringify(v.sessions || []),
@@ -849,11 +1026,11 @@ export class DataStore {
             `;
             for (const bm of v.bookmarks) {
               await client.query(upsertBookmarkPg, [
-                userId, v.id, bm.id, Number(bm.time) || 0,
+                activeUserId, v.id, bm.id, Number(bm.time) || 0,
                 bm.endTime !== undefined && bm.endTime !== null ? Number(bm.endTime) : null,
                 bm.label || '', Boolean(bm.isIntro), Boolean(bm.isOutro), Boolean(bm.skipEnabled),
                 bm.title || null, bm.description || null, bm.category || null,
-                bm.startTime !== undefined && bm.startTime !== null ? Number(bm.startTime) : null,
+                bm.startTime !== undefined && bm.startTime !== null ? Number(bm.startTime) : (Number(bm.time) || 0),
                 bm.thumbnail || null, Boolean(bm.favorite),
                 v.episode || null, v.season || null, bm.color || null, v.tmdbId || null,
                 bm.userName || null, bm.userTime || null, v.title || null, bm.createdBy || 'manual'
@@ -863,8 +1040,6 @@ export class DataStore {
         }
 
         await client.query('COMMIT');
-        // Invalidate Redis profile data cache
-        await this.cacheDel(`valor:cache:profile_data:${userId}`);
       } catch (e) {
         await client.query('ROLLBACK');
         console.error('[PostgreSQL] saveHistory error:', e.message);
@@ -875,7 +1050,7 @@ export class DataStore {
 
     if (this.sqliteDb) {
       try {
-        this.sqliteDb.prepare('DELETE FROM history WHERE userId = ?').run(userId);
+        this.sqliteDb.prepare('DELETE FROM history WHERE userId = ?').run(activeUserId);
         const insertHistory = this.sqliteDb.prepare(`
           INSERT INTO history (
             userId, videoId, title, url, type, fileName, duration, currentTime,
@@ -886,10 +1061,13 @@ export class DataStore {
         `);
 
         for (const v of history) {
+          const cTime = Number(v.currentTime ?? v.current_time ?? 0);
+          const wTime = Number(v.totalTimeWatched ?? v.total_time_watched ?? v.watchTime ?? v.watchtime ?? 0);
+
           insertHistory.run(
-            userId, v.id, v.title || '', v.url || '', v.type || 'local', v.fileName || '',
-            v.duration || 0, v.currentTime || 0, v.lastPlayedDate || new Date().toISOString(),
-            v.totalTimeWatched || 0, v.rating || null, v.timeToFinish || null,
+            activeUserId, v.id, v.title || '', v.url || '', v.type || 'local', v.fileName || '',
+            Number(v.duration) || 0, cTime, v.lastPlayedDate || new Date().toISOString(),
+            wTime, v.rating || null, v.timeToFinish || null,
             JSON.stringify(v.sessions || []), v.localFilePath || null, JSON.stringify(v.playedDates || []),
             v.format || null, JSON.stringify(v.streams || []), JSON.stringify(v.audioTracks || []),
             JSON.stringify(v.subtitleTracks || []), v.episode || null, v.season || null,
@@ -908,11 +1086,11 @@ export class DataStore {
             for (const bm of v.bookmarks) {
               try {
                 upsertStmt.run(
-                  userId, v.id, bm.id, Number(bm.time) || 0,
+                  activeUserId, v.id, bm.id, Number(bm.time) || 0,
                   bm.endTime !== undefined && bm.endTime !== null ? Number(bm.endTime) : null,
                   bm.label || '', bm.isIntro ? 1 : 0, bm.isOutro ? 1 : 0, bm.skipEnabled ? 1 : 0,
                   bm.title || null, bm.description || null, bm.category || null,
-                  bm.startTime !== undefined && bm.startTime !== null ? Number(bm.startTime) : null,
+                  bm.startTime !== undefined && bm.startTime !== null ? Number(bm.startTime) : (Number(bm.time) || 0),
                   bm.thumbnail || null, bm.favorite ? 1 : 0,
                   v.episode || null, v.season || null, bm.color || null, v.tmdbId || null,
                   bm.userName || null, bm.userTime || null, v.title || null, bm.createdBy || 'manual'
@@ -921,8 +1099,16 @@ export class DataStore {
             }
           }
         }
-      } catch (e) {}
+      } catch (e) {
+        console.error('[SQLite] saveHistory error:', e.message);
+      }
     }
+
+    // Invalidate and warm profile cache
+    await this.cacheDel(`valor:cache:profile_data:${activeUserId}`);
+    try {
+      await this.getProfileData(activeUserId);
+    } catch (e) {}
   }
 
   // --------------------------------------------------------------------------
@@ -3074,18 +3260,27 @@ export class DataStore {
 
   /**
    * Fetch bookmarks for a given media by tmdbId (and season/episode) or videoId.
-   * Lazy-loads from Redis cache, then PostgreSQL, falling back to SQLite.
+   * Multi-tier cache (L1 Memory + L2 Redis), then PostgreSQL, falling back to SQLite.
    */
   async getBookmarks({ tmdbId = null, season = null, episode = null, videoId = null, userId = null } = {}) {
     const s = (season !== undefined && season !== null && season !== '') ? parseInt(season, 10) : null;
     const ep = (episode !== undefined && episode !== null && episode !== '') ? parseInt(episode, 10) : null;
     const tId = tmdbId ? parseInt(tmdbId, 10) : null;
 
-    const cacheKey = tId
-      ? `valor:cache:bookmarks:tmdb:${tId}:${s || 0}:${ep || 0}`
-      : `valor:cache:bookmarks:vid:${videoId || 'all'}`;
+    let cacheKey;
+    if (tId) {
+      cacheKey = `valor:cache:bookmarks:tmdb:${tId}:${s || 0}:${ep || 0}`;
+    } else if (videoId && userId) {
+      cacheKey = `valor:cache:bookmarks:vid:${videoId}:user:${userId}`;
+    } else if (videoId) {
+      cacheKey = `valor:cache:bookmarks:vid:${videoId}`;
+    } else if (userId) {
+      cacheKey = `valor:cache:bookmarks:user:${userId}`;
+    } else {
+      cacheKey = `valor:cache:bookmarks:all`;
+    }
 
-    // 1. Check Redis Lazy Cache
+    // 1. Check Multi-Tier Cache
     try {
       const cached = await this.cacheGet(cacheKey);
       if (cached && Array.isArray(cached)) {
@@ -3122,8 +3317,8 @@ export class DataStore {
         const res = await this.pgPool.query(query, params);
         rows = res.rows.map(bm => ({
           id: bm.id,
-          time: bm.time,
-          endTime: bm.end_time !== null ? bm.end_time : undefined,
+          time: Number(bm.time) || 0,
+          endTime: bm.end_time !== null && bm.end_time !== undefined ? Number(bm.end_time) : undefined,
           label: bm.label,
           isIntro: Boolean(bm.is_intro),
           isOutro: Boolean(bm.is_outro),
@@ -3131,7 +3326,7 @@ export class DataStore {
           title: bm.title || '',
           description: bm.description || '',
           category: bm.category || (bm.is_intro ? 'Intro' : bm.is_outro ? 'Outro' : 'Custom'),
-          startTime: bm.start_time !== null ? bm.start_time : bm.time,
+          startTime: bm.start_time !== null && bm.start_time !== undefined ? Number(bm.start_time) : Number(bm.time),
           thumbnail: bm.thumbnail || '',
           favorite: Boolean(bm.favorite),
           createdAt: bm.created_at,
@@ -3172,18 +3367,18 @@ export class DataStore {
 
         rows = sqliteRows.map(bm => ({
           id: bm.id,
-          time: bm.time,
-          endTime: bm.endTime !== null ? bm.endTime : undefined,
+          time: Number(bm.time) || 0,
+          endTime: bm.endTime !== null && bm.endTime !== undefined ? Number(bm.endTime) : undefined,
           label: bm.label,
-          isIntro: bm.isIntro === 1,
-          isOutro: bm.isOutro === 1,
-          skipEnabled: bm.skipEnabled === 1,
+          isIntro: bm.isIntro === 1 || Boolean(bm.isIntro),
+          isOutro: bm.isOutro === 1 || Boolean(bm.isOutro),
+          skipEnabled: bm.skipEnabled === 1 || Boolean(bm.skipEnabled),
           title: bm.title || '',
           description: bm.description || '',
           category: bm.category || (bm.isIntro ? 'Intro' : bm.isOutro ? 'Outro' : 'Custom'),
-          startTime: bm.startTime !== null ? bm.startTime : bm.time,
+          startTime: bm.startTime !== null && bm.startTime !== undefined ? Number(bm.startTime) : Number(bm.time),
           thumbnail: bm.thumbnail || '',
-          favorite: bm.favorite === 1,
+          favorite: bm.favorite === 1 || Boolean(bm.favorite),
           createdAt: bm.createdAt,
           updatedAt: bm.updatedAt,
           userName: bm.userName || '',
@@ -3202,10 +3397,10 @@ export class DataStore {
       }
     }
 
-    // 4. Cache in Redis (1 hour TTL)
+    // 4. Cache in Multi-Tier Cache (1 hour TTL)
     if (rows.length > 0) {
       try {
-        await this.cacheSet(cacheKey, rows, 3600);
+        await this.cacheSet(cacheKey, rows, this.CACHE_TTL.BOOKMARKS || 3600);
       } catch (e) {}
     }
 
@@ -3213,7 +3408,7 @@ export class DataStore {
   }
 
   /**
-   * Save an array of bookmarks/timestamps into PostgreSQL and SQLite with cache invalidation.
+   * Save an array of bookmarks/timestamps into PostgreSQL and SQLite with cache invalidation and warming.
    */
   async saveBookmarks(bookmarks, { tmdbId = null, season = null, episode = null, videoId = null, userId = null } = {}) {
     if (!Array.isArray(bookmarks) || bookmarks.length === 0) {
@@ -3365,17 +3560,35 @@ export class DataStore {
       }
     }
 
-    // 3. Invalidate Redis Caches
+    // 3. Multi-tier Cache Invalidation & Warming
     try {
+      const keysToDel = new Set(['valor:cache:bookmarks:all']);
       if (tId) {
-        await this.cacheDel(`valor:cache:bookmarks:tmdb:${tId}:${s || 0}:${ep || 0}`);
+        keysToDel.add(`valor:cache:bookmarks:tmdb:${tId}:*`);
       }
       if (activeVideoId) {
-        await this.cacheDel(`valor:cache:bookmarks:vid:${activeVideoId}`);
+        keysToDel.add(`valor:cache:bookmarks:vid:${activeVideoId}*`);
       }
       if (userId) {
-        await this.cacheDel(`valor:cache:profile_data:${userId}`);
+        keysToDel.add(`valor:cache:bookmarks:user:${userId}`);
+        keysToDel.add(`valor:cache:profile_data:${userId}`);
       }
+
+      for (const bm of bookmarks) {
+        if (bm.tmdbId) keysToDel.add(`valor:cache:bookmarks:tmdb:${bm.tmdbId}:*`);
+        if (bm.videoId) keysToDel.add(`valor:cache:bookmarks:vid:${bm.videoId}*`);
+        if (bm.userId) {
+          keysToDel.add(`valor:cache:bookmarks:user:${bm.userId}`);
+          keysToDel.add(`valor:cache:profile_data:${bm.userId}`);
+        }
+      }
+
+      for (const key of keysToDel) {
+        await this.cacheDel(key);
+      }
+
+      // Warm the cache with fresh data
+      await this.getBookmarks({ tmdbId: tId, season: s, episode: ep, videoId: activeVideoId, userId });
     } catch (e) {}
 
     return { success: true, count: bookmarks.length };
@@ -3540,16 +3753,21 @@ export class DataStore {
       }
     }
 
-    // Invalidate Redis
+    // Invalidate Multi-Tier Cache
     try {
+      const keysToDel = new Set(['valor:cache:bookmarks:all']);
       if (tmdbId) {
-        await this.cacheDel(`valor:cache:bookmarks:tmdb:${tmdbId}:${season || 0}:${episode || 0}`);
+        keysToDel.add(`valor:cache:bookmarks:tmdb:${tmdbId}:*`);
       }
       if (videoId) {
-        await this.cacheDel(`valor:cache:bookmarks:vid:${videoId}`);
+        keysToDel.add(`valor:cache:bookmarks:vid:${videoId}*`);
       }
       if (userId) {
-        await this.cacheDel(`valor:cache:profile_data:${userId}`);
+        keysToDel.add(`valor:cache:bookmarks:user:${userId}`);
+        keysToDel.add(`valor:cache:profile_data:${userId}`);
+      }
+      for (const k of keysToDel) {
+        await this.cacheDel(k);
       }
     } catch (e) {}
 

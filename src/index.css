@@ -1,6 +1,68 @@
 @import './styles/main.css';
 @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=Inter:wght@300;400;500;600;700&display=swap');
 
+
+/* --------------------------------------------------------------------------
+   TOKEN DESIGN SYSTEM CORE & COMFORT CONTROLS
+   -------------------------------------------------------------------------- */
+html {
+  font-size: calc(clamp(15px, 0.2vw + 13.5px, 18px) * var(--text-scale, 1));
+  box-sizing: border-box;
+}
+
+body {
+  font-family: var(--font-ui);
+  line-height: 1.5;
+  background-color: var(--bg);
+  color: var(--text-1);
+}
+
+/* UI Dimmer affects application chrome, NEVER the native video player */
+.app-layout {
+  filter: brightness(var(--ui-dimmer, 1));
+}
+
+.player-container,
+.video-wrapper,
+video,
+.native-video-el {
+  filter: brightness(1) !important;
+}
+
+/* Accessible focus visible on all interactive elements */
+:focus-visible {
+  outline: 2px solid var(--focus-ring) !important;
+  outline-offset: 2px !important;
+}
+
+/* Motion Preferences */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+[data-reduce-motion="true"] *,
+[data-reduce-motion="true"] *::before,
+[data-reduce-motion="true"] *::after {
+  animation-duration: 0.01ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.01ms !important;
+  scroll-behavior: auto !important;
+}
+
+/* Tabular figures for all timestamps and timecodes */
+.stat-badge,
+.timecode,
+.player-time-display,
+.time-display,
+[data-timecode] {
+  font-variant-numeric: tabular-nums;
+}
+
+
 :root {
   --font-sans: 'Outfit', 'Inter', system-ui, -apple-system, sans-serif;
   --font-mono: 'ui-monospace', monospace;
@@ -42,7 +104,7 @@ body {
    ───────────────────────────────────────────────────────────────────────────── */
 * {
   scrollbar-width: thin;
-  scrollbar-color: rgba(255, 255, 255, 0.2) transparent;
+  scrollbar-color: var(--surface-3) transparent;
 }
 
 ::-webkit-scrollbar {
@@ -54,14 +116,9 @@ body {
   background: transparent;
 }
 
-::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.2);
-  border-radius: 9999px;
-}
+::-webkit-scrollbar-thumb { background: var(--surface-3); border-radius: 9999px; }
 
-::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.4);
-}
+::-webkit-scrollbar-thumb:hover { background: var(--control-border); }
 
 
 /* Typography */
@@ -128,7 +185,7 @@ a:hover {
 
 .btn-primary {
   background-color: var(--accent-color);
-  color: var(--btn-text-color, #ffffff);
+  color: var(--player-accent-text, var(--btn-text-color, #ffffff));
 }
 
 .btn-primary:hover {
@@ -209,7 +266,7 @@ a:hover {
 .form-input:focus {
   outline: none;
   border-color: var(--accent-color);
-  box-shadow: 0 0 0 2px rgba(229, 9, 20, 0.25);
+  box-shadow: 0 0 0 2px var(--accent-soft);
   background: rgba(0, 0, 0, 0.6);
 }
 
@@ -230,7 +287,7 @@ a:hover {
 
 .drop-zone:hover, .drop-zone.active {
   border-color: var(--accent-color);
-  background: rgba(229, 9, 20, 0.03);
+  background: var(--accent-soft);
 }
 
 .drop-zone-icon {
@@ -425,9 +482,9 @@ a:hover {
 }
 
 .segmented-button.active {
-  background: var(--accent-glow, rgba(229, 9, 20, 0.15));
-  color: var(--accent-color, #e50914);
-  border: 1px solid var(--accent-color, #e50914);
+  background: var(--accent-soft);
+  color: var(--accent);
+  border: 1px solid var(--accent);
   box-shadow: 0 2px 6px rgba(0,0,0,0.1);
 }
 
@@ -609,8 +666,8 @@ a:hover {
 }
 
 .bookmark-add-btn:hover {
-  background: #e50914;
-  border-color: #e50914;
+  background: var(--accent);
+  border-color: var(--accent);
 }
 
 .bookmark-search-container {
@@ -678,10 +735,7 @@ a:hover {
 .bookmark-list::-webkit-scrollbar {
   width: 4px;
 }
-.bookmark-list::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.2);
-  border-radius: 4px;
-}
+.bookmark-list::-webkit-scrollbar-thumb { background: var(--surface-3); border-radius: 9999px; }
 
 .premium-bookmark-card {
   display: flex;
@@ -748,7 +802,7 @@ a:hover {
 
 .bookmark-card-time {
   font-size: 12px;
-  color: #e50914;
+  color: var(--accent);
   font-weight: 500;
 }
 
@@ -813,7 +867,7 @@ a:hover {
 }
 
 .empty-add-btn {
-  background: #e50914;
+  background: var(--accent);
   color: white;
   border: none;
   padding: 8px 16px;
@@ -929,7 +983,7 @@ a:hover {
 .bookmark-modal-fields input[type="text"]:focus,
 .bookmark-modal-fields textarea:focus,
 .bookmark-modal-fields select:focus {
-  border-color: #e50914;
+  border-color: var(--accent);
 }
 
 .bookmark-modal-fields textarea {
@@ -971,7 +1025,7 @@ a:hover {
 }
 
 .bookmark-modal-actions .btn-save {
-  background: #e50914;
+  background: var(--accent);
   color: white;
 }
 .bookmark-modal-actions .btn-save:hover {
@@ -1029,7 +1083,7 @@ a:hover {
 
 .search-bar-input:focus {
   border-color: var(--accent-color);
-  box-shadow: 0 0 12px var(--accent-glow);
+  box-shadow: 0 0 12px var(--accent-soft);
   background: var(--card-bg);
 }
 
@@ -1621,7 +1675,7 @@ a:hover {
 }
 
 .header-close-btn:hover {
-  background: #e50914;
+  background: var(--accent);
   transform: rotate(90deg);
 }
 
@@ -1739,10 +1793,7 @@ a:hover {
   width: 4px;
 }
 
-.panel-episodes-grid::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.1);
-  border-radius: 2px;
-}
+.panel-episodes-grid::-webkit-scrollbar-thumb { background: var(--surface-3); border-radius: 9999px; }
 
 .episode-grid-btn {
   aspect-ratio: 1;
@@ -2134,17 +2185,14 @@ a:hover {
   overflow-x: auto;
   padding: 0.5rem 0 1.5rem;
   scrollbar-width: thin;
-  scrollbar-color: rgba(255, 255, 255, 0.15) transparent;
+  scrollbar-color: var(--surface-3) transparent;
 }
 
 .cast-scroll-container::-webkit-scrollbar {
   height: 6px;
 }
 
-.cast-scroll-container::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.18);
-  border-radius: 3px;
-}
+.cast-scroll-container::-webkit-scrollbar-thumb { background: var(--surface-3); border-radius: 9999px; }
 
 .actor-card-item {
   width: 140px;
@@ -2508,10 +2556,7 @@ a:hover {
 .actor-left-col::-webkit-scrollbar {
   width: 4px;
 }
-.actor-left-col::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.1);
-  border-radius: 2px;
-}
+.actor-left-col::-webkit-scrollbar-thumb { background: var(--surface-3); border-radius: 9999px; }
 
 .actor-portrait-card {
   width: 100%;
@@ -2590,7 +2635,7 @@ a:hover {
   background: var(--surface-hover);
   border-color: var(--accent-color);
   transform: scale(1.08) translateY(-2px);
-  box-shadow: 0 5px 15px var(--accent-glow);
+  box-shadow: 0 5px 15px var(--accent-soft);
 }
 
 .actor-facts-list {
@@ -2967,17 +3012,12 @@ a:hover {
 .actor-page-container::-webkit-scrollbar-thumb,
 .full-page-container::-webkit-scrollbar-thumb,
 .search-results-section::-webkit-scrollbar-thumb,
-.online-search-container::-webkit-scrollbar-thumb {
-  background: rgba(229, 9, 20, 0.45);
-  border-radius: 9999px;
-}
+.online-search-container::-webkit-scrollbar-thumb { background: var(--surface-3); border-radius: 9999px; }
 .actor-details-overlay::-webkit-scrollbar-thumb:hover,
 .actor-page-container::-webkit-scrollbar-thumb:hover,
 .full-page-container::-webkit-scrollbar-thumb:hover,
 .search-results-section::-webkit-scrollbar-thumb:hover,
-.online-search-container::-webkit-scrollbar-thumb:hover {
-  background: #e50914;
-}
+.online-search-container::-webkit-scrollbar-thumb:hover { background: var(--control-border); }
 
 /* ─────────────────────────────────────────────────────────────────────────────
    Global Modern Glassmorphic Dropdown Styling System
@@ -3006,14 +3046,14 @@ a:hover {
 
 .global-select-dropdown:hover {
   background-color: var(--dropdown-hover-bg);
-  border-color: var(--accent-glow);
-  box-shadow: 0 6px 20px var(--accent-glow);
+  border-color: var(--accent-soft);
+  box-shadow: 0 6px 20px var(--accent-soft);
 }
 
 .global-select-dropdown:focus {
   outline: none;
   border-color: var(--accent-color);
-  box-shadow: 0 0 0 3px var(--accent-glow);
+  box-shadow: 0 0 0 3px var(--accent-soft);
   background-color: var(--dropdown-bg);
 }
 
@@ -3060,7 +3100,7 @@ a:hover {
 /* Buttons */
 .btn-theme-primary {
   background: var(--accent-color);
-  color: var(--bg-primary);
+  color: var(--player-accent-text, var(--btn-text-color, var(--bg-primary)));
   border: 1px solid var(--accent-color);
   border-radius: 0.75rem;
   padding: 0.65rem 1.4rem;
@@ -3071,7 +3111,7 @@ a:hover {
   align-items: center;
   gap: 0.5rem;
   transition: all 0.2s ease;
-  box-shadow: 0 4px 14px var(--accent-glow);
+  box-shadow: 0 4px 14px var(--accent-soft);
 }
 
 .btn-theme-primary:hover {
@@ -3201,7 +3241,7 @@ a:hover {
 .theme-tile-card:hover {
   border-color: var(--accent-color);
   transform: translateY(-2px);
-  box-shadow: 0 8px 24px var(--accent-glow);
+  box-shadow: 0 8px 24px var(--accent-soft);
 }
 
 /* List Groups */
@@ -3245,7 +3285,7 @@ a:hover {
 }
 
 .theme-badge-accent {
-  background: var(--accent-glow);
+  background: var(--accent-soft);
   color: var(--accent-color);
   border: 1px solid var(--accent-color);
 }
@@ -3755,9 +3795,9 @@ a:hover {
 }
 
 .pagination-btn.active {
-  background: var(--accent-color, #e50914) !important;
+  background: var(--accent) !important;
   color: #fff !important;
-  border-color: var(--accent-color, #e50914) !important;
+  border-color: var(--accent) !important;
 }
 
 .pagination-ellipsis-el {
@@ -3896,10 +3936,7 @@ a:hover {
 .calendar-grid-wrapper::-webkit-scrollbar-track {
   background: #161616;
 }
-.calendar-grid-wrapper::-webkit-scrollbar-thumb {
-  background: #3a3a3a;
-  border-radius: 3px;
-}
+.calendar-grid-wrapper::-webkit-scrollbar-thumb { background: var(--surface-3); border-radius: 9999px; }
 
 .calendar-grid-inner {
   display: flex;
@@ -4459,115 +4496,3 @@ a:hover {
 
 
 
-/* ==========================================================================
-   BLACK-OPS THEME UNIVERSAL STYLING ENGINE
-   Precision pitch-black (#000000) canvas with crisp hairlines (#1f2025)
-   and high-contrast typography matching the Codex docs design system.
-   ========================================================================== */
-[data-theme="black-ops"],
-[data-theme="black-ops"] body,
-html[data-theme="black-ops"] {
-  background-color: #000000 !important;
-  color: #ffffff !important;
-}
-
-[data-theme="black-ops"] .app-layout,
-[data-theme="black-ops"] .app-main,
-[data-theme="black-ops"] .main-content,
-[data-theme="black-ops"] .home-container,
-[data-theme="black-ops"] .settings-container,
-[data-theme="black-ops"] .dashboard-container {
-  background-color: #000000 !important;
-}
-
-[data-theme="black-ops"] header,
-[data-theme="black-ops"] .top-bar,
-[data-theme="black-ops"] .header-bar,
-[data-theme="black-ops"] .navbar {
-  background-color: #000000 !important;
-  border-bottom: 1px solid #1c1c1f !important;
-}
-
-[data-theme="black-ops"] aside,
-[data-theme="black-ops"] .sidebar,
-[data-theme="black-ops"] .left-nav {
-  background-color: #000000 !important;
-  border-right: 1px solid #18181b !important;
-}
-
-[data-theme="black-ops"] .theme-card,
-[data-theme="black-ops"] .media-card,
-[data-theme="black-ops"] .settings-card,
-[data-theme="black-ops"] .settings-section,
-[data-theme="black-ops"] .modal-content,
-[data-theme="black-ops"] .dialog-content {
-  background-color: #0c0d11 !important;
-  border: 1px solid #1f2025 !important;
-}
-
-[data-theme="black-ops"] .theme-card:hover,
-[data-theme="black-ops"] .media-card:hover {
-  border-color: #383a42 !important;
-}
-
-[data-theme="black-ops"] .btn-theme-primary {
-  background-color: #ffffff !important;
-  color: #000000 !important;
-  border: 1px solid #ffffff !important;
-  font-weight: 600;
-}
-
-[data-theme="black-ops"] .btn-theme-primary:hover {
-  background-color: #e4e4e7 !important;
-}
-
-[data-theme="black-ops"] .btn-theme-secondary,
-[data-theme="black-ops"] .btn-theme-outline {
-  background-color: #131417 !important;
-  color: #ffffff !important;
-  border: 1px solid #232429 !important;
-}
-
-[data-theme="black-ops"] .btn-theme-secondary:hover,
-[data-theme="black-ops"] .btn-theme-outline:hover {
-  background-color: #1c1c1f !important;
-  border-color: #383a42 !important;
-}
-
-[data-theme="black-ops"] hr,
-[data-theme="black-ops"] .divider,
-[data-theme="black-ops"] .section-divider {
-  border-color: #1c1c1f !important;
-}
-
-[data-theme="black-ops"] input,
-[data-theme="black-ops"] select,
-[data-theme="black-ops"] textarea,
-[data-theme="black-ops"] .custom-select-trigger {
-  background-color: #08080a !important;
-  border: 1px solid #1f2025 !important;
-  color: #ffffff !important;
-}
-
-[data-theme="black-ops"] input:focus,
-[data-theme="black-ops"] select:focus,
-[data-theme="black-ops"] textarea:focus,
-[data-theme="black-ops"] .custom-select-trigger:focus {
-  border-color: #ffffff !important;
-  box-shadow: 0 0 0 1px #ffffff !important;
-}
-
-[data-theme="black-ops"] .tab-btn.active,
-[data-theme="black-ops"] .pill-tab.active,
-[data-theme="black-ops"] .settings-nav-item.active {
-  background-color: #1c1c1f !important;
-  color: #ffffff !important;
-  border-color: #383a42 !important;
-}
-
-[data-theme="black-ops"] .badge,
-[data-theme="black-ops"] .meta-badge {
-  background-color: #14151a !important;
-  border: 1px solid #232429 !important;
-  color: #8e8ea0 !important;
-}

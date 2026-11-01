@@ -1,3 +1,4 @@
+import { classifyVideoTitle } from '../utils/libraryClassifier';
 import React, { useState, useEffect } from 'react';
 import { Home, History, Play, Settings, Film, X, Activity, Zap } from 'lucide-react';
 import type { VideoItem } from '../types/media';
@@ -101,7 +102,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
       <div className="sidebar-history-section">
         <div className="sidebar-history-title">
-          <h3>Recent Playback</h3>
+          <h3>Recent playback</h3>
         </div>
         {videos.length === 0 ? (
           <div className="sidebar-empty-history">
@@ -110,27 +111,42 @@ export const Sidebar: React.FC<SidebarProps> = ({
           </div>
         ) : (
           <div className="sidebar-history-list">
-            {videos.map((video) => (
-              <div key={`sidebar-${video.id}`} className="sidebar-history-item" onClick={() => handlePlayVideo(video)} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                {video.posterPath && (
-                  <img 
-                    src={video.posterPath} 
-                    alt="" 
-                    crossOrigin="anonymous"
-                    onError={(e) => { (e.target as HTMLElement).style.display = 'none'; }}
-                    style={{ width: '20px', height: '30px', borderRadius: '3px', objectFit: 'cover', flexShrink: 0 }} 
-                  />
-                )}
-                <span className="sidebar-history-item-title" title={video.title} style={{ flexGrow: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{video.title}</span>
-                <button 
-                  className="sidebar-history-remove-btn" 
-                  onClick={(e) => handleRemoveVideo(video.id, e)}
-                  title="Remove"
+            {videos.slice(0, 3).map((video) => {
+              const cleaned = classifyVideoTitle(video.title).displayTitle;
+              return (
+                <div 
+                  key={`sidebar-${video.id}`} 
+                  className="sidebar-history-item" 
+                  onClick={() => handlePlayVideo(video)} 
+                  style={{ display: 'flex', alignItems: 'center', gap: '8px', minWidth: 0, width: '100%' }}
                 >
-                  <X size={12} />
-                </button>
-              </div>
-            ))}
+                  {video.posterPath && (
+                    <img 
+                      src={video.posterPath} 
+                      alt="" 
+                      crossOrigin="anonymous"
+                      onError={(e) => { (e.target as HTMLElement).style.display = 'none'; }}
+                      style={{ width: '20px', height: '30px', borderRadius: '3px', objectFit: 'cover', flexShrink: 0 }} 
+                    />
+                  )}
+                  <span 
+                    className="sidebar-history-item-title" 
+                    title={video.title} 
+                    style={{ flexGrow: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                  >
+                    {cleaned}
+                  </span>
+                  <button 
+                    className="sidebar-history-remove-btn" 
+                    onClick={(e) => handleRemoveVideo(video.id, e)}
+                    aria-label={`Remove ${cleaned} from history`}
+                    title="Remove from history"
+                  >
+                    <X size={12} />
+                  </button>
+                </div>
+              );
+            })}
           </div>
         )}
       </div>

@@ -164,7 +164,7 @@ export const BookmarkModal: React.FC<BookmarkModalProps> = ({
           color: var(--text-primary);
         }
         .preset-btn.active {
-          background: var(--accent-glow);
+          background: var(--accent-soft);
           border-color: var(--accent-color);
           color: var(--accent-color);
           box-shadow: var(--shadow-sm);
@@ -172,40 +172,45 @@ export const BookmarkModal: React.FC<BookmarkModalProps> = ({
       `}</style>
       <div
         style={{
-          position: 'absolute',
-          top: '50%',
-          right: '24px',
-          transform: 'translateY(-50%)',
-          zIndex: 10000,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          width: '100%',
+          height: '100%',
+          padding: '16px',
+          boxSizing: 'border-box'
         }}
       >
         <div 
           className="bookmark-dialog-box custom-box-anim" 
           onClick={(e) => e.stopPropagation()}
           style={{
-            background: 'var(--card-bg)',
-            border: '1px solid var(--border-color)',
-            borderRadius: '16px',
-            padding: '1.75rem',
-            width: '380px',
-            maxWidth: 'calc(100vw - 48px)',
-            boxShadow: 'var(--shadow-xl)',
+            background: 'var(--card-bg, #141414)',
+            border: '1px solid var(--border-color, rgba(255, 255, 255, 0.12))',
+            borderRadius: '14px',
+            padding: '1.25rem',
+            width: '100%',
+            maxWidth: '360px',
+            maxHeight: 'min(90vh, 520px)',
+            overflowY: 'auto',
+            boxShadow: '0 20px 50px rgba(0, 0, 0, 0.75)',
             display: 'flex',
             flexDirection: 'column',
-            gap: '1rem',
-            fontFamily: 'var(--font-sans)'
+            gap: '0.85rem',
+            fontFamily: 'var(--font-sans, sans-serif)',
+            boxSizing: 'border-box'
           }}
         >
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', minWidth: 0, flex: 1, marginRight: '12px' }}>
-              <h2 style={{ margin: 0, fontSize: '1.25rem', fontWeight: 700, color: 'var(--text-primary)' }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', minWidth: 0, flex: 1, marginRight: '10px' }}>
+              <h2 style={{ margin: 0, fontSize: '1.1rem', fontWeight: 700, color: 'var(--text-primary, #ffffff)' }}>
                 Mark Scene
               </h2>
               {videoTitle && (
                 <span 
                   style={{ 
-                    fontSize: '0.75rem', 
-                    color: 'var(--text-muted)', 
+                    fontSize: '0.72rem', 
+                    color: 'var(--text-muted, rgba(255, 255, 255, 0.5))', 
                     fontWeight: 500,
                     whiteSpace: 'nowrap',
                     overflow: 'hidden',
@@ -221,64 +226,53 @@ export const BookmarkModal: React.FC<BookmarkModalProps> = ({
             <button 
               onClick={onClose}
               style={{ 
-                background: 'var(--surface)', 
-                border: '1px solid var(--border-subtle)', 
-                color: 'var(--text-primary)', 
+                background: 'var(--surface, rgba(255, 255, 255, 0.06))', 
+                border: '1px solid var(--border-subtle, rgba(255, 255, 255, 0.1))', 
+                color: 'var(--text-primary, #ffffff)', 
                 cursor: 'pointer', 
                 borderRadius: '50%',
-                width: '32px',
-                height: '32px',
+                width: '28px',
+                height: '28px',
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
-                transition: 'background 0.2s'
+                transition: 'background 0.2s',
+                flexShrink: 0
               }}
-              onMouseEnter={(e) => e.currentTarget.style.background = 'var(--card-hover-bg)'}
-              onMouseLeave={(e) => e.currentTarget.style.background = 'var(--surface)'}
+              onMouseEnter={(e) => e.currentTarget.style.background = 'var(--card-hover-bg, rgba(255, 255, 255, 0.12))'}
+              onMouseLeave={(e) => e.currentTarget.style.background = 'var(--surface, rgba(255, 255, 255, 0.06))'}
             >
-              <X size={18} />
+              <X size={15} />
             </button>
           </div>
 
           <div style={{
-            background: 'var(--surface)',
-            borderRadius: '12px',
-            padding: '8px 16px',
+            background: 'var(--surface, rgba(255, 255, 255, 0.05))',
+            borderRadius: '8px',
+            padding: '6px 12px',
             display: 'flex',
             alignItems: 'center',
             gap: '8px',
-            fontSize: '0.92rem',
-            color: 'var(--text-primary)',
+            fontSize: '0.85rem',
+            color: 'var(--text-primary, #ffffff)',
             fontWeight: 600,
             width: 'fit-content',
             margin: '0 auto',
-            border: '1px solid var(--border-subtle)'
+            border: '1px solid var(--border-subtle, rgba(255, 255, 255, 0.08))'
           }}>
-            <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: 'var(--accent-color)', boxShadow: '0 0 8px var(--accent-color)' }} />
+            <span style={{ width: '7px', height: '7px', borderRadius: '50%', background: 'var(--accent)', boxShadow: '0 0 6px var(--accent)' }} />
             <span>{startTimeStr} {bookmarkType !== 'outro' ? ` - ${endTimeStr}` : ''}</span>
           </div>
 
-          <p style={{
-            fontSize: '0.78rem',
-            color: 'var(--text-muted)',
-            textAlign: 'center',
-            lineHeight: '1.4',
-            margin: '0 0 0.25rem 0',
-            fontStyle: 'normal',
-            borderBottom: '1px solid var(--border-subtle)',
-            paddingBottom: '0.75rem'
-          }}>
-            See a scene others should skip? Tap once to start, tap again to end, 2 clicks! Your mark helps everyone watching the same movie or show.
-          </p>
-
-          <div className="dialog-field" style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem' }}>
-            <label style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', fontWeight: 600 }}>What type of scene is this?</label>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '0.5rem' }}>
+          <div className="dialog-field" style={{ display: 'flex', flexDirection: 'column', gap: '0.45rem' }}>
+            <label style={{ fontSize: '0.76rem', color: 'var(--text-secondary, rgba(255, 255, 255, 0.7))', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.04em' }}>Scene Type</label>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '0.4rem' }}>
               {presets.map((preset) => (
                 <button
                   key={preset.value}
                   className={`preset-btn ${bookmarkType === preset.value ? 'active' : ''}`}
                   onClick={() => handlePresetSelect(preset.value as any)}
+                  style={{ padding: '0.45rem 0.35rem', fontSize: '0.78rem', borderRadius: '6px' }}
                 >
                   {preset.label}
                 </button>
@@ -286,24 +280,24 @@ export const BookmarkModal: React.FC<BookmarkModalProps> = ({
             </div>
           </div>
 
-          <div className="dialog-field" style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
-            <label style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', fontWeight: 600 }}>Scene Title / Label</label>
+          <div className="dialog-field" style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
+            <label style={{ fontSize: '0.76rem', color: 'var(--text-secondary, rgba(255, 255, 255, 0.7))', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.04em' }}>Scene Title / Label</label>
             <input 
               type="text" 
               style={{
                 width: '100%',
-                background: 'var(--input-bg)',
-                border: '1px solid var(--input-border)',
+                background: 'var(--input-bg, rgba(0, 0, 0, 0.3))',
+                border: '1px solid var(--input-border, rgba(255, 255, 255, 0.15))',
                 borderRadius: '8px',
-                padding: '0.75rem',
-                color: 'var(--input-text)',
-                fontSize: '0.95rem',
+                padding: '0.55rem 0.75rem',
+                color: 'var(--input-text, #ffffff)',
+                fontSize: '0.88rem',
                 outline: 'none',
                 boxSizing: 'border-box',
                 fontFamily: 'inherit'
               }}
-              onFocus={(e) => e.currentTarget.style.borderColor = 'var(--accent-color)'}
-              onBlur={(e) => e.currentTarget.style.borderColor = 'var(--input-border)'}
+              onFocus={(e) => e.currentTarget.style.borderColor = 'var(--accent)'}
+              onBlur={(e) => e.currentTarget.style.borderColor = 'var(--input-border, rgba(255, 255, 255, 0.15))'}
               value={newBookmarkLabel} 
               onChange={(e) => setNewBookmarkLabel(e.target.value)}
               placeholder="e.g. Action Scene"
@@ -311,14 +305,14 @@ export const BookmarkModal: React.FC<BookmarkModalProps> = ({
           </div>
 
           {/* Adjust segment duration toggle */}
-          <div style={{ marginTop: '0.2rem' }}>
+          <div style={{ marginTop: '0.1rem' }}>
             <button
               onClick={() => setShowAdjustTimes(!showAdjustTimes)}
               style={{
                 background: 'none',
                 border: 'none',
-                color: 'var(--text-muted)',
-                fontSize: '0.8rem',
+                color: 'var(--text-muted, rgba(255, 255, 255, 0.5))',
+                fontSize: '0.75rem',
                 display: 'flex',
                 alignItems: 'center',
                 gap: '4px',
@@ -326,27 +320,27 @@ export const BookmarkModal: React.FC<BookmarkModalProps> = ({
                 padding: 0,
                 fontFamily: 'inherit'
               }}
-              onMouseEnter={(e) => e.currentTarget.style.color = 'var(--text-primary)'}
-              onMouseLeave={(e) => e.currentTarget.style.color = 'var(--text-muted)'}
+              onMouseEnter={(e) => e.currentTarget.style.color = 'var(--text-primary, #ffffff)'}
+              onMouseLeave={(e) => e.currentTarget.style.color = 'var(--text-muted, rgba(255, 255, 255, 0.5))'}
             >
               <Settings size={12} />
               <span>{showAdjustTimes ? 'Hide time adjustments' : 'Adjust times manually'}</span>
             </button>
 
             {showAdjustTimes && (
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', marginTop: '0.75rem', animation: 'customFadeIn 0.2s ease forwards' }}>
-                <div className="dialog-field" style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
-                  <label style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Start Time</label>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem', marginTop: '0.5rem', animation: 'customFadeIn 0.2s ease forwards' }}>
+                <div className="dialog-field" style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
+                  <label style={{ fontSize: '0.75rem', color: 'var(--text-muted, rgba(255, 255, 255, 0.5))' }}>Start Time</label>
                   <input 
                     type="text" 
                     style={{
                       width: '100%',
-                      background: 'var(--input-bg)',
-                      border: '1px solid var(--input-border)',
-                      borderRadius: '8px',
-                      padding: '0.5rem 0.75rem',
-                      color: 'var(--input-text)',
-                      fontSize: '0.9rem',
+                      background: 'var(--input-bg, rgba(0, 0, 0, 0.3))',
+                      border: '1px solid var(--input-border, rgba(255, 255, 255, 0.15))',
+                      borderRadius: '6px',
+                      padding: '0.45rem 0.6rem',
+                      color: 'var(--input-text, #ffffff)',
+                      fontSize: '0.82rem',
                       outline: 'none',
                       boxSizing: 'border-box',
                       fontFamily: 'inherit'
@@ -359,18 +353,18 @@ export const BookmarkModal: React.FC<BookmarkModalProps> = ({
                   />
                 </div>
 
-                <div className="dialog-field" style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem', opacity: (bookmarkType !== 'outro') ? 1 : 0.5, pointerEvents: (bookmarkType !== 'outro') ? 'auto' : 'none' }}>
-                  <label style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>End Time</label>
+                <div className="dialog-field" style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem', opacity: (bookmarkType !== 'outro') ? 1 : 0.5, pointerEvents: (bookmarkType !== 'outro') ? 'auto' : 'none' }}>
+                  <label style={{ fontSize: '0.75rem', color: 'var(--text-muted, rgba(255, 255, 255, 0.5))' }}>End Time</label>
                   <input 
                     type="text" 
                     style={{
                       width: '100%',
-                      background: 'var(--input-bg)',
-                      border: '1px solid var(--input-border)',
-                      borderRadius: '8px',
-                      padding: '0.5rem 0.75rem',
-                      color: 'var(--input-text)',
-                      fontSize: '0.9rem',
+                      background: 'var(--input-bg, rgba(0, 0, 0, 0.3))',
+                      border: '1px solid var(--input-border, rgba(255, 255, 255, 0.15))',
+                      borderRadius: '6px',
+                      padding: '0.45rem 0.6rem',
+                      color: 'var(--input-text, #ffffff)',
+                      fontSize: '0.82rem',
                       outline: 'none',
                       boxSizing: 'border-box',
                       fontFamily: 'inherit'
@@ -386,43 +380,43 @@ export const BookmarkModal: React.FC<BookmarkModalProps> = ({
             )}
           </div>
 
-          <div className="dialog-actions" style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem', marginTop: '0.5rem' }}>
+          <div className="dialog-actions" style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.6rem', marginTop: '0.3rem' }}>
             <button 
               onClick={onClose}
               style={{
-                background: 'var(--surface)',
-                border: '1px solid var(--border-color)',
+                background: 'var(--surface, rgba(255, 255, 255, 0.06))',
+                border: '1px solid var(--border-color, rgba(255, 255, 255, 0.12))',
                 borderRadius: '8px',
-                color: 'var(--text-secondary)',
-                padding: '0.7rem 1.25rem',
-                fontSize: '0.9rem',
+                color: 'var(--text-secondary, rgba(255, 255, 255, 0.7))',
+                padding: '0.5rem 1rem',
+                fontSize: '0.85rem',
                 fontWeight: 600,
                 cursor: 'pointer',
                 transition: 'background 0.2s',
                 fontFamily: 'inherit'
               }}
-              onMouseEnter={(e) => e.currentTarget.style.background = 'var(--card-hover-bg)'}
-              onMouseLeave={(e) => e.currentTarget.style.background = 'var(--surface)'}
+              onMouseEnter={(e) => e.currentTarget.style.background = 'var(--card-hover-bg, rgba(255, 255, 255, 0.12))'}
+              onMouseLeave={(e) => e.currentTarget.style.background = 'var(--surface, rgba(255, 255, 255, 0.06))'}
             >
               Cancel
             </button>
             <button 
               onClick={handleSaveBookmark}
               style={{
-                background: 'var(--accent-color)',
+                background: 'var(--accent)',
                 border: 'none',
                 borderRadius: '8px',
                 color: 'var(--btn-text-color, #ffffff)',
-                padding: '0.7rem 1.5rem',
-                fontSize: '0.9rem',
+                padding: '0.5rem 1.25rem',
+                fontSize: '0.85rem',
                 fontWeight: 600,
                 cursor: 'pointer',
                 boxShadow: 'var(--shadow-md)',
                 transition: 'background 0.2s, transform 0.1s',
                 fontFamily: 'inherit'
               }}
-              onMouseEnter={(e) => e.currentTarget.style.background = 'var(--accent-hover)'}
-              onMouseLeave={(e) => e.currentTarget.style.background = 'var(--accent-color)'}
+              onMouseEnter={(e) => e.currentTarget.style.background = 'var(--accent-hover, #f40b17)'}
+              onMouseLeave={(e) => e.currentTarget.style.background = 'var(--accent)'}
               onMouseDown={(e) => e.currentTarget.style.transform = 'scale(0.96)'}
               onMouseUp={(e) => e.currentTarget.style.transform = 'scale(1)'}
             >

@@ -1,6 +1,44 @@
 <!doctype html>
 <html lang="en">
   <head>
+    <!-- Immediate Theme & Comfort Initialization (Prevents FOUC) -->
+    <script>
+      (function() {
+        try {
+          var activeUserId = localStorage.getItem('valor_active_user_id') || 'local';
+          var settingsKey = activeUserId === 'local' ? 'valor_settings' : ('valor_settings_' + activeUserId);
+          var raw = localStorage.getItem(settingsKey);
+          var settings = raw ? JSON.parse(raw) : {};
+          var theme = settings.theme || 'midnight-slate';
+
+          if (theme === 'dark' || theme === 'dim' || theme === 'cyberpunk' || theme === 'abyss' || theme === 'aqua' || theme === 'teal') {
+            theme = 'midnight-slate';
+          } else if (theme === 'light' || theme === 'garden' || theme === 'valentine') {
+            theme = 'soft-paper';
+          } else if (theme === 'black' || theme === 'black-and-white' || theme === 'oled') {
+            theme = 'black-ops';
+          } else if (theme === 'auto') {
+            var prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+            theme = prefersDark ? 'midnight-slate' : 'soft-paper';
+          }
+
+          document.documentElement.setAttribute('data-theme', theme);
+
+          if (settings.uiDimmer && settings.uiDimmer < 100) {
+            document.documentElement.style.setProperty('--ui-dimmer', (settings.uiDimmer / 100).toString());
+          }
+          if (settings.textSize && settings.textSize !== 100) {
+            document.documentElement.style.setProperty('--text-scale', (settings.textSize / 100).toString());
+          }
+          if (settings.reduceMotion === 'on') {
+            document.documentElement.setAttribute('data-reduce-motion', 'true');
+          }
+        } catch(e) {
+          document.documentElement.setAttribute('data-theme', 'midnight-slate');
+        }
+      })();
+    </script>
+
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/logo.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
@@ -59,6 +97,20 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@600&family=Montserrat:wght@400;600&family=Outfit:wght@400;600&family=Playfair+Display:ital,wght@0,600;1,600&family=Poppins:wght@400;500;600&family=Roboto+Mono&display=swap" rel="stylesheet">
+    <!-- Google Cast SDK -->
+    <script>
+      window['__onGCastApiAvailable'] = function(isAvailable) {
+        if (isAvailable && window.cast && window.cast.framework) {
+          try {
+            window.cast.framework.CastContext.getInstance().setOptions({
+              receiverApplicationId: window.chrome.cast.media.DEFAULT_MEDIA_RECEIVER_APP_ID,
+              autoJoinPolicy: window.chrome.cast.AutoJoinPolicy.ORIGIN_SCOPED
+            });
+          } catch(e) {}
+        }
+      };
+    </script>
+    <script src="https://www.gstatic.com/cv/js/sender/v1/cast_sender.js?loadCastFramework=1"></script>
   </head>
   <body>
     <div id="root"></div>

@@ -2100,10 +2100,10 @@ const backendServer = http.createServer(async (req, res) => {
         const episode = variables.episode || null;
         const bookmarksData = variables.bookmarks;
         
-        if (!userId || !videoId || !tmdbId) {
+        if (!userId || (!videoId && !tmdbId)) {
           res.statusCode = 400;
           res.setHeader('Content-Type', 'application/json');
-          res.end(JSON.stringify({ errors: [{ message: 'Missing userId, videoId, or tmdbId' }] }));
+          res.end(JSON.stringify({ errors: [{ message: 'Missing userId, or both videoId and tmdbId' }] }));
           return;
         }
         
@@ -2135,91 +2135,17 @@ const backendServer = http.createServer(async (req, res) => {
     return;
   }
 
-  // Get Profile Data API (Combined Settings & History)
+  // Get Profile Data API (Combined Settings & History with Multi-Tier Cache)
   if (pathname === '/api/profile/data' && req.method === 'GET') {
-    const userId = parsedUrl.searchParams.get('userId');
+    const userId = parsedUrl.searchParams.get('userId') || 'local';
     res.statusCode = 200;
     res.setHeader('Content-Type', 'application/json');
-    if (!userId) {
-      res.end(JSON.stringify({ error: 'Missing userId' }));
-      return;
-    }
 
     try {
-      // Fetch settings
-      const settingsQuery = db.prepare('SELECT settingsJson FROM settings WHERE userId = ?');
-      const settingsRow = settingsQuery.get(userId);
-      const settings = settingsRow ? JSON.parse(settingsRow.settingsJson) : {};
-
-      // Fetch history
-      const historyQuery = db.prepare('SELECT * FROM history WHERE userId = ?');
-      const historyRows = historyQuery.all(userId);
-
-      // Fetch bookmarks
-      const bookmarksQuery = db.prepare('SELECT * FROM bookmarks');
-      const bookmarksRows = bookmarksQuery.all();
-
-      // Combine history and bookmarks
-      const videos = historyRows.map(row => {
-        const videoBookmarks = bookmarksRows
-          .filter(bm => bm.videoId === row.videoId)
-          .map(bm => ({
-            id: bm.id,
-            time: bm.time,
-            endTime: bm.endTime !== null ? bm.endTime : undefined,
-            label: bm.label,
-            isIntro: bm.isIntro === 1,
-            isOutro: bm.isOutro === 1,
-            skipEnabled: bm.skipEnabled === 1,
-            title: bm.title,
-            description: bm.description,
-            category: bm.category,
-            thumbnail: bm.thumbnail,
-            favorite: bm.favorite === 1,
-            createdAt: bm.createdAt,
-            updatedAt: bm.updatedAt,
-            userName: bm.userName,
-            userTime: bm.userTime,
-            mediaName: bm.mediaName,
-            tmdbId: bm.tmdbId,
-            episode: bm.episode,
-            season: bm.season,
-            color: bm.color,
-            userId: bm.userId,
-            createdBy: bm.createdBy || 'manual'
-          }));
-        
-        return {
-          id: row.videoId,
-          title: row.title,
-          url: row.url || '',
-          type: row.type || 'local',
-          fileName: row.fileName || '',
-          duration: row.duration,
-          currentTime: row.currentTime,
-          lastPlayedDate: row.lastPlayedDate,
-          totalTimeWatched: row.totalTimeWatched,
-          rating: row.rating,
-          timeToFinish: row.timeToFinish,
-          sessions: row.sessions ? JSON.parse(row.sessions) : [],
-          localFilePath: row.localFilePath,
-          playedDates: row.playedDates ? JSON.parse(row.playedDates) : [],
-          format: row.format || null,
-          streams: row.streams ? JSON.parse(row.streams) : [],
-          audioTracks: row.audioTracks ? JSON.parse(row.audioTracks) : [],
-          subtitleTracks: row.subtitleTracks ? JSON.parse(row.subtitleTracks) : [],
-          episode: row.episode,
-          season: row.season,
-          color: row.color,
-          tmdbId: row.tmdbId,
-          hasScrobbledTrakt: row.hasScrobbledTrakt === 1,
-          bookmarks: videoBookmarks
-        };
-      });
-
-      res.end(JSON.stringify({ settings, history: videos }));
+      const profileData = await dataStore.getProfileData(userId);
+      res.end(JSON.stringify(profileData));
     } catch (e) {
-      console.error('[SQLite profile data GET error]', e.message);
+      console.error('[Profile data GET error]', e.message);
       res.end(JSON.stringify({ settings: {}, history: [] }));
     }
     return;
@@ -2448,176 +2374,30 @@ const backendServer = http.createServer(async (req, res) => {
     return;
   }
 
-  // History API
+  // History API (Multi-Tier Cached via DataStore)
   if (pathname === '/api/history') {
     res.statusCode = 200;
     res.setHeader('Content-Type', 'application/json');
-    const userId = parsedUrl.searchParams.get('userId');
+    const userId = parsedUrl.searchParams.get('userId') || 'local';
 
     if (req.method === 'POST') {
-      getJsonBody(req).then(data => {
-        if (userId && userId !== 'local') {
-          try {
-            // Delete existing history & bookmarks for this user first to match full sync behavior
-            const deleteHistory = db.prepare('DELETE FROM history WHERE userId = ?');
-            deleteHistory.run(userId);
-            const deleteBookmarks = db.prepare('DELETE FROM bookmarks WHERE userId = ?');
-            deleteBookmarks.run(userId);
-
-            const insertHistory = db.prepare(`
-              INSERT OR REPLACE INTO history 
-              (userId, videoId, title, url, type, fileName, duration, currentTime, lastPlayedDate, totalTimeWatched, rating, timeToFinish, sessions, localFilePath, playedDates, format, streams, audioTracks, subtitleTracks, episode, season, color, tmdbId, hasScrobbledTrakt)
-              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            `);
-            const insertBookmark = db.prepare(`
-              INSERT OR REPLACE INTO bookmarks
-              (userId, videoId, id, time, endTime, label, isIntro, isOutro, skipEnabled, title, description, category, startTime, thumbnail, favorite, createdAt, updatedAt, episode, season, color)
-              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'), ?, ?, ?)
-            `);
-
-            if (Array.isArray(data)) {
-              db.exec('BEGIN TRANSACTION;');
-              try {
-                for (const video of data) {
-                  insertHistory.run(
-                    userId,
-                    video.id,
-                    video.title || 'Untitled Video',
-                    video.url || '',
-                    video.type || 'local',
-                    video.fileName || '',
-                    video.duration || null,
-                    video.currentTime || null,
-                    video.lastPlayedDate || null,
-                    video.totalTimeWatched || null,
-                    video.rating || null,
-                    video.timeToFinish || null,
-                    video.sessions ? JSON.stringify(video.sessions) : null,
-                    video.localFilePath || null,
-                    video.playedDates ? JSON.stringify(video.playedDates) : null,
-                    video.format || null,
-                    video.streams ? JSON.stringify(video.streams) : null,
-                    video.audioTracks ? JSON.stringify(video.audioTracks) : null,
-                    video.subtitleTracks ? JSON.stringify(video.subtitleTracks) : null,
-                    video.episode !== undefined && video.episode !== null ? video.episode : null,
-                    video.season !== undefined && video.season !== null ? video.season : null,
-                    video.color || null,
-                    video.tmdbId !== undefined && video.tmdbId !== null ? video.tmdbId : null,
-                    video.hasScrobbledTrakt ? 1 : 0
-                  );
-
-                  if (video.bookmarks && Array.isArray(video.bookmarks)) {
-                    for (const bm of video.bookmarks) {
-                      insertBookmark.run(
-                        userId,
-                        video.id,
-                        bm.id,
-                        bm.time,
-                        bm.endTime !== undefined ? bm.endTime : null,
-                        bm.label || '',
-                        bm.isIntro ? 1 : 0,
-                        bm.isOutro ? 1 : 0,
-                        bm.skipEnabled ? 1 : 0,
-                        bm.title || null,
-                        bm.description || null,
-                        bm.category || null,
-                        bm.startTime || null,
-                        bm.thumbnail || null,
-                        bm.favorite ? 1 : 0,
-                        bm.episode || null,
-                        bm.season || null,
-                        bm.color || null
-                      );
-                    }
-                  }
-                }
-                db.exec('COMMIT;');
-              } catch (e) {
-                db.exec('ROLLBACK;');
-                throw e;
-              }
-            }
-          } catch (e) {
-            console.error('[SQLite history POST error]', e.message);
+      getJsonBody(req).then(async data => {
+        try {
+          if (Array.isArray(data)) {
+            await dataStore.saveHistory(userId, data);
           }
-        } else {
-          const historyFile = path.join(dataDir, 'history.json');
-          fs.writeFileSync(historyFile, JSON.stringify(data, null, 2));
+        } catch (e) {
+          console.error('[History POST error]', e.message);
         }
         res.end(JSON.stringify({ success: true }));
       });
     } else {
-      if (userId && userId !== 'local') {
-        try {
-          const historyQuery = db.prepare('SELECT * FROM history WHERE userId = ?');
-          const historyRows = historyQuery.all(userId);
-
-          const bookmarksQuery = db.prepare('SELECT * FROM bookmarks WHERE userId = ?');
-          const bookmarksRows = bookmarksQuery.all(userId);
-
-          const videos = historyRows.map(row => {
-            const videoBookmarks = bookmarksRows
-              .filter(bm => bm.videoId === row.videoId)
-              .map(bm => ({
-                id: bm.id,
-                time: bm.time,
-                endTime: bm.endTime !== null ? bm.endTime : undefined,
-                label: bm.label,
-                isIntro: bm.isIntro === 1,
-                isOutro: bm.isOutro === 1,
-                skipEnabled: bm.skipEnabled === 1,
-                title: bm.title,
-                description: bm.description,
-                category: bm.category,
-                startTime: bm.startTime,
-                thumbnail: bm.thumbnail,
-                favorite: bm.favorite === 1,
-                createdAt: bm.createdAt,
-                updatedAt: bm.updatedAt,
-                episode: bm.episode,
-                season: bm.season,
-                color: bm.color
-              }));
-
-            return {
-              id: row.videoId,
-              title: row.title,
-              url: row.url || '',
-              type: row.type || 'local',
-              fileName: row.fileName || '',
-              duration: row.duration,
-              currentTime: row.currentTime,
-              lastPlayedDate: row.lastPlayedDate,
-              totalTimeWatched: row.totalTimeWatched,
-              rating: row.rating,
-              timeToFinish: row.timeToFinish,
-              sessions: row.sessions ? JSON.parse(row.sessions) : [],
-              localFilePath: row.localFilePath,
-              playedDates: row.playedDates ? JSON.parse(row.playedDates) : [],
-              format: row.format || null,
-              streams: row.streams ? JSON.parse(row.streams) : [],
-              audioTracks: row.audioTracks ? JSON.parse(row.audioTracks) : [],
-              subtitleTracks: row.subtitleTracks ? JSON.parse(row.subtitleTracks) : [],
-              episode: row.episode,
-              season: row.season,
-              color: row.color,
-              tmdbId: row.tmdbId,
-              hasScrobbledTrakt: row.hasScrobbledTrakt === 1,
-              bookmarks: videoBookmarks
-            };
-          });
-          res.end(JSON.stringify(videos));
-        } catch (e) {
-          console.error('[SQLite history GET error]', e.message);
-          res.end(JSON.stringify([]));
-        }
-      } else {
-        const historyFile = path.join(dataDir, 'history.json');
-        if (fs.existsSync(historyFile)) {
-          res.end(fs.readFileSync(historyFile));
-        } else {
-          res.end(JSON.stringify([]));
-        }
+      try {
+        const profileData = await dataStore.getProfileData(userId);
+        res.end(JSON.stringify(profileData.history || []));
+      } catch (e) {
+        console.error('[History GET error]', e.message);
+        res.end(JSON.stringify([]));
       }
     }
     return;
