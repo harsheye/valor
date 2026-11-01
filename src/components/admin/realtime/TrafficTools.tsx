@@ -36,6 +36,8 @@ interface TrafficToolsProps {
   isPaused?: boolean;
   onTogglePause?: () => void;
   onApplyBuffer?: () => void;
+  onApplyBuffered?: () => void;
+  onCopy?: (text: string, id: string) => void;
 }
 
 export const TrafficTools: React.FC<TrafficToolsProps> = ({
@@ -43,8 +45,10 @@ export const TrafficTools: React.FC<TrafficToolsProps> = ({
   bufferedCount = 0,
   isPaused = false,
   onTogglePause,
-  onApplyBuffer
+  onApplyBuffer,
+  onApplyBuffered
 }) => {
+  const handleApply = onApplyBuffer || onApplyBuffered;
   const [selectedRow, setSelectedRow] = useState<TrafficRow | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [filterCategory, setFilterCategory] = useState<'all' | 'media' | 'api' | 'errors'>('all');

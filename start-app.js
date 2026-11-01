@@ -39,9 +39,24 @@ const frontendOnly = args.includes('--frontend-only');
 const autoShutdown = args.includes('--auto-shutdown');
 const shouldOpen = args.includes('--open');
 const isProd = process.env.NODE_ENV === 'production' || args.includes('--prod');
-const disableOnline = args.includes('--disable-online') || args.includes('--no-online') || args.includes('--offline') || process.env.DISABLE_ONLINE === 'true' || process.env.VITE_DISABLE_ONLINE === 'true';
-const disableEngine = args.includes('--disable-engine') || args.includes('--no-engine') || process.env.DISABLE_ENGINE === 'true' || process.env.VITE_DISABLE_ENGINE === 'true';
-const disableApp = args.includes('--disable-app') || args.includes('--no-app') || args.includes('--maintenance') || process.env.DISABLE_APP === 'true' || process.env.VITE_DISABLE_APP === 'true';
+
+const execDir = path.dirname(process.execPath);
+let appDir = import.meta.dirname || __dirname;
+if (!fs.existsSync(path.join(appDir, 'dist')) && fs.existsSync(path.join(execDir, 'dist'))) {
+  appDir = execDir;
+}
+
+let buildFeatures = {};
+try {
+  const bfPath = path.join(appDir, 'dist', 'build-features.json');
+  if (fs.existsSync(bfPath)) {
+    buildFeatures = JSON.parse(fs.readFileSync(bfPath, 'utf8'));
+  }
+} catch {}
+
+const disableOnline = args.includes('--disable-online') || args.includes('--no-online') || args.includes('--offline') || process.env.DISABLE_ONLINE === 'true' || process.env.VITE_DISABLE_ONLINE === 'true' || Boolean(buildFeatures.disableOnline);
+const disableEngine = args.includes('--disable-engine') || args.includes('--no-engine') || process.env.DISABLE_ENGINE === 'true' || process.env.VITE_DISABLE_ENGINE === 'true' || Boolean(buildFeatures.disableEngine);
+const disableApp = args.includes('--disable-app') || args.includes('--no-app') || args.includes('--maintenance') || process.env.DISABLE_APP === 'true' || process.env.VITE_DISABLE_APP === 'true' || Boolean(buildFeatures.disableApp);
 const hostArg = args.find(a => a.startsWith('--host='))?.split('=')[1];
 const HOST = process.env.HOST || hostArg || '127.0.0.1';
 const filePath = args.find(arg => !arg.startsWith('--'));
@@ -73,11 +88,6 @@ if (playWithVlc && resolvedFilePath) {
   process.exit(0);
 }
 
-const execDir = path.dirname(process.execPath);
-let appDir = import.meta.dirname || __dirname;
-if (!fs.existsSync(path.join(appDir, 'dist')) && fs.existsSync(path.join(execDir, 'dist'))) {
-  appDir = execDir;
-}
 const dataDir = path.join(appDir, '.valor_data');
 const remoteSessionManager = new RemoteSessionManager(dataDir);
 const sessionMediaManager = new SessionMediaManager(dataDir);

@@ -13,15 +13,15 @@ interface ProviderStatus {
 }
 
 interface ThirdPartyMonitorProps {
-  providers: ProviderStatus[];
-  onCheckHealth: () => void;
-  isChecking: boolean;
+  providers?: ProviderStatus[];
+  onCheckHealth?: () => void;
+  isChecking?: boolean;
 }
 
 export const ThirdPartyMonitor: React.FC<ThirdPartyMonitorProps> = ({
-  providers,
+  providers: customProviders,
   onCheckHealth,
-  isChecking
+  isChecking = false
 }) => {
   const [rotatedKeyName, setRotatedKeyName] = useState<string | null>(null);
 
@@ -64,7 +64,7 @@ export const ThirdPartyMonitor: React.FC<ThirdPartyMonitorProps> = ({
     }
   ];
 
-  const displayList = providers && providers.length > 0 ? providers : defaultProviders;
+  const displayList = customProviders && customProviders.length > 0 ? customProviders : defaultProviders;
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>

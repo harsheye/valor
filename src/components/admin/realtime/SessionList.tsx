@@ -24,7 +24,7 @@ export interface PlaybackSession {
 }
 
 interface SessionListProps {
-  sessions: PlaybackSession[];
+  sessions: (PlaybackSession | any)[];
   onSendMessage: (sessionId: string, message: string) => Promise<void>;
   onTerminateSession: (sessionId: string, reason: string) => Promise<void>;
 }

@@ -456,6 +456,7 @@ export const AdminDashboard: React.FC = () => {
   const [themeMode, setThemeMode] = useState<'dark' | 'light'>('dark');
   const [bufferedTraffic, setBufferedTraffic] = useState<any[]>([]);
   const [adminRole, setAdminRole] = useState<'owner' | 'admin' | 'viewer'>('owner');
+  const [trafficViewMode, setTrafficViewMode] = useState<'inspector' | 'classic'>('inspector');
 
   // Visitor Devices Directory & Intelligence State
   const [devicesList, setDevicesList] = useState<VisitorDevice[]>([]);
@@ -520,6 +521,24 @@ export const AdminDashboard: React.FC = () => {
   const [showAdvancedFilters, setShowAdvancedFilters] = useState<boolean>(false);
   const [trafficSearchQuery, setTrafficSearchQuery] = useState<string>('');
   const [selectedLogDetail, setSelectedLogDetail] = useState<TrafficLog | null>(null);
+
+  const normalizedTrafficRows = useMemo(() => {
+    return trafficLogs.map((l: any) => ({
+      id: String(l.id || `${l.timestamp}-${Math.random()}`),
+      method: l.method || 'GET',
+      path: l.path || '/',
+      status: l.statusCode || l.status || 200,
+      latencyMs: l.latencyMs || l.latency_ms || 0,
+      bytes: l.bytes || l.bytes_transferred || 0,
+      ip: l.ip || '127.0.0.1',
+      country: l.country || l.geo?.country,
+      city: l.city || l.geo?.city,
+      timestamp: typeof l.timestamp === 'number' ? new Date(l.timestamp).toISOString() : (l.timestamp || new Date().toISOString()),
+      userAgent: l.userAgent || `${l.browser || ''} ${l.os || ''}`.trim() || undefined,
+      headers: l.headers,
+      body: l.body
+    }));
+  }, [trafficLogs]);
 
   const showToast = (msg: string) => {
     setToastMessage(msg);
@@ -928,6 +947,16 @@ export const AdminDashboard: React.FC = () => {
       setMaintenanceConfig(data);
     }
   }, [isStreamPaused]);
+
+  const flushBufferedEvents = useCallback(() => {
+    if (bufferedTraffic.length === 0) return;
+    setTrafficLogs(prev => {
+      const existingIds = new Set(prev.map(l => l.id));
+      const newItems = bufferedTraffic.filter(l => !existingIds.has(l.id));
+      return [...newItems, ...prev].slice(0, 500);
+    });
+    setBufferedTraffic([]);
+  }, [bufferedTraffic]);
 
   const {
     connectionState,
@@ -3038,6 +3067,7 @@ export const AdminDashboard: React.FC = () => {
       {/* ========================================================================= */}
       {activeTab === 'thirdparty' && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+          <ThirdPartyMonitor />
           {/* Header Card */}
           <div style={{
             backgroundColor: 'var(--surface, #1e293b)',
@@ -3491,17 +3521,24 @@ export const AdminDashboard: React.FC = () => {
       {/* TAB: OPEN SESSIONS & LIVE VISITORS */}
       {/* ========================================================================= */}
       {activeTab === 'sessions' && (
-        <OpenSessionsTab
-          sessions={overview?.activeUsers || []}
-          onTerminateSession={handleTerminateSession}
-          onFilterSessionLogs={handleFilterSessionLogs}
-          onFilterDeviceTraffic={handleFilterByDevice}
-          onBlockIp={handleBlockIp}
-          onRefresh={() => fetchData(true)}
-          refreshing={refreshing}
-          copiedId={copiedId}
-          onCopy={handleCopy}
-        />
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+          <SessionList
+            sessions={(overview?.activeUsers as any) || []}
+            onSendMessage={handleSendSessionMessage}
+            onTerminateSession={handleTerminatePlaybackSession}
+          />
+          <OpenSessionsTab
+            sessions={overview?.activeUsers || []}
+            onTerminateSession={handleTerminateSession}
+            onFilterSessionLogs={handleFilterSessionLogs}
+            onFilterDeviceTraffic={handleFilterByDevice}
+            onBlockIp={handleBlockIp}
+            onRefresh={() => fetchData(true)}
+            refreshing={refreshing}
+            copiedId={copiedId}
+            onCopy={handleCopy}
+          />
+        </div>
       )}
 
       {/* ========================================================================= */}
@@ -3509,12 +3546,76 @@ export const AdminDashboard: React.FC = () => {
       {/* TAB 3: LIVE TRAFFIC FEED (ADVANCED FILTERING & INTERCEPTION) */}
       {/* ========================================================================= */}
       {activeTab === 'traffic' && (
-        <div style={{
-          backgroundColor: 'var(--surface, #1e293b)',
-          border: '1px solid var(--border-color, rgba(255, 255, 255, 0.08))',
-          borderRadius: '12px',
-          overflow: 'hidden'
-        }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+          {/* View Mode Segmented Switch */}
+          <div style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            background: 'var(--surface-1, #151A21)',
+            padding: '10px 16px',
+            borderRadius: 'var(--radius-md, 12px)',
+            border: '1px solid var(--border, #262D39)'
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+              <span style={{ fontSize: '0.82rem', fontWeight: 600, color: 'var(--text-2, #A9B2C0)' }}>
+                Traffic View Mode:
+              </span>
+              <div style={{ display: 'flex', gap: '4px', background: 'var(--surface-2, #1B212A)', padding: '3px', borderRadius: 'var(--radius-sm, 6px)' }}>
+                <button
+                  onClick={() => setTrafficViewMode('inspector')}
+                  style={{
+                    padding: '4px 12px',
+                    borderRadius: '4px',
+                    fontSize: '0.76rem',
+                    fontWeight: 600,
+                    border: 'none',
+                    cursor: 'pointer',
+                    background: trafficViewMode === 'inspector' ? 'var(--accent, #8CA9EE)' : 'transparent',
+                    color: trafficViewMode === 'inspector' ? 'var(--on-accent, #0C1424)' : 'var(--text-3, #8F99AA)'
+                  }}
+                >
+                  ⚡ Real-Time Inspector (v2)
+                </button>
+                <button
+                  onClick={() => setTrafficViewMode('classic')}
+                  style={{
+                    padding: '4px 12px',
+                    borderRadius: '4px',
+                    fontSize: '0.76rem',
+                    fontWeight: 600,
+                    border: 'none',
+                    cursor: 'pointer',
+                    background: trafficViewMode === 'classic' ? 'var(--accent, #8CA9EE)' : 'transparent',
+                    color: trafficViewMode === 'classic' ? 'var(--on-accent, #0C1424)' : 'var(--text-3, #8F99AA)'
+                  }}
+                >
+                  Classic Feed (v1)
+                </button>
+              </div>
+            </div>
+
+            <div style={{ fontSize: '0.76rem', color: 'var(--text-3, #8F99AA)' }}>
+              {trafficLogs.length} events loaded • {bufferedTraffic.length} buffered
+            </div>
+          </div>
+
+          {trafficViewMode === 'inspector' ? (
+            <TrafficTools
+              logs={normalizedTrafficRows}
+              isPaused={isStreamPaused}
+              bufferedCount={bufferedTraffic.length}
+              onTogglePause={() => setIsStreamPaused(p => !p)}
+              onApplyBuffer={flushBufferedEvents}
+              onCopy={handleCopy}
+            />
+          ) : (
+            <div style={{
+              backgroundColor: 'var(--surface, #1e293b)',
+              border: '1px solid var(--border-color, rgba(255, 255, 255, 0.08))',
+              borderRadius: '12px',
+              overflow: 'hidden'
+            }}>
           {/* Header & Controls Bar */}
           <div style={{
             padding: '1.15rem 1.5rem',
@@ -4533,6 +4634,8 @@ export const AdminDashboard: React.FC = () => {
               </div>
             </div>
           )}
+            </div>
+          )}
         </div>
       )}
 
@@ -4657,6 +4760,107 @@ export const AdminDashboard: React.FC = () => {
           copiedId={copiedId}
           onCopy={handleCopy}
         />
+      )}
+
+      {/* ========================================================================= */}
+      {/* TAB: ALERT RULES & NOTIFICATION CENTER */}
+      {/* ========================================================================= */}
+      {activeTab === 'alerts' && (
+        <AlertRuleEditor
+          rules={alertRules}
+          onSaveRule={handleSaveAlertRule}
+          onDeleteRule={handleDeleteAlertRule}
+        />
+      )}
+
+      {/* ========================================================================= */}
+      {/* TAB: SECURITY & ACCESS CONTROL */}
+      {/* ========================================================================= */}
+      {activeTab === 'security' && (
+        <BlockListManager
+          blockList={blockList}
+          suggestions={autoBlockSuggestions}
+          adminSessions={adminSessions}
+          onBlock={handleBlockTarget}
+          onUnblock={handleUnblockTarget}
+          onDismissSuggestion={handleDismissAutoBlock}
+          onSignOutEverywhere={handleSignOutEverywhere}
+        />
+      )}
+
+      {/* ========================================================================= */}
+      {/* TAB: PLAYBACK QUALITY & STREAMING METRICS */}
+      {/* ========================================================================= */}
+      {activeTab === 'playback' && (
+        <PlaybackQuality
+          metrics={playbackQualityMetrics}
+        />
+      )}
+
+      {/* ========================================================================= */}
+      {/* TAB: CONTENT INSIGHTS & RETENTION COHORTS */}
+      {/* ========================================================================= */}
+      {activeTab === 'content' && (
+        <ContentInsights
+          insights={contentInsights}
+        />
+      )}
+
+      {/* ========================================================================= */}
+      {/* TAB: GEOGRAPHY & TRAFFIC MAP */}
+      {/* ========================================================================= */}
+      {activeTab === 'geo' && (
+        <GeoAnalytics
+          geoStats={geoStats}
+        />
+      )}
+
+      {/* ========================================================================= */}
+      {/* TAB: ERROR TRACKING & FINGERPRINTS */}
+      {/* ========================================================================= */}
+      {activeTab === 'errors' && (
+        <ErrorGroups
+          errorGroups={errorGroups}
+          onResolveError={handleResolveError}
+        />
+      )}
+
+      {/* ========================================================================= */}
+      {/* TAB: INFRASTRUCTURE HEALTH & INCIDENTS */}
+      {/* ========================================================================= */}
+      {activeTab === 'infra' && (
+        <InfraHealth
+          infra={infraStatus}
+          incidentTimeline={incidentTimeline}
+        />
+      )}
+
+      {/* ========================================================================= */}
+      {/* TAB: AUDIT LOG TRAIL */}
+      {/* ========================================================================= */}
+      {activeTab === 'audit' && (
+        <AuditLogViewer
+          logs={auditLogs}
+        />
+      )}
+
+      {/* ========================================================================= */}
+      {/* TAB: MAINTENANCE & POLICY */}
+      {/* ========================================================================= */}
+      {activeTab === 'system' && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
+          <MaintenanceBroadcast
+            maintenance={maintenanceConfig}
+            announcements={announcements}
+            onUpdateMaintenance={handleUpdateMaintenance}
+            onSaveAnnouncement={handleSaveAnnouncement}
+            onDeleteAnnouncement={handleDeleteAnnouncement}
+          />
+          <DataRetention
+            config={dataRetentionConfig}
+            onUpdateConfig={handleUpdateDataRetention}
+          />
+        </div>
       )}
 
             </>

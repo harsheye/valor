@@ -24,6 +24,8 @@
 
 import { spawnSync } from 'node:child_process';
 import process from 'node:process';
+import fs from 'node:fs';
+import path from 'node:path';
 
 const args = process.argv.slice(2);
 
@@ -146,6 +148,18 @@ const viteResult = spawnSync(viteCmd, fullViteArgs, {
 
 if (viteResult.status !== 0) {
   process.exit(viteResult.status || 1);
+}
+
+// 3. Persist build feature state into dist for the server to auto-detect
+const distDir = path.resolve('dist');
+if (fs.existsSync(distDir)) {
+  const buildFeatures = {
+    disableOnline: Boolean(disableOnline),
+    disableEngine: Boolean(disableEngine),
+    disableApp: Boolean(disableApp),
+    timestamp: new Date().toISOString()
+  };
+  fs.writeFileSync(path.join(distDir, 'build-features.json'), JSON.stringify(buildFeatures, null, 2) + '\n', 'utf8');
 }
 
 console.log('\n\x1b[32m✓ Build completed successfully!\x1b[0m');
