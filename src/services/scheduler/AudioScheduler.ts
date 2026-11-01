@@ -1,3 +1,4 @@
+import { logger } from '../../utils/logger';
 import type { AudioPacket } from '../pipeline/MediaPipeline';
 
 export class AudioScheduler {
@@ -66,10 +67,10 @@ export class AudioScheduler {
     const durationPlayed = (packet.buffer.duration - playOffset) / playbackRate;
     const audioEndTime = audioStartTime + durationPlayed;
 
-    console.log(`[AudioScheduler-${this.instanceId}] Projecting chunk ${packet.startTime}s: delay=${delay.toFixed(3)}s, playOffset=${playOffset.toFixed(3)}s, audioStartTime=${audioStartTime.toFixed(3)}s`);
+    logger.scheduler(`[AudioScheduler-${this.instanceId}] Projecting chunk ${packet.startTime}s: delay=${delay.toFixed(3)}s, playOffset=${playOffset.toFixed(3)}s, audioStartTime=${audioStartTime.toFixed(3)}s`);
 
     source.onended = () => {
-      console.log(`[AudioScheduler-${this.instanceId}] Chunk ended:`, packet.startTime);
+      logger.scheduler(`[AudioScheduler-${this.instanceId}] Chunk ended:`, packet.startTime);
     };
 
     source.start(audioStartTime, playOffset);
@@ -83,21 +84,21 @@ export class AudioScheduler {
       playOffset,
       playbackRate
     });
-    console.log(`[AudioScheduler-${this.instanceId}] Active Sources: ${this.activeNodes.length}`);
+    logger.scheduler(`[AudioScheduler-${this.instanceId}] Active Sources: ${this.activeNodes.length}`);
   }
 
   stopAll(): void {
-    console.log(`[AudioScheduler-${this.instanceId}] stopAll called. Stopping ${this.activeNodes.length} active nodes.`);
+    logger.scheduler(`[AudioScheduler-${this.instanceId}] stopAll called. Stopping ${this.activeNodes.length} active nodes.`);
     for (const active of this.activeNodes) {
       try {
-        console.log(`[AudioScheduler-${this.instanceId}] source.stop() called for chunk starting at ${active.startTime}s: YES`);
+        logger.scheduler(`[AudioScheduler-${this.instanceId}] source.stop() called for chunk starting at ${active.startTime}s: YES`);
         active.node.stop();
       } catch (e: any) {
-        console.log(`[AudioScheduler-${this.instanceId}] source.stop() failed or already stopped for chunk starting at ${active.startTime}s: ${e.message}`);
+        logger.scheduler(`[AudioScheduler-${this.instanceId}] source.stop() failed or already stopped for chunk starting at ${active.startTime}s: ${e.message}`);
       }
     }
     this.activeNodes = [];
-    console.log(`[AudioScheduler-${this.instanceId}] Active Sources: 0`);
+    logger.scheduler(`[AudioScheduler-${this.instanceId}] Active Sources: 0`);
   }
 
   evictPlayed(currentTime: number): number[] {

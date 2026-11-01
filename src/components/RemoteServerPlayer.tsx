@@ -2285,7 +2285,7 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
       if (bookmarksTimeoutRef.current) clearTimeout(bookmarksTimeoutRef.current);
       logger.player('VideoPlayer resetting FFmpeg worker and lock queue due to unmount or video change');
       ffmpegService.reset();
-      console.clear();
+      if (logger.isDebug) console.clear();
     };
   }, [video.id]);
 
@@ -3203,7 +3203,7 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
       ...video,
       currentTime: latestTimeRef.current
     }, true);
-    console.clear();
+    if (logger.isDebug) console.clear();
     onBack();
   };
 

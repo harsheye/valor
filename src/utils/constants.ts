@@ -69,6 +69,84 @@ export const fontOptions = [
   { value: 'monospace', label: 'Roboto Mono' }
 ];
 
+export const defaultKeybinds = {
+  playPause: ' ',
+  rewind: 'ArrowLeft',
+  forward: 'ArrowRight',
+  volumeUp: 'ArrowUp',
+  volumeDown: 'ArrowDown',
+  mute: 'm',
+  toggleFullscreen: 'f',
+  togglePiP: 'p',
+  toggleCaptions: 'c',
+  bookmark: 'b',
+  jumpNextBookmark: 'n',
+  speedUp: ']',
+  slowDown: '[',
+  toggleMiniPlayer: 'i',
+  bossKey: 'Escape',
+  cycleAspect: 'a',
+  takeScreenshot: 's'
+};
+
+export const defaultSettings = {
+  keybinds: defaultKeybinds,
+  theme: 'black-ops',
+  performancePreset: 'balanced',
+  audioNormalization: true,
+  enableSmartSeek: true,
+  seekDuration: 10,
+  autoSkipIntro: false,
+  autoSkipOutro: false,
+  autoPip: false,
+  autoPlayNext: false,
+  autoPauseOnTabSwitch: true,
+  defaultPlaybackRate: 1.0,
+  volumeStep: 5,
+  storageMode: 'localstorage',
+  enableSubtitles: true,
+  preferredSubtitleLanguage: 'eng',
+  preferredAudioLanguage: 'eng',
+  enableResumePlayback: true,
+  hardwareAcceleration: 'on',
+  reduceMotion: 'off',
+  textSize: 100,
+  uiDimmer: 100,
+  enableTrakt: false,
+  traktToken: null,
+  traktRefreshToken: null,
+  traktTokenExpiresAt: null,
+  traktUsername: null,
+  tmdbApiKey: '',
+  openSubtitlesApiKey: '',
+  openSubtitlesUsername: '',
+  openSubtitlesPassword: '',
+  theintrodbApiKey: '',
+  ratingPromptThreshold: 3,
+  traktRatingPrompt: true,
+  traktHistorySync: false,
+  lastTraktHistorySyncTime: null,
+  traktRatingsSync: false,
+  lastTraktRatingsSyncTime: null,
+  traktWatchlistSync: false,
+  lastTraktWatchlistSyncTime: null,
+  traktFavoritesSync: false,
+  lastTraktFavoritesSyncTime: null,
+  traktSyncInterval: 30
+};
+
+export const themeOptions = [
+  { value: 'midnight-slate', label: 'Midnight Slate' },
+  { value: 'soft-paper', label: 'Soft Paper' },
+  { value: 'black-ops', label: 'Black Ops' }
+];
+
+export const performancePresetOptions = [
+  { value: 'high', label: 'High Performance' },
+  { value: 'balanced', label: 'Balanced' },
+  { value: 'saver', label: 'Battery Saver' }
+];
+
 export const storageModeOptions = [
   { value: 'localstorage', label: 'Local Browser Storage' },
   { value: 'file', label: 'Persistent Server Files' }
@@ -82,5 +160,5 @@ export const ratingThresholdOptions = [
   { value: 10, label: '10 minutes remaining' }
 ];
 
-export const TRAKT_CLIENT_ID = 'V4WfZovVxhKMc-KNyfTHgL_KtI84gJLnBHMss-qwu88';
-
+export const DEFAULT_TMDB_TOKEN = (import.meta.env.VITE_TMDB_BEARER_TOKEN || import.meta.env.VITE_TMDB_API_KEY || '') as string;
+export const TRAKT_CLIENT_ID = (import.meta.env.VITE_TRAKT_CLIENT_ID || 'V4WfZovVxhKMc-KNyfTHgL_KtI84gJLnBHMss-qwu88') as string;

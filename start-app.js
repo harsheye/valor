@@ -31,8 +31,9 @@ const backendOnly = args.includes('--backend-only');
 const frontendOnly = args.includes('--frontend-only');
 const autoShutdown = args.includes('--auto-shutdown');
 const shouldOpen = args.includes('--open');
+const isProd = process.env.NODE_ENV === 'production' || args.includes('--prod');
 const hostArg = args.find(a => a.startsWith('--host='))?.split('=')[1];
-const HOST = process.env.HOST || hostArg || '0.0.0.0';
+const HOST = process.env.HOST || hostArg || '127.0.0.1';
 const filePath = args.find(arg => !arg.startsWith('--'));
 const resolvedFilePath = filePath ? path.resolve(filePath) : null;
 
@@ -53,7 +54,7 @@ if (playWithVlc && resolvedFilePath) {
     const macVlc = '/Applications/VLC.app/Contents/MacOS/VLC';
     if (fs.existsSync(macVlc)) vlcCmd = macVlc;
   }
-  console.log(`[VLC] Launching VLC to play: ${resolvedFilePath}`);
+  console.log(`[VLC] Launching VLC to play: ${path.basename(resolvedFilePath)}`);
   const child = spawn(vlcCmd, [resolvedFilePath], {
     detached: true,
     stdio: 'ignore'
@@ -297,6 +298,101 @@ const colors = {
   reset: '\x1b[0m'
 };
 
+
+function sanitizeServerLog(msg) {
+  if (typeof msg !== 'string') return msg;
+  return msg
+    .replace(/eyJ[a-zA-Z0-9_-]+\.[a-zA-Z0-9_-]+\.[a-zA-Z0-9_-]+/g, '[REDACTED_JWT]')
+    .replace(/([?&](?:api_key|token|auth|key|password|secret)=)[^&\s]+/gi, '$1[REDACTED]')
+    .replace(/[A-Za-z]:\\[Users|Documents|Desktop][^\s"'<>]+/gi, (m) => path.basename(m))
+    .replace(/\/Users\/[^\s"'<>]+/gi, (m) => path.basename(m))
+    .replace(/\/home\/[^\s"'<>]+/gi, (m) => path.basename(m));
+}
+
+function setCorsHeaders(req, res) {
+  const origin = req.headers.origin;
+  const host = req.headers.host || '127.0.0.1';
+  let allowedOrigin = `http://${host}`;
+
+  if (origin) {
+    try {
+      const parsed = new URL(origin);
+      if (
+        parsed.hostname === 'localhost' ||
+        parsed.hostname === '127.0.0.1' ||
+        parsed.host === host
+      ) {
+        allowedOrigin = origin;
+      }
+    } catch {}
+  }
+
+  res.setHeader('Access-Control-Allow-Origin', allowedOrigin);
+  res.setHeader('Access-Control-Allow-Credentials', 'true');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, Range, X-Requested-With, X-Device-Id, X-Embed-Referrer');
+  res.setHeader('Access-Control-Expose-Headers', 'Content-Range, Content-Length, Accept-Ranges, Content-Type');
+}
+
+function setSecurityHeaders(res) {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'SAMEORIGIN');
+  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+}
+
+const ALLOWED_MEDIA_EXTS = new Set([
+  '.mp4', '.mkv', '.avi', '.mov', '.webm', '.m4v', '.ts',
+  '.mp3', '.flac', '.wav', '.aac', '.ogg', '.m4a',
+  '.srt', '.vtt', '.ass', '.ssa'
+]);
+
+function isSafeMediaPath(filePath) {
+  if (!filePath || typeof filePath !== 'string') return false;
+  if (filePath.includes('\0') || filePath.includes('..')) {
+    const normalized = path.normalize(filePath);
+    if (normalized.includes('..')) return false;
+  }
+  const resolved = path.resolve(filePath);
+  const ext = path.extname(resolved).toLowerCase();
+  return ALLOWED_MEDIA_EXTS.has(ext);
+}
+
+function isSafeRemoteUrl(rawUrl) {
+  if (!rawUrl || typeof rawUrl !== 'string') return false;
+  try {
+    const parsed = new URL(rawUrl);
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return false;
+    const h = parsed.hostname.toLowerCase();
+    if (
+      h === '169.254.169.254' ||
+      h === 'metadata.google.internal' ||
+      h === '100.100.100.200' ||
+      h === '0.0.0.0' ||
+      h.startsWith('127.') ||
+      h === 'localhost' ||
+      h.endsWith('.local')
+    ) {
+      return false;
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+const rateLimitMap = new Map();
+function checkRateLimit(ip, limit = 120, windowMs = 60000) {
+  const now = Date.now();
+  let record = rateLimitMap.get(ip);
+  if (!record || now - record.startTime > windowMs) {
+    record = { startTime: now, count: 1 };
+    rateLimitMap.set(ip, record);
+    return true;
+  }
+  record.count++;
+  return record.count <= limit;
+}
+
 function minimizeMessage(msg) {
   if (typeof msg !== 'string') return msg;
   if (msg.includes('[FFmpeg Command] ffmpeg')) {
@@ -318,25 +414,24 @@ const writeToLogFile = (level, msg) => {
 
 const handleLog = (level, originalFn, colorCode, args) => {
   const rawMsg = args.map(a => typeof a === 'object' ? JSON.stringify(a) : String(a)).join(' ');
-  const minimizedMsg = minimizeMessage(rawMsg);
+  const sanitized = sanitizeServerLog(minimizeMessage(rawMsg));
   
-  // Always write to the log file on disk
-  writeToLogFile(level, minimizedMsg);
+  // Always write sanitized logs to file on disk
+  writeToLogFile(level, sanitized);
 
   // In release mode, only log high-level/startup logs, warnings, errors and alerts to terminal console
   if (LOG_MODE === 'release') {
     const isErrorOrWarn = level === 'ERROR' || level === 'WARN';
-    const isHighLevel = rawMsg.startsWith('[Server] Valor') || 
-                        rawMsg.startsWith('[Server] Running') || 
-                        rawMsg.includes('[ALERT]') || 
-                        rawMsg.startsWith('[VLC]');
+    const isHighLevel = sanitized.startsWith('[Server] Valor') || 
+                        sanitized.startsWith('[Server] Running') || 
+                        sanitized.includes('[ALERT]');
     if (!isErrorOrWarn && !isHighLevel) {
       return;
     }
   }
 
   // Print to terminal with ANSI color coding
-  originalFn(`${colorCode}[${level}] ${minimizedMsg}${colors.reset}`);
+  originalFn(`${colorCode}[${level}] ${sanitized}${colors.reset}`);
 };
 
 console.log = (...args) => handleLog('INFO', originalLog, colors.info, args);
@@ -430,9 +525,8 @@ function handleProxyRequest(targetUrl, req, res, redirectCount = 0, parsedUrl = 
       return;
     }
 
-    res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Access-Control-Allow-Headers', '*');
-    res.setHeader('Access-Control-Expose-Headers', 'Content-Range, Content-Length, Accept-Ranges, Content-Type');
+    setCorsHeaders(req, res);
+    setSecurityHeaders(res);
 
     if (req.method === 'OPTIONS') {
       res.statusCode = 204;
@@ -510,10 +604,8 @@ const backendServer = http.createServer(async (req, res) => {
   telemetryMiddleware(req, res);
   if (res.writableEnded) return;
 
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', '*');
-  res.setHeader('Access-Control-Expose-Headers', 'Content-Range, Content-Length, Accept-Ranges, Content-Type');
+  setCorsHeaders(req, res);
+  setSecurityHeaders(res);
 
   if (req.method === 'OPTIONS') {
     res.statusCode = 204;
@@ -705,11 +797,10 @@ const backendServer = http.createServer(async (req, res) => {
         }
 
         const targetUrl = `https://api.themoviedb.org/3/${cleanPath}`;
-        const TMDB_BEARER = "eyJhbGciOiJIUzI1NiJ9.eyJhdWQiOiJlMzQwMGRhZWZjODJjNTJlZDEyYzk1MWU1ZWFmYmVhYyIsIm5iZiI6MTc4MzU0MTI2OS44NzUsInN1YiI6IjZhNGVhZTE1MzFhOWUyYmNhZjBmY2RlMiIsInNjb3BlcyI6WyJhcGlfcmVhZCJdLCJ2ZXJzaW9uIjoxfQ.GT6_b6NSJwjYCXlbaCi_djq09ug0rKDxY9iouqVrYWY";
+        const TMDB_BEARER = process.env.VITE_TMDB_BEARER_TOKEN || process.env.TMDB_BEARER_TOKEN || "";
 
-        res.setHeader('Access-Control-Allow-Origin', '*');
-        res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
-        res.setHeader('Access-Control-Allow-Headers', '*');
+        setCorsHeaders(req, res);
+        setSecurityHeaders(res);
 
         if (req.method === 'OPTIONS') {
           res.statusCode = 204;
@@ -728,7 +819,7 @@ const backendServer = http.createServer(async (req, res) => {
 
         res.statusCode = tmdbRes.status;
         res.setHeader('Content-Type', tmdbRes.headers.get('content-type') || 'application/json');
-        res.setHeader('Access-Control-Allow-Origin', '*');
+        setCorsHeaders(req, res);
         const data = await tmdbRes.arrayBuffer();
         res.end(Buffer.from(data));
       } catch (err) {
@@ -744,9 +835,8 @@ const backendServer = http.createServer(async (req, res) => {
 
   // Companion Sidecar scripts distribution
   if (pathname.startsWith('/api/sidecar/')) {
-    res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', '*');
+    setCorsHeaders(req, res);
+    setSecurityHeaders(res);
     if (req.method === 'OPTIONS') {
       res.statusCode = 204;
       res.end();
@@ -786,17 +876,23 @@ const backendServer = http.createServer(async (req, res) => {
   // Remote media proxy endpoint with SessionMediaManager (240s sliding window cache)
   if (pathname === '/api/proxy-media') {
     (async () => {
+      const clientIp = req.socket.remoteAddress || 'local';
+      if (!checkRateLimit(clientIp, 120, 60000)) {
+        res.statusCode = 429;
+        res.setHeader('Retry-After', '60');
+        res.end(JSON.stringify({ error: 'Rate limit exceeded' }));
+        return;
+      }
       const rawTargetUrl = parsedUrl.searchParams.get('url');
-      if (!rawTargetUrl) {
+      if (!rawTargetUrl || !isSafeRemoteUrl(rawTargetUrl)) {
         res.statusCode = 400;
         res.setHeader('Content-Type', 'application/json');
-        res.end(JSON.stringify({ error: 'Missing url parameter' }));
+        res.end(JSON.stringify({ error: 'Invalid or blocked url parameter' }));
         return;
       }
 
-      res.setHeader('Access-Control-Allow-Origin', '*');
-      res.setHeader('Access-Control-Allow-Headers', '*');
-      res.setHeader('Access-Control-Expose-Headers', 'Content-Range, Content-Length, Accept-Ranges, Content-Type');
+      setCorsHeaders(req, res);
+      setSecurityHeaders(res);
 
       if (req.method === 'OPTIONS') {
         res.statusCode = 204;
@@ -904,8 +1000,9 @@ const backendServer = http.createServer(async (req, res) => {
     // Check if there is an active tab (heartbeat received within last 6 seconds)
     const hasActiveTab = hasReceivedFirstHeartbeat && (Date.now() - lastHeartbeat < 6000);
     
-    if (hasActiveTab && file) {
-      console.log(`[Server] Active tab detected. Queueing file for playback: ${file}`);
+    const isAllowedFile = file && (isSafeRemoteUrl(file) || isSafeMediaPath(file));
+    if (hasActiveTab && isAllowedFile) {
+      console.log(`[Server] Active tab detected. Queueing file for playback: ${path.basename(file)}`);
       pendingPlayFile = file;
     } else {
       if (shouldOpen) {
@@ -1097,12 +1194,12 @@ const backendServer = http.createServer(async (req, res) => {
             maps: mapsList
           });
         }
-        res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+        setCorsHeaders(req, res); res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify(matches));
         return;
       })
       .catch((e) => {
-        res.writeHead(500, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+        setCorsHeaders(req, res); res.writeHead(500, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: e.message }));
         return;
       });
@@ -1120,12 +1217,12 @@ const backendServer = http.createServer(async (req, res) => {
     })
       .then(r => r.text())
       .then(html => {
-        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Access-Control-Allow-Origin': '*' });
+        setCorsHeaders(req, res); res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
         res.end(html);
         return;
       })
       .catch(e => {
-        res.writeHead(500, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+        res.writeHead(500, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': req.headers.origin || `http://${req.headers.host || '127.0.0.1'}` });
         res.end(JSON.stringify({ error: e.message }));
         return;
       });
@@ -1295,7 +1392,7 @@ const backendServer = http.createServer(async (req, res) => {
           'Cache-Control': 'no-cache, no-transform',
           'Connection': 'keep-alive',
           'X-Accel-Buffering': 'no',
-          'Access-Control-Allow-Origin': '*'
+          'Access-Control-Allow-Origin': req.headers.origin || `http://${req.headers.host || '127.0.0.1'}`
         });
 
         res.write(`data: ${JSON.stringify({ type: 'connected', timestamp: Date.now(), adminIp: cleanClientIp })}\n\n`);
@@ -2693,7 +2790,7 @@ const backendServer = http.createServer(async (req, res) => {
       }
     }
 
-    if (!videoPath || !fs.existsSync(videoPath)) {
+    if (!videoPath || !isSafeMediaPath(videoPath) || !fs.existsSync(videoPath)) {
       res.statusCode = 404;
       res.end('File not found');
       return;
@@ -2809,7 +2906,109 @@ async function start() {
   
   if (!backendOnly) {
     try {
-      viteServer = await createViteServer({
+      if (isProd && fs.existsSync(path.join(appDir, 'dist'))) {
+        const distDir = path.join(appDir, 'dist');
+        const MIME_TYPES = {
+          '.html': 'text/html; charset=utf-8',
+          '.js': 'application/javascript; charset=utf-8',
+          '.mjs': 'application/javascript; charset=utf-8',
+          '.css': 'text/css; charset=utf-8',
+          '.json': 'application/json; charset=utf-8',
+          '.svg': 'image/svg+xml',
+          '.png': 'image/png',
+          '.ico': 'image/x-icon',
+          '.wasm': 'application/wasm',
+          '.woff2': 'font/woff2',
+          '.yaml': 'text/yaml'
+        };
+
+        const staticServer = http.createServer((req, res) => {
+          telemetryMiddleware(req, res);
+          if (res.writableEnded) return;
+
+          setCorsHeaders(req, res);
+          setSecurityHeaders(res);
+
+          if (req.method === 'OPTIONS') {
+            res.statusCode = 204;
+            res.end();
+            return;
+          }
+
+          const parsedUrl = new URL(req.url, `http://localhost:${PORT_SERVICE}`);
+          const pathname = parsedUrl.pathname;
+
+          if (pathname === '/api/play') {
+            const file = parsedUrl.searchParams.get('file');
+            if (file) {
+              pendingPlayFile = file;
+            }
+            res.statusCode = 200;
+            res.end('OK');
+            return;
+          }
+
+          // Proxy API requests to backend server
+          if (pathname.startsWith('/api')) {
+            const proxyReq = http.request(
+              {
+                hostname: '127.0.0.1',
+                port: PORT_BACKEND,
+                path: req.url,
+                method: req.method,
+                headers: req.headers
+              },
+              (proxyRes) => {
+                res.writeHead(proxyRes.statusCode, proxyRes.headers);
+                proxyRes.pipe(res);
+              }
+            );
+            proxyReq.on('error', () => {
+              if (!res.headersSent) {
+                res.statusCode = 502;
+                res.end(JSON.stringify({ error: 'Backend unreachable' }));
+              }
+            });
+            req.pipe(proxyReq);
+            return;
+          }
+
+          let safePath = path.normalize(pathname).replace(/^(\.\.[\/\\])+/, '');
+          if (safePath === '/' || safePath === '\\') safePath = '/index.html';
+          let filePath = path.join(distDir, safePath);
+
+          if (!filePath.startsWith(distDir)) {
+            filePath = path.join(distDir, 'index.html');
+          }
+
+          if (!fs.existsSync(filePath) || fs.statSync(filePath).isDirectory()) {
+            filePath = path.join(distDir, 'index.html');
+          }
+
+          const ext = path.extname(filePath).toLowerCase();
+          const mime = MIME_TYPES[ext] || 'application/octet-stream';
+
+          if (safePath.startsWith('/assets/')) {
+            res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+          } else {
+            res.setHeader('Cache-Control', 'no-cache');
+          }
+
+          res.setHeader('Content-Type', mime);
+          fs.createReadStream(filePath).pipe(res);
+        });
+
+        await new Promise((resolve, reject) => {
+          staticServer.on('error', reject);
+          staticServer.listen({ port: PORT_SERVICE, host: HOST }, resolve);
+        });
+
+        viteServer = staticServer;
+        success = true;
+        const displayUrl = PORT_SERVICE === 80 ? `http://${HOST}` : `http://${HOST}:${PORT_SERVICE}`;
+        console.log(`[Server] Valor production server (static) is running on ${displayUrl}`);
+      } else {
+        viteServer = await createViteServer({
         mode: 'development',
         plugins: [
           {
@@ -2860,10 +3059,11 @@ async function start() {
         }
         next();
       });
-      await viteServer.listen();
-      success = true;
-      const displayUrl = PORT_SERVICE === 80 ? `http://${HOST}` : `http://${HOST}:${PORT_SERVICE}`;
-      console.log(`[Server] Valor service server (HTTP) is running on ${displayUrl}`);
+        await viteServer.listen();
+        success = true;
+        const displayUrl = PORT_SERVICE === 80 ? `http://${HOST}` : `http://${HOST}:${PORT_SERVICE}`;
+        console.log(`[Server] Valor service server (HTTP) is running on ${displayUrl}`);
+      }
     } catch (err) {
       if (err.code === 'EADDRINUSE' || (err.message && err.message.includes('already in use'))) {
         console.warn(`[Server] Port ${PORT_SERVICE} is already in use.`);
@@ -2925,16 +3125,15 @@ async function start() {
   }
 }
 
-process.on('SIGINT', () => {
+const gracefulShutdown = () => {
   try { remoteSessionManager?.destroyAll(); } catch {}
   try { sessionMediaManager?.destroyAll(); } catch {}
+  try { if (db && typeof db.close === 'function') db.close(); } catch {}
+  try { if (backendServer) backendServer.close(); } catch {}
   process.exit(0);
-});
-process.on('SIGTERM', () => {
-  try { remoteSessionManager?.destroyAll(); } catch {}
-  try { sessionMediaManager?.destroyAll(); } catch {}
-  process.exit(0);
-});
+};
+process.on('SIGINT', gracefulShutdown);
+process.on('SIGTERM', gracefulShutdown);
 
 start().catch((err) => {
   console.error('[Server] Failed to start server:', err);

@@ -205,8 +205,7 @@ export class DemuxManager {
       concatenated.set(chunkBytes, headerBytes.length);
 
       await ff.writeFile(inputPath, concatenated);
-      console.log(
-        `[DemuxManager] Remote audio slice start=${startTime}s offset=${offsetTime}s ffmpegSeek=${ffmpegSeekTime}s header=${headerBytes.length} bytes=${startOffset}-${endOffset}`
+      logger.ffmpeg(`[DemuxManager] Remote audio slice start=${startTime}s offset=${offsetTime}s ffmpegSeek=${ffmpegSeekTime}s header=${headerBytes.length} bytes=${startOffset}-${endOffset}`
       );
     }
 
@@ -228,11 +227,11 @@ export class DemuxManager {
           tempOutFile
         ];
 
-        console.log(`[FFmpeg Command] ffmpeg ${args.join(" ")}`);
+        logger.ffmpeg(`[FFmpeg Command] ffmpeg ${args.join(" ")}`);
         const startTimeMs = performance.now();
         const code = await ff.exec(args);
         const durationMs = performance.now() - startTimeMs;
-        console.log(`[FFmpeg Status] Exit code: ${code}, Duration: ${durationMs.toFixed(2)}ms`);
+        logger.ffmpeg(`[FFmpeg Status] Exit code: ${code}, Duration: ${durationMs.toFixed(2)}ms`);
         if (code !== 0) {
           throw new Error(`FFmpeg Slicing returned exit code ${code}`);
         }
@@ -243,7 +242,7 @@ export class DemuxManager {
 
       let outputData = await runSlice(ffmpegSeekTime);
       if (isRemoteSource && outputData.byteLength <= 512 && ffmpegSeekTime > 0) {
-        console.warn(
+        logger.ffmpegWarning(
           `[DemuxManager] Remote audio slice was empty at seek ${ffmpegSeekTime}s; retrying from start of byte window.`
         );
         try {

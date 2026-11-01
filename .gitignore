@@ -1,4 +1,9 @@
-# Logs
+# Environment
+.env
+.env.*
+!.env.example
+
+# Logs and runtime data
 logs
 *.log
 npm-debug.log*
@@ -6,6 +11,10 @@ yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
+active_port.txt
+*.sqlite
+*.sqlite3
+*.db
 
 node_modules
 dist

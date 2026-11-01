@@ -8,7 +8,8 @@
 
 import { classifyVideoTitle } from '../utils/libraryClassifier';
 
-export const TRAKT_CLIENT_ID = 'V4WfZovVxhKMc-KNyfTHgL_KtI84gJLnBHMss-qwu88';
+import { TRAKT_CLIENT_ID } from '../utils/constants';
+export { TRAKT_CLIENT_ID };
 export const TRAKT_API_VERSION = '2';
 export const TRAKT_AUTH_URL = 'https://auth.trakt.tv/oauth/authorize';
 export const TRAKT_TOKEN_URL = 'https://api.trakt.tv/oauth/token';

@@ -22,7 +22,7 @@ interface OnlineDetailsPageProps {
   addToast?: (text: string, type?: 'success' | 'error' | 'warning', action?: any) => void;
 }
 
-const DEFAULT_TMDB_TOKEN = "eyJhbGciOiJIUzI1NiJ9.eyJhdWQiOiJlMzQwMGRhZWZjODJjNTJlZDEyYzk1MWU1ZWFmYmVhYyIsIm5iZiI6MTc4MzU0MTI2OS44NzUsInN1YiI6IjZhNGVhZTE1MzFhOWUyYmNhZjBmY2RlMiIsInNjb3BlcyI6WyJhcGlfcmVhZCJdLCJ2ZXJzaW9uIjoxfQ.GT6_b6NSJwjYCXlbaCi_djq09ug0rKDxY9iouqVrYWY";
+import { DEFAULT_TMDB_TOKEN } from '../utils/constants';
 
 export const OnlineDetailsPage: React.FC<OnlineDetailsPageProps> = ({
   video,

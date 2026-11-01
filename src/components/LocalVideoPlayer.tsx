@@ -1868,9 +1868,6 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
   const [showAudioSubMenu, setShowAudioSubMenu] = useState(false);
   const [showSpeedMenu, setShowSpeedMenu] = useState(false);
   const [isKeyInitiated, setIsKeyInitiated] = useState(false);
-  if (false as boolean) {
-    console.log(extractingStreamIndex, isKeyInitiated);
-  }
   const [activeAudioStartOffset, setActiveAudioStartOffset] = useState(0);
   const [activeSubtitleStartOffset, setActiveSubtitleStartOffset] = useState(0);
   const [activeAudioStreamIndex, setActiveAudioStreamIndex] = useState<number | null>(() => {
@@ -2396,9 +2393,6 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
 
   // Auto probing states
   const [isAutoProbing, setIsAutoProbing] = useState(false);
-  if (false as boolean) {
-    console.log(isAutoProbing);
-  }
   const probingVideoIdRef = useRef<string | null>(null);
 
   // Safeguarded arrays
@@ -2466,7 +2460,7 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
       if (bookmarksTimeoutRef.current) clearTimeout(bookmarksTimeoutRef.current);
       logger.player('VideoPlayer resetting FFmpeg worker and lock queue due to unmount or video change');
       ffmpegService.reset();
-      console.clear();
+      if (logger.isDebug) console.clear();
     };
   }, [video.id]);
 
@@ -3198,7 +3192,7 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
       ...video,
       currentTime: latestTimeRef.current
     }, true);
-    console.clear();
+    if (logger.isDebug) console.clear();
     onBack();
   };
 
@@ -5255,7 +5249,7 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
             // If focus loss auto-pause is disabled and this pause was triggered by browser 
             // background tab throttling, ignore it — don't update UI state.
             if (!pauseOnFocusChangeRef.current && document.visibilityState === 'hidden') {
-              console.log('[LocalVideoPlayer] Ignoring browser background throttle onPause event');
+              logger.player('[LocalVideoPlayer] Ignoring browser background throttle onPause event');
               return;
             }
             setIsPlaying(false);
