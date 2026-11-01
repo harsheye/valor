@@ -23,19 +23,20 @@ html, body {
   flex-shrink: 0;
   display: flex;
   flex-direction: column;
-  background: var(--sidebar);
-  border-right: 1px solid var(--border-color);
+  background: var(--surface-1);
+  border-right: 1px solid var(--border);
   backdrop-filter: blur(20px);
   -webkit-backdrop-filter: blur(20px);
   padding: 1.5rem;
   box-sizing: border-box;
-  transition: width 0.3s cubic-bezier(0.16, 1, 0.3, 1), padding 0.3s cubic-bezier(0.16, 1, 0.3, 1), background 0.25s ease, border-color 0.25s ease;
+  transition: width 0.25s cubic-bezier(0.16, 1, 0.3, 1), padding 0.25s cubic-bezier(0.16, 1, 0.3, 1), background 0.25s ease, border-color 0.25s ease;
   z-index: 100;
   overflow: hidden;
 }
 .app-sidebar.collapsed {
-  width: 80px;
-  padding: 1.5rem 0.5rem;
+  width: 72px;
+  min-width: 72px;
+  padding: var(--space-4) 0;
 }
 /* Sub-page layout space overrides to reclaim wasted space */
 .media-details-page-container,
@@ -1173,13 +1174,13 @@ html, body {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 0.65rem 0.85rem;
-  background: var(--card-bg);
-  border: 1px solid var(--border-color);
-  box-shadow: var(--shadow-sm);
-  border-radius: 8px;
+  padding: 0.75rem 1rem;
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  box-shadow: none;
+  border-radius: var(--radius-md, 12px);
   transition: transform 0.2s ease, border-color 0.2s ease, background 0.2s ease;
-  gap: 0.75rem;
+  gap: 1rem;
   cursor: pointer;
   flex-shrink: 0 !important;
   min-height: fit-content !important;
@@ -1187,8 +1188,14 @@ html, body {
 }
 .history-item:hover {
   transform: translateY(-2px);
-  border-color: var(--border-focus);
-  background: var(--card-hover-bg);
+  border-color: var(--control-border);
+  background: var(--surface-2);
+}
+.history-item-header {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  flex: 1;
 }
 .history-info {
   display: flex;
@@ -1199,9 +1206,9 @@ html, body {
   min-width: 0;
 }
 .history-title {
-  font-size: clamp(0.9rem, 2.5vw, 1.05rem);
-  font-weight: 550;
-  color: var(--text-primary);
+  font-size: clamp(0.95rem, 2.5vw, 1.1rem);
+  font-weight: 600;
+  color: var(--text-1);
   white-space: nowrap;
   text-overflow: ellipsis;
   overflow: hidden;
@@ -1211,25 +1218,29 @@ html, body {
   display: flex;
   flex-wrap: wrap;
   gap: 0.5rem;
+  align-items: center;
 }
 .stat-badge {
-  font-size: 0.72rem;
-  background: var(--surface);
-  border: 1px solid var(--border-subtle);
-  color: var(--text-secondary);
-  padding: 0.15rem 0.45rem;
-  border-radius: 4px;
+  font-size: 0.75rem;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  color: var(--text-2);
+  padding: 0.2rem 0.55rem;
+  border-radius: var(--radius-sm, 6px);
   font-weight: 500;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
 }
 .rating-badge {
-  color: #f1c40f;
-  border-color: rgba(241, 196, 15, 0.2);
-  background: rgba(241, 196, 15, 0.05);
+  color: var(--warning);
+  border-color: color-mix(in srgb, var(--warning) 30%, transparent);
+  background: color-mix(in srgb, var(--warning) 10%, transparent);
 }
 .finish-badge {
-  color: #2ecc71;
-  border-color: rgba(46, 204, 113, 0.2);
-  background: rgba(46, 204, 113, 0.05);
+  color: var(--success);
+  border-color: color-mix(in srgb, var(--success) 30%, transparent);
+  background: color-mix(in srgb, var(--success) 10%, transparent);
 }
 .play-btn-compact {
   display: inline-flex;
@@ -1734,4 +1745,211 @@ html, body {
 @keyframes scaleIn {
   from { transform: scale(0.95); opacity: 0; }
   to { transform: scale(1); opacity: 1; }
+}
+
+/* ==========================================================================
+   TRUE-BLACK OLED THEME ("Black Ops" / "OLED Black")
+   Enforces exact #000000 across all backgrounds, surfaces, and layouts.
+   Removes box shadows, glassmorphism, and translucent large overlays.
+   ========================================================================== */
+[data-theme="black-ops"],
+[data-theme="oled"] {
+  background-color: #000000 !important;
+  color: #f2f2f2 !important;
+}
+
+/* 1. Large Surfaces & Containers: Pure #000000 */
+[data-theme="black-ops"] html,
+[data-theme="black-ops"] body,
+[data-theme="black-ops"] #root,
+[data-theme="black-ops"] .app-layout,
+[data-theme="black-ops"] .main-content,
+[data-theme="black-ops"] .app-sidebar,
+[data-theme="black-ops"] .streaming-nav-rail,
+[data-theme="black-ops"] .netflix-page-container,
+[data-theme="black-ops"] .settings-page-root,
+[data-theme="black-ops"] .history-container,
+[data-theme="black-ops"] .library-container,
+[data-theme="black-ops"] .online-stream-page,
+[data-theme="black-ops"] .media-details-page-container,
+[data-theme="black-ops"] .actor-page-container,
+[data-theme="black-ops"] .workspace-panel-wrapper,
+[data-theme="black-ops"] .video-player-container,
+[data-theme="oled"] html,
+[data-theme="oled"] body,
+[data-theme="oled"] #root,
+[data-theme="oled"] .app-layout,
+[data-theme="oled"] .main-content,
+[data-theme="oled"] .app-sidebar,
+[data-theme="oled"] .streaming-nav-rail,
+[data-theme="oled"] .netflix-page-container,
+[data-theme="oled"] .settings-page-root,
+[data-theme="oled"] .history-container,
+[data-theme="oled"] .library-container,
+[data-theme="oled"] .online-stream-page,
+[data-theme="oled"] .media-details-page-container,
+[data-theme="oled"] .actor-page-container,
+[data-theme="oled"] .workspace-panel-wrapper,
+[data-theme="oled"] .video-player-container {
+  background: #000000 !important;
+  background-color: #000000 !important;
+}
+
+/* 2. Top bars, headers, icon rails */
+[data-theme="black-ops"] .glass-navbar,
+[data-theme="black-ops"] .netflix-page-top-bar,
+[data-theme="black-ops"] .top-bar,
+[data-theme="black-ops"] .media-details-header,
+[data-theme="black-ops"] .actor-details-header,
+[data-theme="black-ops"] .mobile-bottom-nav,
+[data-theme="oled"] .glass-navbar,
+[data-theme="oled"] .netflix-page-top-bar,
+[data-theme="oled"] .top-bar,
+[data-theme="oled"] .media-details-header,
+[data-theme="oled"] .actor-details-header,
+[data-theme="oled"] .mobile-bottom-nav {
+  background: #000000 !important;
+  background-color: #000000 !important;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.10) !important;
+  border-top: 1px solid rgba(255, 255, 255, 0.10) !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+/* 3. Cards, Inputs, Dropzone, and History Items */
+[data-theme="black-ops"] .history-item,
+[data-theme="black-ops"] .sidebar-history-item,
+[data-theme="black-ops"] .drop-zone,
+[data-theme="black-ops"] .combined-drop-zone,
+[data-theme="black-ops"] .c-card,
+[data-theme="black-ops"] .os2-card,
+[data-theme="black-ops"] .online-poster-card,
+[data-theme="black-ops"] input[type="text"],
+[data-theme="black-ops"] input[type="search"],
+[data-theme="black-ops"] select,
+[data-theme="oled"] .history-item,
+[data-theme="oled"] .sidebar-history-item,
+[data-theme="oled"] .drop-zone,
+[data-theme="oled"] .combined-drop-zone,
+[data-theme="oled"] .c-card,
+[data-theme="oled"] .os2-card,
+[data-theme="oled"] .online-poster-card,
+[data-theme="oled"] input[type="text"],
+[data-theme="oled"] input[type="search"],
+[data-theme="oled"] select {
+  background: #000000 !important;
+  background-color: #000000 !important;
+  border: 1px solid rgba(255, 255, 255, 0.10) !important;
+}
+
+[data-theme="black-ops"] .history-item:hover,
+[data-theme="black-ops"] .sidebar-history-item:hover,
+[data-theme="black-ops"] .os2-card:hover,
+[data-theme="black-ops"] .online-poster-card:hover,
+[data-theme="black-ops"] input[type="text"]:focus,
+[data-theme="black-ops"] input[type="search"]:focus,
+[data-theme="oled"] .history-item:hover,
+[data-theme="oled"] .sidebar-history-item:hover,
+[data-theme="oled"] .os2-card:hover,
+[data-theme="oled"] .online-poster-card:hover,
+[data-theme="oled"] input[type="text"]:focus,
+[data-theme="oled"] input[type="search"]:focus {
+  border-color: rgba(255, 255, 255, 0.16) !important;
+}
+
+/* 4. Navigation Selection: Pure #000000 background + Accent Left Bar + Accent Text */
+[data-theme="black-ops"] .sidebar-menu-item.active,
+[data-theme="black-ops"] .streaming-nav-item.active,
+[data-theme="oled"] .sidebar-menu-item.active,
+[data-theme="oled"] .streaming-nav-item.active {
+  background: #000000 !important;
+  background-color: #000000 !important;
+  color: var(--accent) !important;
+  border-left: 3px solid var(--accent) !important;
+}
+
+[data-theme="black-ops"] .sidebar-menu-item:hover,
+[data-theme="black-ops"] .streaming-nav-item:hover,
+[data-theme="oled"] .sidebar-menu-item:hover,
+[data-theme="oled"] .streaming-nav-item:hover {
+  background: #0a0a0a !important;
+  background-color: #0a0a0a !important;
+  color: var(--text-1) !important;
+}
+
+/* 5. Modals, Popovers, Dropdowns, Backdrop */
+[data-theme="black-ops"] .modal-backdrop,
+[data-theme="black-ops"] .dialog-backdrop,
+[data-theme="black-ops"] .overlay-backdrop,
+[data-theme="oled"] .modal-backdrop,
+[data-theme="oled"] .dialog-backdrop,
+[data-theme="oled"] .overlay-backdrop {
+  background: rgba(0, 0, 0, 0.95) !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+[data-theme="black-ops"] .modal-content,
+[data-theme="black-ops"] .settings-panel,
+[data-theme="black-ops"] .vlc-menu,
+[data-theme="black-ops"] .custom-select-dropdown,
+[data-theme="black-ops"] .dialog-content,
+[data-theme="oled"] .modal-content,
+[data-theme="oled"] .settings-panel,
+[data-theme="oled"] .vlc-menu,
+[data-theme="oled"] .custom-select-dropdown,
+[data-theme="oled"] .dialog-content {
+  background: #000000 !important;
+  background-color: #000000 !important;
+  border: 1px solid rgba(255, 255, 255, 0.10) !important;
+  box-shadow: none !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+/* 6. Posters & Thumbnails: 1px 0.08 border separation */
+[data-theme="black-ops"] .streaming-poster-card > div:first-child,
+[data-theme="black-ops"] .history-thumbnail-wrapper,
+[data-theme="black-ops"] .library-card-poster,
+[data-theme="black-ops"] .sidebar-history-item img,
+[data-theme="oled"] .streaming-poster-card > div:first-child,
+[data-theme="oled"] .history-thumbnail-wrapper,
+[data-theme="oled"] .library-card-poster,
+[data-theme="oled"] .sidebar-history-item img {
+  border: 1px solid rgba(255, 255, 255, 0.08) !important;
+}
+
+/* 7. Progress bars: Track at 0.12, fill in accent */
+[data-theme="black-ops"] .progress-bar-track,
+[data-theme="black-ops"] [role="progressbar"],
+[data-theme="oled"] .progress-bar-track,
+[data-theme="oled"] [role="progressbar"] {
+  background: rgba(255, 255, 255, 0.12) !important;
+}
+
+/* 8. Scrollbar Tracks: Pure #000000 */
+[data-theme="black-ops"] ::-webkit-scrollbar-track,
+[data-theme="oled"] ::-webkit-scrollbar-track {
+  background: #000000 !important;
+}
+[data-theme="black-ops"] ::-webkit-scrollbar-thumb,
+[data-theme="oled"] ::-webkit-scrollbar-thumb {
+  background: #1a1a1a !important;
+  border: 1px solid #000000 !important;
+  border-radius: 4px !important;
+}
+[data-theme="black-ops"] ::-webkit-scrollbar-thumb:hover,
+[data-theme="oled"] ::-webkit-scrollbar-thumb:hover {
+  background: #2a2a2a !important;
+}
+
+/* 9. Disable box-shadows, text-shadows, and glassmorphism across the board */
+[data-theme="black-ops"] *,
+[data-theme="black-ops"] *::before,
+[data-theme="black-ops"] *::after,
+[data-theme="oled"] *,
+[data-theme="oled"] *::before,
+[data-theme="oled"] *::after {
+  box-shadow: none !important;
+  text-shadow: none !important;
 }

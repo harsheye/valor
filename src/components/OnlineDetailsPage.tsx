@@ -1,9 +1,14 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { X, Play, Star, Calendar, Clock, Film, Tv, ChevronLeft, ChevronRight, User, LayoutGrid, List, AlignLeft, ListFilter, Info } from 'lucide-react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
+import { X } from 'lucide-react';
 import type { VideoItem } from '../types/media';
-import { ActorDetailsPage } from './ActorDetailsPage';
-import { CustomSelect } from './CustomSelect';
-import { MediaPageSkeleton, EpisodeGridSkeleton, CarouselSkeleton } from './SkeletonLoader';
+import { Hero } from './streaming/Hero';
+import { CastRail, type CastPerson } from './streaming/CastRail';
+import { EpisodeList, type EpisodeData } from './streaming/EpisodeRow';
+import { Rail } from './streaming/Rail';
+import { PersonSheet, type PersonProfile } from './streaming/PersonSheet';
+import { TitlePageSkeleton } from './streaming/Skeletons';
+import type { PosterMediaItem } from './streaming/PosterCard';
+import './streaming/streaming.css';
 
 interface OnlineDetailsPageProps {
   video: VideoItem;
@@ -12,20 +17,9 @@ interface OnlineDetailsPageProps {
   onSelectMedia?: (video: VideoItem) => void;
   onSelectActor?: (actor: { id: number; name: string; profilePath?: string }) => void;
   tmdbApiKey?: string;
-}
-
-interface CastMember {
-  id: number;
-  name: string;
-  character: string;
-  profilePath: string;
-}
-
-interface EpisodeItem {
-  episodeNumber: number;
-  name: string;
-  overview: string;
-  stillPath: string;
+  videos?: VideoItem[];
+  setVideos?: React.Dispatch<React.SetStateAction<VideoItem[]>>;
+  addToast?: (text: string, type?: 'success' | 'error' | 'warning', action?: any) => void;
 }
 
 const DEFAULT_TMDB_TOKEN = "eyJhbGciOiJIUzI1NiJ9.eyJhdWQiOiJlMzQwMGRhZWZjODJjNTJlZDEyYzk1MWU1ZWFmYmVhYyIsIm5iZiI6MTc4MzU0MTI2OS44NzUsInN1YiI6IjZhNGVhZTE1MzFhOWUyYmNhZjBmY2RlMiIsInNjb3BlcyI6WyJhcGlfcmVhZCJdLCJ2ZXJzaW9uIjoxfQ.GT6_b6NSJwjYCXlbaCi_djq09ug0rKDxY9iouqVrYWY";
@@ -35,207 +29,199 @@ export const OnlineDetailsPage: React.FC<OnlineDetailsPageProps> = ({
   onClose,
   onPlay,
   onSelectMedia,
-  onSelectActor,
-  tmdbApiKey
+  tmdbApiKey,
+  videos = [],
+  setVideos,
+  addToast
 }) => {
   const [details, setDetails] = useState<any>(null);
-  const [cast, setCast] = useState<CastMember[]>([]);
-  const [seasons, setSeasons] = useState<any[]>([]);
+  const [cast, setCast] = useState<CastPerson[]>([]);
+  const [seasons, setSeasons] = useState<{ seasonNumber: number; name: string }[]>([]);
   const [currentSeason, setCurrentSeason] = useState(1);
-  const [episodes, setEpisodes] = useState<EpisodeItem[]>([]);
-  const [selectedActor, setSelectedActor] = useState<{ id: number; name: string; profilePath?: string } | null>(null);
-  const [recommendations, setRecommendations] = useState<any[]>([]);
-  const [episodeViewMode, setEpisodeViewMode] = useState<'list' | 'grid'>('list');
+  const [episodes, setEpisodes] = useState<EpisodeData[]>([]);
+  const [recommendations, setRecommendations] = useState<PosterMediaItem[]>([]);
   
+  // PersonSheet state
+  const [activePerson, setActivePerson] = useState<PersonProfile | null>(null);
+  const [loadingPerson, setLoadingPerson] = useState(false);
+  const [isPersonSheetOpen, setIsPersonSheetOpen] = useState(false);
+
+  // Loading states
   const [loading, setLoading] = useState(true);
   const [loadingEpisodes, setLoadingEpisodes] = useState(false);
-  const [loadingRecommendations, setLoadingRecommendations] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const castScrollRef = useRef<HTMLDivElement>(null);
-  const recScrollRef = useRef<HTMLDivElement>(null);
-
+  const containerRef = useRef<HTMLDivElement>(null);
   const isAnime = video.type === 'online_anime';
 
-  // Fetch Movie / TV Details & Cast (TMDB)
+  // 1. Fetch Main Media Details, Cast, and Recommendations (TMDB / AniList)
   useEffect(() => {
-    if (isAnime) {
-      fetchAniListDetails();
-      return;
-    }
+    let isMounted = true;
 
     const fetchDetails = async () => {
       setLoading(true);
       setError(null);
+
+      if (isAnime) {
+        await fetchAniListDetails(isMounted);
+        return;
+      }
+
       try {
         const isBearer = tmdbApiKey ? tmdbApiKey.length > 50 : true;
         const token = tmdbApiKey || DEFAULT_TMDB_TOKEN;
         const mediaType = video.type === 'online_movie' ? 'movie' : 'tv';
-        
-        // 1. Fetch Main Details
-        let detailsUrl = `https://api.themoviedb.org/3/${mediaType}/${video.tmdbId}?language=en-US`;
-        let headers: HeadersInit = { 'accept': 'application/json' };
+
+        let headers: HeadersInit = { accept: 'application/json' };
+        let authParams = '';
         if (isBearer) {
           headers['Authorization'] = `Bearer ${token}`;
         } else {
-          detailsUrl += `&api_key=${token}`;
+          authParams = `&api_key=${token}`;
         }
 
+        // 1. Details
+        const detailsUrl = `https://api.themoviedb.org/3/${mediaType}/${video.tmdbId}?language=en-US${authParams}`;
         const detailsRes = await fetch(detailsUrl, { headers });
-        if (!detailsRes.ok) throw new Error('Failed to fetch media details');
+        if (!detailsRes.ok) throw new Error(`Details fetch failed: ${detailsRes.status}`);
         const detailsData = await detailsRes.json();
-        setDetails(detailsData);
 
-        if (video.type === 'online_tv') {
-          setSeasons(detailsData.seasons || []);
-          const activeSeason = detailsData.seasons && detailsData.seasons.length > 0 
-            ? detailsData.seasons[0].season_number === 0 && detailsData.seasons.length > 1 
-              ? detailsData.seasons[1].season_number 
-              : detailsData.seasons[0].season_number
-            : 1;
-          setCurrentSeason(activeSeason);
-        }
-
-        // 2. Fetch Credits (Cast)
-        let creditsUrl = `https://api.themoviedb.org/3/${mediaType}/${video.tmdbId}/credits?language=en-US`;
-        if (!isBearer) creditsUrl += `&api_key=${token}`;
-        
+        // 2. Cast
+        const creditsUrl = `https://api.themoviedb.org/3/${mediaType}/${video.tmdbId}/credits?language=en-US${authParams}`;
         const creditsRes = await fetch(creditsUrl, { headers });
+        let castList: CastPerson[] = [];
         if (creditsRes.ok) {
           const creditsData = await creditsRes.json();
-          const castList: CastMember[] = (creditsData.cast || [])
-            .slice(0, 15)
-            .map((c: any) => ({
-              id: c.id,
-              name: c.name,
-              character: c.character,
-              profilePath: c.profile_path ? `https://images.weserv.nl/?url=https://image.tmdb.org/t/p/w185${c.profile_path}` : ''
-            }));
-          setCast(castList);
+          castList = (creditsData.cast || []).slice(0, 16).map((c: any) => ({
+            id: c.id,
+            name: c.name,
+            role: c.character,
+            profilePath: c.profile_path ? `https://images.weserv.nl/?url=https://image.tmdb.org/t/p/w185${c.profile_path}` : undefined
+          }));
         }
 
-        // 3. Fetch Recommendations
-        let recsUrl = `https://api.themoviedb.org/3/${mediaType}/${video.tmdbId}/recommendations?language=en-US`;
-        if (!isBearer) recsUrl += `&api_key=${token}`;
-        
+        // 3. Recommendations ("More like this")
+        const recsUrl = `https://api.themoviedb.org/3/${mediaType}/${video.tmdbId}/recommendations?language=en-US${authParams}`;
         const recsRes = await fetch(recsUrl, { headers });
+        let recsList: PosterMediaItem[] = [];
         if (recsRes.ok) {
           const recsData = await recsRes.json();
-          const items = (recsData.results || []).slice(0, 12).map((r: any) => ({
-            id: r.id,
-            title: r.title || r.name,
-            posterPath: r.poster_path ? `https://images.weserv.nl/?url=https://image.tmdb.org/t/p/w300${r.poster_path}` : '',
-            type: mediaType,
-            year: r.release_date || r.first_air_date ? (r.release_date || r.first_air_date).split('-')[0] : ''
-          }));
-          setRecommendations(items);
+          recsList = (recsData.results || []).slice(0, 12).map((r: any) => {
+            const isMovie = r.media_type === 'movie' || (!r.media_type && mediaType === 'movie');
+            return {
+              id: r.id,
+              title: r.title || r.name || 'Unknown',
+              posterPath: r.poster_path ? `https://images.weserv.nl/?url=https://image.tmdb.org/t/p/w300${r.poster_path}` : undefined,
+              year: (r.release_date || r.first_air_date || '').split('-')[0] || '2024',
+              type: isMovie ? 'movie' : 'tv',
+              rating: r.vote_average
+            };
+          });
+        }
+
+        if (isMounted) {
+          setDetails(detailsData);
+          setCast(castList);
+          setRecommendations(recsList);
+
+          if (video.type === 'online_tv') {
+            const sList = (detailsData.seasons || [])
+              .filter((s: any) => s.season_number > 0)
+              .map((s: any) => ({
+                seasonNumber: s.season_number,
+                name: s.name || `Season ${s.season_number}`
+              }));
+            setSeasons(sList);
+            const initialSeason = sList.length > 0 ? sList[0].seasonNumber : 1;
+            setCurrentSeason(initialSeason);
+          }
         }
       } catch (err: any) {
-        console.error(err);
-        setError(err.message || 'Failed to fetch details');
+        console.error('Error fetching details:', err);
+        if (isMounted) setError(err.message || 'Failed to fetch title details.');
       } finally {
-        setLoading(false);
+        if (isMounted) setLoading(false);
       }
     };
 
     fetchDetails();
-  }, [video.id, video.tmdbId, video.type, tmdbApiKey]);
+    return () => { isMounted = false; };
+  }, [video.id, video.tmdbId, video.type, tmdbApiKey, isAnime]);
 
-  // Fetch TV Episodes when currentSeason changes
+  // 2. Fetch Episodes for selected season
   useEffect(() => {
     if (isAnime || video.type !== 'online_tv' || !video.tmdbId) return;
 
+    let isMounted = true;
     const fetchEpisodes = async () => {
       setLoadingEpisodes(true);
       try {
         const isBearer = tmdbApiKey ? tmdbApiKey.length > 50 : true;
         const token = tmdbApiKey || DEFAULT_TMDB_TOKEN;
-        
-        let url = `https://api.themoviedb.org/3/tv/${video.tmdbId}/season/${currentSeason}?language=en-US`;
-        let headers: HeadersInit = { 'accept': 'application/json' };
+
+        let headers: HeadersInit = { accept: 'application/json' };
+        let authParams = '';
         if (isBearer) {
           headers['Authorization'] = `Bearer ${token}`;
         } else {
-          url += `&api_key=${token}`;
+          authParams = `&api_key=${token}`;
         }
 
+        const url = `https://api.themoviedb.org/3/tv/${video.tmdbId}/season/${currentSeason}?language=en-US${authParams}`;
         const res = await fetch(url, { headers });
         if (!res.ok) throw new Error('Failed to fetch season episodes');
         const data = await res.json();
-        
-        const mappedEpisodes: EpisodeItem[] = (data.episodes || []).map((e: any) => ({
-          episodeNumber: e.episode_number,
-          name: e.name || `Episode ${e.episode_number}`,
-          overview: e.overview || 'No description available.',
-          stillPath: e.still_path ? `https://images.weserv.nl/?url=https://image.tmdb.org/t/p/w300${e.still_path}` : ''
-        }));
-        
-        setEpisodes(mappedEpisodes);
+
+        if (isMounted) {
+          const mapped: EpisodeData[] = (data.episodes || []).map((e: any) => {
+            // Check if episode was partially watched
+            const epMatch = videos.find(v => 
+              v.tmdbId === video.tmdbId && v.season === currentSeason && v.episode === e.episode_number
+            );
+            const progress = epMatch?.currentTime && epMatch.currentTime > 0 ? 0.35 : 0;
+
+            return {
+              episodeNumber: e.episode_number,
+              name: e.name || `Episode ${e.episode_number}`,
+              overview: e.overview || 'No synopsis available.',
+              stillPath: e.still_path ? `https://images.weserv.nl/?url=https://image.tmdb.org/t/p/w300${e.still_path}` : undefined,
+              progress
+            };
+          });
+          setEpisodes(mapped);
+        }
       } catch (err) {
-        console.error('Error fetching season episodes:', err);
+        console.error(err);
       } finally {
-        setLoadingEpisodes(false);
+        if (isMounted) setLoadingEpisodes(false);
       }
     };
 
     fetchEpisodes();
-  }, [currentSeason, video.tmdbId, video.type, tmdbApiKey]);
+    return () => { isMounted = false; };
+  }, [currentSeason, video.tmdbId, video.type, tmdbApiKey, isAnime, videos]);
 
-  // Fetch Anime details from AniList
-  const fetchAniListDetails = async () => {
-    setLoading(true);
-    setError(null);
+  // Anime fallback fetcher
+  const fetchAniListDetails = async (isMounted: boolean) => {
     try {
       const graphqlQuery = `
         query ($id: Int) {
           Media (id: $id, type: ANIME) {
             id
-            title {
-              english
-              romaji
-              native
-            }
+            title { english romaji native }
             bannerImage
-            coverImage {
-              extraLarge
-              large
-            }
+            coverImage { extraLarge large }
             description
             averageScore
             seasonYear
-            genres
             episodes
-            characters (sort: [ROLE, REPUTATION]) {
+            characters (perPage: 12, sort: ROLE) {
               edges {
+                role
                 node {
                   id
-                  name {
-                    full
-                  }
-                  image {
-                    large
-                  }
-                }
-                role
-              }
-            }
-            recommendations (limit: 12) {
-              edges {
-                node {
-                  mediaRecommendation {
-                    id
-                    title {
-                      english
-                      romaji
-                    }
-                    coverImage {
-                      large
-                    }
-                    startDate {
-                      year
-                    }
-                    type
-                  }
+                  name { full }
+                  image { medium }
                 }
               }
             }
@@ -245,620 +231,395 @@ export const OnlineDetailsPage: React.FC<OnlineDetailsPageProps> = ({
 
       const res = await fetch('https://graphql.anilist.co', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Accept': 'application/json',
-        },
-        body: JSON.stringify({
-          query: graphqlQuery,
-          variables: { id: video.anilistId }
-        })
+        headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+        body: JSON.stringify({ query: graphqlQuery, variables: { id: video.anilistId } })
       });
 
-      if (!res.ok) throw new Error('Failed to fetch Anime details');
+      if (!res.ok) throw new Error('AniList fetch failed');
       const body = await res.json();
       const media = body.data?.Media;
-      
-      if (!media) throw new Error('Anime not found');
 
-      setDetails({
-        title: media.title.english || media.title.romaji || media.title.native,
-        overview: media.description ? media.description.replace(/<[^>]*>/g, '') : '',
-        backdrop_path: media.bannerImage || '',
-        poster_path: media.coverImage.extraLarge || media.coverImage.large || '',
-        vote_average: media.averageScore ? media.averageScore / 10 : null,
-        release_date: media.seasonYear ? String(media.seasonYear) : '',
-        genres: (media.genres || []).map((g: string) => ({ name: g })),
-        episodes_count: media.episodes || 12
-      });
+      if (isMounted && media) {
+        setDetails({
+          title: media.title.english || media.title.romaji || media.title.native,
+          overview: media.description ? media.description.replace(/<[^>]*>/g, '') : '',
+          backdrop_path: media.bannerImage || '',
+          vote_average: media.averageScore ? media.averageScore / 10 : 8.0,
+          release_date: media.seasonYear ? String(media.seasonYear) : '2024'
+        });
 
-      // Map Cast members
-      const castList: CastMember[] = (media.characters?.edges || [])
-        .slice(0, 15)
-        .map((edge: any) => ({
-          id: edge.node.id,
-          name: edge.node.name.full,
-          character: edge.role || 'Character',
-          profilePath: edge.node.image?.large || ''
+        const cList: CastPerson[] = (media.characters?.edges || []).map((e: any) => ({
+          id: e.node.id,
+          name: e.node.name.full,
+          role: e.role,
+          profilePath: e.node.image.medium ? `https://images.weserv.nl/?url=${encodeURIComponent(e.node.image.medium)}` : undefined
         }));
-      setCast(castList);
+        setCast(cList);
 
-      // Map Recommendations
-      const recsList = (media.recommendations?.edges || [])
-        .map((edge: any) => {
-          const rec = edge.node?.mediaRecommendation;
-          if (!rec) return null;
-          return {
-            id: rec.id,
-            title: rec.title.english || rec.title.romaji || 'Unknown Anime',
-            posterPath: rec.coverImage.large ? `https://images.weserv.nl/?url=${encodeURIComponent(rec.coverImage.large)}` : '',
-            type: 'anime',
-            year: rec.startDate.year ? String(rec.startDate.year) : ''
-          };
-        })
-        .filter(Boolean);
-      setRecommendations(recsList);
-
-      // Generate episodes grid for Anime
-      const totalEp = media.episodes || 12;
-      const animeEps: EpisodeItem[] = Array.from({ length: totalEp }, (_, i) => ({
-        episodeNumber: i + 1,
-        name: `Episode ${i + 1}`,
-        overview: `Watch Episode ${i + 1} of ${media.title.english || media.title.romaji}`,
-        stillPath: ''
-      }));
-      setEpisodes(animeEps);
+        const epCount = media.episodes || 12;
+        const eps: EpisodeData[] = Array.from({ length: epCount }).map((_, i) => ({
+          episodeNumber: i + 1,
+          name: `Episode ${i + 1}`,
+          overview: `Episode ${i + 1} of ${media.title.english || media.title.romaji}`,
+          progress: 0
+        }));
+        setEpisodes(eps);
+      }
     } catch (err: any) {
-      console.error(err);
-      setError(err.message || 'Failed to fetch AniList details');
+      if (isMounted) setError(err.message || 'Failed to fetch anime details');
     } finally {
-      setLoading(false);
+      if (isMounted) setLoading(false);
     }
   };
 
-  const handleScrollCast = (dir: 'left' | 'right') => {
-    if (!castScrollRef.current) return;
-    const scrollAmount = 300;
-    castScrollRef.current.scrollBy({
-      left: dir === 'left' ? -scrollAmount : scrollAmount,
-      behavior: 'smooth'
-    });
-  };
+  // 3. Check if current title is in library & whether it is watched
+  const titleText = details?.title || details?.name || video.title;
+  const rawBackdrop = details?.backdrop_path || video.posterPath;
+  const backdropUrl = rawBackdrop
+    ? (rawBackdrop.startsWith('http') ? rawBackdrop : `https://images.weserv.nl/?url=https://image.tmdb.org/t/p/original${rawBackdrop}`)
+    : undefined;
+  const rawPoster = details?.poster_path || video.posterPath;
+  const posterUrl = rawPoster
+    ? (rawPoster.startsWith('http') ? rawPoster : `https://images.weserv.nl/?url=https://image.tmdb.org/t/p/w500${rawPoster}`)
+    : undefined;
 
-  const handleScrollRec = (dir: 'left' | 'right') => {
-    if (!recScrollRef.current) return;
-    const scrollAmount = recScrollRef.current.clientWidth * 0.75;
-    recScrollRef.current.scrollBy({
-      left: dir === 'left' ? -scrollAmount : scrollAmount,
-      behavior: 'smooth'
-    });
-  };
+  const currentLibraryItems = useMemo(() => {
+    if (!videos || !video) return [];
+    return videos.filter(v => 
+      (video.tmdbId && v.tmdbId === video.tmdbId) ||
+      (v.id && (v.id === video.id || v.id.startsWith(`${video.type}-${video.tmdbId}`)))
+    );
+  }, [videos, video]);
 
-  // Convert vertical mousewheel scroll to horizontal scrolling when cursor is over or reaching More Like This
-  useEffect(() => {
-    const el = recScrollRef.current;
-    if (!el) return;
+  const isInLibrary = currentLibraryItems.length > 0;
 
-    const onWheel = (e: WheelEvent) => {
-      if (Math.abs(e.deltaY) > Math.abs(e.deltaX)) {
-        const maxScrollLeft = el.scrollWidth - el.clientWidth;
-        const canScrollRight = el.scrollLeft < maxScrollLeft - 2;
-        const canScrollLeft = el.scrollLeft > 2;
+  // Determine if item has been watched in user's history
+  const isWatched = useMemo(() => {
+    if (currentLibraryItems.length === 0) return false;
+    return currentLibraryItems.some(v => 
+      (v as any).completed === true || 
+      (v.currentTime !== undefined && v.currentTime > 0)
+    );
+  }, [currentLibraryItems]);
 
-        if ((e.deltaY > 0 && canScrollRight) || (e.deltaY < 0 && canScrollLeft)) {
-          e.preventDefault();
-          el.scrollBy({ left: e.deltaY * 1.25, behavior: 'auto' });
+  // Handle + Library Button Toggle: adds if not present (watched or unwatched), removes if present
+  const handleToggleLibrary = () => {
+    if (!setVideos) return;
+
+    if (isInLibrary) {
+      // Remove from library
+      setVideos(prev => prev.filter(v => 
+        !((video.tmdbId && v.tmdbId === video.tmdbId) ||
+          (v.id && (v.id === video.id || v.id.startsWith(`${video.type}-${video.tmdbId}`))))
+      ));
+      if (addToast) addToast(`Removed "${titleText}" from Library`, 'warning');
+    } else {
+      // Add to library: if watched then watched, if not then unwatched
+      const isSeries = video.type === 'online_tv';
+      const runtimeMinutes = details?.runtime || 120;
+      const durationSec = runtimeMinutes * 60;
+      const durationStr = `${Math.floor(runtimeMinutes / 60)}:${String(runtimeMinutes % 60).padStart(2, '0')}:00`;
+
+      let newItems: VideoItem[] = [];
+
+      if (!isSeries) {
+        // Movie item
+        const movieItem: VideoItem = {
+          id: `online_movie-${video.tmdbId || video.id}`,
+          title: titleText,
+          url: '',
+          type: 'online_movie',
+          isRemote: true,
+          posterPath: posterUrl,
+          backdropUrl: backdropUrl,
+          tmdbId: video.tmdbId,
+          duration: durationStr,
+          completed: isWatched,
+          currentTime: isWatched ? durationSec : 0,
+          lastPlayedDate: isWatched ? new Date().toISOString() : undefined,
+          audioTracks: [],
+          subtitleTracks: []
+        };
+        newItems = [movieItem];
+      } else {
+        // Series: if episodes are loaded, create episodes; otherwise create season 1 episode 1
+        if (episodes.length > 0) {
+          newItems = episodes.map(ep => {
+            const sStr = String(currentSeason).padStart(2, '0');
+            const eStr = String(ep.episodeNumber).padStart(2, '0');
+            return {
+              id: `online_tv-${video.tmdbId}-s${currentSeason}e${ep.episodeNumber}`,
+              title: `${titleText} S${sStr}E${eStr}`,
+              url: '',
+              type: 'online_tv',
+              isRemote: true,
+              posterPath: ep.stillPath || posterUrl,
+              backdropUrl: backdropUrl,
+              tmdbId: video.tmdbId,
+              season: currentSeason,
+              episode: ep.episodeNumber,
+              duration: '00:45:00',
+              completed: isWatched,
+              currentTime: isWatched ? 2700 : 0,
+              lastPlayedDate: isWatched ? new Date().toISOString() : undefined,
+              audioTracks: [],
+              subtitleTracks: []
+            };
+          });
+        } else {
+          newItems = [{
+            id: `online_tv-${video.tmdbId}-s01e01`,
+            title: `${titleText} S01E01`,
+            url: '',
+            type: 'online_tv',
+            isRemote: true,
+            posterPath: posterUrl,
+            backdropUrl: backdropUrl,
+            tmdbId: video.tmdbId,
+            season: 1,
+            episode: 1,
+            duration: '00:45:00',
+            completed: isWatched,
+            currentTime: isWatched ? 2700 : 0,
+            lastPlayedDate: isWatched ? new Date().toISOString() : undefined,
+            audioTracks: [],
+            subtitleTracks: []
+          }];
         }
       }
-    };
 
-    el.addEventListener('wheel', onWheel, { passive: false });
-    return () => el.removeEventListener('wheel', onWheel);
-  }, [recommendations]);
+      setVideos(prev => [...newItems, ...prev]);
+      if (addToast) {
+        addToast(
+          `Added "${titleText}" to Library (${isWatched ? 'Watched' : 'Unwatched'})`,
+          'success'
+        );
+      }
+    }
+  };
+
+  // 4. Open PersonSheet and fetch actor details + combined credits
+  const handleSelectPerson = async (person: CastPerson) => {
+    setIsPersonSheetOpen(true);
+    setLoadingPerson(true);
+
+    try {
+      const isBearer = tmdbApiKey ? tmdbApiKey.length > 50 : true;
+      const token = tmdbApiKey || DEFAULT_TMDB_TOKEN;
+
+      let headers: HeadersInit = { accept: 'application/json' };
+      let authParams = '';
+      if (isBearer) {
+        headers['Authorization'] = `Bearer ${token}`;
+      } else {
+        authParams = `&api_key=${token}`;
+      }
+
+      // Person profile
+      const pUrl = `https://api.themoviedb.org/3/person/${person.id}?language=en-US${authParams}`;
+      const pRes = await fetch(pUrl, { headers });
+      const pData = pRes.ok ? await pRes.json() : null;
+
+      // Combined credits
+      const cUrl = `https://api.themoviedb.org/3/person/${person.id}/combined_credits?language=en-US${authParams}`;
+      const cRes = await fetch(cUrl, { headers });
+      const cData = cRes.ok ? await cRes.json() : null;
+
+      const creditsMapped: PosterMediaItem[] = (cData?.cast || []).slice(0, 48).map((c: any) => {
+        const isMovie = c.media_type === 'movie';
+        return {
+          id: c.id,
+          title: c.title || c.name || 'Unknown',
+          posterPath: c.poster_path ? `https://images.weserv.nl/?url=https://image.tmdb.org/t/p/w300${c.poster_path}` : undefined,
+          year: (c.release_date || c.first_air_date || '').split('-')[0] || '2024',
+          type: isMovie ? 'movie' : 'tv',
+          rating: c.vote_average
+        };
+      });
+
+      setActivePerson({
+        id: person.id,
+        name: pData?.name || person.name,
+        role: pData?.known_for_department || person.role || 'Acting',
+        profilePath: pData?.profile_path ? `https://images.weserv.nl/?url=https://image.tmdb.org/t/p/w500${pData.profile_path}` : person.profilePath,
+        biography: pData?.biography || '',
+        birthday: pData?.birthday || null,
+        placeOfBirth: pData?.place_of_birth || null,
+        rating: pData?.popularity ? Math.min(10, pData.popularity / 10) : 7.8,
+        credits: creditsMapped
+      });
+    } catch (err) {
+      console.error('Error fetching person details:', err);
+      setActivePerson({
+        id: person.id,
+        name: person.name,
+        role: person.role,
+        profilePath: person.profilePath,
+        credits: []
+      });
+    } finally {
+      setLoadingPerson(false);
+    }
+  };
 
   if (loading) {
-    return <MediaPageSkeleton />;
+    return <TitlePageSkeleton />;
   }
 
-  if (error || !details) {
-    return (
-      <div className="details-page-error">
-        <h2>Failed to load details</h2>
-        <p>{error || 'Please check your connection and TMDB settings.'}</p>
-        <button onClick={onClose} className="btn-back">Go Back</button>
-      </div>
-    );
-  }
+  const ratingVal = details?.vote_average ? Number(details.vote_average) : 8.2;
+  const matchScore = Math.min(99, Math.max(75, Math.round(ratingVal * 10)));
+  const isSeries = video.type === 'online_tv';
+  const seasonsOrDuration = isSeries
+    ? (seasons.length > 0 ? `${seasons.length} ${seasons.length === 1 ? 'Season' : 'Seasons'}` : '1 Season')
+    : (details?.runtime ? `${Math.floor(details.runtime / 60)}h ${details.runtime % 60}m` : '2h 05m');
 
-  const isMovie = video.type === 'online_movie';
-  const backdropUrl = isAnime 
-    ? details.backdrop_path 
-    : (details.backdrop_path ? `https://images.weserv.nl/?url=https://image.tmdb.org/t/p/original${details.backdrop_path}` : '');
-  const posterUrl = isAnime 
-    ? details.poster_path 
-    : (details.poster_path ? `https://images.weserv.nl/?url=https://image.tmdb.org/t/p/w500${details.poster_path}` : '');
-  const genresText = (details.genres || []).map((g: any) => g.name).join(', ');
-  const releaseYear = details.release_date ? details.release_date.split('-')[0] : '';
-  const voteAverage = details.vote_average ? details.vote_average.toFixed(1) : 'N/A';
-
-  const matchScore = details.vote_average ? Math.min(99, Math.max(82, Math.round(details.vote_average * 10))) : 96;
-  const formattedRuntime = details.runtime ? `${Math.floor(details.runtime / 60)}h ${details.runtime % 60}m` : null;
+  const playButtonLabel = isSeries ? `Play S${currentSeason} · E1` : 'Play Movie';
 
   return (
-    <div className="netflix-page-container animate-fade-in">
-      {/* Sticky Top Navigation Bar (Real Page Navigation) */}
-      <div className="netflix-page-top-bar">
-        <div className="netflix-top-bar-left">
-          <button onClick={onClose} className="netflix-back-nav-btn" title="Back to Browse">
-            <ChevronLeft size={18} />
-            <span>Back</span>
-          </button>
-          <div className="netflix-breadcrumbs">
-            <span className="netflix-breadcrumb-link" onClick={onClose}>Online Stream</span>
-            <span className="netflix-breadcrumb-sep">/</span>
-            <span className="netflix-breadcrumb-current">{details.title || details.name}</span>
-          </div>
-        </div>
+    <div
+      ref={containerRef}
+      className="online-details-scroll-container"
+      style={{
+        position: 'relative',
+        width: '100%',
+        height: '100%',
+        flex: 1,
+        minHeight: 0,
+        background: 'var(--bg)',
+        color: 'var(--text-1)',
+        overflowY: 'auto',
+        overflowX: 'hidden',
+        WebkitOverflowScrolling: 'touch',
+        boxSizing: 'border-box',
+        paddingBottom: 'var(--space-8)'
+      }}
+    >
+      {/* Floating Close Button */}
+      <button
+        type="button"
+        onClick={onClose}
+        aria-label="Back to stream browser"
+        style={{
+          position: 'fixed',
+          top: 'var(--space-4)',
+          right: 'var(--space-5)',
+          zIndex: 90,
+          width: '42px',
+          height: '42px',
+          borderRadius: '50%',
+          background: 'rgba(20, 22, 28, 0.75)',
+          backdropFilter: 'blur(10px)',
+          WebkitBackdropFilter: 'blur(10px)',
+          border: '1px solid var(--control-border)',
+          color: 'var(--text-1)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          cursor: 'pointer',
+          boxShadow: '0 4px 16px rgba(0,0,0,0.5)',
+          transition: 'all 0.15s ease'
+        }}
+        onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = 'var(--surface-3)'; }}
+        onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = 'rgba(20, 22, 28, 0.75)'; }}
+      >
+        <X size={20} />
+      </button>
 
-        <div className="netflix-top-bar-right">
-          <span className="netflix-badge-box netflix-pill">
-            {isMovie ? 'Movie' : (video.type === 'online_tv' ? 'TV Series' : 'Anime')}
-          </span>
-        </div>
-      </div>
+      {/* 1. Full-Bleed Hero with Scrim Fade & Parallax */}
+      <Hero
+        title={titleText}
+        backdropUrl={backdropUrl}
+        synopsis={details?.overview || 'Experience this acclaimed title in stunning picture and spatial audio.'}
+        matchScore={matchScore}
+        ageRating="16+"
+        seasonsOrDuration={seasonsOrDuration}
+        quality="4K"
+        audioFormat="5.1"
+        playButtonLabel={playButtonLabel}
+        onPlay={() => {
+          if (isSeries) {
+            onPlay(video, currentSeason, 1);
+          } else {
+            onPlay(video);
+          }
+        }}
+        onToggleLibrary={handleToggleLibrary}
+        isInLibrary={isInLibrary}
+        scrollContainerRef={containerRef}
+      />
 
-      {/* Netflix Cinematic Billboard Hero Banner */}
-      <div className="netflix-hero-container">
-        {backdropUrl && (
-          <div 
-            className="netflix-hero-backdrop"
-            style={{ backgroundImage: `url(${backdropUrl})` }}
+      {/* Main Content Flow: Cast & Crew -> Episodes -> More Like This */}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-7)', marginTop: 'var(--space-6)' }}>
+        {/* 2. Cast & Crew Circular Portraits */}
+        {cast.length > 0 && (
+          <CastRail
+            cast={cast}
+            onSelectPerson={handleSelectPerson}
+            title="Cast & Crew"
           />
         )}
-        <div className="netflix-hero-vignette-vertical" />
-        <div className="netflix-hero-vignette-horizontal" />
 
-        <div className="netflix-hero-content">
-          <h1 className="netflix-hero-title">{details.title || details.name}</h1>
-
-          <div className="netflix-meta-row">
-            <span className="netflix-match-score">{matchScore}% Match</span>
-            {releaseYear && <span className="netflix-meta-item">{releaseYear}</span>}
-            <span className="netflix-badge-box">16+</span>
-            {formattedRuntime && <span className="netflix-meta-item">{formattedRuntime}</span>}
-            {!isMovie && (
-              <span className="netflix-meta-item">
-                {seasons.length > 0 ? `${seasons.filter((s: any) => s.season_number > 0).length} Seasons` : '1 Season'}
-              </span>
-            )}
-            <span className="netflix-badge-box">Ultra HD 4K</span>
-            <span className="netflix-badge-box">5.1 Audio</span>
-          </div>
-
-          <p className="netflix-hero-overview">
-            {details.overview || 'No description available for this catalog entry.'}
-          </p>
-
-          <div className="netflix-hero-actions">
-            <button 
-              className="netflix-btn-play"
-              onClick={() => {
-                if (isMovie) {
-                  onPlay(video);
-                } else {
-                  const firstEp = episodes[0]?.episodeNumber || 1;
-                  onPlay(video, currentSeason, firstEp);
-                }
-              }}
-            >
-              <Play size={20} fill="currentColor" />
-              <span>{isMovie ? 'Play Movie' : `Play S${currentSeason}:E1`}</span>
-            </button>
-          </div>
-
-          <div className="netflix-hero-details-row">
-            {genresText && (
-              <div>
-                <strong>Genres: </strong>
-                <span>{genresText}</span>
-              </div>
-            )}
-            {cast.length > 0 && (
-              <div>
-                <strong>Starring: </strong>
-                {cast.slice(0, 4).map((c, idx) => (
-                  <span key={c.id}>
-                    <span 
-                      style={{ cursor: 'pointer', color: '#fff', textDecoration: 'underline', textUnderlineOffset: '3px' }}
-                      onClick={() => {
-                        if (onSelectActor) onSelectActor(c);
-                        else setSelectedActor(c);
-                      }}
-                    >
-                      {c.name}
-                    </span>
-                    {idx < Math.min(cast.length, 4) - 1 ? ', ' : ''}
-                  </span>
-                ))}
-              </div>
-            )}
-            {details.original_language && (
-              <div>
-                <strong>Original Audio: </strong>
-                <span>{details.original_language.toUpperCase()}</span>
-              </div>
-            )}
-          </div>
-        </div>
-      </div>
-
-      <div className="netflix-page-body">
-
-        {/* Cast Section */}
-        {cast.length > 0 && (
-          <div className="netflix-section">
-            <div className="netflix-section-header">
-              <h2 className="netflix-section-title">Cast & Crew</h2>
-              <div className="scroll-arrow-controls">
-                <button className="arrow-scroll-btn" onClick={() => handleScrollCast('left')} title="Scroll Left">
-                  <ChevronLeft size={18} />
-                </button>
-                <button className="arrow-scroll-btn" onClick={() => handleScrollCast('right')} title="Scroll Right">
-                  <ChevronRight size={18} />
-                </button>
-              </div>
-            </div>
-
-            <div className="netflix-cast-slider" ref={castScrollRef}>
-              {cast.map((actor) => (
-                <div 
-                  className="netflix-cast-card" 
-                  key={actor.id}
-                  onClick={() => {
-                    if (onSelectActor) {
-                      onSelectActor({ id: actor.id, name: actor.name, profilePath: actor.profilePath });
-                    } else {
-                      setSelectedActor({ id: actor.id, name: actor.name, profilePath: actor.profilePath });
-                    }
-                  }}
-                  title={`View ${actor.name}`}
-                >
-                  <div className="netflix-cast-photo-wrapper">
-                    {actor.profilePath ? (
-                      <img src={actor.profilePath} alt={actor.name} className="netflix-cast-photo" loading="lazy" />
-                    ) : (
-                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: 'rgba(255,255,255,0.3)' }}>
-                        <User size={36} />
-                      </div>
-                    )}
-                  </div>
-                  <div className="netflix-cast-name">{actor.name}</div>
-                  <div className="netflix-cast-char">{actor.character}</div>
-                </div>
-              ))}
-            </div>
-          </div>
+        {/* 3. Episodes (Season picker & 16:9 thumbnail rows) */}
+        {isSeries && episodes.length > 0 && (
+          <EpisodeList
+            episodes={episodes}
+            seasons={seasons}
+            currentSeason={currentSeason}
+            onSeasonChange={(s) => setCurrentSeason(s)}
+            onPlayEpisode={(ep) => onPlay(video, currentSeason, ep.episodeNumber)}
+            loading={loadingEpisodes}
+          />
         )}
 
-        {/* Episodes Section for TV Shows and Anime */}
-        {!isMovie && (
-          <div className="netflix-section">
-            <div className="netflix-section-header">
-              <div style={{ display: 'flex', alignItems: 'center', gap: '1.25rem', flexWrap: 'wrap' }}>
-                <h2 className="netflix-section-title">Episodes</h2>
-                {video.type === 'online_tv' && seasons.length > 0 && (
-                  <div className="season-selector-dropdown-wrapper">
-                    <CustomSelect
-                      value={currentSeason}
-                      onChange={(val) => setCurrentSeason(Number(val))}
-                      options={seasons
-                        .filter((s: any) => s.season_number > 0)
-                        .map((s: any) => ({
-                          value: s.season_number,
-                          label: `Season ${s.season_number}`
-                        }))}
-                      hideSearch={true}
-                      width="140px"
-                    />
-                  </div>
-                )}
-              </div>
-
-              {/* View Mode Toggle Controls */}
-              <div style={{ display: 'flex', alignItems: 'center', background: 'rgba(255, 255, 255, 0.08)', padding: '3px', borderRadius: '8px', border: '1px solid rgba(255, 255, 255, 0.1)' }}>
-                <button
-                  title="List View"
-                  onClick={() => setEpisodeViewMode('list')}
-                  style={{
-                    background: episodeViewMode === 'list' ? '#e50914' : 'transparent',
-                    border: 'none',
-                    color: '#fff',
-                    padding: '6px 12px',
-                    borderRadius: '6px',
-                    cursor: 'pointer',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    transition: 'background 0.2s'
-                  }}
-                >
-                  <List size={16} />
-                </button>
-                <button
-                  title="Grid View"
-                  onClick={() => setEpisodeViewMode('grid')}
-                  style={{
-                    background: episodeViewMode === 'grid' ? '#e50914' : 'transparent',
-                    border: 'none',
-                    color: '#fff',
-                    padding: '6px 12px',
-                    borderRadius: '6px',
-                    cursor: 'pointer',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    transition: 'background 0.2s'
-                  }}
-                >
-                  <LayoutGrid size={16} />
-                </button>
-              </div>
-            </div>
-
-            {loadingEpisodes ? (
-              <EpisodeGridSkeleton count={8} />
-            ) : (
-              <div>
-                {/* Netflix List View (Default authentic Netflix episode style) */}
-                {episodeViewMode === 'list' && (
-                  <div className="netflix-episodes-list">
-                    {episodes.map((ep) => (
-                      <div
-                        key={ep.episodeNumber}
-                        className="netflix-episode-card"
-                        onClick={() => onPlay(video, currentSeason, ep.episodeNumber)}
-                      >
-                        <div className="netflix-ep-num">{ep.episodeNumber}</div>
-                        <div className="netflix-ep-thumb-wrapper">
-                          {(ep.stillPath || posterUrl) ? (
-                            <img src={ep.stillPath || posterUrl} alt={ep.name} className="netflix-ep-thumb" loading="lazy" />
-                          ) : (
-                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: 'rgba(255,255,255,0.4)' }}>
-                              <Play size={24} />
-                            </div>
-                          )}
-                          <div className="netflix-ep-play-overlay">
-                            <Play size={24} fill="#ffffff" />
-                          </div>
-                        </div>
-                        <div className="netflix-ep-info">
-                          <div className="netflix-ep-header-row">
-                            <h4 className="netflix-ep-title">{ep.name}</h4>
-                            <span className="netflix-ep-duration">EP {ep.episodeNumber}</span>
-                          </div>
-                          <p className="netflix-ep-overview">
-                            {ep.overview || 'No overview available for this episode.'}
-                          </p>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-
-                {/* Netflix Grid View */}
-                {episodeViewMode === 'grid' && (
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: '1.25rem' }}>
-                    {episodes.map((ep) => (
-                      <div
-                        key={ep.episodeNumber}
-                        onClick={() => onPlay(video, currentSeason, ep.episodeNumber)}
-                        style={{
-                          background: 'rgba(255, 255, 255, 0.04)',
-                          border: '1px solid rgba(255, 255, 255, 0.08)',
-                          borderRadius: '8px',
-                          overflow: 'hidden',
-                          cursor: 'pointer',
-                          transition: 'all 0.25s cubic-bezier(0.16, 1, 0.3, 1)',
-                          display: 'flex',
-                          flexDirection: 'column'
-                        }}
-                        onMouseEnter={(e) => {
-                          e.currentTarget.style.transform = 'translateY(-4px)';
-                          e.currentTarget.style.borderColor = '#e50914';
-                          e.currentTarget.style.boxShadow = '0 12px 28px rgba(0, 0, 0, 0.6)';
-                        }}
-                        onMouseLeave={(e) => {
-                          e.currentTarget.style.transform = 'none';
-                          e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.08)';
-                          e.currentTarget.style.boxShadow = 'none';
-                        }}
-                      >
-                        <div style={{ width: '100%', aspectRatio: '16/9', position: 'relative', background: '#1c1c1c' }}>
-                          {(ep.stillPath || posterUrl) ? (
-                            <img src={ep.stillPath || posterUrl} alt={ep.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                          ) : (
-                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: 'rgba(255,255,255,0.4)' }}>
-                              <Play size={28} />
-                            </div>
-                          )}
-                          <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(to top, rgba(0,0,0,0.85) 0%, transparent 60%)', display: 'flex', alignItems: 'flex-end', padding: '0.75rem' }}>
-                            <span style={{ background: '#e50914', color: '#fff', fontSize: '0.72rem', fontWeight: 800, padding: '2px 8px', borderRadius: '3px' }}>
-                              EP {ep.episodeNumber}
-                            </span>
-                          </div>
-                        </div>
-                        <div style={{ padding: '0.9rem 1rem' }}>
-                          <h4 style={{ margin: '0 0 0.35rem 0', fontSize: '0.92rem', fontWeight: 700, color: '#ffffff', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                            {ep.name}
-                          </h4>
-                          <p style={{ margin: 0, fontSize: '0.78rem', color: 'rgba(255, 255, 255, 0.6)', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden', lineHeight: 1.45 }}>
-                            {ep.overview || 'No overview available.'}
-                          </p>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* Recommendations / More Like This */}
+        {/* 4. More Like This Poster Rail */}
         {recommendations.length > 0 && (
-          <div className="netflix-section">
-            <div className="netflix-section-header">
-              <h2 className="netflix-section-title">More Like This</h2>
-              <div className="scroll-arrow-controls">
-                <button className="arrow-scroll-btn" onClick={() => handleScrollRec('left')} title="Scroll Left">
-                  <ChevronLeft size={18} />
-                </button>
-                <button className="arrow-scroll-btn" onClick={() => handleScrollRec('right')} title="Scroll Right">
-                  <ChevronRight size={18} />
-                </button>
-              </div>
-            </div>
-
-            {loadingRecommendations ? (
-              <CarouselSkeleton count={7} />
-            ) : (
-              <div 
-                className="netflix-rec-slider"
-                ref={recScrollRef}
-              >
-                {recommendations.map((rec) => {
-                  const mediaYear = rec.year || (rec.release_date ? rec.release_date.split('-')[0] : '');
-                  const mediaTypeLabel = rec.type === 'movie' ? 'Movie' : (rec.type === 'tv' ? 'TV' : 'Anime');
-
-                  return (
-                    <div 
-                      key={rec.id} 
-                      onClick={() => {
-                        if (onSelectMedia) {
-                          onSelectMedia({
-                            id: `${rec.type === 'movie' ? 'movie' : (rec.type === 'tv' ? 'tv' : 'anime')}-${rec.id}`,
-                            title: rec.title,
-                            url: '',
-                            type: rec.type === 'movie' ? 'online_movie' : (rec.type === 'tv' ? 'online_tv' : 'online_anime'),
-                            isRemote: true,
-                            posterPath: rec.posterPath,
-                            tmdbId: rec.type !== 'anime' ? Number(rec.id) : undefined,
-                            anilistId: rec.type === 'anime' ? Number(rec.id) : undefined,
-                            audioTracks: [],
-                            subtitleTracks: []
-                          });
-                        }
-                      }}
-                      className="os2-card netflix-card"
-                      title={rec.title}
-                    >
-                      <div className="os2-poster">
-                        {rec.posterPath ? (
-                          <img src={rec.posterPath} alt={rec.title} className="os2-image" loading="lazy" />
-                        ) : (
-                          <div className="os2-fallback">
-                            {rec.type === 'movie' ? <Film size={32} /> : <Tv size={32} />}
-                            <span>{rec.title}</span>
-                          </div>
-                        )}
-
-                        {/* Netflix Gradient Shade */}
-                        <div className="netflix-card-gradient" />
-
-                        {/* Top Badges: Netflix 'N' Logo */}
-                        <div className="netflix-card-top-badges">
-                          <span className="netflix-n-badge">N</span>
-                        </div>
-
-                        {/* Hover Quick Actions */}
-                        <div className="netflix-card-hover-actions">
-                          <button 
-                            className="netflix-card-play-btn"
-                            title="Play Now"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              onPlay({
-                                id: `${rec.type === 'movie' ? 'movie' : (rec.type === 'tv' ? 'tv' : 'anime')}-${rec.id}`,
-                                title: rec.title,
-                                url: '',
-                                type: rec.type === 'movie' ? 'online_movie' : (rec.type === 'tv' ? 'online_tv' : 'online_anime'),
-                                isRemote: true,
-                                posterPath: rec.posterPath,
-                                tmdbId: rec.type !== 'anime' ? Number(rec.id) : undefined,
-                                anilistId: rec.type === 'anime' ? Number(rec.id) : undefined,
-                                audioTracks: [],
-                                subtitleTracks: []
-                              });
-                            }}
-                          >
-                            <Play size={16} fill="currentColor" />
-                          </button>
-
-                          <button 
-                            className="netflix-card-info-btn"
-                            title="Details"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              if (onSelectMedia) {
-                                onSelectMedia({
-                                  id: `${rec.type === 'movie' ? 'movie' : (rec.type === 'tv' ? 'tv' : 'anime')}-${rec.id}`,
-                                  title: rec.title,
-                                  url: '',
-                                  type: rec.type === 'movie' ? 'online_movie' : (rec.type === 'tv' ? 'online_tv' : 'online_anime'),
-                                  isRemote: true,
-                                  posterPath: rec.posterPath,
-                                  tmdbId: rec.type !== 'anime' ? Number(rec.id) : undefined,
-                                  anilistId: rec.type === 'anime' ? Number(rec.id) : undefined,
-                                  audioTracks: [],
-                                  subtitleTracks: []
-                                });
-                              }
-                            }}
-                          >
-                            <Info size={16} />
-                          </button>
-                        </div>
-                      </div>
-
-                      {/* Card Details / Info */}
-                      <div className="os2-details">
-                        <div className="netflix-card-meta-row">
-                          <span className="netflix-card-match">96% Match</span>
-                          <span className="netflix-card-badge">16+</span>
-                          <span className="netflix-card-badge">HD</span>
-                        </div>
-
-                        <h3 className="os2-title" title={rec.title}>{rec.title}</h3>
-
-                        <div className="os2-meta">
-                          <span className="os2-year">{mediaYear || '2024'}</span>
-                          <span className="os2-type">{mediaTypeLabel}</span>
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </div>
+          <Rail
+            title="More Like This"
+            items={recommendations}
+            onSelectItem={(rec) => {
+              if (onSelectMedia) {
+                const item: VideoItem = {
+                  id: `${rec.type}-${rec.id}`,
+                  title: rec.title,
+                  url: '',
+                  type: rec.type === 'movie' ? 'online_movie' : 'online_tv',
+                  isRemote: true,
+                  posterPath: rec.posterPath,
+                  tmdbId: Number(rec.id),
+                  audioTracks: [],
+                  subtitleTracks: []
+                };
+                onSelectMedia(item);
+              }
+            }}
+          />
         )}
       </div>
 
-      {!onSelectActor && selectedActor && (
-        <ActorDetailsPage
-          actorId={selectedActor.id}
-          actorName={selectedActor.name}
-          onClose={() => setSelectedActor(null)}
-          onSelectMedia={(clickedMedia) => {
-            setSelectedActor(null);
-            if (onSelectMedia) {
-              onSelectMedia(clickedMedia);
-            }
-          }}
-          tmdbApiKey={tmdbApiKey}
-          profilePath={selectedActor.profilePath}
-        />
-      )}
+      {/* 5. Person Sheet (Right-side sheet modal) */}
+      <PersonSheet
+        isOpen={isPersonSheetOpen}
+        onClose={() => setIsPersonSheetOpen(false)}
+        person={activePerson}
+        loading={loadingPerson}
+        onSelectMedia={(item) => {
+          setIsPersonSheetOpen(false);
+          if (onSelectMedia) {
+            const vItem: VideoItem = {
+              id: `${item.type}-${item.id}`,
+              title: item.title,
+              url: '',
+              type: item.type === 'movie' ? 'online_movie' : 'online_tv',
+              isRemote: true,
+              posterPath: item.posterPath,
+              tmdbId: Number(item.id),
+              audioTracks: [],
+              subtitleTracks: []
+            };
+            onSelectMedia(vItem);
+          }
+        }}
+      />
     </div>
   );
 };

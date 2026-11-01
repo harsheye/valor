@@ -1143,8 +1143,27 @@ function App() {
 
 
 
+  const parseDurationToSeconds = (duration: string | number | undefined): number => {
+    if (duration === undefined || duration === null) return 0;
+    if (typeof duration === 'number') return duration;
+    const clean = String(duration).trim();
+    if (!clean || clean.toLowerCase() === 'unknown') return 0;
+    if (!isNaN(Number(clean))) {
+      return Number(clean);
+    }
+    const parts = clean.split(':').map(Number);
+    if (parts.some(isNaN)) return 0;
+    if (parts.length === 2) {
+      return parts[0] * 60 + parts[1];
+    }
+    if (parts.length === 3) {
+      return parts[0] * 3600 + parts[1] * 60 + parts[2];
+    }
+    return 0;
+  };
+
   const formatTime = (secs: number | string | undefined) => {
-    const num = typeof secs === 'number' ? secs : Number(secs);
+    const num = typeof secs === 'number' ? secs : parseDurationToSeconds(secs);
     if (isNaN(num) || num < 0) return '0:00';
     const rounded = Math.round(num);
     const h = Math.floor(rounded / 3600);
@@ -1173,25 +1192,6 @@ function App() {
       }
     }
     return false;
-  };
-
-  const parseDurationToSeconds = (duration: string | number | undefined): number => {
-    if (duration === undefined || duration === null) return 0;
-    if (typeof duration === 'number') return duration;
-    const clean = String(duration).trim();
-    if (!clean || clean.toLowerCase() === 'unknown') return 0;
-    if (!isNaN(Number(clean))) {
-      return Number(clean);
-    }
-    const parts = clean.split(':').map(Number);
-    if (parts.some(isNaN)) return 0;
-    if (parts.length === 2) {
-      return parts[0] * 60 + parts[1];
-    }
-    if (parts.length === 3) {
-      return parts[0] * 3600 + parts[1] * 60 + parts[2];
-    }
-    return 0;
   };
 
   const getVideoIdentity = (title: string): string => {
@@ -1577,7 +1577,12 @@ function App() {
   }, []);
 
   useEffect(() => {
-    document.documentElement.setAttribute('data-theme', settings.theme || 'black-ops');
+    const theme = settings.theme || 'black-ops';
+    document.documentElement.setAttribute('data-theme', theme);
+    const metaTheme = document.querySelector('meta[name="theme-color"]');
+    if (metaTheme) {
+      metaTheme.setAttribute('content', (theme === 'black-ops' || theme === 'oled') ? '#000000' : (theme === 'soft-paper' ? '#ECE7DD' : '#0F1217'));
+    }
   }, [settings.theme]);
 
   const storageProvider = useMemo(() => {
@@ -3121,7 +3126,7 @@ function App() {
 
 
 
-  const isSidebarCollapsed = !!selectedActor || !!selectedDetailsMedia;
+  const isSidebarCollapsed = activeTab === 'online' || !!selectedActor || !!selectedDetailsMedia;
 
   return (
     <div className={`app-layout ${settings.disableAnimations ? 'no-animations' : ''} ${activeTab === 'settings' ? 'settings-active' : ''} ${isSidebarCollapsed ? 'sidebar-collapsed' : ''}`}>
@@ -3178,6 +3183,9 @@ function App() {
               onSelectMedia={handleOpenMediaDetails}
               onSelectActor={handleOpenActorDetails}
               tmdbApiKey={settings.tmdbApiKey}
+              videos={videos}
+              setVideos={setVideos}
+              addToast={addToast}
             />
           ) : (
             <>

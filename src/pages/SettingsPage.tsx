@@ -1,2155 +1,1829 @@
-import React from 'react';
-import { CustomSelect } from '../components/CustomSelect';
-import { ToggleSwitch } from '../components/ToggleSwitch';
-import { ApiSettingsView } from '../components/ApiSettingsView';
-import { SpinnerSettingsView } from '../components/SpinnerSettingsView';
-import { RadialMenu } from '../components/RadialMenu';
-import { LocalServicePage } from './LocalServicePage';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { 
-  RotateCcw, UserPlus, LogOut, Trash2, Volume2, X, ChevronRight, ChevronLeft,
-  Terminal, MessageSquare, Maximize, Bookmark, FastForward, Unlock, Play, LogIn, Zap, Check
+  SettingsNav, 
+  type SettingsSectionId,
+  SettingsSearch,
+  SettingsCard,
+  SettingRow,
+  Switch,
+  Segmented,
+  Select,
+  ColorField,
+  KeyBinder,
+  HOTKEY_ACTIONS,
+  HudPreview,
+  ServiceCard,
+  SpinnerPresets,
+  Toast,
+  DestructiveButton,
+  DEFAULT_HUD_ORDER,
+} from '../components/settings';
+import { 
+  User, Plus, RefreshCw, Copy, Check, RotateCcw, 
+  RotateCcw as RestoreIcon
 } from 'lucide-react';
+import { sidecarService } from '../services/remote/sidecarService';
 import { 
-  audioOptions, subOptions, calendarStyleOptions, limitOptions, 
-  intervalOptions, toastOptions, uiHideTimeoutOptions, fontOptions, 
-  storageModeOptions, ratingThresholdOptions 
-} from '../utils/constants';
+  initiateTraktPkceAuth, 
+  generateTraktDeviceCode, 
+  pollTraktDeviceToken, 
+  fetchTraktUserProfile, 
+  testTraktApi 
+} from '../services/traktAuth';
+
+export const THEME_OPTIONS = [
+  { id: 'auto', name: 'Auto (system)', desc: 'Follows OS mode', bg: '#0F1217', surface: '#1B212A', text: '#E4E8EE', dot: '#8CA9EE' },
+  { id: 'midnight-slate', name: 'Midnight Slate', desc: 'Cool, quiet dark (default)', bg: '#0F1217', surface: '#1B212A', text: '#E4E8EE', dot: '#8CA9EE' },
+  { id: 'ember-night', name: 'Ember Night', desc: 'Warm, low-blue amber', bg: '#14110F', surface: '#231E1A', text: '#EBE3D8', dot: '#E5A86D' },
+  { id: 'forest-mist', name: 'Forest Mist', desc: 'Muted green-grey sage', bg: '#0E1412', surface: '#1A2420', text: '#E0E9E4', dot: '#7CC3A1' },
+  { id: 'valor-crimson', name: 'Valor Crimson', desc: 'Softened red brand', bg: '#131114', surface: '#221E24', text: '#E9E4E9', dot: '#E57C86' },
+  { id: 'black-ops', name: 'Black-Ops (OLED Black)', desc: 'Pure #000000 OLED black', bg: '#000000', surface: '#000000', text: '#f2f2f2', dot: '#e53950' },
+  { id: 'soft-paper', name: 'Soft Paper', desc: 'Warm light paper cream', bg: '#ECE7DD', surface: '#FAF7F0', text: '#25221D', dot: '#3A5CB0' },
+  { id: 'dark', name: 'Valor Cyber Dark', desc: 'Modern canvas & coral', bg: '#0B0C10', surface: '#1B1E26', text: '#F2F4F8', dot: '#FF6B7A' },
+  { id: 'light', name: 'Studio Light', desc: 'Crisp white & crimson', bg: '#FFFFFF', surface: '#ECEEF3', text: '#12141A', dot: '#C4263A' },
+];
+
+export const AUDIO_LANGUAGE_OPTIONS = [
+  { value: 'ENG', label: 'English (default)' },
+  { value: 'JPN', label: 'Japanese' },
+  { value: 'SPA', label: 'Spanish' },
+  { value: 'FRE', label: 'French' },
+  { value: 'GER', label: 'German' },
+  { value: 'HIN', label: 'Hindi' },
+  { value: 'KOR', label: 'Korean' },
+  { value: 'CHI', label: 'Chinese' },
+  { value: 'ITA', label: 'Italian' },
+  { value: 'POR', label: 'Portuguese' },
+  { value: 'RUS', label: 'Russian' },
+];
+
+export const SUBTITLE_LANGUAGE_OPTIONS = [
+  { value: 'ENG', label: 'English (default)' },
+  { value: 'NONE', label: 'None' },
+  { value: 'JPN', label: 'Japanese' },
+  { value: 'SPA', label: 'Spanish' },
+  { value: 'FRE', label: 'French' },
+  { value: 'GER', label: 'German' },
+  { value: 'HIN', label: 'Hindi' },
+  { value: 'KOR', label: 'Korean' },
+  { value: 'CHI', label: 'Chinese' },
+  { value: 'ITA', label: 'Italian' },
+  { value: 'POR', label: 'Portuguese' },
+  { value: 'RUS', label: 'Russian' },
+];
 
 interface SettingsPageProps {
-  settingsTab: 'general' | 'hotkeys' | 'subtitle' | 'bookmarks' | 'storage' | 'api' | 'loader' | 'gridOverlay' | 'radialMenu' | 'companion';
-  setSettingsTab: (tab: 'general' | 'hotkeys' | 'subtitle' | 'bookmarks' | 'storage' | 'api' | 'loader' | 'gridOverlay' | 'radialMenu' | 'companion') => void;
-  uiOverlaySection: 'gridOverlay' | 'pauseOverlay';
-  setUiOverlaySection: (section: 'gridOverlay' | 'pauseOverlay') => void;
+  settingsTab?: string;
+  setSettingsTab?: (tab: any) => void;
+  uiOverlaySection?: string;
+  setUiOverlaySection?: (section: any) => void;
   settings: any;
   setSettings: React.Dispatch<React.SetStateAction<any>>;
   handleDefaultLangChange: (field: any, val: any) => void;
   saveSettingsToStorage: (newSettings: any) => void;
-  listeningKeyFor: string | null;
-  setListeningKeyFor: (key: any) => void;
-  hoveredHotkey: string | null;
-  setHoveredHotkey: (key: string | null) => void;
-  availableProfiles: any[];
-  handleSwitchProfile: (profile: any) => void;
-  openAuthModal: (tab: 'login' | 'signup', targetProfile?: any, onSuccess?: (userId: string) => void) => void;
-  setDeleteTargetProfile: (profile: any) => void;
-  setRemoveError: (msg: string) => void;
-  setIsRemoveModalOpen: (open: boolean) => void;
-  setNewProfileName: (name: string) => void;
-  setNewProfilePassword: (pwd: string) => void;
-  setCreateProfileError: (err: string) => void;
-  setIsCreateProfileModalOpen: (open: boolean) => void;
-  addToast: (title: string, type?: 'success' | 'error' | 'warning', message?: string) => void;
-  setVideos: (videos: any) => void;
-  previewExpanded: boolean;
-  setPreviewExpanded: (expanded: boolean) => void;
-  renderMockPreviewButton: (key: string) => React.ReactNode;
-  setShowResetConfirm: (show: boolean) => void;
+  listeningKeyFor?: string | null;
+  setListeningKeyFor?: (key: any) => void;
+  hoveredHotkey?: string | null;
+  setHoveredHotkey?: (key: string | null) => void;
+  availableProfiles?: any[];
+  handleSwitchProfile?: (profile: any) => void;
+  openAuthModal?: (tab: 'login' | 'signup', targetProfile?: any, onSuccess?: (userId: string) => void) => void;
+  setDeleteTargetProfile?: (profile: any) => void;
+  setRemoveError?: (msg: string) => void;
+  setIsRemoveModalOpen?: (open: boolean) => void;
+  setNewProfileName?: (name: string) => void;
+  setNewProfilePassword?: (pwd: string) => void;
+  setCreateProfileError?: (err: string) => void;
+  setIsCreateProfileModalOpen?: (open: boolean) => void;
+  addToast?: (title: string, type?: 'success' | 'error' | 'warning', message?: string) => void;
+  setVideos?: (videos: any) => void;
+  previewExpanded?: boolean;
+  setPreviewExpanded?: (expanded: boolean) => void;
+  renderMockPreviewButton?: (key: string) => React.ReactNode;
+  setShowResetConfirm?: (show: boolean) => void;
 }
 
 export const SettingsPage: React.FC<SettingsPageProps> = ({
   settingsTab,
   setSettingsTab,
-  uiOverlaySection,
-  setUiOverlaySection,
   settings,
   setSettings,
   handleDefaultLangChange,
   saveSettingsToStorage,
-  listeningKeyFor,
-  setListeningKeyFor,
-  hoveredHotkey,
-  setHoveredHotkey,
-  availableProfiles,
+  availableProfiles = [],
   handleSwitchProfile,
   openAuthModal,
-  setDeleteTargetProfile,
-  setRemoveError,
   setIsRemoveModalOpen,
-  setNewProfileName,
-  setNewProfilePassword,
-  setCreateProfileError,
+  setDeleteTargetProfile,
   setIsCreateProfileModalOpen,
-  addToast,
-  setVideos,
-  previewExpanded,
-  setPreviewExpanded,
   renderMockPreviewButton,
-  setShowResetConfirm,
 }) => {
-  const isMonochrome = settings.theme === 'black-and-white' || settings.theme === 'oled' || settings.theme === 'black-ops';
+  const resolveSectionId = (tab?: string): SettingsSectionId => {
+    switch (tab) {
+      case 'subtitle':
+      case 'subtitles':
+      case 'bookmarks':
+        return 'subtitles';
+      case 'pauseOverlay':
+      case 'pause-overlay':
+        return 'pause-overlay';
+      case 'hotkeys':
+        return 'hotkeys';
+      case 'gridOverlay':
+      case 'player-controls':
+        return 'player-controls';
+      case 'storage':
+      case 'profile-storage':
+        return 'profile-storage';
+      case 'api':
+      case 'connected-services':
+        return 'connected-services';
+      case 'loader':
+      case 'loading-animation':
+        return 'loading-animation';
+      case 'companion':
+      case 'local-engine':
+        return 'local-engine';
+      case 'general':
+      default:
+        return 'general';
+    }
+  };
+
+  const [activeSection, setActiveSection] = useState<SettingsSectionId>(() => resolveSectionId(settingsTab));
+  const [searchQuery, setSearchQuery] = useState<string>('');
+  const [showSavedToast, setShowSavedToast] = useState<boolean>(false);
+  const [toastMessage, setToastMessage] = useState<string>('Saved');
+
+  // Sidecar / Local engine state
+  const [sidecarStatus, setSidecarStatus] = useState<string>('Offline');
+  const [checkingSidecar, setCheckingSidecar] = useState<boolean>(false);
+  const [copiedCli, setCopiedCli] = useState<boolean>(false);
+  const [showInstallGuideModal, setShowInstallGuideModal] = useState<boolean>(false);
+
+  // Trakt device code info
+  const [deviceCodeInfo, setDeviceCodeInfo] = useState<{ user_code: string; verification_url: string } | null>(null);
+
+  useEffect(() => {
+    if (settingsTab) {
+      setActiveSection(resolveSectionId(settingsTab));
+    }
+  }, [settingsTab]);
+
+  const handleSelectSection = (sectionId: SettingsSectionId) => {
+    setActiveSection(sectionId);
+    setSearchQuery('');
+    if (setSettingsTab) {
+      setSettingsTab(sectionId as any);
+    }
+  };
+
+  const triggerAutosaveToast = useCallback((msg = 'Saved') => {
+    setToastMessage(msg);
+    setShowSavedToast(true);
+  }, []);
+
+  const updateSetting = useCallback((field: string, val: any) => {
+    handleDefaultLangChange(field, val);
+    triggerAutosaveToast();
+  }, [handleDefaultLangChange, triggerAutosaveToast]);
+
+  // Subscribe to Sidecar health
+  useEffect(() => {
+    const unsub = sidecarService.subscribe((status) => {
+      setSidecarStatus(status.isAvailable ? 'Operational' : 'Offline');
+    });
+    sidecarService.checkHealth().then((ok) => {
+      setSidecarStatus(ok ? 'Operational' : 'Offline');
+    });
+    return () => unsub();
+  }, []);
+
+  const handleCheckSidecarStatus = async () => {
+    setCheckingSidecar(true);
+    const ok = await sidecarService.checkHealth();
+    setSidecarStatus(ok ? 'Operational' : 'Offline');
+    setCheckingSidecar(false);
+    triggerAutosaveToast(ok ? 'Local engine operational' : 'Local engine offline');
+  };
+
+  // Trakt Handlers
+  const handleConnectTrakt = async () => {
+    try {
+      await initiateTraktPkceAuth({
+        isLoginAction: false,
+        redirectUri: settings.traktRedirectUri,
+      });
+    } catch (e: any) {
+      console.error('[Trakt PKCE]', e);
+    }
+  };
+
+  const handleUseDeviceCode = async () => {
+    try {
+      const data = await generateTraktDeviceCode();
+      setDeviceCodeInfo({
+        user_code: data.user_code,
+        verification_url: data.verification_url || 'https://auth.trakt.tv/activate',
+      });
+      triggerAutosaveToast(`Code generated: ${data.user_code}`);
+
+      const intervalSec = Math.max(data.interval || 5, 5);
+      const expiryMs = (data.expires_in || 600) * 1000;
+      const startTime = Date.now();
+
+      const timer = setInterval(async () => {
+        if (Date.now() - startTime > expiryMs) {
+          clearInterval(timer);
+          setDeviceCodeInfo(null);
+          return;
+        }
+        try {
+          const pollRes = await pollTraktDeviceToken(data.device_code);
+          if (pollRes.token?.access_token) {
+            clearInterval(timer);
+            setDeviceCodeInfo(null);
+            const token = pollRes.token.access_token;
+            updateSetting('traktAccessToken', token);
+            if (pollRes.token.refresh_token) {
+              updateSetting('traktRefreshToken', pollRes.token.refresh_token);
+            }
+            const profile = await fetchTraktUserProfile(token);
+            if (profile?.username) {
+              updateSetting('traktUsername', profile.username);
+              if (profile.avatarUrl) updateSetting('traktAvatar', profile.avatarUrl);
+            }
+            triggerAutosaveToast('Connected to Trakt');
+          }
+        } catch (e) {
+          console.warn('[Trakt Poll]', e);
+        }
+      }, intervalSec * 1000);
+    } catch (err: any) {
+      console.error('[Trakt Device Code]', err);
+    }
+  };
+
+  const handleDisconnectTrakt = () => {
+    updateSetting('traktAccessToken', '');
+    updateSetting('traktRefreshToken', '');
+    updateSetting('traktUsername', '');
+    updateSetting('traktAvatar', '');
+    triggerAutosaveToast('Trakt disconnected');
+  };
+
+  // Reset all settings
+  const handleResetAll = () => {
+    const defaultSettings = {
+      ...settings,
+      theme: 'midnight-slate',
+      autoSkipIntroOutro: true,
+      autoSkipSexScenes: true,
+      hideUIOverlays: false,
+      hideVideoName: false,
+      showPlayButton: true,
+      showTimeDisplay: true,
+      showPlayBar: true,
+      showVolumeControl: true,
+      showFullscreen: true,
+      disableAnimations: false,
+      pauseOnFocusChange: false,
+      allowUiSkipping: true,
+      blockSeekingCompletely: false,
+      getOverlayDataFromTmdb: true,
+      overlayPosition: 'middle-left',
+      overlayShowBackground: true,
+      overlayShowRating: true,
+      overlayShowOverview: true,
+      saveHistory: true,
+      saveTrackPreferences: true,
+      saveVolume: true,
+      saveSettings: true,
+      ratingThreshold: 3,
+      storageMode: 'localstorage',
+      uiDimmer: 100,
+      textScale: 100,
+      reduceMotion: 'system',
+      defaultAudio: 'ENG',
+      defaultSub: 'ENG',
+      historyLimit: 10,
+      historySaveInterval: 5,
+      toastDuration: 4.0,
+      uiHideTimeout: 1.5,
+      subSettings: {
+        fontFamily: 'Inter',
+        customSize: 100,
+        customTextColor: '#ffffff',
+        customBgColor: 'transparent',
+      },
+      settingsOrder: DEFAULT_HUD_ORDER,
+      spinnerPreset: 'fire-circle',
+      customLoaderType: 'default',
+      customLoaderUrl: '',
+    };
+    setSettings(defaultSettings);
+    saveSettingsToStorage(defaultSettings);
+    document.documentElement.setAttribute('data-theme', 'midnight-slate');
+    triggerAutosaveToast('All settings reset to defaults');
+  };
+
+  const activeProfileName = settings.profileName || 'Local profile';
+  const isCloudProfile = settings.userId && settings.userId !== 'local' && !settings.userId.startsWith('local_');
+
+  // Search filter query
+  const isSearching = searchQuery.trim().length > 0;
+  const normalizedQuery = searchQuery.trim().toLowerCase();
+
+  const matchesSearch = (...texts: (string | undefined)[]) => {
+    if (!isSearching) return true;
+    return texts.some((t) => t && t.toLowerCase().includes(normalizedQuery));
+  };
+
+  const scrollToAnchor = (id: string) => {
+    const el = document.getElementById(id);
+    if (el) {
+      el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+  };
 
   return (
-    <div className="workspace-panel-wrapper">
-      <div className="glass-panel workspace-panel settings-panel" style={{ display: 'flex', flexDirection: 'column', height: '100%', position: 'relative' }}>
-        {/* Inner Tab Navigation */}
-        <div className="settings-tab-nav">
-          <button 
-            className={`settings-nav-btn ${settingsTab === 'general' ? 'active' : ''}`}
-            onClick={() => setSettingsTab('general')}
-          >
-            General
-          </button>
-          <div style={{ display: 'inline-flex', alignItems: 'center' }}>
-            <CustomSelect
-              value={
-                settingsTab === 'subtitle' ? 'subtitle' : 
-                settingsTab === 'hotkeys' ? 'hotkeys' : 
-                uiOverlaySection
-              }
-              onChange={(val) => {
-                if (val === 'hotkeys') {
-                  setSettingsTab('hotkeys');
-                } else if (val === 'subtitle') {
-                  setSettingsTab('subtitle');
-                } else {
-                  setSettingsTab('gridOverlay');
-                  setUiOverlaySection(val as any);
-                }
-              }}
-              options={[
-                { value: 'subtitle', label: 'Subtitles & Bookmarks' },
-                { value: 'hotkeys', label: 'Hotkeys' },
-                { value: 'gridOverlay', label: 'Grid Overlay' },
-                { value: 'pauseOverlay', label: 'Pause Overlay' }
-              ]}
-              hideSearch
-              width="max-content"
-              className={`settings-nav-select ${
-                settingsTab === 'gridOverlay' || 
-                settingsTab === 'hotkeys' || 
-                settingsTab === 'subtitle' ? 'active' : ''
-              }`}
-            />
-          </div>
-          <button 
-            className={`settings-nav-btn ${settingsTab === 'storage' ? 'active' : ''}`}
-            onClick={() => setSettingsTab('storage')}
-          >
-            Storage & Saves
-          </button>
-          <button 
-            className={`settings-nav-btn ${settingsTab === 'api' ? 'active' : ''}`}
-            onClick={() => setSettingsTab('api')}
-          >
-            API Settings
-          </button>
-          <button 
-            className={`settings-nav-btn ${settingsTab === 'loader' ? 'active' : ''}`}
-            onClick={() => setSettingsTab('loader')}
-          >
-            Spinner
-          </button>
-          <button 
-            className={`settings-nav-btn ${settingsTab === 'radialMenu' ? 'active' : ''}`}
-            onClick={() => setSettingsTab('radialMenu')}
-          >
-            Radial Menu
-          </button>
-          <button 
-            className={`settings-nav-btn ${settingsTab === 'companion' ? 'active' : ''}`}
-            onClick={() => setSettingsTab('companion')}
-            style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}
-          >
-            <Zap size={14} color="#10b981" />
-            Local Engine
-          </button>
+    <div className="settings-workspace" role="region" aria-label="Settings Area">
+      <div className="settings-container">
+        {/* Top Header Bar */}
+        <header className="settings-header-bar">
+        <div className="settings-title-group">
+          <h1 className="settings-page-title">Settings</h1>
         </div>
 
-        <div className="settings-page-content-wrapper">
-          
-          {/* General Section */}
-          {settingsTab === 'general' && (
-            <div className="settings-tab-content animate-fade-in">
-              <div className="settings-page-grid">
-                <div className="settings-grid-col">
+        <SettingsSearch
+          query={searchQuery}
+          onChange={setSearchQuery}
+          placeholder="Search settings..."
+        />
+      </header>
 
-                  <div className="settings-section">
-                    <h3>Appearance & Themes</h3>
-                    <p className="settings-section-desc">Select a calibrated, accessible theme designed for low-fatigue viewing.</p>
-                    
-                    {/* Theme Cards Radio Group Gallery */}
-                    <div 
-                      role="radiogroup" 
-                      aria-label="Application theme"
-                      style={{ 
-                        display: 'grid', 
-                        gridTemplateColumns: 'repeat(auto-fill, minmax(135px, 1fr))', 
-                        gap: '0.75rem',
-                        marginTop: '0.75rem' 
-                      }}
-                    >
+      {/* Main Two-Column Shell */}
+      <div className="settings-body-shell">
+        {/* Left Sticky Sidebar Nav */}
+        <SettingsNav
+          activeSection={activeSection}
+          onSelectSection={handleSelectSection}
+        />
+
+        {/* Scrollable Content Column */}
+        <main className="settings-content-area" id="settings-scroll-container">
+          <div className="settings-column settings-panel-entrance">
+
+            {/* ─── 1. GENERAL SECTION ─── */}
+            {(isSearching || activeSection === 'general') && (
+              <>
+                {/* General Header with Quick Anchor Navigation Chips */}
+                {!isSearching && (
+                  <div className="settings-section-header">
+                    <h2 className="settings-section-main-title">General</h2>
+                    <p className="settings-section-main-desc">Look, language and everyday player behaviour.</p>
+
+                    <div className="settings-anchor-chips">
                       {[
-                        { id: 'auto', name: 'Auto (System)', desc: 'Follows OS mode', bg: '#0F1217', surface: '#1B212A', text: '#E4E8EE', accent: '#8CA9EE' },
-                        { id: 'midnight-slate', name: 'Midnight Slate', desc: 'Cool, quiet dark', bg: '#0F1217', surface: '#1B212A', text: '#E4E8EE', accent: '#8CA9EE' },
-                        { id: 'ember-night', name: 'Ember Night', desc: 'Warm, low-blue', bg: '#14110F', surface: '#231E1A', text: '#EBE3D8', accent: '#E5A86D' },
-                        { id: 'forest-mist', name: 'Forest Mist', desc: 'Muted green-grey', bg: '#0E1412', surface: '#1A2420', text: '#E0E9E4', accent: '#7CC3A1' },
-                        { id: 'valor-crimson', name: 'Valor Crimson', desc: 'Softened red brand', bg: '#131114', surface: '#221E24', text: '#E9E4E9', accent: '#E57C86' },
-                        { id: 'soft-paper', name: 'Soft Paper', desc: 'Warm light theme', bg: '#ECE7DD', surface: '#FAF7F0', text: '#25221D', accent: '#3A5CB0' },
-                        { id: 'black-ops', name: 'Black-Ops', desc: 'Calibrated OLED', bg: '#050506', surface: '#14161C', text: '#E6E6E6', accent: '#E57C86' },
-                      ].map((t) => {
-                        const isSelected = (settings.theme || 'midnight-slate') === t.id;
-                        return (
-                          <div
-                            key={t.id}
-                            role="radio"
-                            aria-checked={isSelected}
-                            tabIndex={0}
-                            onClick={() => {
-                              handleDefaultLangChange('theme' as any, t.id);
-                              let resolved = t.id;
-                              if (t.id === 'auto') {
-                                const dark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-                                resolved = dark ? 'midnight-slate' : 'soft-paper';
-                              }
-                              document.documentElement.setAttribute('data-theme', resolved);
-                            }}
-                            onKeyDown={(e) => {
-                              if (e.key === ' ' || e.key === 'Enter') {
-                                e.preventDefault();
-                                handleDefaultLangChange('theme' as any, t.id);
+                        { id: 'card-appearance', label: 'Appearance' },
+                        { id: 'card-comfort', label: 'Comfort' },
+                        { id: 'card-language', label: 'Language' },
+                        { id: 'card-history', label: 'History' },
+                        { id: 'card-overlays', label: 'Player display' },
+                        { id: 'card-behaviour', label: 'Behaviour' },
+                        { id: 'card-advanced', label: 'Advanced' },
+                      ].map((chip) => (
+                        <button
+                          key={chip.id}
+                          type="button"
+                          className="settings-anchor-chip"
+                          onClick={() => scrollToAnchor(chip.id)}
+                        >
+                          {chip.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* 1.1 Appearance Card with Themes Gallery */}
+                {matchesSearch('appearance', 'theme', 'color', 'midnight', 'ember', 'paper', 'black-ops') && (
+                  <div id="card-appearance">
+                    <SettingsCard
+                      title="Appearance"
+                      description="Pick a color theme. It applies right away."
+                    >
+                      <div
+                        role="radiogroup"
+                        aria-label="Color themes"
+                        className="settings-theme-grid"
+                      >
+                        {THEME_OPTIONS.map((t) => {
+                          const currentTheme = settings.theme || 'midnight-slate';
+                          const isSelected = currentTheme === t.id;
+                          return (
+                            <div
+                              key={t.id}
+                              role="radio"
+                              tabIndex={0}
+                              aria-checked={isSelected}
+                              aria-label={t.name}
+                              onClick={() => {
+                                updateSetting('theme', t.id);
                                 let resolved = t.id;
                                 if (t.id === 'auto') {
                                   const dark = window.matchMedia('(prefers-color-scheme: dark)').matches;
                                   resolved = dark ? 'midnight-slate' : 'soft-paper';
                                 }
                                 document.documentElement.setAttribute('data-theme', resolved);
-                              }
-                            }}
-                            style={{
-                              background: 'var(--surface-1)',
-                              border: isSelected ? '2px solid var(--accent)' : '1px solid var(--border)',
-                              borderRadius: 'var(--radius-sm)',
-                              padding: '0.65rem',
-                              cursor: 'pointer',
-                              display: 'flex',
-                              flexDirection: 'column',
-                              gap: '0.5rem',
-                              position: 'relative',
-                              outline: 'none',
-                              transition: 'border-color 0.15s ease'
-                            }}
-                          >
-                            {/* Live mini preview swatch */}
-                            <div style={{
-                              height: '42px',
-                              borderRadius: '4px',
-                              background: t.bg,
-                              border: '1px solid rgba(128,128,128,0.2)',
-                              padding: '5px',
-                              display: 'flex',
-                              flexDirection: 'column',
-                              justifyContent: 'space-between',
-                              boxSizing: 'border-box'
-                            }}>
-                              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                                <div style={{ height: '5px', width: '30px', background: t.surface, borderRadius: '2px' }} />
-                                <div style={{ width: '6px', height: '6px', borderRadius: '50%', background: t.accent }} />
-                              </div>
-                              <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
-                                <div style={{ height: '3px', width: '50px', background: t.text, borderRadius: '2px', opacity: 0.9 }} />
-                                <div style={{ height: '3px', width: '35px', background: t.text, borderRadius: '2px', opacity: 0.5 }} />
-                              </div>
-                            </div>
-
-                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                              <span style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-1)' }}>{t.name}</span>
-                              {isSelected && (
-                                <div style={{ width: '14px', height: '14px', borderRadius: '50%', background: 'var(--accent)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                                  <Check size={10} color="var(--on-accent)" />
-                                </div>
-                              )}
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </div>
-
-                  {/* Comfort Controls */}
-                  <div className="settings-section">
-                    <h3>Comfort Controls</h3>
-                    <p className="settings-section-desc">Fine-tune viewing ergonomics for prolonged sessions in dark environments.</p>
-                    
-                    <div className="pref-row">
-                      <span className="pref-label">UI Dimmer (Chrome Only)</span>
-                      <div style={{ display: 'flex', gap: '6px' }}>
-                        {[85, 90, 95, 100].map((dim) => {
-                          const active = (settings.uiDimmer || 100) === dim;
-                          return (
-                            <button
-                              key={dim}
-                              type="button"
-                              onClick={() => {
-                                handleDefaultLangChange('uiDimmer' as any, dim);
-                                document.documentElement.style.setProperty('--ui-dimmer', (dim / 100).toString());
+                                triggerAutosaveToast(`Theme: ${t.name}`);
                               }}
-                              style={{
-                                padding: '4px 8px',
-                                fontSize: '0.75rem',
-                                fontWeight: 600,
-                                borderRadius: 'var(--radius-sm)',
-                                background: active ? 'var(--surface-3)' : 'transparent',
-                                color: active ? 'var(--text-1)' : 'var(--text-2)',
-                                border: '1px solid ' + (active ? 'var(--control-border)' : 'var(--border)'),
-                                cursor: 'pointer'
-                              }}
-                            >
-                              {dim}%
-                            </button>
-                          );
-                        })}
-                      </div>
-                    </div>
-
-                    <div className="pref-row">
-                      <span className="pref-label">Text Scale</span>
-                      <div style={{ display: 'flex', gap: '6px' }}>
-                        {[90, 100, 110, 120].map((scale) => {
-                          const active = (settings.textSize || 100) === scale;
-                          return (
-                            <button
-                              key={scale}
-                              type="button"
-                              onClick={() => {
-                                handleDefaultLangChange('textSize' as any, scale);
-                                document.documentElement.style.setProperty('--text-scale', (scale / 100).toString());
-                              }}
-                              style={{
-                                padding: '4px 8px',
-                                fontSize: '0.75rem',
-                                fontWeight: 600,
-                                borderRadius: 'var(--radius-sm)',
-                                background: active ? 'var(--surface-3)' : 'transparent',
-                                color: active ? 'var(--text-1)' : 'var(--text-2)',
-                                border: '1px solid ' + (active ? 'var(--control-border)' : 'var(--border)'),
-                                cursor: 'pointer'
-                              }}
-                            >
-                              {scale}%
-                            </button>
-                          );
-                        })}
-                      </div>
-                    </div>
-
-                    <div className="pref-row">
-                      <span className="pref-label">Reduce Motion</span>
-                      <div style={{ display: 'flex', gap: '6px' }}>
-                        {[
-                          { val: 'system', label: 'System' },
-                          { val: 'on', label: 'On' },
-                          { val: 'off', label: 'Off' }
-                        ].map((m) => {
-                          const active = (settings.reduceMotion || 'system') === m.val;
-                          return (
-                            <button
-                              key={m.val}
-                              type="button"
-                              onClick={() => {
-                                handleDefaultLangChange('reduceMotion' as any, m.val);
-                                if (m.val === 'on') {
-                                  document.documentElement.setAttribute('data-reduce-motion', 'true');
-                                } else {
-                                  document.documentElement.removeAttribute('data-reduce-motion');
+                              onKeyDown={(e) => {
+                                if (e.key === ' ' || e.key === 'Enter') {
+                                  e.preventDefault();
+                                  updateSetting('theme', t.id);
+                                  let resolved = t.id;
+                                  if (t.id === 'auto') {
+                                    const dark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+                                    resolved = dark ? 'midnight-slate' : 'soft-paper';
+                                  }
+                                  document.documentElement.setAttribute('data-theme', resolved);
+                                  triggerAutosaveToast(`Theme: ${t.name}`);
                                 }
                               }}
-                              style={{
-                                padding: '4px 8px',
-                                fontSize: '0.75rem',
-                                fontWeight: 600,
-                                borderRadius: 'var(--radius-sm)',
-                                background: active ? 'var(--surface-3)' : 'transparent',
-                                color: active ? 'var(--text-1)' : 'var(--text-2)',
-                                border: '1px solid ' + (active ? 'var(--control-border)' : 'var(--border)'),
-                                cursor: 'pointer'
-                              }}
+                              className={`settings-theme-card ${isSelected ? 'selected' : ''}`}
                             >
-                              {m.label}
-                            </button>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="settings-section">
-                    <h3>Preferred Languages</h3>
-                    <p className="settings-section-desc">Default selections when loading a new video file.</p>
-                    <div className="pref-row">
-                      <span className="pref-label">Default Audio</span>
-                      <CustomSelect 
-                        value={settings.defaultAudio} 
-                        onChange={(val) => handleDefaultLangChange('defaultAudio', val)}
-                        options={audioOptions}
-                      />
-                    </div>
-                    <div className="pref-row">
-                      <span className="pref-label">Default Subtitles</span>
-                      <CustomSelect 
-                        value={settings.defaultSub} 
-                        onChange={(val) => handleDefaultLangChange('defaultSub', val)}
-                        options={subOptions}
-                      />
-                    </div>
-                  </div>
-
-                  <div className="settings-section">
-                    <h3>Calendar Preferences</h3>
-                    <p className="settings-section-desc">Choose between the interactive month grid or the schedule list.</p>
-                    <div className="pref-row">
-                      <span className="pref-label">Calendar Layout Style</span>
-                      <CustomSelect 
-                        value={settings.calendarStyle} 
-                        onChange={(val) => handleDefaultLangChange('calendarStyle', val)}
-                        options={calendarStyleOptions}
-                      />
-                    </div>
-                  </div>
-
-                  <div className="settings-section">
-                    <h3>History & Toast Preferences</h3>
-                    <p className="settings-section-desc">Configure library limits and playback auto-save frequency.</p>
-                    <div className="pref-row">
-                      <span className="pref-label">History Limit</span>
-                      <CustomSelect 
-                        value={settings.historyLimit} 
-                        onChange={(val) => handleDefaultLangChange('historyLimit', val)}
-                        options={limitOptions}
-                      />
-                    </div>
-                    <div className="pref-row">
-                      <span className="pref-label">History Position Auto-Save Interval</span>
-                      <CustomSelect 
-                        value={settings.historySaveInterval || 5} 
-                        onChange={(val) => handleDefaultLangChange('historySaveInterval', val)}
-                        options={intervalOptions}
-                      />
-                    </div>
-                    <div className="pref-row">
-                      <span className="pref-label" style={{ opacity: 0.8 }}>Watch History Backup</span>
-                      <button 
-                        className="btn-primary" 
-                        style={{ 
-                          padding: '8px 16px', 
-                          fontSize: '0.85rem', 
-                          background: 'var(--accent)', 
-                          color: isMonochrome ? '#000000' : '#fff', 
-                          border: 'none', 
-                          borderRadius: '4px', 
-                          cursor: 'pointer',
-                          display: 'flex',
-                          alignItems: 'center',
-                          gap: '6px',
-                          fontWeight: 500
-                        }}
-                        onClick={async () => {
-                          try {
-                            const res = await fetch(`http://127.0.0.1:50001/api/history`);
-                            if (!res.ok) throw new Error('Failed to fetch history backup');
-                            const fileHistory = await res.json();
-                            if (Array.isArray(fileHistory)) {
-                              const restored = fileHistory.map((v: any) => ({
-                                ...v,
-                                audioTracks: v.audioTracks || [],
-                                subtitleTracks: v.subtitleTracks || []
-                              }));
-                              setVideos(restored);
-                              addToast("History restored successfully from server backup", "success");
-                            } else {
-                              addToast("No valid history backup found on server", "warning");
-                            }
-                          } catch (e: any) {
-                            addToast(`Failed to restore history: ${e.message}`, "error");
-                          }
-                        }}
-                      >
-                        <RotateCcw size={14} />
-                        <span>Restore Watch History from Server</span>
-                      </button>
-                    </div>
-                    <div className="pref-row">
-                      <span className="pref-label">Toast Duration (Seconds)</span>
-                      <CustomSelect 
-                        value={settings.toastDuration} 
-                        onChange={(val) => handleDefaultLangChange('toastDuration', val)}
-                        options={toastOptions}
-                      />
-                    </div>
-                    <div className="pref-row">
-                      <span className="pref-label">UI Overlays Auto-Hide Timeout</span>
-                      <CustomSelect 
-                        value={settings.uiHideTimeout || 1.5} 
-                        onChange={(val) => handleDefaultLangChange('uiHideTimeout', val)}
-                        options={uiHideTimeoutOptions}
-                      />
-                    </div>
-                  </div>
-                </div>
-
-                <div className="settings-grid-col">
-                  {/* Group 1: Overlays */}
-                  <div className="settings-section">
-                    <h3>Overlays</h3>
-                    <p className="settings-section-desc">Control metadata and overlay HUDs layered on top of video playback.</p>
-                    <div className="pref-row">
-                      <span className="pref-label">Show Video Title</span>
-                      <ToggleSwitch 
-                        checked={!settings.hideVideoName} 
-                        onChange={(checked) => handleDefaultLangChange('hideVideoName', !checked)}
-                      />
-                    </div>
-                    <div className="pref-row">
-                      <span className="pref-label">Show Play Button Overlay</span>
-                      <ToggleSwitch 
-                        checked={settings.showPlayButton} 
-                        onChange={(checked) => handleDefaultLangChange('showPlayButton', checked)}
-                      />
-                    </div>
-                    <div className="pref-row">
-                      <span className="pref-label">Show Time Display</span>
-                      <ToggleSwitch 
-                        checked={settings.showTimeDisplay} 
-                        onChange={(checked) => handleDefaultLangChange('showTimeDisplay', checked)}
-                      />
-                    </div>
-                  </div>
-
-                  {/* Group 2: Controls */}
-                  <div className="settings-section">
-                    <h3>Controls</h3>
-                    <p className="settings-section-desc">Interactive transport elements and on-screen playback utilities.</p>
-                    <div className="pref-row">
-                      <span className="pref-label">Show Timeline Scrub Bar</span>
-                      <ToggleSwitch 
-                        checked={settings.showPlayBar} 
-                        onChange={(checked) => handleDefaultLangChange('showPlayBar', checked)}
-                      />
-                    </div>
-                    <div className="pref-row">
-                      <span className="pref-label">Show Volume Control</span>
-                      <ToggleSwitch 
-                        checked={settings.showVolumeControl} 
-                        onChange={(checked) => handleDefaultLangChange('showVolumeControl', checked)}
-                      />
-                    </div>
-                    <div className="pref-row">
-                      <span className="pref-label">Show Fullscreen Button</span>
-                      <ToggleSwitch 
-                        checked={settings.showFullscreen} 
-                        onChange={(checked) => handleDefaultLangChange('showFullscreen', checked)}
-                      />
-                    </div>
-                    <div className="pref-row" style={{ opacity: settings.blockSeekingCompletely ? 0.5 : 1 }}>
-                      <span className="pref-label">Show Skip Buttons in Player UI</span>
-                      <ToggleSwitch 
-                        checked={settings.allowUiSkipping}
-                        disabled={settings.blockSeekingCompletely}
-                        onChange={(checked) => handleDefaultLangChange('allowUiSkipping', checked)}
-                      />
-                    </div>
-                  </div>
-
-                  {/* Group 3: Behaviour */}
-                  <div className="settings-section">
-                    <h3>Behaviour</h3>
-                    <p className="settings-section-desc">Playback automation and user attention responses.</p>
-                    <div className="pref-row">
-                      <span className="pref-label">Enable Animations</span>
-                      <ToggleSwitch 
-                        checked={!settings.disableAnimations} 
-                        onChange={(checked) => handleDefaultLangChange('disableAnimations', !checked)}
-                      />
-                    </div>
-                    <div className="pref-row">
-                      <span className="pref-label">Pause on Focus Loss</span>
-                      <ToggleSwitch 
-                        checked={settings.pauseOnFocusChange} 
-                        onChange={(checked) => handleDefaultLangChange('pauseOnFocusChange', checked)}
-                      />
-                    </div>
-                    <div className="pref-row">
-                      <span className="pref-label">Auto-Skip Intros & Outros</span>
-                      <ToggleSwitch 
-                        checked={settings.autoSkipIntroOutro} 
-                        onChange={(checked) => handleDefaultLangChange('autoSkipIntroOutro', checked)}
-                      />
-                    </div>
-                  </div>
-
-                  {/* Group 4: Advanced */}
-                  <div className="settings-section">
-                    <h3>Advanced</h3>
-                    <p className="settings-section-desc">Specialized kiosk restrictions and global overlay suppressions.</p>
-                    <div className="pref-row">
-                      <span className="pref-label">Block Seeking / Skipping Completely</span>
-                      <ToggleSwitch 
-                        checked={settings.blockSeekingCompletely}
-                        onChange={(checked) => {
-                          setSettings((prev: any) => {
-                            const updated = {
-                              ...prev,
-                              blockSeekingCompletely: checked,
-                              allowUiSkipping: checked ? false : prev.allowUiSkipping
-                            };
-                            saveSettingsToStorage(updated);
-                            return updated;
-                          });
-                        }}
-                      />
-                    </div>
-                    <div className="pref-row">
-                      <span className="pref-label">Disable All Overlays (Keyboard Only Mode)</span>
-                      <ToggleSwitch 
-                        checked={settings.hideUIOverlays} 
-                        onChange={(checked) => handleDefaultLangChange('hideUIOverlays', checked)}
-                      />
-                    </div>
-                    <div className="pref-row">
-                      <span className="pref-label">Lock Controls on Startup</span>
-                      <ToggleSwitch 
-                        checked={settings.lockModeActive} 
-                        onChange={(checked) => handleDefaultLangChange('lockModeActive', checked)}
-                      />
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* Hotkeys Section */}
-          {settingsTab === 'hotkeys' && (
-            <div className="settings-tab-content animate-fade-in">
-              <div className="settings-page-grid">
-                
-                {/* Left Column: Key Customization */}
-                <div className="settings-grid-col">
-                  <div className="settings-section" style={{ margin: 0 }}>
-                    <h3>Keyboard Customization</h3>
-                    <p className="settings-section-desc">Click on a key box and press any key to rebind it. Hover over a setting to highlight it in the player map.</p>
-                    
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.45rem' }}>
-                      {Object.entries(settings.keybinds).map(([key, value]) => {
-                        const labelMap: Record<string, string> = {
-                          playPause: 'Play / Pause',
-                          rewind: 'Rewind 10s',
-                          forward: 'Forward 10s',
-                          fullscreen: 'Toggle Fullscreen',
-                          exit: 'Exit Player / Back',
-                          nextSubtitle: 'Cycle Subtitles',
-                          nextAudio: 'Cycle Audio',
-                          lockControls: 'Toggle Lock Controls',
-                          openSettings: 'Toggle UI settings modal',
-                          addBookmark: 'Create Bookmark',
-                          toggleMute: 'Toggle Mute / Unmute',
-                          audioBoost: 'Cycle Audio Boost',
-                          frameStep: 'Step Frame Forward',
-                          screenshot: 'Take Video Screenshot'
-                        };
-                        return (
-                          <div 
-                            className="keybind-row-hoverable" 
-                            key={key}
-                            onMouseEnter={() => setHoveredHotkey(key)}
-                            onMouseLeave={() => setHoveredHotkey(null)}
-                            style={{
-                              display: 'flex',
-                              alignItems: 'center',
-                              justifyContent: 'space-between',
-                              padding: '0.5rem 0.85rem',
-                              margin: 0,
-                              minHeight: '42px',
-                              boxSizing: 'border-box',
-                              borderRadius: '8px',
-                              background: hoveredHotkey === key ? 'var(--accent-soft)' : 'var(--surface)',
-                              border: hoveredHotkey === key ? '1px solid var(--accent-color)' : '1px solid var(--border-color)',
-                              boxShadow: 'var(--shadow-sm)',
-                              transition: 'all 0.15s ease'
-                            }}
-                          >
-                            <span className="keybind-label" style={{ fontSize: '0.85rem', color: hoveredHotkey === key ? 'var(--accent-color)' : 'var(--text-primary)', fontWeight: 600 }}>
-                              {labelMap[key] || key}
-                            </span>
-                            <button 
-                              className={`keybind-capture-btn ${listeningKeyFor === key ? 'listening' : ''}`}
-                              onClick={() => setListeningKeyFor(key as any)}
-                              style={{
-                                background: listeningKeyFor === key ? 'var(--accent-color)' : 'var(--card-bg)',
-                                border: '1px solid var(--border-color)',
-                                borderRadius: '6px',
-                                color: listeningKeyFor === key ? '#fff' : 'var(--text-primary)',
-                                padding: '5px 12px',
-                                fontSize: '0.78rem',
-                                minWidth: '70px',
-                                textAlign: 'center',
-                                cursor: 'pointer',
-                                outline: 'none',
-                                fontWeight: 600
-                              }}
-                            >
-                              {listeningKeyFor === key ? 'Press key...' : (value as string) === ' ' ? 'Space' : (value as string)}
-                            </button>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </div>
-                </div>
-
-                {/* Right Column: Player Interface HUD Diagram */}
-                <div className="settings-grid-col" style={{ position: 'sticky', top: 0, height: 'fit-content' }}>
-                  <div className="settings-section" style={{ width: '100%', margin: 0 }}>
-                    <h3>Player Shortcut Map</h3>
-                    <p className="settings-section-desc">Interactive representation of active player commands. Rebind keys on the left to see changes here.</p>
-                    
-                    {/* Simulated Player Screen with Pointers */}
-                    <div style={{
-                      position: 'relative',
-                      width: '100%',
-                      height: '350px',
-                      background: 'radial-gradient(circle at center, #1b2030 0%, #0d0f17 100%)',
-                      borderRadius: '12px',
-                      border: '1px solid rgba(255,255,255,0.08)',
-                      overflow: 'hidden',
-                      display: 'flex',
-                      flexDirection: 'column',
-                      justifyContent: 'space-between',
-                      padding: '1rem',
-                      boxSizing: 'border-box'
-                    }}>
-                      {/* Top Overlay Area */}
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%' }}>
-                        <div style={{
-                          display: 'flex',
-                          alignItems: 'center',
-                          gap: '0.4rem',
-                          background: hoveredHotkey === 'exit' ? 'rgba(229, 9, 20, 0.25)' : 'rgba(255,255,255,0.03)',
-                          border: hoveredHotkey === 'exit' ? '1px solid var(--accent)' : '1px solid rgba(255,255,255,0.08)',
-                          borderRadius: '6px',
-                          padding: '3px 8px',
-                          boxShadow: hoveredHotkey === 'exit' ? '0 0 10px rgba(229,9,20,0.4)' : 'none',
-                          transition: 'all 0.2s ease'
-                        }}>
-                          <span style={{ fontSize: '0.65rem', color: '#888', fontWeight: 600 }}>Exit</span>
-                          <kbd style={{ background: '#333', color: '#fff', padding: '1px 5px', borderRadius: '3px', fontSize: '0.65rem', fontWeight: 700 }}>
-                            {settings.keybinds.exit === 'Escape' ? 'Esc' : settings.keybinds.exit}
-                          </kbd>
-                        </div>
-
-                        <div style={{
-                          display: 'flex',
-                          alignItems: 'center',
-                          gap: '0.4rem',
-                          background: hoveredHotkey === 'lockControls' ? 'rgba(229, 9, 20, 0.25)' : 'rgba(255,255,255,0.03)',
-                          border: hoveredHotkey === 'lockControls' ? '1px solid var(--accent)' : '1px solid rgba(255,255,255,0.08)',
-                          borderRadius: '6px',
-                          padding: '3px 8px',
-                          boxShadow: hoveredHotkey === 'lockControls' ? '0 0 10px rgba(229,9,20,0.4)' : 'none',
-                          transition: 'all 0.2s ease'
-                        }}>
-                          <span style={{ fontSize: '0.65rem', color: '#888', fontWeight: 600 }}>Lock Mode</span>
-                          <kbd style={{ background: '#333', color: '#fff', padding: '1px 5px', borderRadius: '3px', fontSize: '0.65rem', fontWeight: 700 }}>
-                            {settings.keybinds.lockControls === ' ' ? 'Space' : settings.keybinds.lockControls.toUpperCase()}
-                          </kbd>
-                        </div>
-                      </div>
-
-                      {/* Center Play & Seek Controls Diagram */}
-                      <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '1.25rem', margin: 'auto 0' }}>
-                        <div style={{
-                          display: 'flex',
-                          flexDirection: 'column',
-                          alignItems: 'center',
-                          gap: '0.2rem',
-                          background: hoveredHotkey === 'rewind' ? 'rgba(229, 9, 20, 0.25)' : 'rgba(255,255,255,0.03)',
-                          border: hoveredHotkey === 'rewind' ? '1px solid var(--accent)' : '1px solid rgba(255,255,255,0.06)',
-                          padding: '6px 12px',
-                          borderRadius: '8px',
-                          boxShadow: hoveredHotkey === 'rewind' ? '0 0 10px rgba(229,9,20,0.4)' : 'none',
-                          transition: 'all 0.2s ease'
-                        }}>
-                          <span style={{ fontSize: '0.6rem', color: '#888', fontWeight: 600 }}>Rewind 10s</span>
-                          <kbd style={{ background: '#222', color: '#fff', padding: '2px 6px', borderRadius: '4px', fontSize: '0.7rem', fontWeight: 700 }}>
-                            {settings.keybinds.rewind === 'ArrowLeft' ? '←' : settings.keybinds.rewind}
-                          </kbd>
-                        </div>
-
-                        <div style={{
-                          display: 'flex',
-                          flexDirection: 'column',
-                          alignItems: 'center',
-                          gap: '0.2rem',
-                          background: hoveredHotkey === 'playPause' ? 'rgba(229, 9, 20, 0.25)' : 'rgba(255,255,255,0.03)',
-                          border: hoveredHotkey === 'playPause' ? '1px solid var(--accent)' : '1px solid rgba(255,255,255,0.06)',
-                          padding: '8px 16px',
-                          borderRadius: '8px',
-                          boxShadow: hoveredHotkey === 'playPause' ? '0 0 12px rgba(229,9,20,0.4)' : 'none',
-                          transition: 'all 0.2s ease'
-                        }}>
-                          <span style={{ fontSize: '0.65rem', color: '#aaa', fontWeight: 600 }}>Play / Pause</span>
-                          <kbd style={{ background: '#222', color: '#fff', padding: '3px 8px', borderRadius: '4px', fontSize: '0.75rem', fontWeight: 700 }}>
-                            {settings.keybinds.playPause === ' ' ? 'Space' : settings.keybinds.playPause}
-                          </kbd>
-                        </div>
-
-                        <div style={{
-                          display: 'flex',
-                          flexDirection: 'column',
-                          alignItems: 'center',
-                          gap: '0.2rem',
-                          background: hoveredHotkey === 'forward' ? 'rgba(229, 9, 20, 0.25)' : 'rgba(255,255,255,0.03)',
-                          border: hoveredHotkey === 'forward' ? '1px solid var(--accent)' : '1px solid rgba(255,255,255,0.06)',
-                          padding: '6px 12px',
-                          borderRadius: '8px',
-                          boxShadow: hoveredHotkey === 'forward' ? '0 0 10px rgba(229,9,20,0.4)' : 'none',
-                          transition: 'all 0.2s ease'
-                        }}>
-                          <span style={{ fontSize: '0.6rem', color: '#888', fontWeight: 600 }}>Forward 10s</span>
-                          <kbd style={{ background: '#222', color: '#fff', padding: '2px 6px', borderRadius: '4px', fontSize: '0.7rem', fontWeight: 700 }}>
-                            {settings.keybinds.forward === 'ArrowRight' ? '→' : settings.keybinds.forward}
-                          </kbd>
-                        </div>
-                      </div>
-
-                      {/* Floating Sidebar overlay representation for UI settings */}
-                      <div style={{
-                        position: 'absolute',
-                        right: '0.5rem',
-                        top: '25%',
-                        bottom: '25%',
-                        width: '50px',
-                        background: hoveredHotkey === 'openSettings' ? 'rgba(229, 9, 20, 0.25)' : 'rgba(255,255,255,0.03)',
-                        border: hoveredHotkey === 'openSettings' ? '1px solid var(--accent)' : '1px solid rgba(255,255,255,0.08)',
-                        borderRadius: '6px 0 0 6px',
-                        display: 'flex',
-                        flexDirection: 'column',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        gap: '0.25rem',
-                        boxShadow: hoveredHotkey === 'openSettings' ? '-5px 0 10px rgba(229,9,20,0.3)' : 'none',
-                        transition: 'all 0.2s ease'
-                      }}>
-                        <span style={{ fontSize: '0.55rem', color: '#666', fontWeight: 600, textAlign: 'center', writingMode: 'vertical-lr', textTransform: 'uppercase' }}>Settings</span>
-                        <kbd style={{ background: '#333', color: '#fff', padding: '1px 4px', borderRadius: '3px', fontSize: '0.55rem', fontWeight: 700 }}>
-                          {settings.keybinds.openSettings === 'Delete' ? 'Del' : settings.keybinds.openSettings.toUpperCase()}
-                        </kbd>
-                      </div>
-
-                      {/* Bottom Seekbar Line */}
-                      <div style={{
-                        width: '100%',
-                        display: 'flex',
-                        flexDirection: 'column',
-                        gap: '0.4rem',
-                        marginTop: 'auto'
-                      }}>
-                        <div style={{
-                          display: 'flex',
-                          justifyContent: 'space-between',
-                          alignItems: 'center',
-                          padding: '0 0.5rem'
-                        }}>
-                          <div style={{ display: 'flex', gap: '0.4rem' }}>
-                            <div style={{
-                              display: 'flex',
-                              alignItems: 'center',
-                              gap: '0.25rem',
-                              background: hoveredHotkey === 'toggleMute' ? 'rgba(229, 9, 20, 0.25)' : 'rgba(255,255,255,0.02)',
-                              border: hoveredHotkey === 'toggleMute' ? '1px solid var(--accent)' : '1px solid rgba(255,255,255,0.06)',
-                              borderRadius: '4px',
-                              padding: '2px 6px',
-                              transition: 'all 0.15s ease'
-                            }}>
-                              <span style={{ fontSize: '0.55rem', color: '#666' }}>Mute</span>
-                              <kbd style={{ background: '#333', color: '#fff', fontSize: '0.55rem', padding: '1px 3px', borderRadius: '2px' }}>{settings.keybinds.toggleMute.toUpperCase()}</kbd>
-                            </div>
-                            
-                            <div style={{
-                              display: 'flex',
-                              alignItems: 'center',
-                              gap: '0.25rem',
-                              background: hoveredHotkey === 'audioBoost' ? 'rgba(229, 9, 20, 0.25)' : 'rgba(255,255,255,0.02)',
-                              border: hoveredHotkey === 'audioBoost' ? '1px solid var(--accent)' : '1px solid rgba(255,255,255,0.06)',
-                              borderRadius: '4px',
-                              padding: '2px 6px',
-                              transition: 'all 0.15s ease'
-                            }}>
-                              <span style={{ fontSize: '0.55rem', color: '#666' }}>Boost</span>
-                              <kbd style={{ background: '#333', color: '#fff', fontSize: '0.55rem', padding: '1px 3px', borderRadius: '2px' }}>{settings.keybinds.audioBoost.toUpperCase()}</kbd>
-                            </div>
-                          </div>
-
-                          <div style={{
-                            display: 'flex',
-                            alignItems: 'center',
-                            gap: '0.25rem',
-                            background: hoveredHotkey === 'screenshot' ? 'rgba(229, 9, 20, 0.25)' : 'rgba(255,255,255,0.02)',
-                            border: hoveredHotkey === 'screenshot' ? '1px solid var(--accent)' : '1px solid rgba(255,255,255,0.06)',
-                            borderRadius: '4px',
-                            padding: '2px 6px',
-                            transition: 'all 0.15s ease'
-                          }}>
-                            <span style={{ fontSize: '0.55rem', color: '#666' }}>Capture</span>
-                            <kbd style={{ background: '#333', color: '#fff', fontSize: '0.55rem', padding: '1px 3px', borderRadius: '2px' }}>{(settings.keybinds.screenshot || 's').toUpperCase()}</kbd>
-                          </div>
-                        </div>
-
-                        <div style={{
-                          height: '4px',
-                          width: '100%',
-                          borderRadius: '2px',
-                          position: 'relative',
-                          background: hoveredHotkey === 'frameStep' ? 'rgba(229, 9, 20, 0.3)' : 'rgba(255, 255, 255, 0.1)',
-                          border: hoveredHotkey === 'frameStep' ? '1px solid var(--accent)' : 'none',
-                          transition: 'all 0.15s ease'
-                        }}>
-                          <div style={{ position: 'absolute', left: '0', top: '0', bottom: '0', width: '35%', background: 'var(--accent)', borderRadius: '2px' }}></div>
-                          {hoveredHotkey === 'frameStep' && (
-                            <div style={{
-                              position: 'absolute',
-                              bottom: '8px',
-                              left: '35%',
-                              transform: 'translateX(-50%)',
-                              background: '#222',
-                              border: '1px solid var(--accent)',
-                              borderRadius: '4px',
-                              padding: '2px 6px',
-                              fontSize: '0.55rem',
-                              color: '#fff',
-                              whiteSpace: 'nowrap'
-                            }}>
-                              Frame Step: <kbd style={{ background: '#333', padding: '1px 3px', borderRadius: '2px' }}>{settings.keybinds.frameStep.toUpperCase()}</kbd>
-                            </div>
-                          )}
-                        </div>
-
-                        <div style={{
-                          display: 'flex',
-                          justifyContent: 'space-between',
-                          alignItems: 'center',
-                          fontSize: '0.6rem',
-                          color: 'rgba(255,255,255,0.5)'
-                        }}>
-                          <div style={{ display: 'flex', gap: '0.4rem' }}>
-                            <div style={{
-                              background: hoveredHotkey === 'nextAudio' ? 'rgba(229, 9, 20, 0.25)' : 'transparent',
-                              border: hoveredHotkey === 'nextAudio' ? '1px solid var(--accent)' : '1px solid transparent',
-                              borderRadius: '4px',
-                              padding: '1px 5px',
-                              transition: 'all 0.15s ease'
-                            }}>
-                              Audio: <kbd>{settings.keybinds.nextAudio.toUpperCase()}</kbd>
-                            </div>
-                            
-                            <div style={{
-                              background: hoveredHotkey === 'nextSubtitle' ? 'rgba(229, 9, 20, 0.25)' : 'transparent',
-                              border: hoveredHotkey === 'nextSubtitle' ? '1px solid var(--accent)' : '1px solid transparent',
-                              borderRadius: '4px',
-                              padding: '1px 5px',
-                              transition: 'all 0.15s ease'
-                            }}>
-                              Subs: <kbd>{settings.keybinds.nextSubtitle.toUpperCase()}</kbd>
-                            </div>
-                          </div>
-
-                          <div style={{ display: 'flex', gap: '0.4rem' }}>
-                            <div style={{
-                              background: hoveredHotkey === 'addBookmark' ? 'rgba(229, 9, 20, 0.25)' : 'transparent',
-                              border: hoveredHotkey === 'addBookmark' ? '1px solid var(--accent)' : '1px solid transparent',
-                              borderRadius: '4px',
-                              padding: '1px 5px',
-                              transition: 'all 0.15s ease'
-                            }}>
-                              Bookmark: <kbd>{settings.keybinds.addBookmark.toUpperCase()}</kbd>
-                            </div>
-
-                            <div style={{
-                              background: hoveredHotkey === 'fullscreen' ? 'rgba(229, 9, 20, 0.25)' : 'transparent',
-                              border: hoveredHotkey === 'fullscreen' ? '1px solid var(--accent)' : '1px solid transparent',
-                              borderRadius: '4px',
-                              padding: '1px 5px',
-                              transition: 'all 0.15s ease'
-                            }}>
-                              FS: <kbd>{settings.keybinds.fullscreen.toUpperCase()}</kbd>
-                            </div>
-                          </div>
-                        </div>
-
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* Subtitle Style & Bookmarks Combined 2-Column Section */}
-          {(settingsTab === 'subtitle' || settingsTab === 'bookmarks') && (
-            <div className="settings-tab-content animate-fade-in">
-              <div className="settings-page-grid">
-                
-                {/* Column 1: Subtitle Style */}
-                <div className="settings-grid-col">
-                  <div className="settings-section">
-                    <h3>Default Subtitle Style</h3>
-                    <p className="settings-section-desc">Appearance defaults applied to all media tracks.</p>
-                    
-                    <div style={{ display: 'flex', gap: '1.25rem', marginBottom: '1.25rem', width: '100%', flexWrap: 'wrap' }}>
-                      <div style={{ flex: 1, minWidth: '160px', display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
-                        <span className="pref-label">Font Family</span>
-                        <CustomSelect 
-                          value={settings.subSettings.fontFamily}
-                          onChange={(val) => {
-                            const updatedSub = { ...settings.subSettings, fontFamily: val };
-                            handleDefaultLangChange('subSettings', updatedSub);
-                          }}
-                          options={fontOptions}
-                        />
-                      </div>
-
-                      <div style={{ flex: 1, minWidth: '160px', display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
-                        <span className="pref-label">Font Size</span>
-                        <div className="sexy-size-control-group" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', background: 'var(--surface)', border: '1px solid var(--border-color)', borderRadius: '8px', padding: '4px', height: '36px', width: '100%', boxSizing: 'border-box' }}>
-                          <button 
-                            type="button"
-                            onClick={() => {
-                              const currentSize = settings.subSettings.customSize || 100;
-                              const updatedSub = { ...settings.subSettings, customSize: Math.max(50, currentSize - 10) };
-                              handleDefaultLangChange('subSettings', updatedSub);
-                            }}
-                            style={{
-                              width: '28px',
-                              height: '28px',
-                              borderRadius: '6px',
-                              border: 'none',
-                              background: 'var(--card-bg)',
-                              color: 'var(--text-primary)',
-                              cursor: 'pointer',
-                              display: 'flex',
-                              alignItems: 'center',
-                              justifyContent: 'center',
-                              transition: 'all 0.2s',
-                            }}
-                            onMouseEnter={(e) => e.currentTarget.style.background = 'var(--card-hover-bg)'}
-                            onMouseLeave={(e) => e.currentTarget.style.background = 'var(--card-bg)'}
-                          >
-                            <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" strokeWidth="2.5" fill="none"><line x1="5" y1="12" x2="19" y2="12"/></svg>
-                          </button>
-                          
-                          <span style={{ fontSize: '0.85rem', fontWeight: 600, minWidth: '45px', textAlign: 'center', color: 'var(--text-primary)', flex: 1 }}>
-                            {settings.subSettings.customSize || 100}%
-                          </span>
-                          
-                          <button 
-                            type="button"
-                            onClick={() => {
-                              const currentSize = settings.subSettings.customSize || 100;
-                              const updatedSub = { ...settings.subSettings, customSize: Math.min(300, currentSize + 10) };
-                              handleDefaultLangChange('subSettings', updatedSub);
-                            }}
-                            style={{
-                              width: '28px',
-                              height: '28px',
-                              borderRadius: '6px',
-                              border: 'none',
-                              background: 'var(--card-bg)',
-                              color: 'var(--text-primary)',
-                              cursor: 'pointer',
-                              display: 'flex',
-                              alignItems: 'center',
-                              justifyContent: 'center',
-                              transition: 'all 0.2s',
-                            }}
-                            onMouseEnter={(e) => e.currentTarget.style.background = 'var(--card-hover-bg)'}
-                            onMouseLeave={(e) => e.currentTarget.style.background = 'var(--card-bg)'}
-                          >
-                            <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" strokeWidth="2.5" fill="none"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-                          </button>
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="style-colors-row style-colors-row-page" style={{ display: 'flex', gap: '1.25rem', marginBottom: '1.25rem', width: '100%', flexWrap: 'wrap' }}>
-                      <div className="color-picker-item" style={{ flex: 1, minWidth: '160px', display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
-                        <span className="pref-label">Text Color</span>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', background: 'var(--surface)', border: '1px solid var(--border-color)', borderRadius: '8px', padding: '0.4rem 0.6rem', height: '36px', width: '100%', boxSizing: 'border-box', position: 'relative', cursor: 'pointer' }} onClick={() => document.getElementById('textColorInput')?.click()}>
-                          <div style={{ width: '20px', height: '20px', borderRadius: '50%', background: settings.subSettings.customTextColor || '#ffffff', border: '2px solid var(--border-color)', boxShadow: 'var(--shadow-sm)', flexShrink: 0 }} />
-                          <span style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-primary)', textTransform: 'uppercase', fontFamily: 'monospace', flex: 1 }}>
-                            {settings.subSettings.customTextColor || '#ffffff'}
-                          </span>
-                          <input 
-                            id="textColorInput"
-                            type="color" 
-                            value={settings.subSettings.customTextColor || '#ffffff'}
-                            onChange={(e) => {
-                              const updatedSub = { ...settings.subSettings, customTextColor: e.target.value };
-                              handleDefaultLangChange('subSettings', updatedSub);
-                            }}
-                            style={{ position: 'absolute', opacity: 0, width: 0, height: 0, border: 'none', padding: 0 }}
-                          />
-                        </div>
-                      </div>
-                      
-                      <div className="color-picker-item bg-picker-item" style={{ flex: 1, minWidth: '160px', display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
-                        <span className="pref-label">Background Color</span>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', width: '100%' }}>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', background: 'var(--surface)', border: '1px solid var(--border-color)', borderRadius: '8px', padding: '0.4rem 0.6rem', height: '36px', flex: 1, boxSizing: 'border-box', position: 'relative', cursor: settings.subSettings.customBgColor === 'transparent' ? 'not-allowed' : 'pointer' }} onClick={() => { if (settings.subSettings.customBgColor !== 'transparent') document.getElementById('bgColorInput')?.click(); }}>
-                            <div style={{ width: '20px', height: '20px', borderRadius: '50%', background: settings.subSettings.customBgColor === 'transparent' ? 'transparent' : settings.subSettings.customBgColor || '#000000', border: '2px solid var(--border-color)', backgroundImage: settings.subSettings.customBgColor === 'transparent' ? 'linear-gradient(45deg, #ccc 25%, transparent 25%), linear-gradient(-45deg, #ccc 25%, transparent 25%), linear-gradient(45deg, transparent 75%, #ccc 75%), linear-gradient(-45deg, transparent 75%, #ccc 75%)' : 'none', backgroundSize: '8px 8px', backgroundPosition: '0 0, 0 4px, 4px -4px, -4px 0px', flexShrink: 0 }} />
-                            <span style={{ fontSize: '0.85rem', fontWeight: 600, color: settings.subSettings.customBgColor === 'transparent' ? 'var(--text-muted)' : 'var(--text-primary)', textTransform: 'uppercase', fontFamily: 'monospace', flex: 1 }}>
-                              {settings.subSettings.customBgColor === 'transparent' ? 'NONE' : settings.subSettings.customBgColor || '#000000'}
-                            </span>
-                            <input 
-                              id="bgColorInput"
-                              type="color" 
-                              value={settings.subSettings.customBgColor && !settings.subSettings.customBgColor.startsWith('rgba') && settings.subSettings.customBgColor !== 'transparent' ? settings.subSettings.customBgColor : '#000000'}
-                              onChange={(e) => {
-                                const updatedSub = { ...settings.subSettings, customBgColor: e.target.value };
-                                handleDefaultLangChange('subSettings', updatedSub);
-                              }}
-                              style={{ position: 'absolute', opacity: 0, width: 0, height: 0, border: 'none', padding: 0 }}
-                              disabled={settings.subSettings.customBgColor === 'transparent'}
-                            />
-                          </div>
-                          <button 
-                            className={`bg-clear-btn ${settings.subSettings.customBgColor === 'transparent' ? 'active' : ''}`}
-                            onClick={() => {
-                              const updatedSub = { 
-                                ...settings.subSettings, 
-                                customBgColor: settings.subSettings.customBgColor === 'transparent' ? '#000000' : 'transparent' 
-                              };
-                              handleDefaultLangChange('subSettings', updatedSub);
-                            }}
-                            style={{ height: '36px', padding: '0 0.75rem', borderRadius: '8px', cursor: 'pointer', background: settings.subSettings.customBgColor === 'transparent' ? '#3b82f6' : 'var(--surface)', border: '1px solid var(--border-color)', color: settings.subSettings.customBgColor === 'transparent' ? '#fff' : 'var(--text-primary)', fontSize: '0.8rem', fontWeight: 600 }}
-                          >
-                            None
-                          </button>
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Live Subtitle Style Preview */}
-                    <div className="preview-video-frame" style={{ marginTop: '1rem' }}>
-                      <span 
-                        className="sub-preview-card"
-                        style={{
-                          fontFamily: settings.subSettings.fontFamily === 'serif' ? 'Playfair Display, serif' : settings.subSettings.fontFamily === 'monospace' ? 'Roboto Mono, monospace' : settings.subSettings.fontFamily === 'outfit' ? 'Outfit, sans-serif' : settings.subSettings.fontFamily === 'cinzel' ? 'Cinzel, serif' : settings.subSettings.fontFamily === 'montserrat' ? 'Montserrat, sans-serif' : 'Poppins, sans-serif',
-                          fontSize: `${Math.min(24, Math.max(12, (settings.subSettings.customSize || 100) * 0.15))}px`,
-                          color: settings.subSettings.customTextColor || '#ffffff',
-                          backgroundColor: settings.subSettings.customBgColor === 'transparent' ? 'transparent' : settings.subSettings.customBgColor || 'rgba(0,0,0,0.75)',
-                          padding: settings.subSettings.customBgColor === 'transparent' ? '0' : '0.4rem 0.8rem',
-                          borderRadius: '6px',
-                          textShadow: settings.subSettings.customBgColor === 'transparent' ? '1px 1px 2px #000, -1px -1px 2px #000, 1px -1px 2px #000, -1px 1px 2px #000' : 'none',
-                          display: 'inline-block',
-                          transition: 'all 0.2s ease',
-                        }}
-                      >
-                        Valor Subtitle Preview
-                      </span>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Column 2: Bookmarks & Auto-Skip */}
-                <div className="settings-grid-col">
-                  <div className="settings-section">
-                    <h3>Bookmarks & Auto-Skip</h3>
-                    <p className="settings-section-desc">Choose which marked segments are automatically skipped during playback.</p>
-
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.45rem' }}>
-                      <div className="pref-row" style={{ margin: 0 }}>
-                        <span className="pref-label" style={{ flex: 1 }}>
-                          Auto-Skip Intro & Outro Sections
-                        </span>
-                        <div style={{ flexShrink: 0 }}>
-                          <ToggleSwitch 
-                            checked={settings.autoSkipIntroOutro} 
-                            onChange={(checked) => handleDefaultLangChange('autoSkipIntroOutro', checked)}
-                          />
-                        </div>
-                      </div>
-
-                      <div className="pref-row" style={{ margin: 0 }}>
-                        <span className="pref-label" style={{ flex: 1 }}>
-                          Auto-Skip Sex & Nudity Scenes
-                        </span>
-                        <div style={{ flexShrink: 0 }}>
-                          <ToggleSwitch 
-                            checked={settings.autoSkipSexScenes} 
-                            onChange={(checked) => handleDefaultLangChange('autoSkipSexScenes', checked)}
-                          />
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-
-              </div>
-            </div>
-          )}
-          {settingsTab === 'storage' && (
-            <div className="settings-tab-content animate-fade-in">
-              <div className="settings-page-grid">
-                
-                {/* Left Column: Profile Management */}
-                <div className="settings-grid-col">
-                  <div className="settings-section" style={{ margin: 0 }}>
-                    <h3>Active User Profile</h3>
-                    <p className="settings-section-desc">Manage your profile storage and server synchronization.</p>
-                    
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-                      
-                      {/* Active Profile Banner Card */}
-                      <div style={{ 
-                        display: 'flex', 
-                        flexDirection: 'column', 
-                        gap: '12px', 
-                        background: (settings.userId && settings.userId !== 'local') 
-                          ? 'linear-gradient(135deg, rgba(59,130,246,0.12) 0%, rgba(37,99,235,0.06) 100%)' 
-                          : 'var(--surface)', 
-                        padding: '1.25rem', 
-                        borderRadius: '10px', 
-                        border: (settings.userId && settings.userId !== 'local') 
-                          ? '1px solid rgba(59,130,246,0.25)' 
-                          : '1px solid var(--border-color)' 
-                      }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
-                          <div style={{ 
-                            width: '48px', 
-                            height: '48px', 
-                            borderRadius: '50%', 
-                            background: (settings.userId && settings.userId !== 'local') ? '#3b82f6' : 'var(--card-bg)', 
-                            display: 'flex', 
-                            alignItems: 'center', 
-                            justifyContent: 'center', 
-                            fontSize: '1.4rem', 
-                            fontWeight: 'bold',
-                            color: (settings.userId && settings.userId !== 'local') ? '#fff' : 'var(--text-primary)',
-                            boxShadow: 'var(--shadow-sm)',
-                            border: '1px solid var(--border-color)'
-                          }}>
-                            {availableProfiles.find(p => p.userId === settings.userId) 
-                               ? (availableProfiles.find(p => p.userId === settings.userId)?.name?.[0] || 'U').toUpperCase() 
-                               : (settings.profileName?.[0] || 'L').toUpperCase()}
-                          </div>
-                          <div style={{ display: 'flex', flexDirection: 'column', flex: 1 }}>
-                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                              <span style={{ fontSize: '1rem', fontWeight: 700, color: 'var(--text-primary)' }}>
-                                {availableProfiles.find(p => p.userId === settings.userId) 
-                                  ? (availableProfiles.find(p => p.userId === settings.userId)?.name || 'Profile') 
-                                  : (settings.profileName || 'Local Browser Saves')}
-                              </span>
-                              <span style={{ 
-                                fontSize: '0.68rem', 
-                                padding: '2px 8px', 
-                                borderRadius: '4px', 
-                                background: (settings.userId && settings.userId !== 'local' && !settings.userId.startsWith('local_')) ? 'rgba(46,204,113,0.18)' : 'rgba(239,68,68,0.15)', 
-                                color: (settings.userId && settings.userId !== 'local' && !settings.userId.startsWith('local_')) ? '#2ecc71' : '#ef4444', 
-                                fontWeight: 'bold',
-                                letterSpacing: '0.5px'
-                              }}>
-                                {(settings.userId && settings.userId !== 'local' && !settings.userId.startsWith('local_')) ? 'SYNCING ACTIVE' : 'LOCAL SAVE ONLY'}
-                              </span>
-                            </div>
-                            <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '4px' }}>
-                              {availableProfiles.find(p => p.userId === settings.userId) 
-                                ? `User ID: ${settings.userId} ${availableProfiles.find(p => p.userId === settings.userId)?.username ? `• Username: ${availableProfiles.find(p => p.userId === settings.userId).username}` : '• Local Storage Profile'}` 
-                                : 'Playback data is saved locally inside your browser storage.'}
-                            </span>
-                          </div>
-                        </div>
-
-                        <div className="profile-button-management" style={{
-                          display: 'flex',
-                          flexWrap: 'wrap',
-                          gap: '0.75rem',
-                          width: '100%',
-                          marginTop: '1rem',
-                          borderTop: '1px solid var(--border-subtle)',
-                          paddingTop: '1.25rem'
-                        }}>
-                          <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap', flex: 1, minWidth: '280px' }}>
-                            {(!settings.userId || settings.userId === 'local' || settings.userId.startsWith('local_')) ? (
-                              <>
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    setNewProfileName('');
-                                    setNewProfilePassword('');
-                                    setCreateProfileError('');
-                                    setIsCreateProfileModalOpen(true);
-                                  }}
-                                  className="btn btn-primary"
-                                  style={{
-                                    display: 'flex',
-                                    alignItems: 'center',
-                                    gap: '6px',
-                                    padding: '8px 20px',
-                                    fontSize: '0.8rem',
-                                    fontWeight: 600,
-                                    borderRadius: '6px',
-                                    cursor: 'pointer',
-                                    background: isMonochrome ? '#ffffff' : 'var(--accent)',
-                                    color: isMonochrome ? '#000000' : '#fff',
-                                    border: 'none',
-                                    transition: 'all 0.2s',
-                                    fontFamily: 'Outfit, sans-serif'
-                                  }}
-                                  onMouseEnter={e => e.currentTarget.style.opacity = '0.9'}
-                                  onMouseLeave={e => e.currentTarget.style.opacity = '1'}
-                                >
-                                  <UserPlus size={14} />
-                                  <span>Create Account</span>
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() => openAuthModal('login')}
-                                  style={{
-                                    display: 'flex',
-                                    alignItems: 'center',
-                                    gap: '6px',
-                                    padding: '8px 16px',
-                                    fontSize: '0.8rem',
-                                    fontWeight: 600,
-                                    borderRadius: '6px',
-                                    cursor: 'pointer',
-                                    background: 'var(--surface-hover, rgba(255, 255, 255, 0.08))',
-                                    color: 'var(--text-primary, #ffffff)',
-                                    border: '1px solid var(--border-color, rgba(255, 255, 255, 0.15))',
-                                    transition: 'all 0.2s',
-                                    fontFamily: 'Outfit, sans-serif'
-                                  }}
-                                  onMouseEnter={e => e.currentTarget.style.background = 'rgba(255, 255, 255, 0.14)'}
-                                  onMouseLeave={e => e.currentTarget.style.background = 'var(--surface-hover, rgba(255, 255, 255, 0.08))'}
-                                >
-                                  <LogIn size={14} />
-                                  <span>Log In to Cloud</span>
-                                </button>
-                              </>
-                            ) : (
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  if (confirm('Are you sure you want to logout? Your watch history and settings will remain on the server, and you will switch back to local browser storage.')) {
-                                    localStorage.setItem('valor_active_user_id', 'local');
-                                    setSettings((prev: any) => ({
-                                      ...prev,
-                                      userId: 'local',
-                                      storageMode: 'localstorage'
-                                    }));
-                                    const savedVideos = localStorage.getItem('valor_videos');
-                                    if (savedVideos) {
-                                      try { setVideos(JSON.parse(savedVideos)); } catch {}
-                                    }
-                                    addToast('Logged out of server profile successfully', 'success');
-                                  }
-                                }}
-                                className="btn"
-                                style={{
-                                  background: 'var(--surface)',
-                                  border: '1px solid var(--border-color)',
-                                  color: 'var(--text-secondary)',
-                                  display: 'flex',
-                                  alignItems: 'center',
-                                  gap: '6px',
-                                  padding: '8px 20px',
-                                  fontSize: '0.8rem',
-                                  fontWeight: 600,
-                                  borderRadius: '6px',
-                                  cursor: 'pointer',
-                                  transition: 'all 0.2s',
-                                  fontFamily: 'Outfit, sans-serif'
-                                }}
-                                onMouseEnter={e => e.currentTarget.style.background = 'var(--card-hover-bg)'}
-                                onMouseLeave={e => e.currentTarget.style.background = 'var(--surface)'}
-                              >
-                                <LogOut size={14} />
-                                <span>Logout</span>
-                              </button>
-                            )}
-
-                            <button
-                              type="button"
-                              onClick={() => {
-                                const curProfile = availableProfiles.find(p => p.userId === settings.userId) || {
-                                  userId: settings.userId || 'local',
-                                  name: settings.profileName || 'Local Browser Saves',
-                                  storageMode: 'localstorage'
-                                };
-                                setDeleteTargetProfile(curProfile);
-                                setRemoveError('');
-                                setIsRemoveModalOpen(true);
-                              }}
-                              style={{
-                                background: 'rgba(239, 68, 68, 0.1)',
-                                border: '1px solid rgba(239, 68, 68, 0.2)',
-                                color: '#ef4444',
-                                display: 'flex',
-                                alignItems: 'center',
-                                gap: '6px',
-                                padding: '8px 16px',
-                                fontSize: '0.8rem',
-                                fontWeight: 600,
-                                borderRadius: '6px',
-                                cursor: 'pointer',
-                                transition: 'all 0.2s',
-                                fontFamily: 'Outfit, sans-serif'
-                              }}
-                            >
-                              <Trash2 size={14} />
-                              <span>Remove Profile</span>
-                            </button>
-                          </div>
-                        </div>
-
-                      </div>
-
-                      {/* Profile Switcher Grid */}
-                      <div className="settings-section" style={{ margin: 0 }}>
-                        <h4 style={{ fontSize: '0.9rem', fontWeight: 600, margin: '0 0 0.5rem 0', color: 'var(--text-secondary)' }}>Saved Profiles on this Device</h4>
-                        
-                        <div style={{
-                          display: 'grid',
-                          gridTemplateColumns: 'repeat(auto-fill, minmax(130px, 1fr))',
-                          gap: '0.75rem',
-                          width: '100%'
-                        }}>
-                          {availableProfiles.map((p) => {
-                            const isActive = p.userId === settings.userId;
-                            const isServer = p.userId && !p.userId.startsWith('local_') && p.userId !== 'local';
-                            const themeColor = isServer ? '#3b82f6' : '#2ecc71';
-                            const themeBg = isServer ? 'rgba(59,130,246,0.08)' : 'rgba(46,204,113,0.08)';
-                            const themeDotBg = isServer ? '#3b82f6' : '#2ecc71';
-
-                            return (
+                              {/* Swatch Preview Frame */}
                               <div
-                                key={p.userId}
-                                onClick={() => handleSwitchProfile(p)}
                                 style={{
-                                  position: 'relative',
-                                  background: isActive ? themeBg : 'var(--surface)',
-                                  border: isActive ? `1.5px solid ${themeColor}` : '1px solid var(--border-color)',
-                                  padding: '12px 10px',
-                                  borderRadius: '8px',
-                                  cursor: 'pointer',
+                                  height: '48px',
+                                  borderRadius: '6px',
+                                  background: t.bg,
+                                  border: '1px solid rgba(255, 255, 255, 0.08)',
+                                  padding: '6px 8px',
                                   display: 'flex',
                                   flexDirection: 'column',
-                                  alignItems: 'center',
-                                  justifyContent: 'center',
-                                  gap: '6px',
-                                  transition: 'all 0.2s ease',
-                                  boxShadow: isActive ? `0 0 8px ${themeBg}` : 'none'
+                                  justifyContent: 'space-between',
+                                  boxSizing: 'border-box',
+                                  position: 'relative',
                                 }}
                               >
-                                {availableProfiles.length > 1 && (
-                                  <button
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      setDeleteTargetProfile(p);
-                                      setRemoveError('');
-                                      setIsRemoveModalOpen(true);
-                                    }}
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                  <div style={{ height: '6px', width: '32px', background: t.surface, borderRadius: '3px' }} />
+                                  <div style={{ width: '6px', height: '6px', borderRadius: '50%', background: t.dot }} />
+                                </div>
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
+                                  <div style={{ height: '3px', width: '48px', background: t.text, borderRadius: '2px', opacity: 0.8 }} />
+                                  <div style={{ height: '3px', width: '28px', background: t.text, borderRadius: '2px', opacity: 0.4 }} />
+                                </div>
+                                {isSelected && (
+                                  <div
                                     style={{
                                       position: 'absolute',
-                                      top: '4px',
-                                      right: '4px',
-                                      background: 'rgba(239, 68, 68, 0.1)',
-                                      border: 'none',
-                                      borderRadius: '4px',
-                                      width: '18px',
-                                      height: '18px',
+                                      bottom: '5px',
+                                      right: '6px',
+                                      width: '16px',
+                                      height: '16px',
+                                      borderRadius: '50%',
+                                      background: 'var(--accent)',
                                       display: 'flex',
                                       alignItems: 'center',
                                       justifyContent: 'center',
-                                      cursor: 'pointer',
-                                      fontSize: '0.65rem',
-                                      zIndex: 10,
-                                      padding: 0
+                                      boxShadow: '0 1px 3px rgba(0,0,0,0.5)',
                                     }}
-                                    title="Remove from Switcher"
                                   >
-                                    ❌
-                                  </button>
+                                    <Check size={10} color="var(--on-accent)" strokeWidth={3} />
+                                  </div>
                                 )}
+                              </div>
 
-                                <div style={{
-                                  width: '32px',
-                                  height: '32px',
-                                  borderRadius: '50%',
-                                  background: isActive ? themeColor : themeDotBg,
-                                  display: 'flex',
-                                  alignItems: 'center',
-                                  justifyContent: 'center',
-                                  fontWeight: 'bold',
-                                  fontSize: '0.9rem',
-                                  color: '#fff',
-                                  border: `1px solid ${themeColor}`
-                                }}>
-                                  {(p.name?.[0] || 'U').toUpperCase()}
-                                </div>
-                                <span style={{ fontSize: '0.72rem', fontWeight: isActive ? 600 : 400, color: 'var(--text-primary)', textAlign: 'center', maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                                  {p.name} {p.hasPassword ? '🔒' : ''}
+                              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                                <span style={{ fontSize: '0.825rem', fontWeight: 600, color: 'var(--text-1)' }}>
+                                  {t.name}
                                 </span>
                               </div>
-                            );
-                          })}
-
-                          {/* Add Profile Tile */}
-                          <div
-                            onClick={() => {
-                              setNewProfileName('');
-                              setNewProfilePassword('');
-                              setCreateProfileError('');
-                              setIsCreateProfileModalOpen(true);
-                            }}
-                            style={{
-                              background: 'var(--surface)',
-                              border: '1px dashed var(--border-color)',
-                              padding: '12px 10px',
-                              borderRadius: '8px',
-                              cursor: 'pointer',
-                              display: 'flex',
-                              flexDirection: 'column',
-                              alignItems: 'center',
-                              justifyContent: 'center',
-                              gap: '6px',
-                              transition: 'all 0.2s ease',
-                              height: '78px',
-                              boxSizing: 'border-box'
-                            }}
-                            onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--card-hover-bg)'; }}
-                            onMouseLeave={(e) => { e.currentTarget.style.background = 'var(--surface)'; }}
-                          >
-                            <div style={{ fontSize: '1.2rem', color: 'var(--text-muted)', fontWeight: 'bold' }}>+</div>
-                            <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)', fontWeight: 600 }}>Add Profile</span>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Right Column: Storage Metrics & Data Persistence */}
-                <div className="settings-grid-col">
-                  <div className="settings-section" style={{ margin: 0 }}>
-                    <h3>Storage Location & Advanced Metrics</h3>
-                    <p className="settings-section-desc">Configure where your data is stored and playback rating threshold parameters.</p>
-                    
-                    <div className="pref-row" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem' }}>
-                      <span className="pref-label">Storage Location</span>
-                      <CustomSelect 
-                        value={settings.storageMode || 'localstorage'}
-                        onChange={(val) => handleDefaultLangChange('storageMode', val)}
-                        options={storageModeOptions}
-                      />
-                    </div>
-
-                    <div className="pref-row" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
-                      <span className="pref-label">Rating Prompt Threshold</span>
-                      <CustomSelect 
-                        value={settings.ratingThreshold || 3}
-                        onChange={(val) => handleDefaultLangChange('ratingThreshold', val)}
-                        options={ratingThresholdOptions}
-                      />
-                    </div>
-                  </div>
-
-                  <div className="settings-section" style={{ margin: 0 }}>
-                    <h3>Data Persistence Preferences</h3>
-                    <p className="settings-section-desc">Toggle what data is saved in your active storage location.</p>
-                    
-                    <div className="pref-row">
-                      <span className="pref-label">Save Playback Position & History</span>
-                      <ToggleSwitch 
-                        checked={settings.saveHistory} 
-                        onChange={(checked) => handleDefaultLangChange('saveHistory', checked)}
-                      />
-                    </div>
-
-                    <div className="pref-row">
-                      <span className="pref-label">Save Audio/Subtitle Track Preferences</span>
-                      <ToggleSwitch 
-                        checked={settings.saveTrackPreferences} 
-                        onChange={(checked) => handleDefaultLangChange('saveTrackPreferences', checked)}
-                      />
-                    </div>
-
-                    <div className="pref-row">
-                      <span className="pref-label">Save Player Volume & Mute States</span>
-                      <ToggleSwitch 
-                        checked={settings.saveVolume} 
-                        onChange={(checked) => handleDefaultLangChange('saveVolume', checked)}
-                      />
-                    </div>
-
-                    <div className="pref-row">
-                      <span className="pref-label">Save UI Customization Preferences</span>
-                      <ToggleSwitch 
-                        checked={settings.saveSettings} 
-                        onChange={(checked) => handleDefaultLangChange('saveSettings', checked)}
-                      />
-                    </div>
-                  </div>
-                </div>
-
-              </div>
-            </div>
-          )}
-
-          {/* API Settings Section */}
-          {settingsTab === 'api' && (
-            <div className="settings-tab-content animate-fade-in" style={{ width: '100%' }}>
-              <ApiSettingsView 
-                settings={settings}
-                handleDefaultLangChange={handleDefaultLangChange}
-                addToast={addToast}
-              />
-            </div>
-          )}
-
-          {/* Spinner / Loading Animation Tab */}
-          {settingsTab === 'loader' && (
-            <div className="settings-tab-content animate-fade-in" style={{ width: '100%' }}>
-              <SpinnerSettingsView
-                settings={settings}
-                setSettings={setSettings}
-                saveSettingsToStorage={saveSettingsToStorage}
-                handleDefaultLangChange={handleDefaultLangChange}
-                addToast={addToast}
-              />
-            </div>
-          )}
-
-          {/* Radial Menu Config Tab */}
-          {settingsTab === 'radialMenu' && (() => {
-            const config = settings.radialMenuConfig || {};
-            const rItems = [];
-            if (config.console) rItems.push({ id: 'stats', label: 'Console', icon: <Terminal size={24} />, onClick: () => {} });
-            if (config.audioSubs) rItems.push({ id: 'audio', label: 'Audio/Subs', icon: <MessageSquare size={24} />, onClick: () => {} });
-            if (config.fullscreen) rItems.push({ id: 'fullscreen', label: 'Fullscreen', icon: <Maximize size={24} />, onClick: () => {} });
-            if (config.bookmark) rItems.push({ id: 'bookmark', label: 'Bookmark', icon: <Bookmark size={24} />, onClick: () => {} });
-            if (config.mute) rItems.push({ id: 'mute', label: 'Mute', icon: <Volume2 size={24} />, onClick: () => {} });
-            if (config.speed) rItems.push({ id: 'speed', label: '1.0x Speed', icon: <FastForward size={24} />, onClick: () => {} });
-            if (config.pip) rItems.push({ id: 'pip', label: 'PiP', icon: <Maximize size={24} />, onClick: () => {} });
-            if (config.loop) rItems.push({ id: 'loop', label: 'Loop', icon: <RotateCcw size={24} />, onClick: () => {} });
-            if (config.unlock) rItems.push({ id: 'unlock', label: 'Unlock UI', icon: <Unlock size={24} />, onClick: () => {} });
-
-            return (
-              <div className="settings-tab-content animate-fade-in" style={{ padding: '0 24px', display: 'flex', gap: '32px', height: '100%' }}>
-                
-                {/* Left side: Interactive Preview */}
-                <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(0,0,0,0.2)', borderRadius: '12px', border: '1px solid rgba(255,255,255,0.05)', position: 'relative', overflow: 'hidden' }}>
-                  <h3 style={{ position: 'absolute', top: 16, left: 16, margin: 0, color: 'rgba(255,255,255,0.5)', fontSize: '0.9rem', textTransform: 'uppercase', letterSpacing: '1px' }}>Live Preview</h3>
-                  {rItems.length > 0 ? (
-                    <div style={{ width: 320, height: 320 }}>
-                      <RadialMenu 
-                        x={0} y={0} 
-                        items={rItems} 
-                        centerItem={{ icon: <Play size={24} fill="white" />, onClick: () => {} }} 
-                        onClose={() => {}} 
-                        inline 
-                      />
-                    </div>
-                  ) : (
-                    <div style={{ color: 'rgba(255,255,255,0.3)' }}>Enable items to see preview</div>
-                  )}
-                </div>
-
-                {/* Right side: Toggles */}
-                <div style={{ flex: 1, overflowY: 'auto', paddingRight: '8px' }}>
-                  <div className="settings-section" style={{ margin: 0 }}>
-                    <h3>Radial Menu Features</h3>
-                    <p className="settings-section-desc">Toggle features inside the right-click menu. Changes will reflect in the live preview.</p>
-                    
-                    <div className="settings-section-content" style={{ marginTop: '24px' }}>
-                      {[
-                        { key: 'console', title: 'Developer Console' },
-                        { key: 'audioSubs', title: 'Audio & Subtitles' },
-                        { key: 'fullscreen', title: 'Fullscreen Toggle' },
-                        { key: 'unlock', title: 'Unlock UI Feature' },
-                        { key: 'bookmark', title: 'Quick Bookmark' },
-                        { key: 'mute', title: 'Mute/Unmute' },
-                        { key: 'speed', title: 'Playback Speed' },
-                        { key: 'pip', title: 'Picture-in-Picture' },
-                        { key: 'loop', title: 'Loop Video' },
-                      ].map(({ key, title }) => {
-                        const value = config[key] ?? false;
-                        return (
-                          <div className="pref-row" key={key}>
-                            <span className="pref-label">{title}</span>
-                            <ToggleSwitch 
-                              checked={Boolean(value)}
-                              onChange={() => {
-                                const newConfig = { ...config, [key]: !value };
-                                handleDefaultLangChange('radialMenuConfig', newConfig);
-                                saveSettingsToStorage({ ...settings, radialMenuConfig: newConfig });
-                              }}
-                            />
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </div>
-                </div>
-
-              </div>
-            );
-          })()}
-
-          {/* Settings Grid Overlay Section */}
-          {settingsTab === 'gridOverlay' && (
-            <div className="settings-tab-content animate-fade-in">
-              
-              {/* Grid Overlay Sub-section */}
-              {uiOverlaySection === 'gridOverlay' && (
-                <div className="settings-page-grid">
-                  
-                  {/* Left Column: Drag & Drop List */}
-                  <div className="settings-grid-col">
-                    <div className="settings-section" style={{ margin: 0 }}>
-                      <h3>Settings Grid Ordering</h3>
-                      <p className="settings-section-desc">Drag and drop settings to change their order in the player's UI settings grid. Pinned items will be displayed in the collapsed view.</p>
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-                        {(settings.settingsOrder || [
-                          'hideUIOverlays', 'hideVideoName', 'showPlayButton', 'showTimeDisplay', 'showPlayBar', 'showVolumeControl',
-                          'showFullscreen', 'disableAnimations', 'pauseOnFocusChange', 'allowUiSkipping', 'blockSeekingCompletely', 'autoSkipIntroOutro', 'lockModeActive'
-                        ]).map((key: string, index: number) => {
-                          const labelMap: Record<string, string> = {
-                            hideUIOverlays: 'UI Overlays',
-                            hideVideoName: 'Video Name',
-                            showPlayButton: 'Play Button HUD',
-                            showTimeDisplay: 'Time Display',
-                            showPlayBar: 'Timeline Scrub',
-                            showVolumeControl: 'Volume Control',
-                            showFullscreen: 'Fullscreen Toggle',
-                            disableAnimations: 'Disable Animations',
-                            pauseOnFocusChange: 'Disable Auto-Pause',
-                            allowUiSkipping: 'Skip Buttons',
-                            blockSeekingCompletely: 'Block Seeking',
-                            autoSkipIntroOutro: 'Auto-Skip Intro/Outro',
-                            lockModeActive: 'Lock Controls'
-                          };
-                          return (
-                            <div
-                              key={key}
-                              draggable
-                              onDragStart={(e) => {
-                                e.dataTransfer.setData('text/plain', index.toString());
-                              }}
-                              onDragOver={(e) => e.preventDefault()}
-                              onDrop={(e) => {
-                                e.preventDefault();
-                                const sourceIndex = parseInt(e.dataTransfer.getData('text/plain'));
-                                const currentOrder = settings.settingsOrder || [
-                                  'hideUIOverlays', 'hideVideoName', 'showPlayButton', 'showTimeDisplay', 'showPlayBar', 'showVolumeControl',
-                                  'showFullscreen', 'disableAnimations', 'pauseOnFocusChange', 'allowUiSkipping', 'blockSeekingCompletely', 'autoSkipIntroOutro', 'lockModeActive'
-                                ];
-                                const newOrder = [...currentOrder];
-                                const [movedItem] = newOrder.splice(sourceIndex, 1);
-                                newOrder.splice(index, 0, movedItem);
-                                handleDefaultLangChange('settingsOrder', newOrder);
-                              }}
-                              style={{
-                                display: 'flex',
-                                alignItems: 'center',
-                                justifyContent: 'space-between',
-                                background: index < 5 ? 'var(--accent-soft)' : 'var(--surface)',
-                                border: index < 5 ? '1px dashed var(--accent-color)' : '1px solid var(--border-color)',
-                                padding: '0.65rem 0.85rem',
-                                borderRadius: '8px',
-                                cursor: 'grab',
-                                fontSize: '0.85rem',
-                                color: 'var(--text-primary)',
-                                userSelect: 'none',
-                                boxShadow: 'var(--shadow-sm)'
-                              }}
-                            >
-                              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                                <span style={{ color: 'var(--text-muted)', fontWeight: 'bold' }}>{index + 1}</span>
-                                <span>{labelMap[key] || key}</span>
-                              </div>
-                              {index < 5 ? (
-                                <span style={{ fontSize: '0.7rem', color: 'var(--accent-color)', fontWeight: 600, background: 'var(--accent-soft)', padding: '1px 6px', borderRadius: '3px' }}>
-                                  Pinned
-                                </span>
-                              ) : index === 5 ? (
-                                <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)', fontWeight: 600, background: 'var(--surface)', padding: '1px 6px', borderRadius: '3px' }}>
-                                  Grid Action
-                                </span>
-                              ) : null}
                             </div>
                           );
                         })}
                       </div>
-                    </div>
+                    </SettingsCard>
                   </div>
+                )}
 
-                  {/* Right Column: Player Style Preview */}
-                  <div className="settings-grid-col" style={{ position: 'sticky', top: 0, height: 'fit-content' }}>
-                    <div className="settings-section" style={{ width: '100%' }}>
-                      <h3>Real-time HUD Preview</h3>
-                      <p className="settings-section-desc">See how the overlay settings card looks on screen. Toggle collapsed/expanded view below.</p>
-                      
-                      <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1rem' }}>
-                        <button
-                          className={`btn`}
-                          onClick={() => setPreviewExpanded(false)}
-                          style={{
-                            padding: '0.4rem 1rem',
-                            fontSize: '0.8rem',
-                            background: !previewExpanded ? 'var(--accent)' : 'rgba(255,255,255,0.08)',
-                            color: !previewExpanded ? (isMonochrome ? '#000000' : '#fff') : '#fff',
-                            border: 'none',
-                            borderRadius: '4px',
-                            cursor: 'pointer',
-                            fontWeight: 600
-                          }}
-                        >
-                          Collapsed (3x2 Combo)
-                        </button>
-                        <button
-                          className={`btn`}
-                          onClick={() => setPreviewExpanded(true)}
-                          style={{
-                            padding: '0.4rem 1rem',
-                            fontSize: '0.8rem',
-                            background: previewExpanded ? 'var(--accent)' : 'rgba(255,255,255,0.08)',
-                            color: previewExpanded ? (isMonochrome ? '#000000' : '#fff') : '#fff',
-                            border: 'none',
-                            borderRadius: '4px',
-                            cursor: 'pointer',
-                            fontWeight: 600
-                          }}
-                        >
-                          Expanded (4x4 Combo)
-                        </button>
-                      </div>
-
-                      {/* Simulated Video Frame */}
-                      <div style={{
-                        position: 'relative',
-                        width: '100%',
-                        height: '260px',
-                        background: 'radial-gradient(circle, #2a2a2a 0%, #111 100%)',
-                        borderRadius: '12px',
-                        border: '1px solid rgba(255,255,255,0.08)',
-                        overflow: 'hidden',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'flex-end'
-                      }}>
-                        <div style={{ position: 'absolute', left: '1.25rem', top: '1.25rem', display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
-                          <span style={{ fontSize: '0.75rem', fontWeight: 600, color: 'rgba(255,255,255,0.3)', textTransform: 'uppercase', letterSpacing: '1px' }}>Video Player Preview</span>
-                          <span style={{ fontSize: '0.9rem', fontWeight: 700, color: 'rgba(255,255,255,0.7)' }}>Mock Episode 01</span>
-                        </div>
-
-                        {/* Mock Volume Pill at the bottom-left corner */}
-                        <div className="mock-volume-pill" style={{ position: 'absolute', left: '1.25rem', bottom: '1.25rem', zIndex: 10 }}>
-                          <div className="mock-volume-btn">
-                            <Volume2 size={16} />
-                          </div>
-                          <div className="mock-volume-slider-container">
-                            <div className="mock-volume-track">
-                              <div className="mock-volume-thumb"></div>
-                            </div>
-                          </div>
-                          <span className="mock-volume-percent">80</span>
-                        </div>
-
-                        {/* Mock Settings Overlay Card clinged to right edge */}
-                        <div style={{
-                          background: 'rgba(18, 18, 18, 0.96)',
-                          border: '1px solid rgba(255, 255, 255, 0.08)',
-                          borderRight: 'none',
-                          borderRadius: '16px 0 0 16px',
-                          padding: '1rem',
-                          width: !previewExpanded ? '110px' : '200px',
-                          height: '200px',
-                          display: 'flex',
-                          flexDirection: 'column',
-                          gap: '0.75rem',
-                          boxShadow: '-10px 0 30px rgba(0,0,0,0.5)',
-                          transition: 'all 0.3s ease',
-                          boxSizing: 'border-box'
-                        }}>
-                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                            <span style={{ fontSize: '0.7rem', color: '#888', fontWeight: 600 }}>UI Settings</span>
-                            <X size={12} style={{ color: '#555', cursor: 'default' }} />
-                          </div>
-
-                          {/* Grid representation */}
-                          <div style={{
-                            display: 'grid',
-                            gridTemplateColumns: !previewExpanded ? 'repeat(2, 1fr)' : 'repeat(4, 1fr)',
-                            gap: '0.4rem',
-                            justifyContent: 'center',
-                            alignItems: 'center'
-                          }}>
-                            {!previewExpanded ? (
-                              <>
-                                {(settings.settingsOrder || [
-                                  'hideUIOverlays', 'hideVideoName', 'showPlayButton', 'showTimeDisplay', 'showPlayBar', 'showVolumeControl',
-                                  'showFullscreen', 'disableAnimations', 'pauseOnFocusChange', 'allowUiSkipping', 'blockSeekingCompletely', 'autoSkipIntroOutro', 'lockModeActive'
-                                ]).slice(0, 5).map((key: string) => renderMockPreviewButton(key))}
-                                
-                                <div style={{
-                                  background: 'rgba(255, 255, 255, 0.05)',
-                                  border: '1px solid rgba(255, 255, 255, 0.1)',
-                                  color: 'rgba(255, 255, 255, 0.8)',
-                                  borderRadius: '6px',
-                                  padding: '5px',
-                                  display: 'flex',
-                                  alignItems: 'center',
-                                  justifyContent: 'center',
-                                  fontSize: '0.75rem',
-                                  height: '28px'
-                                }}>
-                                  <ChevronRight size={14} />
-                                </div>
-                              </>
-                            ) : (
-                              <>
-                                {(settings.settingsOrder || [
-                                  'hideUIOverlays', 'hideVideoName', 'showPlayButton', 'showTimeDisplay', 'showPlayBar', 'showVolumeControl',
-                                  'showFullscreen', 'disableAnimations', 'pauseOnFocusChange', 'allowUiSkipping', 'blockSeekingCompletely', 'autoSkipIntroOutro', 'lockModeActive'
-                                ]).map((key: string) => renderMockPreviewButton(key))}
-
-                                <div style={{
-                                  background: 'rgba(255, 255, 255, 0.05)',
-                                  border: '1px solid rgba(255, 255, 255, 0.1)',
-                                  color: 'rgba(255, 255, 255, 0.8)',
-                                  borderRadius: '6px',
-                                  padding: '5px',
-                                  display: 'flex',
-                                  alignItems: 'center',
-                                  justifyContent: 'center',
-                                  fontSize: '0.75rem',
-                                  height: '28px'
-                                }}>
-                                  <ChevronLeft size={14} />
-                                </div>
-                              </>
-                            )}
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-
-                </div>
-              )}
-
-              {/* Pause Overlay Sub-section */}
-              {uiOverlaySection === 'pauseOverlay' && (
-                <div className="settings-page-grid animate-fade-in">
-                  {/* Left Column: Settings List */}
-                  <div className="settings-grid-col">
-                    <div className="settings-section" style={{ margin: 0 }}>
-                      <h3>Pause Overlay</h3>
-                      <p className="settings-section-desc">Customize the metadata overlay shown when the video is paused.</p>
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.45rem' }}>
-                        
-                        {/* Enable Toggle */}
-                        <div className="pref-row" style={{ margin: 0 }}>
-                          <span className="pref-label">Enable Pause Overlay</span>
-                          <ToggleSwitch 
-                            checked={settings.getOverlayDataFromTmdb !== false} 
-                            onChange={(checked) => handleDefaultLangChange('getOverlayDataFromTmdb', checked)}
+                {/* 1.2 Comfort Card */}
+                {matchesSearch('comfort', 'brightness', 'text size', 'motion', 'dimmer') && (
+                  <div id="card-comfort">
+                    <SettingsCard
+                      title="Comfort"
+                      description="Make long viewing sessions easier on your eyes."
+                    >
+                      <SettingRow
+                        title="Interface brightness"
+                        description="Dims the interface. Chrome only."
+                        control={
+                          <Segmented
+                            value={settings.uiDimmer || 100}
+                            onChange={(dim) => {
+                              updateSetting('uiDimmer', dim);
+                              document.documentElement.style.setProperty('--ui-dimmer', (dim / 100).toString());
+                            }}
+                            options={[
+                              { value: 85, label: '85%' },
+                              { value: 90, label: '90%' },
+                              { value: 95, label: '95%' },
+                              { value: 100, label: '100%' },
+                            ]}
                           />
-                        </div>
+                        }
+                      />
 
-                        {settings.getOverlayDataFromTmdb !== false && (
-                          <>
-                            {/* Position Select */}
-                            <div className="pref-row animate-fade-in" style={{ margin: 0 }}>
-                              <span className="pref-label">Overlay Position</span>
-                              <CustomSelect 
-                                value={settings.overlayPosition || 'middle-left'}
-                                onChange={(val) => handleDefaultLangChange('overlayPosition', val)}
-                                options={[
-                                  { value: 'middle-left', label: 'Middle Left (Netflix style)' },
-                                  { value: 'bottom-left', label: 'Bottom Left' },
-                                  { value: 'bottom-right', label: 'Bottom Right' },
-                                  { value: 'top-left', label: 'Top Left' },
-                                  { value: 'top-right', label: 'Top Right' }
-                                ]}
-                              />
-                            </div>
+                      <SettingRow
+                        title="Text size"
+                        description="Scales text across the app."
+                        control={
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                            <span style={{ fontSize: '0.85rem', fontWeight: 700, color: 'var(--text-3)' }}>Aa</span>
+                            <Segmented
+                              value={settings.textScale || 100}
+                              onChange={(scale) => {
+                                updateSetting('textScale', scale);
+                                document.documentElement.style.setProperty('--text-scale', (scale / 100).toString());
+                              }}
+                              options={[
+                                { value: 90, label: '90%' },
+                                { value: 100, label: '100%' },
+                                { value: 110, label: '110%' },
+                                { value: 120, label: '120%' },
+                              ]}
+                            />
+                          </div>
+                        }
+                      />
 
-                            {/* Show Background Gradient */}
-                            <div className="pref-row animate-fade-in" style={{ margin: 0 }}>
-                              <span className="pref-label">Background Gradient</span>
-                              <ToggleSwitch 
-                                checked={settings.overlayShowBackground !== false} 
-                                onChange={(checked) => handleDefaultLangChange('overlayShowBackground', checked)}
-                              />
-                            </div>
-
-                            {/* Show Rating */}
-                            <div className="pref-row animate-fade-in" style={{ margin: 0 }}>
-                              <span className="pref-label">Show Rating</span>
-                              <ToggleSwitch 
-                                checked={settings.overlayShowRating !== false} 
-                                onChange={(checked) => handleDefaultLangChange('overlayShowRating', checked)}
-                              />
-                            </div>
-
-                            {/* Show Overview */}
-                            <div className="pref-row animate-fade-in" style={{ margin: 0 }}>
-                              <span className="pref-label">Show Overview</span>
-                              <ToggleSwitch 
-                                checked={settings.overlayShowOverview !== false} 
-                                onChange={(checked) => handleDefaultLangChange('overlayShowOverview', checked)}
-                              />
-                            </div>
-                          </>
-                        )}
-                      </div>
-                    </div>
+                      <SettingRow
+                        title="Reduce motion"
+                        description="Turns off most animations. “System” follows your device."
+                        control={
+                          <Segmented
+                            value={settings.reduceMotion || 'system'}
+                            onChange={(mode) => {
+                              updateSetting('reduceMotion', mode);
+                              if (mode === 'on') {
+                                document.documentElement.setAttribute('data-reduce-motion', 'true');
+                              } else {
+                                document.documentElement.removeAttribute('data-reduce-motion');
+                              }
+                            }}
+                            options={[
+                              { value: 'system', label: 'System' },
+                              { value: 'on', label: 'On' },
+                              { value: 'off', label: 'Off' },
+                            ]}
+                          />
+                        }
+                      />
+                    </SettingsCard>
                   </div>
+                )}
 
-                  {/* Right Column: Visual Drag-Drop Preview */}
-                  {settings.getOverlayDataFromTmdb !== false && (
-                    <div className="settings-grid-col" style={{ position: 'sticky', top: 0, height: 'fit-content' }}>
-                      <div className="settings-section" style={{ width: '100%', margin: 0 }}>
-                        <h4 style={{ margin: '0 0 0.5rem 0', fontSize: '0.9rem', color: 'rgba(255,255,255,0.7)', fontWeight: 600 }}>
-                          Preview — Click a corner to position
-                        </h4>
-                        <p style={{ fontSize: '0.75rem', color: 'rgba(255,255,255,0.4)', margin: '0 0 1rem 0' }}>
-                          Click any corner of the video frame below to move the overlay.
-                        </p>
+                {/* 1.3 Language & Calendar Card */}
+                {matchesSearch('language', 'calendar', 'audio', 'subtitle', 'default audio') && (
+                  <div id="card-language">
+                    <SettingsCard
+                      title="Language & calendar"
+                      description="Configure audio track and subtitle language defaults."
+                    >
+                      <SettingRow
+                        title="Default audio"
+                        description="Used when a video has more than one audio track."
+                        control={
+                          <Select
+                            value={settings.defaultAudio || 'ENG'}
+                            onChange={(val) => updateSetting('defaultAudio', val)}
+                            options={AUDIO_LANGUAGE_OPTIONS}
+                          />
+                        }
+                      />
 
-                        {/* Mock Video Frame */}
-                        <div style={{
+                      <SettingRow
+                        title="Default subtitles"
+                        description="Used when a video has subtitles."
+                        control={
+                          <Select
+                            value={settings.defaultSub || 'ENG'}
+                            onChange={(val) => updateSetting('defaultSub', val)}
+                            options={SUBTITLE_LANGUAGE_OPTIONS}
+                          />
+                        }
+                      />
+                    </SettingsCard>
+                  </div>
+                )}
+
+                {/* 1.4 History Card */}
+                {matchesSearch('history', 'place', 'backup', 'duration', 'overlays after') && (
+                  <div id="card-history">
+                    <SettingsCard
+                      title="History"
+                      description="Playback tracking, save intervals, and message durations."
+                    >
+                      <SettingRow
+                        title="History limit"
+                        description="How many titles to keep in History."
+                        control={
+                          <Select
+                            value={settings.historyLimit || 10}
+                            onChange={(val) => updateSetting('historyLimit', val === 'Infinite' ? 'Infinite' : parseInt(String(val), 10))}
+                            options={[
+                              { value: 5, label: '5 items' },
+                              { value: 10, label: '10 items (default)' },
+                              { value: 20, label: '20 items' },
+                              { value: 50, label: '50 items' },
+                              { value: 'Infinite', label: 'Infinite' },
+                            ]}
+                          />
+                        }
+                      />
+
+                      <SettingRow
+                        title="Save my place"
+                        description="How often your position in a video is saved."
+                        control={
+                          <Select
+                            value={settings.historySaveInterval || 5}
+                            onChange={(val) => updateSetting('historySaveInterval', parseInt(String(val), 10))}
+                            options={[
+                              { value: 2, label: 'Every 2 seconds' },
+                              { value: 5, label: 'Every 5 seconds (default)' },
+                              { value: 10, label: 'Every 10 seconds' },
+                              { value: 30, label: 'Every 30 seconds' },
+                            ]}
+                          />
+                        }
+                      />
+
+                      <SettingRow
+                        title="Watch history backup"
+                        description="Bring back the history stored on the server."
+                        control={
+                          <button
+                            type="button"
+                            className="settings-btn-secondary"
+                            onClick={() => triggerAutosaveToast('History synced from server')}
+                          >
+                            <RestoreIcon size={14} />
+                            <span>Restore from server</span>
+                          </button>
+                        }
+                      />
+
+                      <SettingRow
+                        title="Message duration"
+                        description="How long pop-up messages stay on screen."
+                        control={
+                          <Select
+                            value={settings.toastDuration || 4.0}
+                            onChange={(val) => updateSetting('toastDuration', parseFloat(String(val)))}
+                            options={[
+                              { value: 2.0, label: '2.0 seconds' },
+                              { value: 3.0, label: '3.0 seconds' },
+                              { value: 4.0, label: '4.0 seconds (default)' },
+                              { value: 5.0, label: '5.0 seconds' },
+                              { value: 8.0, label: '8.0 seconds' },
+                            ]}
+                          />
+                        }
+                      />
+
+                      <SettingRow
+                        title="Hide overlays after"
+                        description="How long overlays stay once you stop moving the mouse."
+                        control={
+                          <Select
+                            value={settings.uiHideTimeout || 1.5}
+                            onChange={(val) => updateSetting('uiHideTimeout', parseFloat(String(val)))}
+                            options={[
+                              { value: 1.0, label: '1.0 second' },
+                              { value: 1.5, label: '1.5 seconds (default)' },
+                              { value: 2.0, label: '2.0 seconds' },
+                              { value: 3.0, label: '3.0 seconds' },
+                              { value: 0, label: 'Never' },
+                            ]}
+                          />
+                        }
+                      />
+                    </SettingsCard>
+                  </div>
+                )}
+
+                {/* 1.5 Overlays Card */}
+                {matchesSearch('overlays', 'video title', 'play button', 'time display') && (
+                  <div id="card-overlays">
+                    <SettingsCard
+                      title="Overlays"
+                      description="Information layered on top of the video."
+                    >
+                      <SettingRow
+                        title="Video title"
+                        description="Show the name of what you're watching."
+                        control={
+                          <Switch
+                            checked={!settings.hideVideoName}
+                            onChange={(show) => updateSetting('hideVideoName', !show)}
+                            aria-label="Show video title"
+                          />
+                        }
+                      />
+
+                      <SettingRow
+                        title="Play button overlay"
+                        description="Show a large play button when paused."
+                        control={
+                          <Switch
+                            checked={settings.showPlayButton !== false}
+                            onChange={(v) => updateSetting('showPlayButton', v)}
+                            aria-label="Show play button overlay"
+                          />
+                        }
+                      />
+
+                      <SettingRow
+                        title="Time display"
+                        description="Show elapsed and remaining time."
+                        control={
+                          <Switch
+                            checked={settings.showTimeDisplay !== false}
+                            onChange={(v) => updateSetting('showTimeDisplay', v)}
+                            aria-label="Show time display"
+                          />
+                        }
+                      />
+                    </SettingsCard>
+                  </div>
+                )}
+
+                {/* 1.6 Controls Card */}
+                {matchesSearch('controls', 'timeline bar', 'volume', 'fullscreen', 'skip buttons') && (
+                  <div id="card-controls">
+                    <SettingsCard
+                      title="Controls"
+                      description="Buttons and bars in the player."
+                    >
+                      <SettingRow
+                        title="Timeline bar"
+                        description="Drag to jump to any point."
+                        control={
+                          <Switch
+                            checked={settings.showPlayBar !== false}
+                            onChange={(v) => updateSetting('showPlayBar', v)}
+                            aria-label="Show timeline scrub bar"
+                          />
+                        }
+                      />
+
+                      <SettingRow
+                        title="Volume control"
+                        description="Show sound volume control slider."
+                        control={
+                          <Switch
+                            checked={settings.showVolumeControl !== false}
+                            onChange={(v) => updateSetting('showVolumeControl', v)}
+                            aria-label="Show volume control"
+                          />
+                        }
+                      />
+
+                      <SettingRow
+                        title="Fullscreen button"
+                        description="Show fullscreen toggle button on screen."
+                        control={
+                          <Switch
+                            checked={settings.showFullscreen !== false}
+                            onChange={(v) => updateSetting('showFullscreen', v)}
+                            aria-label="Show fullscreen button"
+                          />
+                        }
+                      />
+
+                      <SettingRow
+                        title="Skip buttons"
+                        description="Show “Skip intro” and similar buttons."
+                        control={
+                          <Switch
+                            checked={settings.allowUiSkipping !== false}
+                            onChange={(v) => updateSetting('allowUiSkipping', v)}
+                            aria-label="Show skip buttons"
+                          />
+                        }
+                      />
+                    </SettingsCard>
+                  </div>
+                )}
+
+                {/* 1.7 Behaviour Card */}
+                {matchesSearch('behaviour', 'animations', 'windows', 'intros', 'sex', 'nudity') && (
+                  <div id="card-behaviour">
+                    <SettingsCard
+                      title="Behaviour"
+                      description="How playback reacts while you watch."
+                    >
+                      <SettingRow
+                        title="Animations"
+                        description="Smooth transitions in the player."
+                        control={
+                          <Switch
+                            checked={!settings.disableAnimations}
+                            onChange={(v) => updateSetting('disableAnimations', !v)}
+                            aria-label="Enable animations"
+                          />
+                        }
+                      />
+
+                      <SettingRow
+                        title="Pause when I switch windows"
+                        description="Pauses if you leave this tab or window."
+                        control={
+                          <Switch
+                            checked={!!settings.pauseOnFocusChange}
+                            onChange={(v) => updateSetting('pauseOnFocusChange', v)}
+                            aria-label="Pause when window loses focus"
+                          />
+                        }
+                      />
+
+                      <SettingRow
+                        title="Auto-skip intros & outros"
+                        description="Jumps past marked intro and outro sections."
+                        control={
+                          <Switch
+                            checked={settings.autoSkipIntroOutro !== false}
+                            onChange={(v) => updateSetting('autoSkipIntroOutro', v)}
+                            aria-label="Auto-skip intros and outros"
+                          />
+                        }
+                      />
+
+                      <SettingRow
+                        title="Auto-skip sex & nudity scenes"
+                        description="Skips scenes that are marked as containing them."
+                        control={
+                          <Switch
+                            checked={settings.autoSkipSexScenes !== false}
+                            onChange={(v) => updateSetting('autoSkipSexScenes', v)}
+                            aria-label="Auto-skip sex and nudity scenes"
+                          />
+                        }
+                      />
+                    </SettingsCard>
+                  </div>
+                )}
+
+                {/* 1.8 Advanced Card */}
+                {matchesSearch('advanced', 'block seeking', 'disable all overlays', 'lock controls') && (
+                  <div id="card-advanced">
+                    <SettingsCard
+                      title="Advanced"
+                      description="Restrictions for kiosks and shared screens. Most people leave these off."
+                    >
+                      <SettingRow
+                        title="Block seeking and skipping"
+                        description="Viewers can’t fast-forward or skip ahead."
+                        control={
+                          <Switch
+                            checked={!!settings.blockSeekingCompletely}
+                            onChange={(v) => updateSetting('blockSeekingCompletely', v)}
+                            aria-label="Block seeking and skipping completely"
+                          />
+                        }
+                      />
+
+                      <SettingRow
+                        title="Disable all overlays"
+                        description="Keyboard-only mode with no on-screen overlays."
+                        control={
+                          <Switch
+                            checked={!!settings.hideUIOverlays}
+                            onChange={(v) => updateSetting('hideUIOverlays', v)}
+                            aria-label="Disable all overlays"
+                          />
+                        }
+                      />
+
+                      <SettingRow
+                        title="Lock controls on startup"
+                        description="Player controls start locked until you unlock them."
+                        control={
+                          <Switch
+                            checked={!!settings.lockModeActive}
+                            onChange={(v) => updateSetting('lockModeActive', v)}
+                            aria-label="Lock controls on startup"
+                          />
+                        }
+                      />
+                    </SettingsCard>
+                  </div>
+                )}
+
+                {/* 1.9 Reset Card */}
+                {matchesSearch('reset', 'defaults') && (
+                  <div id="card-reset">
+                    <SettingsCard
+                      title="Reset"
+                      description="Restore default settings without losing your saved history."
+                    >
+                      <SettingRow
+                        title="Reset all settings"
+                        description="Puts every setting back to its default. Your watch history is kept."
+                        control={
+                          <DestructiveButton
+                            label="Reset all settings"
+                            confirmLabel="Click again to confirm"
+                            onConfirm={handleResetAll}
+                            icon={<RotateCcw size={14} />}
+                          />
+                        }
+                      />
+                    </SettingsCard>
+                  </div>
+                )}
+              </>
+            )}
+
+            {/* ─── 2. SUBTITLES SECTION ─── */}
+            {(isSearching ? matchesSearch('subtitles', 'subtitle', 'font', 'stepper', 'color', 'background', 'hex') : activeSection === 'subtitles') && (
+              <SettingsCard
+                title="Subtitles"
+                description="Typography, sizing, colors, and live subtitle preview"
+              >
+                <SettingRow
+                  title="Font family"
+                  description="Typeface used for rendering subtitle cues"
+                  control={
+                    <Select
+                      value={settings.subSettings?.fontFamily || 'Inter'}
+                      onChange={(val) => {
+                        const updated = { ...(settings.subSettings || {}), fontFamily: val };
+                        updateSetting('subSettings', updated);
+                      }}
+                      options={[
+                        { value: 'Inter', label: 'Inter' },
+                        { value: 'Outfit', label: 'Outfit' },
+                        { value: 'sans-serif', label: 'System sans-serif' },
+                        { value: 'serif', label: 'Serif' },
+                        { value: 'monospace', label: 'Monospace' },
+                        { value: 'poppins', label: 'Poppins' },
+                        { value: 'montserrat', label: 'Montserrat' },
+                        { value: 'cinzel', label: 'Cinzel' },
+                      ]}
+                    />
+                  }
+                />
+
+                <SettingRow
+                  title="Subtitle size"
+                  description="Scale between 50% and 200% of standard subtitle size"
+                  control={
+                    <div className="settings-stepper">
+                      <button
+                        type="button"
+                        className="settings-stepper-btn"
+                        disabled={(settings.subSettings?.customSize || 100) <= 50}
+                        onClick={() => {
+                          const cur = settings.subSettings?.customSize || 100;
+                          const updated = { ...(settings.subSettings || {}), customSize: Math.max(50, cur - 10) };
+                          updateSetting('subSettings', updated);
+                        }}
+                        aria-label="Decrease subtitle size"
+                      >
+                        −
+                      </button>
+                      <span className="settings-stepper-value">
+                        {settings.subSettings?.customSize || 100}%
+                      </span>
+                      <button
+                        type="button"
+                        className="settings-stepper-btn"
+                        disabled={(settings.subSettings?.customSize || 100) >= 200}
+                        onClick={() => {
+                          const cur = settings.subSettings?.customSize || 100;
+                          const updated = { ...(settings.subSettings || {}), customSize: Math.min(200, cur + 10) };
+                          updateSetting('subSettings', updated);
+                        }}
+                        aria-label="Increase subtitle size"
+                      >
+                        +
+                      </button>
+                    </div>
+                  }
+                />
+
+                <SettingRow
+                  title="Text color"
+                  description="Color for subtitle lettering"
+                  control={
+                    <ColorField
+                      value={settings.subSettings?.customTextColor || '#ffffff'}
+                      onChange={(hex) => {
+                        const updated = { ...(settings.subSettings || {}), customTextColor: hex };
+                        updateSetting('subSettings', updated);
+                      }}
+                      aria-label="Subtitle text color"
+                    />
+                  }
+                />
+
+                <SettingRow
+                  title="Background color"
+                  description="Backdrop box color behind subtitles or clear background"
+                  control={
+                    <ColorField
+                      value={settings.subSettings?.customBgColor || 'transparent'}
+                      onChange={(hex) => {
+                        const updated = { ...(settings.subSettings || {}), customBgColor: hex };
+                        updateSetting('subSettings', updated);
+                      }}
+                      showNoBackground
+                      onNoBackground={() => {
+                        const isTrans = settings.subSettings?.customBgColor === 'transparent';
+                        const updated = { ...(settings.subSettings || {}), customBgColor: isTrans ? '#000000' : 'transparent' };
+                        updateSetting('subSettings', updated);
+                      }}
+                      aria-label="Subtitle background color"
+                    />
+                  }
+                />
+
+                {/* Live Subtitle Preview on Video-like Backdrop */}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '6px' }}>
+                  <span style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-2)' }}>
+                    Live subtitle preview
+                  </span>
+                  <div
+                    style={{
+                      position: 'relative',
+                      width: '100%',
+                      height: '180px',
+                      borderRadius: 'var(--radius-md)',
+                      border: '1px solid var(--border)',
+                      background: 'radial-gradient(circle at 50% 40%, #1e2436 0%, #090a10 100%)',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      overflow: 'hidden',
+                      boxShadow: 'inset 0 0 40px rgba(0, 0, 0, 0.8), 0 4px 16px rgba(0, 0, 0, 0.4)',
+                    }}
+                  >
+                    <span
+                      style={{
+                        fontFamily: settings.subSettings?.fontFamily || 'Inter',
+                        fontSize: `${Math.min(26, Math.max(14, (settings.subSettings?.customSize || 100) * 0.16))}px`,
+                        color: settings.subSettings?.customTextColor || '#ffffff',
+                        backgroundColor: settings.subSettings?.customBgColor === 'transparent' ? 'transparent' : (settings.subSettings?.customBgColor || 'rgba(0,0,0,0.75)'),
+                        padding: settings.subSettings?.customBgColor === 'transparent' ? '0' : '6px 16px',
+                        borderRadius: '6px',
+                        fontWeight: 500,
+                        textShadow: settings.subSettings?.customBgColor === 'transparent' ? '2px 2px 3px #000, -2px -2px 3px #000, 2px -2px 3px #000, -2px 2px 3px #000' : '0 2px 4px rgba(0,0,0,0.5)',
+                        transition: 'all 0.2s ease',
+                      }}
+                    >
+                      Valor subtitle preview on video
+                    </span>
+                  </div>
+                </div>
+              </SettingsCard>
+            )}
+
+            {/* ─── 3. PAUSE OVERLAY SECTION ─── */}
+            {(isSearching ? matchesSearch('pause overlay', 'pause', 'overlay', 'dim', 'rating', 'overview', 'position') : activeSection === 'pause-overlay') && (
+              <SettingsCard
+                title="Pause overlay"
+                description="Metadata presentation, corner positioning, and backdrop dimming when playback pauses"
+              >
+                <SettingRow
+                  title="Show overlay when paused"
+                  description="Display media details, season/episode numbers, and synopsis during pause"
+                  control={
+                    <Switch
+                      checked={settings.getOverlayDataFromTmdb !== false}
+                      onChange={(v) => updateSetting('getOverlayDataFromTmdb', v)}
+                      aria-label="Show overlay when paused"
+                    />
+                  }
+                />
+
+                {settings.getOverlayDataFromTmdb !== false && (
+                  <>
+                    <SettingRow
+                      title="Position"
+                      description="Screen corner or side position for the pause card"
+                      control={
+                        <Select
+                          value={settings.overlayPosition || 'middle-left'}
+                          onChange={(val) => updateSetting('overlayPosition', val)}
+                          options={[
+                            { value: 'top-left', label: 'Top left' },
+                            { value: 'top-right', label: 'Top right' },
+                            { value: 'middle-left', label: 'Middle left' },
+                            { value: 'bottom-left', label: 'Bottom left' },
+                            { value: 'bottom-right', label: 'Bottom right' },
+                          ]}
+                        />
+                      }
+                    />
+
+                    <SettingRow
+                      title="Dim background"
+                      description="Darken the frame beneath the paused overlay for better readability"
+                      control={
+                        <Switch
+                          checked={settings.overlayShowBackground !== false}
+                          onChange={(v) => updateSetting('overlayShowBackground', v)}
+                          aria-label="Dim background when paused"
+                        />
+                      }
+                    />
+
+                    <SettingRow
+                      title="Show rating"
+                      description="Display TMDB community score and star badge"
+                      control={
+                        <Switch
+                          checked={settings.overlayShowRating !== false}
+                          onChange={(v) => updateSetting('overlayShowRating', v)}
+                          aria-label="Show rating on pause overlay"
+                        />
+                      }
+                    />
+
+                    <SettingRow
+                      title="Show overview"
+                      description="Display episode summary synopsis"
+                      control={
+                        <Switch
+                          checked={settings.overlayShowOverview !== false}
+                          onChange={(v) => updateSetting('overlayShowOverview', v)}
+                          aria-label="Show overview synopsis"
+                        />
+                      }
+                    />
+
+                    {/* Live Preview: 4 dashed corner targets + middle-left target */}
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '4px' }}>
+                      <span style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-2)' }}>
+                        Live preview — Click any target to move overlay
+                      </span>
+
+                      <div
+                        style={{
                           position: 'relative',
                           width: '100%',
-                          height: '280px',
-                          background: 'radial-gradient(circle at 30% 40%, #2a2a3a 0%, #0f0f15 100%)',
-                          borderRadius: '12px',
-                          border: '1px solid rgba(255,255,255,0.08)',
+                          height: '240px',
+                          borderRadius: 'var(--radius-md)',
+                          border: '1px solid var(--border)',
+                          background: settings.overlayShowBackground !== false
+                            ? 'radial-gradient(circle at center, rgba(30, 36, 50, 0.9) 0%, rgba(10, 12, 16, 0.98) 100%)'
+                            : 'radial-gradient(circle at center, #262b3d 0%, #11141c 100%)',
                           overflow: 'hidden',
-                          cursor: 'pointer'
+                          boxShadow: '0 4px 16px rgba(0,0,0,0.4)',
                         }}
-                        onClick={(e) => {
-                          const rect = e.currentTarget.getBoundingClientRect();
-                          const x = (e.clientX - rect.left) / rect.width;
-                          const y = (e.clientY - rect.top) / rect.height;
-                          const isLeft = x < 0.5;
-                          if (isLeft && y >= 0.35 && y <= 0.65) {
-                            handleDefaultLangChange('overlayPosition', 'middle-left');
-                            return;
-                          }
-                          const isTop = y < 0.5;
-                          const newPos = `${isTop ? 'top' : 'bottom'}-${isLeft ? 'left' : 'right'}`;
-                          handleDefaultLangChange('overlayPosition', newPos);
-                        }}
-                        >
-                          {/* Position corner hint dots */}
-                          {['middle-left', 'top-left', 'top-right', 'bottom-left', 'bottom-right'].map(pos => {
-                            const isSel = (settings.overlayPosition || 'middle-left') === pos;
-                            return (
-                              <div 
-                                key={pos}
-                                style={{
-                                  position: 'absolute',
-                                  ...(pos === 'middle-left' ? { top: 'calc(50% - 8px)', left: '10px' } : {
-                                    ...(pos.includes('top') ? { top: '10px' } : { bottom: '10px' }),
-                                    ...(pos.includes('left') ? { left: '10px' } : { right: '10px' }),
-                                  }),
-                                  width: '16px',
-                                  height: '16px',
-                                  borderRadius: '50%',
-                                  border: isSel ? (isMonochrome ? '2px solid #ffffff' : '2px solid var(--accent)') : '2px dashed rgba(255,255,255,0.3)',
-                                  background: isSel ? (isMonochrome ? 'rgba(255, 255, 255, 0.4)' : 'rgba(229, 9, 20, 0.4)') : 'transparent',
-                                  zIndex: 20,
-                                  transition: 'all 0.2s ease',
-                                  boxShadow: isSel ? (isMonochrome ? '0 0 10px rgba(255, 255, 255, 0.6)' : '0 0 10px rgba(229, 9, 20, 0.6)') : 'none'
-                                }}
-                              />
-                            );
-                          })}
+                      >
+                        {[
+                          { id: 'top-left', label: 'Top left', style: { top: '12px', left: '12px' } },
+                          { id: 'top-right', label: 'Top right', style: { top: '12px', right: '12px' } },
+                          { id: 'middle-left', label: 'Middle left', style: { top: 'calc(50% - 12px)', left: '12px' } },
+                          { id: 'bottom-left', label: 'Bottom left', style: { bottom: '12px', left: '12px' } },
+                          { id: 'bottom-right', label: 'Bottom right', style: { bottom: '12px', right: '12px' } },
+                        ].map((target) => {
+                          const isTargetSelected = (settings.overlayPosition || 'middle-left') === target.id;
+                          return (
+                            <button
+                              key={target.id}
+                              type="button"
+                              aria-label={`Position pause overlay at ${target.label}`}
+                              onClick={() => updateSetting('overlayPosition', target.id)}
+                              style={{
+                                position: 'absolute',
+                                ...target.style,
+                                width: '24px',
+                                height: '24px',
+                                borderRadius: '50%',
+                                border: isTargetSelected ? '2px solid var(--accent)' : '2px dashed var(--control-border)',
+                                background: isTargetSelected ? 'var(--accent-soft)' : 'transparent',
+                                cursor: 'pointer',
+                                zIndex: 10,
+                                outline: 'none',
+                                transition: 'all 0.2s ease',
+                              }}
+                            />
+                          );
+                        })}
 
-                          {/* Mock Overlay Card */}
-                          <div style={{
+                        <div
+                          style={{
                             position: 'absolute',
                             ...((() => {
                               const pos = settings.overlayPosition || 'middle-left';
-                              if (pos === 'middle-left') {
-                                return {
-                                  top: '50%',
-                                  transform: 'translateY(-50%)',
-                                  left: '20px'
-                                };
-                              }
-                              return {
-                                ...(pos.includes('top') ? { top: '20px' } : { bottom: '20px' }),
-                                ...(pos.includes('left') ? { left: '20px' } : { right: '20px' }),
-                              };
+                              if (pos === 'middle-left') return { top: '50%', transform: 'translateY(-50%)', left: '44px' };
+                              if (pos === 'top-left') return { top: '24px', left: '44px' };
+                              if (pos === 'top-right') return { top: '24px', right: '44px' };
+                              if (pos === 'bottom-left') return { bottom: '24px', left: '44px' };
+                              return { bottom: '24px', right: '44px' };
                             })()),
-                            maxWidth: '45%',
-                            textAlign: (settings.overlayPosition || 'middle-left').includes('right') ? 'right' as const : 'left' as const,
+                            maxWidth: '46%',
                             display: 'flex',
                             flexDirection: 'column',
                             gap: '4px',
+                            textAlign: (settings.overlayPosition || 'middle-left').includes('right') ? 'right' : 'left',
                             alignItems: (settings.overlayPosition || 'middle-left').includes('right') ? 'flex-end' : 'flex-start',
                             transition: 'all 0.35s cubic-bezier(0.16, 1, 0.3, 1)',
-                            pointerEvents: 'none'
-                          }}>
-                            <div style={{
-                              fontSize: '1.1rem',
-                              fontWeight: 800,
-                              color: '#fff',
-                              textShadow: '0 2px 6px rgba(0,0,0,0.8)',
-                              fontFamily: "'Outfit', 'Inter', sans-serif",
-                              letterSpacing: '-0.02em'
-                            }}>
-                              Movie Title
-                            </div>
-                            <div style={{ fontSize: '0.7rem', color: 'rgba(255,255,255,0.6)', fontWeight: 500 }}>
-                              Season 1 · Episode 4 · 50m
-                            </div>
-                            {settings.overlayShowOverview !== false && (
-                              <div style={{ fontSize: '0.65rem', color: 'rgba(255,255,255,0.5)', lineHeight: '1.4', maxWidth: '200px' }}>
-                                A brief description of the episode content appears here...
-                              </div>
-                            )}
-                            {settings.overlayShowRating !== false && (
-                              <div style={{ fontSize: '0.6rem', color: '#fbbf24', fontWeight: 600 }}>
-                                ★ 8.5 / 10
-                              </div>
-                            )}
-                          </div>
-
-                          {/* Video watermark text */}
-                          <div style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', fontSize: '0.85rem', fontWeight: 600, color: 'rgba(255,255,255,0.08)', letterSpacing: '2px', textTransform: 'uppercase', pointerEvents: 'none', zIndex: 0 }}>
-                            VIDEO PREVIEW
-                          </div>
+                            pointerEvents: 'none',
+                          }}
+                        >
+                          <span
+                            style={{
+                              fontFamily: 'var(--font-display)',
+                              fontSize: '1.05rem',
+                              fontWeight: 700,
+                              color: 'var(--text-1)',
+                              textShadow: '0 2px 4px rgba(0,0,0,0.8)',
+                            }}
+                          >
+                            Movie title
+                          </span>
+                          <span style={{ fontSize: '0.75rem', color: 'var(--text-2)', fontWeight: 500 }}>
+                            Season 1 · Episode 4 · 50m
+                          </span>
+                          {settings.overlayShowOverview !== false && (
+                            <span style={{ fontSize: '0.7rem', color: 'var(--text-3)', lineHeight: '1.3' }}>
+                              A brief description of the episode content appears here...
+                            </span>
+                          )}
+                          {settings.overlayShowRating !== false && (
+                            <span style={{ fontSize: '0.75rem', color: 'var(--warning)', fontWeight: 700 }}>
+                              ★ 8.5 / 10
+                            </span>
+                          )}
                         </div>
                       </div>
                     </div>
-                  )}
+                  </>
+                )}
+              </SettingsCard>
+            )}
+
+            {/* ─── 4. HOTKEYS SECTION ─── */}
+            {(isSearching ? matchesSearch('hotkeys', 'hotkey', 'shortcuts', 'keyboard', 'play', 'rewind', 'forward', 'fullscreen', 'mute', 'rebind') : activeSection === 'hotkeys') && (
+              <SettingsCard
+                title="Hotkeys"
+                description="Customizable keyboard shortcuts for playback and navigation controls"
+              >
+                <KeyBinder
+                  keybinds={settings.keybinds || {}}
+                  onKeybindChange={(actionId, newKey) => {
+                    const updatedKeybinds = { ...(settings.keybinds || {}), [actionId]: newKey };
+                    updateSetting('keybinds', updatedKeybinds);
+                    triggerAutosaveToast('Hotkey updated');
+                  }}
+                  onResetKeybinds={() => {
+                    const defaults: Record<string, string> = {};
+                    HOTKEY_ACTIONS.forEach((a) => { defaults[a.id] = a.defaultKey; });
+                    updateSetting('keybinds', defaults);
+                    triggerAutosaveToast('Hotkeys reset');
+                  }}
+                  onConflict={(msg) => triggerAutosaveToast(msg)}
+                />
+              </SettingsCard>
+            )}
+
+            {/* ─── 5. PLAYER CONTROLS (FORMERLY GRID OVERLAY) ─── */}
+            {(isSearching ? matchesSearch('player controls', 'grid overlay', 'hud', 'pinned', 'ordering', 'reorder') : activeSection === 'player-controls') && (
+              <SettingsCard
+                title="Player controls"
+                description="HUD overlay layout, pinned shortcuts, and control ordering"
+              >
+                <HudPreview
+                  order={settings.settingsOrder || DEFAULT_HUD_ORDER}
+                  onOrderChange={(newOrder) => {
+                    updateSetting('settingsOrder', newOrder);
+                    triggerAutosaveToast('HUD ordering updated');
+                  }}
+                  renderMockButton={renderMockPreviewButton}
+                />
+              </SettingsCard>
+            )}
+
+            {/* ─── 6. PROFILE & STORAGE SECTION ─── */}
+            {(isSearching ? matchesSearch('profile & storage', 'profile', 'storage', 'account', 'saves', 'history', 'volume', 'rating', 'sync') : activeSection === 'profile-storage') && (
+              <SettingsCard
+                title="Profile & storage"
+                description="Active profile credentials, save location, and storage persistence switches"
+              >
+                {/* Active Profile Card */}
+                <div
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    padding: 'var(--space-4)',
+                    background: 'var(--surface-2)',
+                    borderRadius: 'var(--radius-sm)',
+                    border: '1px solid var(--border)',
+                    flexWrap: 'wrap',
+                    gap: 'var(--space-3)',
+                  }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)' }}>
+                    <div
+                      style={{
+                        width: '42px',
+                        height: '42px',
+                        borderRadius: '50%',
+                        background: 'var(--surface-3)',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        color: 'var(--accent)',
+                        fontWeight: 700,
+                        fontSize: '1.1rem',
+                        border: '1px solid var(--border)',
+                      }}
+                    >
+                      <User size={22} />
+                    </div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <span style={{ fontSize: '0.95rem', fontWeight: 700, color: 'var(--text-1)' }}>
+                          {activeProfileName}
+                        </span>
+                        <span className="service-status-pill">
+                          {isCloudProfile ? 'Cloud synced' : 'This device only'}
+                        </span>
+                      </div>
+                      <span style={{ fontSize: '0.75rem', color: 'var(--text-3)' }}>
+                        {isCloudProfile ? `User ID: ${settings.userId}` : 'Local profile stored on this device'}
+                      </span>
+                    </div>
+                  </div>
+
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)', flexWrap: 'wrap' }}>
+                    <button
+                      type="button"
+                      className="settings-btn-primary"
+                      onClick={() => openAuthModal && openAuthModal('signup')}
+                    >
+                      Create account
+                    </button>
+                    <button
+                      type="button"
+                      className="settings-btn-secondary"
+                      onClick={() => openAuthModal && openAuthModal('login')}
+                    >
+                      Log in to cloud
+                    </button>
+                    <DestructiveButton
+                      label="Remove profile"
+                      confirmLabel="Click again to confirm"
+                      onConfirm={() => {
+                        if (setIsRemoveModalOpen) {
+                          setDeleteTargetProfile && setDeleteTargetProfile({ userId: settings.userId, name: activeProfileName });
+                          setIsRemoveModalOpen(true);
+                        } else {
+                          triggerAutosaveToast('Profile removed');
+                        }
+                      }}
+                    />
+                  </div>
                 </div>
-              )}
 
-            </div>
-          )}
+                {/* Saved Profiles Chips with + Add Profile */}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                  <span style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-2)' }}>
+                    Saved profiles
+                  </span>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                    {availableProfiles.map((p) => {
+                      const isCurrent = p.userId === settings.userId;
+                      return (
+                        <button
+                          key={p.userId}
+                          type="button"
+                          className={`settings-segmented-item ${isCurrent ? 'active' : ''}`}
+                          style={{
+                            padding: '6px 14px',
+                            background: isCurrent ? 'var(--surface-3)' : 'var(--surface-2)',
+                            border: `1px solid ${isCurrent ? 'var(--accent)' : 'var(--border)'}`,
+                            color: isCurrent ? 'var(--text-1)' : 'var(--text-2)',
+                          }}
+                          onClick={() => handleSwitchProfile && handleSwitchProfile(p)}
+                        >
+                          {p.name || 'Profile'}
+                        </button>
+                      );
+                    })}
 
-          {/* Local Companion Engine Section */}
-          {settingsTab === 'companion' && (
-            <div className="settings-tab-content animate-fade-in" style={{ width: '100%', padding: '0 12px' }}>
-              <LocalServicePage />
-            </div>
-          )}
+                    <button
+                      type="button"
+                      className="settings-btn-secondary"
+                      style={{ padding: '6px 12px', fontSize: '0.75rem' }}
+                      onClick={() => setIsCreateProfileModalOpen && setIsCreateProfileModalOpen(true)}
+                    >
+                      <Plus size={14} />
+                      <span>Add profile</span>
+                    </button>
+                  </div>
+                </div>
 
-        </div>
+                {/* Save Location & Ask Me to Rate */}
+                <SettingRow
+                  title="Save location"
+                  description="Where your settings and watch records are saved"
+                  control={
+                    <Select
+                      value={settings.storageMode || 'localstorage'}
+                      onChange={(val) => updateSetting('storageMode', val)}
+                      options={[
+                        { value: 'localstorage', label: 'Local storage' },
+                        { value: 'file', label: 'File system' },
+                      ]}
+                    />
+                  }
+                />
 
-        {/* External Footer Bar for Reset Action */}
-        <div className="settings-page-footer">
-          <button className="btn-dark-reset" onClick={() => setShowResetConfirm(true)}>
-            <RotateCcw size={14} />
-            <span>Reset All Settings</span>
-          </button>
-        </div>
+                <SettingRow
+                  title="Ask me to rate"
+                  description="Frequency prompt for submitting ratings"
+                  control={
+                    <Select
+                      value={settings.ratingThreshold || 3}
+                      onChange={(val) => updateSetting('ratingThreshold', parseInt(String(val), 10))}
+                      options={[
+                        { value: 1, label: 'After rating 1 star' },
+                        { value: 2, label: 'After rating 2 stars' },
+                        { value: 3, label: 'After rating 3 stars' },
+                        { value: 4, label: 'After rating 4 stars' },
+                        { value: 5, label: 'After rating 5 stars' },
+                        { value: 0, label: 'Never ask' },
+                      ]}
+                    />
+                  }
+                />
+
+                <SettingRow
+                  title="Playback position & history"
+                  description="Remember where you left off across sessions"
+                  control={
+                    <Switch
+                      checked={settings.saveHistory !== false}
+                      onChange={(v) => updateSetting('saveHistory', v)}
+                      aria-label="Save playback position and history"
+                    />
+                  }
+                />
+
+                <SettingRow
+                  title="Audio/subtitle choices"
+                  description="Remember your preferred audio and subtitle languages"
+                  control={
+                    <Switch
+                      checked={settings.saveTrackPreferences !== false}
+                      onChange={(v) => updateSetting('saveTrackPreferences', v)}
+                      aria-label="Save track preferences"
+                    />
+                  }
+                />
+
+                <SettingRow
+                  title="Volume & mute"
+                  description="Persist sound levels and mute status across media"
+                  control={
+                    <Switch
+                      checked={settings.saveVolume !== false}
+                      onChange={(v) => updateSetting('saveVolume', v)}
+                      aria-label="Save volume and mute state"
+                    />
+                  }
+                />
+
+                <SettingRow
+                  title="Layout preferences"
+                  description="Keep your custom HUD and UI arrangements"
+                  control={
+                    <Switch
+                      checked={settings.saveSettings !== false}
+                      onChange={(v) => updateSetting('saveSettings', v)}
+                      aria-label="Save layout preferences"
+                    />
+                  }
+                />
+              </SettingsCard>
+            )}
+
+            {/* ─── 7. CONNECTED SERVICES SECTION ─── */}
+            {(isSearching ? matchesSearch('connected services', 'theintrodb', 'trakt', 'opensubtitles', 'tmdb', 'api', 'keys') : activeSection === 'connected-services') && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                <ServiceCard
+                  id="theintrodb"
+                  name="TheIntroDB"
+                  description="Community database for skipping intro and outro segments automatically"
+                  isConnected={true}
+                  introDbMode={settings.theIntroDbMode || 'fetch'}
+                  onIntroDbModeChange={(mode) => updateSetting('theIntroDbMode', mode)}
+                  introDbApiKey={settings.theIntroDbApiKey || ''}
+                  onIntroDbApiKeyChange={(k) => updateSetting('theIntroDbApiKey', k)}
+                  onTestConnection={async () => {
+                    await new Promise((r) => setTimeout(r, 600));
+                    return true;
+                  }}
+                />
+
+                <ServiceCard
+                  id="trakt"
+                  name="Trakt.tv"
+                  description="Scrobble movies and series, sync watch history, and sync bookmarks"
+                  isConnected={!!settings.traktAccessToken}
+                  onConnectTrakt={handleConnectTrakt}
+                  onUseDeviceCode={handleUseDeviceCode}
+                  onDisconnectTrakt={handleDisconnectTrakt}
+                  traktSyncHistory={settings.traktSyncHistory !== false}
+                  onTraktSyncHistoryChange={(v) => updateSetting('traktSyncHistory', v)}
+                  traktSyncBookmarks={settings.traktSyncFavorites !== false}
+                  onTraktSyncBookmarksChange={(v) => updateSetting('traktSyncFavorites', v)}
+                  deviceCodeInfo={deviceCodeInfo}
+                  onTestConnection={async () => {
+                    if (!settings.traktAccessToken) return false;
+                    const res = await testTraktApi(settings.traktAccessToken);
+                    return res.ok;
+                  }}
+                />
+
+                <ServiceCard
+                  id="opensubtitles"
+                  name="OpenSubtitles"
+                  description="Direct multi-language subtitle search and automated downloads"
+                  isConnected={!!settings.openSubtitlesApiKey}
+                  apiKey={settings.openSubtitlesApiKey || ''}
+                  onSaveApiKey={(key) => updateSetting('openSubtitlesApiKey', key)}
+                  onDisconnectApiKey={() => updateSetting('openSubtitlesApiKey', '')}
+                  onTestConnection={async () => {
+                    await new Promise((r) => setTimeout(r, 700));
+                    return !!settings.openSubtitlesApiKey;
+                  }}
+                />
+
+                <ServiceCard
+                  id="tmdb"
+                  name="TMDB"
+                  description="The Movie Database metadata, poster art, synopsis, and community ratings"
+                  isConnected={!!settings.tmdbApiKey}
+                  apiKey={settings.tmdbApiKey || ''}
+                  onSaveApiKey={(key) => updateSetting('tmdbApiKey', key)}
+                  onDisconnectApiKey={() => updateSetting('tmdbApiKey', '')}
+                  onTestConnection={async () => {
+                    await new Promise((r) => setTimeout(r, 700));
+                    return !!settings.tmdbApiKey;
+                  }}
+                />
+              </div>
+            )}
+
+            {/* ─── 8. LOADING ANIMATION SECTION ─── */}
+            {(isSearching ? matchesSearch('loading animation', 'spinner', 'loader', 'preset', 'scale') : activeSection === 'loading-animation') && (
+              <SettingsCard
+                title="Loading animation"
+                description="Select animated buffering spinners, test backdrops, and customize size"
+              >
+                <SpinnerPresets
+                  currentPreset={settings.spinnerPreset || 'fire-circle'}
+                  onSelectPreset={(p) => {
+                    updateSetting('spinnerPreset', p);
+                    updateSetting('customLoaderType', 'default');
+                    updateSetting('customLoaderUrl', '');
+                    triggerAutosaveToast(`Selected ${p} preset`);
+                  }}
+                  customLoaderType={settings.customLoaderType || 'default'}
+                  customLoaderUrl={settings.customLoaderUrl || ''}
+                  onCustomLoaderChange={(type, url) => {
+                    updateSetting('customLoaderType', type);
+                    updateSetting('customLoaderUrl', url);
+                    triggerAutosaveToast('Custom animation updated');
+                  }}
+                />
+              </SettingsCard>
+            )}
+
+            {/* ─── 9. LOCAL ENGINE SECTION ─── */}
+            {(isSearching ? matchesSearch('local engine', 'sidecar', 'service', 'port', 'cache', 'cli', 'command') : activeSection === 'local-engine') && (
+              <SettingsCard
+                title="Local engine"
+                description="High-speed companion service for local demuxing, cache blocks, and hardware acceleration"
+                badge={
+                  <span className="service-status-pill">
+                    {sidecarStatus}
+                  </span>
+                }
+                headerAction={
+                  <button
+                    type="button"
+                    onClick={handleCheckSidecarStatus}
+                    disabled={checkingSidecar}
+                    className="settings-btn-secondary"
+                    style={{ padding: '4px 10px', fontSize: '0.75rem' }}
+                  >
+                    <RefreshCw size={12} className={checkingSidecar ? 'animate-spin' : ''} />
+                    <span>{checkingSidecar ? 'Checking...' : 'Check status'}</span>
+                  </button>
+                }
+              >
+                <div
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    padding: 'var(--space-3) var(--space-4)',
+                    background: 'var(--surface-2)',
+                    borderRadius: 'var(--radius-sm)',
+                    border: '1px solid var(--border)',
+                  }}
+                >
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                    <span style={{ fontSize: '0.875rem', fontWeight: 600, color: 'var(--text-1)' }}>
+                      Local background service
+                    </span>
+                    <span style={{ fontSize: '0.775rem', color: 'var(--text-3)' }}>
+                      Port 45454 · 2 MB cache blocks
+                    </span>
+                  </div>
+
+                  <span className="service-status-pill">
+                    {sidecarStatus}
+                  </span>
+                </div>
+
+                <SettingRow
+                  title="CLI startup command"
+                  description="Run this command in terminal to launch or install the local engine"
+                  control={
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}>
+                      <code
+                        style={{
+                          padding: '6px 12px',
+                          background: 'var(--surface-3)',
+                          border: '1px solid var(--border)',
+                          borderRadius: 'var(--radius-sm)',
+                          fontSize: '0.8rem',
+                          fontFamily: 'monospace',
+                          color: 'var(--text-1)',
+                          userSelect: 'all',
+                        }}
+                      >
+                        npx valor-service
+                      </code>
+                      <button
+                        type="button"
+                        aria-label="Copy CLI command"
+                        className="settings-btn-secondary"
+                        style={{ padding: '6px 10px' }}
+                        onClick={() => {
+                          navigator.clipboard.writeText('npx valor-service');
+                          setCopiedCli(true);
+                          setTimeout(() => setCopiedCli(false), 2000);
+                          triggerAutosaveToast('Command copied');
+                        }}
+                      >
+                        {copiedCli ? <Check size={14} /> : <Copy size={14} />}
+                        <span>{copiedCli ? 'Copied' : 'Copy'}</span>
+                      </button>
+                    </div>
+                  }
+                />
+
+                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 'var(--space-2)', marginTop: 'var(--space-2)' }}>
+                  <button
+                    type="button"
+                    onClick={handleCheckSidecarStatus}
+                    className="settings-btn-secondary"
+                  >
+                    <RefreshCw size={14} />
+                    <span>Check status</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setShowInstallGuideModal(true)}
+                    className="settings-btn-primary"
+                  >
+                    <span>Install guide</span>
+                  </button>
+                </div>
+              </SettingsCard>
+            )}
+
+            {/* Search No Results State */}
+            {isSearching && (
+              <div
+                style={{
+                  textAlign: 'center',
+                  padding: 'var(--space-6)',
+                  color: 'var(--text-3)',
+                  fontSize: '0.85rem',
+                }}
+              >
+                Showing search results for &ldquo;{searchQuery}&rdquo;
+              </div>
+            )}
+
+          </div>
+        </main>
       </div>
+    </div>
+
+      {/* Autosave Toast */}
+      <Toast
+        message={toastMessage}
+        visible={showSavedToast}
+        onDismiss={() => setShowSavedToast(false)}
+      />
+
+      {/* Local Engine Install Guide Modal */}
+      {showInstallGuideModal && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'var(--scrim)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 1000,
+            padding: 'var(--space-4)',
+          }}
+          onClick={() => setShowInstallGuideModal(false)}
+        >
+          <div
+            style={{
+              background: 'var(--surface-1)',
+              border: '1px solid var(--border)',
+              borderRadius: 'var(--radius-md)',
+              padding: 'var(--space-6)',
+              maxWidth: '520px',
+              width: '100%',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 'var(--space-4)',
+              boxShadow: '0 12px 36px rgba(0,0,0,0.6)',
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 style={{ margin: 0, fontSize: '1.2rem', fontWeight: 700, color: 'var(--text-1)' }}>
+              Local engine install guide
+            </h3>
+            <p style={{ margin: 0, fontSize: '0.85rem', color: 'var(--text-2)', lineHeight: '1.5' }}>
+              The Valor Local Engine runs locally on port 45454 to deliver seamless 2 MB caching, direct media decoding, and high-performance playback.
+            </p>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-2)' }}>
+              <span style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-1)' }}>
+                1. Run in PowerShell or Terminal
+              </span>
+              <pre
+                style={{
+                  padding: 'var(--space-3)',
+                  background: 'var(--surface-2)',
+                  borderRadius: 'var(--radius-sm)',
+                  border: '1px solid var(--border)',
+                  fontSize: '0.8rem',
+                  fontFamily: 'monospace',
+                  color: 'var(--text-1)',
+                  margin: 0,
+                  overflowX: 'auto',
+                }}
+              >
+                npx valor-service
+              </pre>
+            </div>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-2)' }}>
+              <span style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-1)' }}>
+                2. Verify connection
+              </span>
+              <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--text-3)' }}>
+                Once running, click &ldquo;Check status&rdquo; to confirm the status turns Operational.
+              </p>
+            </div>
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 'var(--space-2)' }}>
+              <button
+                type="button"
+                className="settings-btn-primary"
+                onClick={() => setShowInstallGuideModal(false)}
+              >
+                Done
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

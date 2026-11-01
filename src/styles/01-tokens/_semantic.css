@@ -470,51 +470,55 @@
 }
 
 /* --------------------------------------------------------------------------
-   THEME 6: BLACK-OPS (OLED Dark; pure depth with calibrated text-1)
+   THEME 6: BLACK-OPS (True-Black OLED; pure #000000 pixels with calibrated contrast)
    -------------------------------------------------------------------------- */
 [data-theme="black-ops"],
 [data-theme="black"],
 [data-theme="black-and-white"],
 [data-theme="oled"] {
-  --bg: #050506;
-  --surface-1: #0D0E12;
-  --surface-2: #14161C;
-  --surface-3: #1C1F27;
-  --border: #1D2028;
+  --bg: #000000;
+  --surface-1: #000000;
+  --surface-2: #000000;
+  --surface-3: #0a0a0a;
+  --border: rgba(255, 255, 255, 0.10);
   --control-border: #656877;
+  --border-hover: rgba(255, 255, 255, 0.16);
 
-  --text-1: #E6E6E6;
-  --text-2: #9CA3AF;
-  --text-3: #858C9B;
+  --text-1: #f2f2f2;
+  --text-2: #b0b0b0;
+  --text-3: #9a9a9a;
 
-  --accent: #E57C86;
-  --accent-fill: #B2404C;
-  --on-accent: #FBF1F2;
-  --accent-soft: rgba(229, 124, 134, 0.14);
+  --accent: #e53950;
+  --accent-fill: #b2404c;
+  --on-accent: #ffffff;
+  --accent-soft: rgba(229, 57, 80, 0.14);
 
-  --success: #86CDA6;
-  --warning: #E3BD7A;
-  --danger: #EC8F95;
+  --success: #3ddc84;
+  --warning: #f5b83d;
+  --danger: #ff5a5f;
 
-  --focus-ring: #E57C86;
-  --scrim: rgba(5, 5, 6, 0.8);
+  --focus-ring: #e53950;
+  --scrim: #000000;
 
   --tile-l: 22%;
   --tile-glyph-l: 74%;
 
   /* Legacy Backward Compatibility Aliases */
-  --bg-color: var(--bg);
-  --bg-primary: var(--bg);
-  --bg-secondary: var(--surface-1);
-  --background: var(--bg);
-  --surface: var(--surface-1);
-  --surface-elevated: var(--surface-2);
-  --surface-hover: var(--surface-2);
-  --card-bg: var(--surface-1);
-  --card-hover-bg: var(--surface-2);
+  --bg-color: #000000;
+  --bg-primary: #000000;
+  --bg-secondary: #000000;
+  --background: #000000;
+  --surface: #000000;
+  --surface-elevated: #000000;
+  --surface-hover: #0a0a0a;
+  --sidebar-bg: #000000;
+  --card-bg: #000000;
+  --card-hover-bg: #0a0a0a;
   --card-border: var(--border);
-  --sidebar: var(--surface-1);
-  --sidebar-hover: var(--surface-2);
+  --sidebar: #000000;
+  --sidebar-hover: #0a0a0a;
+  --overlay: #000000;
+  --modal-bg: #000000;
 
   --text-primary: var(--text-1);
   --text-secondary: var(--text-2);
@@ -522,7 +526,7 @@
 
   --accent-color: var(--accent);
   --accent-hover: var(--accent-fill);
-  --accent-glow: var(--accent-soft);
+  --accent-glow: transparent;
 
   --border-color: var(--border);
   --border-subtle: var(--border);
@@ -532,28 +536,28 @@
   --btn-text-color: var(--on-accent);
   --btn-border-radius: var(--radius-sm);
 
-  --input-bg: var(--surface-2);
+  --input-bg: #000000;
   --input-border: var(--control-border);
   --input-text: var(--text-1);
   --input-placeholder: var(--text-3);
 
-  --dropdown-bg: var(--surface-2);
+  --dropdown-bg: #000000;
   --dropdown-border: var(--control-border);
   --dropdown-text: var(--text-1);
-  --dropdown-hover-bg: var(--surface-3);
-  --dropdown-selected-bg: var(--accent-soft);
+  --dropdown-hover-bg: #0a0a0a;
+  --dropdown-selected-bg: #000000;
 
   --player-accent: var(--accent);
   --player-accent-text: var(--on-accent);
-  --player-bg: var(--bg);
-  --player-control-bg: var(--scrim);
-  --play-btn-bg: var(--surface-3);
+  --player-bg: #000000;
+  --player-control-bg: #000000;
+  --play-btn-bg: #0a0a0a;
   --play-btn-text: var(--text-1);
-  --banner-bg: var(--surface-1);
+  --banner-bg: #000000;
   --banner-shadow: none;
-  --overlay-bg: var(--scrim);
+  --overlay-bg: #000000;
 
-  --scrollbar-track: var(--bg);
-  --scrollbar-thumb: var(--surface-3);
-  --scrollbar-thumb-hover: var(--control-border);
+  --scrollbar-track: #000000;
+  --scrollbar-thumb: #1a1a1a;
+  --scrollbar-thumb-hover: #2a2a2a;
 }

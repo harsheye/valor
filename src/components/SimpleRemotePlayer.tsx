@@ -709,110 +709,138 @@ export const SimpleRemotePlayer: React.FC<SimpleRemotePlayerProps> = ({
       />
 
       {/* Top Header Overlay Bar */}
-      {controlsVisible && !isLocked && (
-        <PlayerTopBar
-          title={video.title || 'Simple Player'}
-          episodeInfo={mediaDetails?.season && mediaDetails?.episode ? `S${mediaDetails.season} E${mediaDetails.episode}` : undefined}
-          onBack={onBack}
-          currentMode="simple"
-          onSwitchMode={onSwitchMode}
-          isLocked={isLocked}
-          onToggleLock={() => setIsLocked(!isLocked)}
-          showConsole={showConsoleOverlay}
-          onToggleConsole={() => setShowConsoleOverlay(!showConsoleOverlay)}
-          onClose={onBack}
-          onOpenCompanion={() => setShowCompanionModal(true)}
-        />
+      {!isLocked && (
+        <div
+          style={{
+            position: 'absolute',
+            top: 0,
+            left: 0,
+            right: 0,
+            zIndex: 100,
+            opacity: controlsVisible ? 1 : 0,
+            transform: controlsVisible ? 'translateY(0)' : 'translateY(-12px)',
+            pointerEvents: controlsVisible ? 'auto' : 'none',
+            transition: controlsVisible ? 'opacity 0.2s ease-out, transform 0.2s ease-out' : 'opacity 0.6s ease-out, transform 0.6s ease-out',
+          }}
+        >
+          <PlayerTopBar
+            title={video.title || 'Simple Player'}
+            episodeInfo={mediaDetails?.season && mediaDetails?.episode ? `S${mediaDetails.season} E${mediaDetails.episode}` : undefined}
+            onBack={onBack}
+            currentMode="simple"
+            onSwitchMode={onSwitchMode}
+            isLocked={isLocked}
+            onToggleLock={() => setIsLocked(!isLocked)}
+            showConsole={showConsoleOverlay}
+            onToggleConsole={() => setShowConsoleOverlay(!showConsoleOverlay)}
+            onClose={onBack}
+            onOpenCompanion={() => setShowCompanionModal(true)}
+          />
+        </div>
       )}
 
       {/* Bottom Controls Bar */}
-      {controlsVisible && !isLocked && (
-        <PlayerBottomBar
-          currentTime={currentTime}
-          duration={duration}
-          bufferedRanges={bufferedRanges}
-          bookmarks={bookmarks}
-          onSeek={handleSeek}
-          formatTime={formatTime}
-          isPlaying={isPlaying}
-          onTogglePlay={togglePlay}
-          onRewind10={() => handleSeek(currentTime - 10)}
-          onForward10={() => handleSeek(currentTime + 10)}
-          volume={volume}
-          isMuted={isMuted}
-          onChangeVolume={updateVolume}
-          onToggleMute={toggleMute}
-          playbackRate={playbackRate}
-          onChangeSpeed={handleSpeedChange}
-          isFullscreen={isFullscreen}
-          onToggleFullscreen={toggleFullscreen}
-          onTogglePiP={togglePiP}
-          showAudioSubMenu={showAudioSubMenu}
-          setShowAudioSubMenu={setShowAudioSubMenu}
-          audioSubPopoverContent={
-            <AudioSubPopover
-              audioStreams={[]}
-              audioTracks={audioTracks}
-              selectedAudioTrack={selectedAudioTrack}
-              setSelectedAudioTrack={setSelectedAudioTrack}
-              setActiveAudioStreamIndex={() => {}}
-              handleSelectEmbeddedAudio={async () => {}}
-              customAudioInputRef={customAudioInputRef}
-              subtitleStreams={[]}
-              subtitleTracks={subtitleTracks}
-              selectedSubTrack={selectedSubTrack}
-              setSelectedSubTrack={setSelectedSubTrack}
-              setActiveSubStreamIndex={() => {}}
-              handleSelectEmbeddedSubtitle={async () => {}}
-              customSubInputRef={customSubInputRef}
-              currentTime={currentTime}
-              videoRef={videoRef}
-              setCurrentTime={handleSeek}
-              setShowAudioSubMenu={setShowAudioSubMenu}
-              audioSubTimeoutRef={{ current: null }}
-              getLangLabel={(l) => l || 'Default'}
-              formatTime={formatTime}
-              cleanSubtitleText={cleanSubtitleText}
-              subSettings={subSettings}
-              onUpdateSubSettings={(s) => {
-                setSubSettings(prev => ({ ...prev, ...s }));
-                propOnUpdateSubSettings?.(s);
-              }}
-              audioBoost={audioBoost}
-              setAudioBoost={setAudioBoost}
-              openSubtitles={openSubtitles}
-              isOpenSubLoading={isOpenSubLoading}
-              onDownloadOpenSubtitle={downloadOpenSubtitle}
-              hasFetchedOpenSubtitles={hasFetchedOpenSubtitles}
-              onFetchOpenSubtitles={fetchOpenSubtitles}
-            />
-          }
-          showBookmarksPopover={showBookmarksPopover}
-          setShowBookmarksPopover={setShowBookmarksPopover}
-          bookmarkPanelContent={
-            <BookmarkPanel
-              bookmarks={bookmarks}
-              onJump={handleSeek}
-              onEdit={(bm) => {
-                setEditingBookmark(bm);
-                setShowBookmarkModal(true);
-                setShowBookmarksPopover(false);
-              }}
-              onDelete={(id) => {
-                const filtered = bookmarks.filter(b => b.id !== id);
-                setBookmarks(filtered);
-                onUpdateVideo({ ...video, bookmarks: filtered }, false);
-              }}
-              onAdd={() => {
-                setEditingBookmark(undefined);
-                setShowBookmarkModal(true);
-                setShowBookmarksPopover(false);
-              }}
-              onClose={() => setShowBookmarksPopover(false)}
-            />
-          }
-          systemTime={systemTime}
-        />
+      {!isLocked && (
+        <div
+          style={{
+            position: 'absolute',
+            bottom: 0,
+            left: 0,
+            right: 0,
+            zIndex: 100,
+            opacity: controlsVisible ? 1 : 0,
+            transform: controlsVisible ? 'translateY(0)' : 'translateY(12px)',
+            pointerEvents: controlsVisible ? 'auto' : 'none',
+            transition: controlsVisible ? 'opacity 0.2s ease-out, transform 0.2s ease-out' : 'opacity 0.6s ease-out, transform 0.6s ease-out',
+          }}
+        >
+          <PlayerBottomBar
+            currentTime={currentTime}
+            duration={duration}
+            bufferedRanges={bufferedRanges}
+            bookmarks={bookmarks}
+            onSeek={handleSeek}
+            formatTime={formatTime}
+            isPlaying={isPlaying}
+            onTogglePlay={togglePlay}
+            onRewind10={() => handleSeek(currentTime - 10)}
+            onForward10={() => handleSeek(currentTime + 10)}
+            volume={volume}
+            isMuted={isMuted}
+            onChangeVolume={updateVolume}
+            onToggleMute={toggleMute}
+            playbackRate={playbackRate}
+            onChangeSpeed={handleSpeedChange}
+            isFullscreen={isFullscreen}
+            onToggleFullscreen={toggleFullscreen}
+            onTogglePiP={togglePiP}
+            showAudioSubMenu={showAudioSubMenu}
+            setShowAudioSubMenu={setShowAudioSubMenu}
+            audioSubPopoverContent={
+              <AudioSubPopover
+                audioStreams={[]}
+                audioTracks={audioTracks}
+                selectedAudioTrack={selectedAudioTrack}
+                setSelectedAudioTrack={setSelectedAudioTrack}
+                setActiveAudioStreamIndex={() => {}}
+                handleSelectEmbeddedAudio={async () => {}}
+                customAudioInputRef={customAudioInputRef}
+                subtitleStreams={[]}
+                subtitleTracks={subtitleTracks}
+                selectedSubTrack={selectedSubTrack}
+                setSelectedSubTrack={setSelectedSubTrack}
+                setActiveSubStreamIndex={() => {}}
+                handleSelectEmbeddedSubtitle={async () => {}}
+                customSubInputRef={customSubInputRef}
+                currentTime={currentTime}
+                videoRef={videoRef}
+                setCurrentTime={handleSeek}
+                setShowAudioSubMenu={setShowAudioSubMenu}
+                audioSubTimeoutRef={{ current: null }}
+                getLangLabel={(l) => l || 'Default'}
+                formatTime={formatTime}
+                cleanSubtitleText={cleanSubtitleText}
+                subSettings={subSettings}
+                onUpdateSubSettings={(s) => {
+                  setSubSettings(prev => ({ ...prev, ...s }));
+                  propOnUpdateSubSettings?.(s);
+                }}
+                audioBoost={audioBoost}
+                setAudioBoost={setAudioBoost}
+                openSubtitles={openSubtitles}
+                isOpenSubLoading={isOpenSubLoading}
+                onDownloadOpenSubtitle={downloadOpenSubtitle}
+                hasFetchedOpenSubtitles={hasFetchedOpenSubtitles}
+                onFetchOpenSubtitles={fetchOpenSubtitles}
+              />
+            }
+            showBookmarksPopover={showBookmarksPopover}
+            setShowBookmarksPopover={setShowBookmarksPopover}
+            bookmarkPanelContent={
+              <BookmarkPanel
+                bookmarks={bookmarks}
+                onJump={handleSeek}
+                onEdit={(bm) => {
+                  setEditingBookmark(bm);
+                  setShowBookmarkModal(true);
+                  setShowBookmarksPopover(false);
+                }}
+                onDelete={(id) => {
+                  const filtered = bookmarks.filter(b => b.id !== id);
+                  setBookmarks(filtered);
+                  onUpdateVideo({ ...video, bookmarks: filtered }, false);
+                }}
+                onAdd={() => {
+                  setEditingBookmark(undefined);
+                  setShowBookmarkModal(true);
+                  setShowBookmarksPopover(false);
+                }}
+                onClose={() => setShowBookmarksPopover(false)}
+              />
+            }
+            systemTime={systemTime}
+          />
+        </div>
       )}
 
       {/* Bookmark Modal */}

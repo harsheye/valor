@@ -1997,11 +1997,85 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
   const [bufferedPercent, setBufferedPercent] = useState(0);
 
   const videoRef = useRef<HTMLVideoElement>(null);
+  const ambientCanvasRef = useRef<HTMLCanvasElement>(null);
+  const ambientVideoRef = useRef<HTMLVideoElement>(null);
+  const [ambientCanvasError, setAmbientCanvasError] = useState(false);
   const hasSeekedRef = useRef(false);
   const wasPausedByFocusLossRef = useRef(false);
   const previewVideoRef = useRef<HTMLVideoElement>(null);
   const [playPauseFeedback, setPlayPauseFeedback] = useState<{ action: 'play' | 'pause'; id: number } | null>(null);
   const playPauseFeedbackTimeoutRef = useRef<any>(null);
+
+  // Ambiance Lighting frame drawer (70% blur ambient mode behind video)
+  const drawAmbientFrame = useCallback(() => {
+    const v = videoRef.current;
+    const c = ambientCanvasRef.current;
+    if (v && c && v.readyState >= 2) {
+      try {
+        const ctx = c.getContext('2d', { alpha: false });
+        if (ctx) {
+          ctx.drawImage(v, 0, 0, c.width, c.height);
+        }
+      } catch {
+        setAmbientCanvasError(true);
+      }
+    }
+  }, []);
+
+  // Ambiance lighting render loop (runs at ~25-30fps during playback)
+  useEffect(() => {
+    let animId: number;
+    let lastRender = 0;
+
+    const renderAmbiance = (now: number) => {
+      if (now - lastRender >= 33) {
+        lastRender = now;
+        const v = videoRef.current;
+        const c = ambientCanvasRef.current;
+        if (v && c && !v.paused && !v.ended && v.readyState >= 2) {
+          try {
+            const ctx = c.getContext('2d', { alpha: false });
+            if (ctx) {
+              ctx.drawImage(v, 0, 0, c.width, c.height);
+            }
+          } catch {
+            setAmbientCanvasError(true);
+          }
+        }
+      }
+      animId = requestAnimationFrame(renderAmbiance);
+    };
+
+    animId = requestAnimationFrame(renderAmbiance);
+    return () => cancelAnimationFrame(animId);
+  }, []);
+
+  // Sync fallback ambient video element if canvas cannot read frames (CORS)
+  useEffect(() => {
+    if (!ambientCanvasError) return;
+    const v = videoRef.current;
+    const amb = ambientVideoRef.current;
+    if (!v || !amb) return;
+
+    const syncAmb = () => {
+      if (Math.abs(amb.currentTime - v.currentTime) > 0.3) {
+        amb.currentTime = v.currentTime;
+      }
+      if (v.paused && !amb.paused) amb.pause();
+      if (!v.paused && amb.paused) amb.play().catch(() => {});
+    };
+
+    v.addEventListener('timeupdate', syncAmb);
+    v.addEventListener('play', syncAmb);
+    v.addEventListener('pause', syncAmb);
+    v.addEventListener('seeked', syncAmb);
+    return () => {
+      v.removeEventListener('timeupdate', syncAmb);
+      v.removeEventListener('play', syncAmb);
+      v.removeEventListener('pause', syncAmb);
+      v.removeEventListener('seeked', syncAmb);
+    };
+  }, [ambientCanvasError]);
 
   const triggerPlayPauseFeedback = (action: 'play' | 'pause') => {
     if (playPauseFeedbackTimeoutRef.current) clearTimeout(playPauseFeedbackTimeoutRef.current);
@@ -2998,6 +3072,7 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
 
   const handleVideoSeeked = async () => {
     setIsBuffering(false);
+    drawAmbientFrame();
     if (!videoRef.current) return;
     const newTime = videoRef.current.currentTime;
 
@@ -5054,6 +5129,63 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
           setVlcContextMenuState(prev => prev.visible ? { visible: false, x: 0, y: 0 } : { visible: true, x: e.clientX, y: e.clientY });
         }}
       >
+        {/* Ambiance Lighting Layer (70% blur ambient mode filling blank letterbox / pillarbox bars) */}
+        <div
+          className="video-ambiance-layer"
+          aria-hidden="true"
+          style={{
+            position: 'absolute',
+            inset: 0,
+            width: '100%',
+            height: '100%',
+            overflow: 'hidden',
+            pointerEvents: 'none',
+            zIndex: 1,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            backgroundColor: '#000000'
+          }}
+        >
+          <canvas
+            ref={ambientCanvasRef}
+            width={160}
+            height={90}
+            style={{
+              position: 'absolute',
+              inset: 0,
+              width: '100%',
+              height: '100%',
+              objectFit: 'cover',
+              filter: 'blur(54px) saturate(1.4) brightness(0.92)',
+              opacity: 0.7,
+              transform: 'scale(1.22)',
+              transformOrigin: 'center center',
+              display: ambientCanvasError ? 'none' : 'block'
+            }}
+          />
+          {ambientCanvasError && (
+            <video
+              ref={ambientVideoRef}
+              src={video.url}
+              muted
+              playsInline
+              aria-hidden="true"
+              style={{
+                position: 'absolute',
+                inset: 0,
+                width: '100%',
+                height: '100%',
+                objectFit: 'cover',
+                filter: 'blur(54px) saturate(1.4) brightness(0.92)',
+                opacity: 0.7,
+                transform: 'scale(1.22)',
+                transformOrigin: 'center center'
+              }}
+            />
+          )}
+        </div>
+
         <video
           ref={videoRef}
           onContextMenu={(e) => e.preventDefault()}
@@ -5063,7 +5195,12 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
           className="main-video-element"
           style={{
             ...getVideoTransformStyle(),
+            position: 'relative',
+            zIndex: 2,
             transition: 'transform 0.25s cubic-bezier(0.16, 1, 0.3, 1), object-fit 0.25s ease'
+          }}
+          onLoadedData={() => {
+            drawAmbientFrame();
           }}
           onLoadedMetadata={() => {
             if (videoRef.current) {
@@ -6862,7 +6999,7 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
           left: 0;
           right: 0;
           z-index: 20;
-          transition: opacity 0.25s ease, transform 0.25s ease;
+          transition: opacity 0.5s cubic-bezier(0.16, 1, 0.3, 1), transform 0.5s cubic-bezier(0.16, 1, 0.3, 1);
           pointer-events: auto;
         }
         .top-overlay-clean {
@@ -7478,10 +7615,12 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
         .player-overlay.visible {
           opacity: 1;
           transform: translateY(0);
+          transition: opacity 0.2s ease-out, transform 0.2s ease-out;
         }
         .player-overlay.hidden {
           opacity: 0;
           pointer-events: none;
+          transition: opacity 0.6s ease-out, transform 0.6s ease-out;
         }
         .player-overlay.hidden.top-overlay-clean {
           transform: translateY(-12px);
@@ -7500,17 +7639,19 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
           justify-content: center;
           gap: clamp(4rem, 15vw, 12rem);
           pointer-events: none;
-          transition: opacity 0.25s ease;
+          transition: opacity 0.5s ease-out;
         }
         .center-controls-hud.hidden {
           opacity: 0;
           pointer-events: none !important;
+          transition: opacity 0.6s ease-out;
         }
         .center-controls-hud.hidden * {
           pointer-events: none !important;
         }
         .center-controls-hud.visible {
           opacity: 1;
+          transition: opacity 0.2s ease-out;
         }
         .hud-btn-clean {
           background: none;

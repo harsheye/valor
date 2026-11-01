@@ -1,9 +1,11 @@
-import React from 'react';
-import { Play, UploadCloud, Film, X, List, Calendar } from 'lucide-react';
+import React, { useState } from 'react';
+import { Play, UploadCloud, Film, X } from 'lucide-react';
 import type { VideoItem } from '../types/media';
 import { CalendarView } from '../components/CalendarView';
 import Calendar02 from '../components/creative-tim/blocks/calendar-02';
 import { classifyVideoTitle } from '../utils/libraryClassifier';
+import { smartTitleCase, getTileColors, getFirstAlphanumeric } from '../utils/libraryViewModel';
+import { formatRuntime, formatTimecode, formatFullTimecode, parseDurationToSeconds } from '../utils/timeFormat';
 import { BookingCalendar } from '../components/BookingCalendar';
 import { AppointmentCalendar } from '../components/AppointmentCalendar';
 
@@ -20,17 +22,84 @@ interface HistoryPageProps {
   formatTime: (secs: number | string | undefined) => string;
 }
 
+function getCleanDisplayTitle(video: VideoItem): { title: string; rawTitle: string; subtitle?: string } {
+  const rawTitle = video.title || 'Untitled';
+  const info = classifyVideoTitle(rawTitle);
+  if (info.type === 'series' && info.season !== undefined && info.episode !== undefined) {
+    const sTitle = smartTitleCase(info.seriesTitle || 'Unknown Series').replace(/\s*\(\d{4}\)$/, '').trim();
+    const sStr = String(info.season).padStart(2, '0');
+    const eStr = String(info.episode).padStart(2, '0');
+    return {
+      title: `${sTitle} S${sStr}E${eStr}`,
+      rawTitle,
+      subtitle: info.episodeTitle ? smartTitleCase(info.episodeTitle) : undefined
+    };
+  }
+  const base = smartTitleCase(info.cleanTitle || rawTitle);
+  const title = info.year ? `${base} (${info.year})` : base;
+  return { title, rawTitle };
+}
+
+const HistoryThumbnail: React.FC<{ posterPath?: string; title: string }> = ({ posterPath, title }) => {
+  const [imgError, setImgError] = useState(false);
+  const tile = getTileColors(title);
+  const glyph = getFirstAlphanumeric(title);
+
+  return (
+    <div 
+      style={{ 
+        width: '48px', 
+        height: '68px', 
+        borderRadius: 'var(--radius-sm, 8px)', 
+        overflow: 'hidden', 
+        flexShrink: 0, 
+        marginRight: '1rem',
+        background: posterPath && !imgError ? 'var(--surface-2)' : tile.tileBg,
+        border: '1px solid var(--border)',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        position: 'relative',
+        boxSizing: 'border-box'
+      }}
+    >
+      {posterPath && !imgError ? (
+        <img 
+          src={posterPath} 
+          alt="" 
+          crossOrigin="anonymous"
+          onError={() => setImgError(true)}
+          style={{ width: '100%', height: '100%', objectFit: 'cover' }} 
+        />
+      ) : (
+        <span 
+          style={{ 
+            fontSize: '1.25rem', 
+            fontWeight: 700, 
+            color: tile.glyphColor, 
+            fontFamily: 'var(--font-display, inherit)',
+            lineHeight: 1,
+            userSelect: 'none'
+          }}
+        >
+          {glyph}
+        </span>
+      )}
+    </div>
+  );
+};
+
 export const HistoryPage: React.FC<HistoryPageProps> = ({
   videos,
   historyViewMode,
-  setHistoryViewMode,
+  setHistoryViewMode: _setHistoryViewMode,
   settings,
   handlePlayVideo,
   handleRemoveVideo,
   syncVideoToTraktHistory,
   isInstantlyPlayable,
-  parseDurationToSeconds,
-  formatTime,
+  parseDurationToSeconds: _parseDurationToSeconds,
+  formatTime: _formatTime,
 }) => {
   const sortedVideos = React.useMemo(() => {
     return [...videos].sort((a, b) => {
@@ -43,85 +112,98 @@ export const HistoryPage: React.FC<HistoryPageProps> = ({
   const continueWatchingList = sortedVideos.filter(v => {
     if (!v.currentTime || v.currentTime <= 2) return false;
     const durSecs = typeof v.duration === 'number' ? v.duration : parseDurationToSeconds(v.duration);
-    return durSecs <= 0 || v.currentTime < durSecs - 5;
+    return durSecs <= 0 || v.currentTime < durSecs - 15;
   });
   const primaryContinue = continueWatchingList.length > 0 ? continueWatchingList[0] : (sortedVideos.length > 0 ? sortedVideos[0] : null);
 
   return (
-    <>
-      <div className="workspace-panel-wrapper">
-        <div className="glass-panel workspace-panel">
-          {historyViewMode === 'calendar' ? (
-            <div style={{ display: 'flex', flexDirection: 'column', width: '100%' }}>
-              {settings.calendarStyle === 'list' && (
-                <Calendar02 videos={sortedVideos} onPlayVideo={handlePlayVideo} isInstantlyPlayable={isInstantlyPlayable} />
-              )}
-              {settings.calendarStyle === 'grid' && (
-                <CalendarView videos={sortedVideos} onPlayVideo={handlePlayVideo} />
-              )}
-              {settings.calendarStyle === 'booking' && (
-                <BookingCalendar />
-              )}
-              {settings.calendarStyle === 'appointment' && (
-                <AppointmentCalendar videos={sortedVideos} onPlayVideo={handlePlayVideo} />
-              )}
-            </div>
-          ) : (
-            <>
-              {primaryContinue && (
+    <div className="workspace-panel-wrapper">
+      <div className="glass-panel workspace-panel">
+        {historyViewMode === 'calendar' ? (
+          <div style={{ display: 'flex', flexDirection: 'column', width: '100%' }}>
+            {settings.calendarStyle === 'list' && (
+              <Calendar02 videos={sortedVideos} onPlayVideo={handlePlayVideo} isInstantlyPlayable={isInstantlyPlayable} />
+            )}
+            {settings.calendarStyle === 'grid' && (
+              <CalendarView videos={sortedVideos} onPlayVideo={handlePlayVideo} />
+            )}
+            {settings.calendarStyle === 'booking' && (
+              <BookingCalendar />
+            )}
+            {settings.calendarStyle === 'appointment' && (
+              <AppointmentCalendar videos={sortedVideos} onPlayVideo={handlePlayVideo} />
+            )}
+          </div>
+        ) : (
+          <>
+            {primaryContinue && (() => {
+              const primaryClean = getCleanDisplayTitle(primaryContinue);
+              const primaryDur = typeof primaryContinue.duration === 'number' ? primaryContinue.duration : parseDurationToSeconds(primaryContinue.duration);
+              const isPrimaryInProgress = typeof primaryContinue.currentTime === 'number' && primaryContinue.currentTime > 2;
+              const primaryProgressPct = primaryDur > 0 && primaryContinue.currentTime ? Math.round((primaryContinue.currentTime / primaryDur) * 100) : 0;
+              const isCompleted = !!(primaryContinue.completed || (primaryContinue as any).timeToFinish || (primaryDur > 0 && primaryContinue.currentTime && primaryContinue.currentTime >= primaryDur - 15));
+
+              return (
                 <div 
                   onClick={() => handlePlayVideo(primaryContinue)}
                   style={{ 
                     width: '100%', 
                     background: 'var(--surface-1)',
                     backgroundImage: 'linear-gradient(135deg, var(--accent-soft) 0%, transparent 75%)', 
-                    borderRadius: '12px', 
-                    padding: '0.85rem 1.1rem', 
-                    marginBottom: '1rem',
+                    borderRadius: 'var(--radius-md, 12px)', 
+                    padding: '1rem 1.25rem', 
+                    marginBottom: '1.25rem',
                     display: 'flex',
                     justifyContent: 'space-between',
                     alignItems: 'center',
                     cursor: 'pointer',
                     boxShadow: 'none',
                     border: '1px solid var(--border)',
-                    transition: 'transform 0.2s, box-shadow 0.2s',
+                    transition: 'transform 0.2s, border-color 0.2s',
                     boxSizing: 'border-box'
                   }}
                   className="premium-red-banner"
                 >
-                  <div style={{ flex: 1, minWidth: '0', paddingRight: '1.5rem' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '0.4rem' }}>
-                      <span style={{ fontSize: '0.7rem', fontWeight: 800, letterSpacing: '1px', background: 'var(--surface-2)', color: 'var(--text-1)', padding: '2px 8px', borderRadius: '4px', textTransform: 'uppercase' }}>
-                        Continue watching
-                      </span>
-                      {primaryContinue.duration && (
-                        <span style={{ fontSize: '0.72rem', color: 'var(--text-2)', fontWeight: 500 }}>
-                          {(() => {
-                            const dur = parseDurationToSeconds(primaryContinue.duration);
-                            return dur > 0 ? `${Math.round(((primaryContinue.currentTime || 0) / dur) * 100)}% Watched` : '';
-                          })()}
+                  <div style={{ display: 'flex', alignItems: 'center', flex: 1, minWidth: 0, paddingRight: '1.5rem' }}>
+                    <HistoryThumbnail posterPath={primaryContinue.posterPath} title={primaryClean.title} />
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '0.35rem' }}>
+                        <span style={{ fontSize: '0.68rem', fontWeight: 800, letterSpacing: '0.8px', background: 'var(--surface-2)', color: 'var(--text-1)', padding: '2px 8px', borderRadius: '4px', textTransform: 'uppercase' }}>
+                          {isCompleted ? 'Watched' : isPrimaryInProgress ? 'Continue watching' : 'Latest item'}
                         </span>
+                        {primaryProgressPct > 0 && !isCompleted && (
+                          <span style={{ fontSize: '0.75rem', color: 'var(--text-2)', fontWeight: 500 }}>
+                            {primaryProgressPct}% Watched
+                          </span>
+                        )}
+                        {primaryDur > 0 && (
+                          <span style={{ fontSize: '0.75rem', color: 'var(--text-3)', fontWeight: 500 }}>
+                            {formatRuntime(primaryDur)}
+                          </span>
+                        )}
+                      </div>
+                      
+                      <h3 style={{ margin: 0, fontSize: '1.2rem', fontWeight: 700, color: 'var(--text-1)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={primaryClean.rawTitle}>
+                        {primaryClean.title}
+                      </h3>
+                      
+                      <p style={{ margin: '4px 0 0 0', fontSize: '0.85rem', color: 'var(--text-2)' }}>
+                        {isCompleted ? (
+                          <span>Watched completely • Ready to replay</span>
+                        ) : isPrimaryInProgress ? (
+                          <span>Resume playback at <b>{formatTimecode(primaryContinue.currentTime)}</b></span>
+                        ) : (
+                          <span>Not started • Click to play</span>
+                        )}
+                      </p>
+
+                      {/* Progress bar inside banner */}
+                      {primaryProgressPct > 0 && !isCompleted && (
+                        <div style={{ height: '4px', width: '100%', maxWidth: '360px', background: 'var(--surface-2)', borderRadius: '2px', overflow: 'hidden', marginTop: '0.65rem' }}>
+                          <div style={{ height: '100%', width: `${primaryProgressPct}%`, background: 'var(--accent)' }} />
+                        </div>
                       )}
                     </div>
-                    
-                    <h3 style={{ margin: 0, fontSize: '1.25rem', fontWeight: 700, color: '#fff', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                      {classifyVideoTitle(primaryContinue.title).displayTitle}
-                    </h3>
-                    
-                    <p style={{ margin: '4px 0 0 0', fontSize: '0.85rem', color: 'var(--text-2)' }}>
-                      Resume playback at <b>{formatTime(primaryContinue.currentTime || 0)}</b>
-                    </p>
-
-                    {/* Progress bar inside banner */}
-                    {(() => {
-                      const dur = parseDurationToSeconds(primaryContinue.duration);
-                      const progress = dur > 0 && primaryContinue.currentTime ? Math.round((primaryContinue.currentTime / dur) * 100) : 0;
-                      return progress > 0 ? (
-                        <div style={{ height: '4px', width: '100%', background: 'var(--surface-2)', borderRadius: '2px', overflow: 'hidden', marginTop: '0.8rem' }}>
-                          <div style={{ height: '100%', width: `${progress}%`, background: 'var(--accent)' }} />
-                        </div>
-                      ) : null;
-                    })()}
                   </div>
                   
                   <button 
@@ -130,10 +212,10 @@ export const HistoryPage: React.FC<HistoryPageProps> = ({
                       background: 'var(--surface-3)',
                       color: 'var(--text-1)',
                       border: '1px solid var(--control-border)',
-                      padding: '0.65rem 1.5rem',
+                      padding: '0.65rem 1.4rem',
                       fontSize: '0.88rem',
                       fontWeight: 700,
-                      borderRadius: 'var(--btn-border-radius, 8px)',
+                      borderRadius: 'var(--radius-sm, 8px)',
                       display: 'flex',
                       alignItems: 'center',
                       gap: '8px',
@@ -145,7 +227,7 @@ export const HistoryPage: React.FC<HistoryPageProps> = ({
                     {isInstantlyPlayable(primaryContinue) ? (
                       <>
                         <Play size={14} fill="currentColor" stroke="currentColor" />
-                        <span>Resume playback</span>
+                        <span>{isCompleted ? 'Play again' : isPrimaryInProgress ? 'Resume playback' : 'Play now'}</span>
                       </>
                     ) : (
                       <>
@@ -155,50 +237,68 @@ export const HistoryPage: React.FC<HistoryPageProps> = ({
                     )}
                   </button>
                 </div>
-              )}
+              );
+            })()}
 
-              {sortedVideos.length === 0 ? (
-                <div className="empty-catalog-box glass-panel">
-                  <Film size={44} className="text-muted pulsing" />
-                  <p>No playback history yet. Load a stream or select a file to begin.</p>
-                </div>
-              ) : (
-                <div className="history-list">
-                  {sortedVideos.map((video) => (
+            {sortedVideos.length === 0 ? (
+              <div className="empty-catalog-box glass-panel">
+                <Film size={44} className="text-muted pulsing" />
+                <p>No playback history yet. Load a stream or select a file to begin.</p>
+              </div>
+            ) : (
+              <div className="history-list">
+                {sortedVideos.map((video) => {
+                  const clean = getCleanDisplayTitle(video);
+                  const durationSec = typeof video.duration === 'number' ? video.duration : parseDurationToSeconds(video.duration);
+                  const isCompleted = !!(video.completed || (video as any).timeToFinish || (durationSec > 0 && video.currentTime && video.currentTime >= durationSec - 15));
+                  const hasProgress = !isCompleted && typeof video.currentTime === 'number' && video.currentTime > 2;
+                  const rating = (video as any).rating;
+
+                  return (
                     <div key={video.id} className="history-item glass-panel" onClick={() => handlePlayVideo(video)}>
                       <div className="history-item-header">
-                        {video.posterPath && (
-                          <img 
-                            src={video.posterPath} 
-                            alt="" 
-                            crossOrigin="anonymous"
-                            onError={(e) => { (e.target as HTMLElement).style.display = 'none'; }}
-                            style={{ width: '45px', height: '65px', borderRadius: '6px', objectFit: 'cover', marginRight: '1rem', flexShrink: 0 }} 
-                          />
-                        )}
+                        <HistoryThumbnail posterPath={video.posterPath} title={clean.title} />
                         <div className="history-info">
-                          <span className="history-title" title={video.title}>{classifyVideoTitle(video.title).displayTitle}</span>
+                          <span className="history-title" title={clean.rawTitle}>
+                            {clean.title}
+                          </span>
                           <div className="history-stats">
-                            {video.duration ? (
-                              <span className="stat-badge">Length: {formatTime(video.duration)}</span>
+                            {durationSec > 0 ? (
+                              <span className="stat-badge" title={formatFullTimecode(durationSec)}>
+                                Length: {formatRuntime(durationSec)}
+                              </span>
                             ) : (
-                              <span className="stat-badge" style={{ opacity: 0.5 }}>Length: Unknown</span>
+                              <span className="stat-badge" style={{ opacity: 0.6 }}>
+                                Length: Unknown
+                              </span>
                             )}
-                            {(video.currentTime && video.currentTime > 0) ? (
-                              <span className="stat-badge">Watched: {formatTime(video.currentTime)}</span>
-                            ) : ((video as any).totalTimeWatched > 0 ? (
-                              <span className="stat-badge">Watched: {formatTime((video as any).totalTimeWatched)}</span>
+                            {isCompleted ? (
+                              <span className="stat-badge finish-badge">
+                                Watched
+                              </span>
+                            ) : hasProgress ? (
+                              <span className="stat-badge">
+                                Watched: {formatTimecode(video.currentTime)}
+                                {durationSec > 0 && ` (${Math.round((video.currentTime! / durationSec) * 100)}%)`}
+                              </span>
+                            ) : (video as any).totalTimeWatched > 2 ? (
+                              <span className="stat-badge">
+                                Watched: {formatTimecode((video as any).totalTimeWatched)}
+                              </span>
                             ) : (
-                              <span className="stat-badge" style={{ color: 'var(--text-2)' }}>Not started</span>
-                            ))}
-                            {(video as any).rating && (
-                              <span className="stat-badge rating-badge">Rating: {'★'.repeat((video as any).rating)}{'☆'.repeat(5 - (video as any).rating)}</span>
+                              <span className="stat-badge" style={{ color: 'var(--text-3)' }}>
+                                Not started
+                              </span>
                             )}
-                            {(video as any).timeToFinish && (
-                              <span className="stat-badge finish-badge">Total watch time: {formatTime((video as any).timeToFinish)}</span>
+                            {rating && (
+                              <span className="stat-badge rating-badge">
+                                Rating: {'★'.repeat(rating)}{'☆'.repeat(5 - rating)}
+                              </span>
                             )}
                             {(video.bookmarks && video.bookmarks.length > 0) && (
-                              <span className="stat-badge bookmark-badge">Bookmarks: {video.bookmarks.length}</span>
+                              <span className="stat-badge bookmark-badge">
+                                Bookmarks: {video.bookmarks.length}
+                              </span>
                             )}
                           </div>
                         </div>
@@ -214,7 +314,7 @@ export const HistoryPage: React.FC<HistoryPageProps> = ({
                             color: 'var(--text-1)',
                             border: '1px solid var(--control-border)',
                             borderRadius: 'var(--radius-sm)',
-                            padding: '0.4rem 0.9rem',
+                            padding: '0.45rem 0.95rem',
                             fontWeight: 600,
                             cursor: 'pointer'
                           }}
@@ -222,7 +322,7 @@ export const HistoryPage: React.FC<HistoryPageProps> = ({
                           {isInstantlyPlayable(video) ? (
                             <>
                               <Play size={13} fill="currentColor" />
-                              <span>Play</span>
+                              <span>{hasProgress ? 'Resume' : 'Play'}</span>
                             </>
                           ) : (
                             <>
@@ -232,11 +332,7 @@ export const HistoryPage: React.FC<HistoryPageProps> = ({
                           )}
                         </button>
                         {(() => {
-                          const durationSec = typeof video.duration === 'number' ? video.duration : parseDurationToSeconds(video.duration);
-                          const isCompleted = !!(video.timeToFinish || (durationSec > 0 && video.currentTime && video.currentTime >= durationSec - 15));
-                          
                           if (!isCompleted && !video.hasScrobbledTrakt) return null;
-                          
                           return (
                             <button 
                               className={`btn btn-sm ${video.hasScrobbledTrakt ? 'btn-secondary' : 'btn-outline-danger'}`}
@@ -245,11 +341,11 @@ export const HistoryPage: React.FC<HistoryPageProps> = ({
                                 display: 'flex', 
                                 alignItems: 'center', 
                                 gap: '4px',
-                                background: video.hasScrobbledTrakt ? 'rgba(255,255,255,0.05)' : 'var(--accent-soft)',
-                                color: video.hasScrobbledTrakt ? '#888' : 'var(--accent)',
-                                border: video.hasScrobbledTrakt ? '1px solid rgba(255,255,255,0.1)' : '1px solid var(--accent)',
-                                padding: '0.4rem 0.8rem',
-                                borderRadius: '6px',
+                                background: video.hasScrobbledTrakt ? 'var(--surface-2)' : 'var(--accent-soft)',
+                                color: video.hasScrobbledTrakt ? 'var(--text-3)' : 'var(--accent)',
+                                border: video.hasScrobbledTrakt ? '1px solid var(--border)' : '1px solid var(--accent)',
+                                padding: '0.45rem 0.85rem',
+                                borderRadius: 'var(--radius-sm)',
                                 fontSize: '0.75rem',
                                 fontWeight: 600,
                                 cursor: 'pointer',
@@ -259,7 +355,7 @@ export const HistoryPage: React.FC<HistoryPageProps> = ({
                               title={video.hasScrobbledTrakt ? "Already Synced to Trakt.tv" : "Sync watched status to Trakt.tv"}
                               disabled={video.hasScrobbledTrakt}
                             >
-                              <Film size={12} fill={video.hasScrobbledTrakt ? "#888" : "none"} />
+                              <Film size={12} fill={video.hasScrobbledTrakt ? "var(--text-3)" : "none"} />
                               <span>Trakt</span>
                             </button>
                           );
@@ -280,7 +376,7 @@ export const HistoryPage: React.FC<HistoryPageProps> = ({
                             width: '32px',
                             height: '32px',
                             borderRadius: 'var(--radius-sm)',
-                            marginLeft: '0.5rem',
+                            marginLeft: '0.25rem',
                             transition: 'color 0.15s, background 0.15s'
                           }}
                         >
@@ -288,15 +384,13 @@ export const HistoryPage: React.FC<HistoryPageProps> = ({
                         </button>
                       </div>
                     </div>
-                  ))}
-                </div>
-              )}
-            </>
-          )}
-        </div>
+                  );
+                })}
+              </div>
+            )}
+          </>
+        )}
       </div>
-
-      
-    </>
+    </div>
   );
 };

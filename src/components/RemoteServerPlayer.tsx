@@ -6446,7 +6446,7 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
           left: 0;
           right: 0;
           z-index: 20;
-          transition: opacity 0.25s ease, transform 0.25s ease;
+          transition: opacity 0.5s cubic-bezier(0.16, 1, 0.3, 1), transform 0.5s cubic-bezier(0.16, 1, 0.3, 1);
           pointer-events: auto;
         }
         .top-overlay-clean {
@@ -7054,10 +7054,12 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
         .player-overlay.visible {
           opacity: 1;
           transform: translateY(0);
+          transition: opacity 0.2s ease-out, transform 0.2s ease-out;
         }
         .player-overlay.hidden {
           opacity: 0;
           pointer-events: none;
+          transition: opacity 0.6s ease-out, transform 0.6s ease-out;
         }
         .player-overlay.hidden.top-overlay-clean {
           transform: translateY(-12px);
@@ -7076,17 +7078,19 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
           justify-content: center;
           gap: clamp(4rem, 15vw, 12rem);
           pointer-events: none;
-          transition: opacity 0.25s ease;
+          transition: opacity 0.5s ease-out;
         }
         .center-controls-hud.hidden {
           opacity: 0;
           pointer-events: none !important;
+          transition: opacity 0.6s ease-out;
         }
         .center-controls-hud.hidden * {
           pointer-events: none !important;
         }
         .center-controls-hud.visible {
           opacity: 1;
+          transition: opacity 0.2s ease-out;
         }
         .hud-btn-clean {
           background: none;

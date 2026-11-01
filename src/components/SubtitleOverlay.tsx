@@ -120,7 +120,7 @@ export const SubtitleOverlay: React.FC<SubtitleOverlayProps> = ({
       <style>{`
         .subtitle-overlay-container {
           position: absolute;
-          bottom: calc(max(20px, 3.2%) * var(--player-ui-scale, 1));
+          bottom: calc(35px * var(--player-ui-scale, 1));
           left: 8%;
           right: 8%;
           display: flex;
@@ -133,7 +133,7 @@ export const SubtitleOverlay: React.FC<SubtitleOverlayProps> = ({
           transition: bottom 0.25s cubic-bezier(0.25, 1, 0.5, 1);
         }
         .subtitle-overlay-container.controls-showing {
-          bottom: calc(90px * var(--player-ui-scale, 1));
+          bottom: calc(105px * var(--player-ui-scale, 1));
         }
         .subtitle-overlay-container.menu-showing {
           bottom: 75% !important;
@@ -159,6 +159,12 @@ export const SubtitleOverlay: React.FC<SubtitleOverlayProps> = ({
         }
         
         @media (max-width: 768px) {
+          .subtitle-overlay-container {
+            bottom: calc(26px * var(--player-ui-scale, 1));
+          }
+          .subtitle-overlay-container.controls-showing {
+            bottom: calc(75px * var(--player-ui-scale, 1));
+          }
           .font-small { font-size: 0.9rem; }
           .font-medium { font-size: 1.15rem; }
           .font-large { font-size: 1.45rem; }

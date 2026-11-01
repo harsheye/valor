@@ -9,8 +9,8 @@
   height: 100% !important;
   min-height: 100% !important;
   position: relative !important;
-  background: #141414 !important;
-  color: #ffffff !important;
+  background: var(--bg) !important;
+  color: var(--text-1) !important;
   overflow-y: auto !important;
   -webkit-overflow-scrolling: touch !important;
   box-sizing: border-box !important;
@@ -23,7 +23,7 @@
   width: 8px;
 }
 .netflix-page-container::-webkit-scrollbar-track {
-  background: #141414;
+  background: var(--bg);
 }
 .netflix-page-container::-webkit-scrollbar-thumb {
   background: rgba(255, 255, 255, 0.2);
@@ -40,10 +40,8 @@
   left: 0;
   right: 0;
   height: 64px;
-  background: rgba(20, 20, 20, 0.88);
-  backdrop-filter: blur(20px);
-  -webkit-backdrop-filter: blur(20px);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  background: var(--surface-1);
+  border-bottom: 1px solid var(--border);
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -131,7 +129,7 @@
   display: flex;
   align-items: flex-end;
   box-sizing: border-box;
-  background: #141414;
+  background: var(--bg);
   overflow: hidden;
 }
 
@@ -149,10 +147,10 @@
   inset: 0;
   background: linear-gradient(
     to bottom,
-    rgba(20, 20, 20, 0.2) 0%,
-    rgba(20, 20, 20, 0.4) 40%,
-    rgba(20, 20, 20, 0.85) 75%,
-    #141414 100%
+    transparent 0%,
+    color-mix(in srgb, var(--bg) 40%, transparent) 40%,
+    color-mix(in srgb, var(--bg) 85%, transparent) 75%,
+    var(--bg) 100%
   );
   pointer-events: none;
 }
@@ -162,9 +160,9 @@
   inset: 0;
   background: linear-gradient(
     to right,
-    rgba(20, 20, 20, 0.96) 0%,
-    rgba(20, 20, 20, 0.82) 32%,
-    rgba(20, 20, 20, 0.4) 65%,
+    var(--bg) 0%,
+    color-mix(in srgb, var(--bg) 85%, transparent) 32%,
+    color-mix(in srgb, var(--bg) 40%, transparent) 65%,
     transparent 100%
   );
   pointer-events: none;
@@ -317,7 +315,7 @@
   display: flex;
   flex-direction: column;
   gap: 3.5rem;
-  background: #141414;
+  background: var(--bg);
   box-sizing: border-box;
 }
 
@@ -541,7 +539,7 @@
   display: flex;
   align-items: center;
   gap: 3rem;
-  background: #141414;
+  background: var(--bg);
   box-sizing: border-box;
   overflow: hidden;
 }
@@ -790,14 +788,14 @@
 .netflix-card-gradient {
   position: absolute !important;
   inset: 0 !important;
-  background: linear-gradient(to top, rgba(20, 20, 20, 0.92) 0%, rgba(20, 20, 20, 0.2) 35%, transparent 60%) !important;
+  background: linear-gradient(to top, color-mix(in srgb, var(--bg) 92%, transparent) 0%, color-mix(in srgb, var(--bg) 20%, transparent) 35%, transparent 60%) !important;
   pointer-events: none !important;
   z-index: 2 !important;
   transition: background 0.3s ease !important;
 }
 
 .os2-card:hover .netflix-card-gradient {
-  background: linear-gradient(to top, rgba(20, 20, 20, 0.98) 0%, rgba(20, 20, 20, 0.4) 45%, transparent 75%) !important;
+  background: linear-gradient(to top, color-mix(in srgb, var(--bg) 98%, transparent) 0%, color-mix(in srgb, var(--bg) 40%, transparent) 45%, transparent 75%) !important;
 }
 
 .netflix-card-top-badges {

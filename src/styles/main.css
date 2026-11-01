@@ -6,6 +6,7 @@
 /* 1. Design Tokens (3-Tier Custom Properties) */
 @import './01-tokens/_global.css';
 @import './01-tokens/_semantic.css';
+@import './01-tokens/streaming-tokens.css';
 
 /* 2. Base & Resets */
 @import './02-base/_reset.css';
@@ -21,3 +22,6 @@
 
 /* 5. Utility Helpers */
 @import './05-utilities/_u-helpers.css';
+
+/* 6. Settings Area Modern Redesign */
+@import './settings.css';

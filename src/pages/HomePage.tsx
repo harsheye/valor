@@ -187,26 +187,26 @@ export const HomePage: React.FC<HomePageProps> = ({
           justifyContent: 'center'
         }} onClick={() => setIsPasteModalOpen(false)}>
           <div style={{
-            background: 'var(--card-bg, #161622)',
+            background: 'var(--surface-1)',
             padding: '2rem',
-            borderRadius: '16px',
+            borderRadius: 'var(--radius-md)',
             width: '420px',
             maxWidth: '90%',
-            boxShadow: '0 20px 40px rgba(0,0,0,0.6)',
-            border: '1px solid rgba(255,255,255,0.15)',
+            boxShadow: '0 20px 40px rgba(0,0,0,0.3)',
+            border: '1px solid var(--border)',
             display: 'flex',
             flexDirection: 'column',
             gap: '1.25rem'
           }} onClick={e => e.stopPropagation()}>
-            <h3 style={{ margin: 0, fontSize: '1.25rem', color: '#fff', display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <h3 style={{ margin: 0, fontSize: '1.25rem', color: 'var(--text-1)', display: 'flex', alignItems: 'center', gap: '8px' }}>
               <Radio size={20} color="var(--accent)" />
               Pasted Link Detected
             </h3>
             
             {pastedPreviewTitle && (
-              <div style={{ background: 'rgba(255,255,255,0.06)', padding: '12px', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.08)' }}>
-                <span style={{ fontSize: '0.75rem', color: '#aaa', textTransform: 'uppercase', letterSpacing: '1px' }}>Preview</span>
-                <p style={{ margin: '4px 0 0 0', fontWeight: 600, color: '#fff', wordBreak: 'break-all' }}>{pastedPreviewTitle}</p>
+              <div style={{ background: 'var(--surface-2)', padding: '12px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)' }}>
+                <span style={{ fontSize: '0.75rem', color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '1px' }}>Preview</span>
+                <p style={{ margin: '4px 0 0 0', fontWeight: 600, color: 'var(--text-1)', wordBreak: 'break-all' }}>{pastedPreviewTitle}</p>
               </div>
             )}
             
@@ -217,10 +217,10 @@ export const HomePage: React.FC<HomePageProps> = ({
               style={{
                 width: '100%',
                 padding: '12px',
-                borderRadius: '8px',
-                border: '1px solid rgba(255,255,255,0.2)',
-                background: 'rgba(0,0,0,0.4)',
-                color: '#fff',
+                borderRadius: 'var(--radius-sm)',
+                border: '1px solid var(--control-border)',
+                background: 'var(--surface-2)',
+                color: 'var(--text-1)',
                 fontSize: '0.9rem',
                 boxSizing: 'border-box'
               }}
@@ -232,10 +232,10 @@ export const HomePage: React.FC<HomePageProps> = ({
                 style={{
                   flex: 1,
                   padding: '12px',
-                  background: 'var(--accent)',
-                  color: '#fff',
+                  background: 'var(--accent-fill)',
+                  color: 'var(--on-accent)',
                   border: 'none',
-                  borderRadius: '8px',
+                  borderRadius: 'var(--radius-sm)',
                   fontWeight: 'bold',
                   cursor: 'pointer',
                   display: 'flex',
@@ -250,10 +250,10 @@ export const HomePage: React.FC<HomePageProps> = ({
                 onClick={() => setIsPasteModalOpen(false)}
                 style={{
                   padding: '12px 18px',
-                  background: 'rgba(255,255,255,0.1)',
-                  color: '#fff',
-                  border: '1px solid rgba(255,255,255,0.2)',
-                  borderRadius: '8px',
+                  background: 'var(--surface-3)',
+                  color: 'var(--text-1)',
+                  border: '1px solid var(--control-border)',
+                  borderRadius: 'var(--radius-sm)',
                   fontWeight: 'bold',
                   cursor: 'pointer'
                 }}
@@ -271,9 +271,9 @@ export const HomePage: React.FC<HomePageProps> = ({
           ========================================================================= */}
       {primaryContinue && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', width: '100%' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', paddingBottom: '0.5rem', borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', paddingBottom: '0.5rem', borderBottom: '1px solid var(--border)' }}>
             <Play size={20} color="var(--accent)" />
-            <h2 style={{ fontSize: '1.2rem', fontWeight: 800, margin: 0, color: '#ffffff' }}>Continue Watching</h2>
+            <h2 style={{ fontSize: '1.2rem', fontWeight: 800, margin: 0, color: 'var(--text-1)' }}>Continue Watching</h2>
           </div>
 
           <div 
@@ -374,12 +374,12 @@ export const HomePage: React.FC<HomePageProps> = ({
         flexDirection: 'column',
         gap: '1.5rem'
       }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: '1px solid rgba(255,255,255,0.08)', paddingBottom: '0.75rem' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: '1px solid var(--border)', paddingBottom: '0.75rem' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
             <UploadCloud size={22} color="var(--accent)" />
-            <h2 style={{ fontSize: '1.25rem', fontWeight: 800, margin: 0, color: '#ffffff' }}>Select Media</h2>
+            <h2 style={{ fontSize: '1.25rem', fontWeight: 800, margin: 0, color: 'var(--text-1)' }}>Select Media</h2>
           </div>
-          <span style={{ fontSize: '0.8rem', color: 'rgba(255,255,255,0.5)' }}>
+          <span style={{ fontSize: '0.8rem', color: 'var(--text-3)' }}>
             Supports MP4, MKV, MOV, WebM, HLS Streams
           </span>
         </div>
@@ -426,20 +426,20 @@ export const HomePage: React.FC<HomePageProps> = ({
               width: '64px',
               height: '64px',
               borderRadius: '50%',
-              background: 'rgba(229, 9, 20, 0.15)',
+              background: 'var(--accent-soft)',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
               color: 'var(--accent)',
-              border: '1px solid rgba(229, 9, 20, 0.3)'
+              border: '1px solid color-mix(in srgb, var(--accent) 30%, transparent)'
             }}>
               <UploadCloud size={32} />
             </div>
             <div>
-              <h3 style={{ margin: 0, fontSize: '1.2rem', fontWeight: 700, color: '#ffffff' }}>
+              <h3 style={{ margin: 0, fontSize: '1.2rem', fontWeight: 700, color: 'var(--text-1)' }}>
                 Open Local Video File
               </h3>
-              <p style={{ margin: '4px 0 0 0', fontSize: '0.85rem', color: 'rgba(255, 255, 255, 0.6)' }}>
+              <p style={{ margin: '4px 0 0 0', fontSize: '0.85rem', color: 'var(--text-2)' }}>
                 Drag & drop or click anywhere in this area to browse video files
               </p>
             </div>
@@ -462,11 +462,11 @@ export const HomePage: React.FC<HomePageProps> = ({
           </div>
 
           <div style={{ display: 'flex', alignItems: 'center', width: '80%', maxWidth: '500px', gap: '1rem' }} onClick={(e) => e.stopPropagation()}>
-            <div style={{ flex: 1, height: '1px', background: 'rgba(255,255,255,0.1)' }} />
-            <span style={{ fontSize: '0.75rem', fontWeight: 700, color: 'rgba(255,255,255,0.4)', textTransform: 'uppercase', letterSpacing: '1px' }}>
+            <div style={{ flex: 1, height: '1px', background: 'var(--border)' }} />
+            <span style={{ fontSize: '0.75rem', fontWeight: 700, color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '1px' }}>
               OR STREAM FROM URL
             </span>
-            <div style={{ flex: 1, height: '1px', background: 'rgba(255,255,255,0.1)' }} />
+            <div style={{ flex: 1, height: '1px', background: 'var(--border)' }} />
           </div>
 
           {/* Inline URL Input Form */}
@@ -531,18 +531,18 @@ export const HomePage: React.FC<HomePageProps> = ({
 
           {/* Quick Demo Streams Bar */}
           <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '8px', marginTop: '-0.5rem' }} onClick={(e) => e.stopPropagation()}>
-            <span style={{ fontSize: '0.75rem', color: 'rgba(255,255,255,0.5)', marginRight: '4px' }}>
+            <span style={{ fontSize: '0.75rem', color: 'var(--text-3)', marginRight: '4px' }}>
               Sample Streams:
             </span>
             <button
               type="button"
               onClick={() => handleLoadDemo('https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8')}
               style={{
-                background: 'rgba(255,255,255,0.06)',
-                border: '1px solid rgba(255,255,255,0.12)',
-                borderRadius: '6px',
+                background: 'var(--surface-3)',
+                border: '1px solid var(--control-border)',
+                borderRadius: 'var(--radius-sm)',
                 padding: '4px 10px',
-                color: '#ddd',
+                color: 'var(--text-2)',
                 fontSize: '0.75rem',
                 cursor: 'pointer'
               }}
@@ -553,11 +553,11 @@ export const HomePage: React.FC<HomePageProps> = ({
               type="button"
               onClick={() => handleLoadDemo('https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/TearsOfSteel.mp4')}
               style={{
-                background: 'rgba(255,255,255,0.06)',
-                border: '1px solid rgba(255,255,255,0.12)',
-                borderRadius: '6px',
+                background: 'var(--surface-3)',
+                border: '1px solid var(--control-border)',
+                borderRadius: 'var(--radius-sm)',
                 padding: '4px 10px',
-                color: '#ddd',
+                color: 'var(--text-2)',
                 fontSize: '0.75rem',
                 cursor: 'pointer'
               }}
@@ -573,12 +573,12 @@ export const HomePage: React.FC<HomePageProps> = ({
           ========================================================================= */}
       {sortedVideos.length > 0 && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', width: '100%' }}>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: '1px solid rgba(255,255,255,0.08)', paddingBottom: '0.5rem' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: '1px solid var(--border)', paddingBottom: '0.5rem' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
               <Film size={20} color="var(--accent)" />
-              <h2 style={{ fontSize: '1.2rem', fontWeight: 800, margin: 0, color: '#ffffff' }}>Recent History</h2>
+              <h2 style={{ fontSize: '1.2rem', fontWeight: 800, margin: 0, color: 'var(--text-1)' }}>Recent History</h2>
             </div>
-            <span style={{ fontSize: '0.8rem', color: 'rgba(255,255,255,0.5)' }}>
+            <span style={{ fontSize: '0.8rem', color: 'var(--text-3)' }}>
               {sortedVideos.length} items recorded
             </span>
           </div>
@@ -608,8 +608,9 @@ export const HomePage: React.FC<HomePageProps> = ({
                 <div style={{
                   width: '42px',
                   height: '42px',
-                  borderRadius: '8px',
-                  background: 'rgba(229, 9, 20, 0.15)',
+                  borderRadius: 'var(--radius-sm)',
+                  background: 'var(--accent-soft)',
+                  border: '1px solid color-mix(in srgb, var(--accent) 30%, transparent)',
                   display: 'flex',
                   alignItems: 'center',
                   justifyContent: 'center',
@@ -619,10 +620,10 @@ export const HomePage: React.FC<HomePageProps> = ({
                   <Play size={18} fill="currentColor" />
                 </div>
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <h4 style={{ margin: 0, fontSize: '0.9rem', fontWeight: 700, color: '#fff', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  <h4 style={{ margin: 0, fontSize: '0.9rem', fontWeight: 700, color: 'var(--text-1)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                     {classifyVideoTitle(video.title).displayTitle}
                   </h4>
-                  <p style={{ margin: '3px 0 0 0', fontSize: '0.75rem', color: 'rgba(255,255,255,0.5)' }}>
+                  <p style={{ margin: '3px 0 0 0', fontSize: '0.75rem', color: 'var(--text-2)' }}>
                     {video.currentTime ? `At ${formatTime(video.currentTime)}` : 'Ready to play'}
                   </p>
                 </div>

@@ -23,6 +23,10 @@
           }
 
           document.documentElement.setAttribute('data-theme', theme);
+          var metaTheme = document.querySelector('meta[name="theme-color"]');
+          if (metaTheme) {
+            metaTheme.setAttribute('content', (theme === 'black-ops' || theme === 'oled') ? '#000000' : (theme === 'soft-paper' ? '#ECE7DD' : '#0F1217'));
+          }
 
           if (settings.uiDimmer && settings.uiDimmer < 100) {
             document.documentElement.style.setProperty('--ui-dimmer', (settings.uiDimmer / 100).toString());
@@ -40,6 +44,7 @@
     </script>
 
     <meta charset="UTF-8" />
+    <meta name="theme-color" content="#0F1217" />
     <link rel="icon" type="image/svg+xml" href="/logo.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
     <title>Valor</title>

@@ -855,15 +855,15 @@ export const VlcContextMenu: React.FC<VlcContextMenuProps> = ({
 
       <style>{`
         .vlc-context-menu {
-          background: rgba(18, 18, 18, 0.95);
+          background: color-mix(in srgb, var(--surface-1) 94%, transparent);
           backdrop-filter: blur(20px);
           -webkit-backdrop-filter: blur(20px);
-          border: 1px solid rgba(255, 255, 255, 0.14);
-          border-radius: 8px;
-          box-shadow: 0 12px 36px rgba(0, 0, 0, 0.75), 0 0 0 1px rgba(255, 255, 255, 0.05);
-          font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+          border: 1px solid var(--border);
+          border-radius: var(--radius-sm, 8px);
+          box-shadow: 0 12px 36px var(--scrim, rgba(0, 0, 0, 0.45)), 0 0 0 1px var(--border);
+          font-family: var(--font-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif);
           font-size: 12.5px;
-          color: rgba(255, 255, 255, 0.92);
+          color: var(--text-1);
           user-select: none;
           min-width: 185px;
           padding: 5px 0;
@@ -877,7 +877,7 @@ export const VlcContextMenu: React.FC<VlcContextMenuProps> = ({
         }
         .vlc-context-menu::-webkit-scrollbar-thumb,
         .vlc-submenu-container::-webkit-scrollbar-thumb {
-          background: rgba(255, 255, 255, 0.25);
+          background: var(--control-border);
           border-radius: 3px;
         }
 
@@ -890,9 +890,9 @@ export const VlcContextMenu: React.FC<VlcContextMenuProps> = ({
           display: flex;
           align-items: center;
           position: relative;
-          padding: 4px 14px 4px 28px;
+          padding: 5px 14px 5px 28px;
           cursor: pointer;
-          color: rgba(255, 255, 255, 0.88);
+          color: var(--text-1);
           white-space: nowrap;
           border-left: 2px solid transparent;
           transition: background 0.12s ease, color 0.12s ease;
@@ -900,13 +900,14 @@ export const VlcContextMenu: React.FC<VlcContextMenuProps> = ({
 
         .vlc-menu-item:hover,
         .vlc-menu-item.active {
-          background: rgba(255, 255, 255, 0.12);
-          color: #ffffff;
+          background: var(--surface-2);
+          color: var(--text-1);
           border-left-color: var(--accent);
         }
 
         .vlc-menu-item.disabled {
-          color: rgba(255, 255, 255, 0.35);
+          color: var(--text-3);
+          opacity: 0.5;
           pointer-events: none;
         }
 
@@ -936,11 +937,11 @@ export const VlcContextMenu: React.FC<VlcContextMenuProps> = ({
           display: flex;
           align-items: center;
           justify-content: center;
-          color: rgba(255, 255, 255, 0.7);
+          color: var(--text-2);
         }
         .vlc-menu-item:hover .vlc-icon-wrapper,
         .vlc-menu-item.active .vlc-icon-wrapper {
-          color: #ffffff;
+          color: var(--text-1);
         }
 
         .vlc-menu-label {
@@ -962,37 +963,37 @@ export const VlcContextMenu: React.FC<VlcContextMenuProps> = ({
 
         .vlc-menu-shortcut {
           font-size: 11px;
-          color: rgba(255, 255, 255, 0.45);
+          color: var(--text-3);
           margin-right: 4px;
           font-family: monospace;
         }
 
         .vlc-menu-item:hover .vlc-menu-shortcut,
         .vlc-menu-item.active .vlc-menu-shortcut {
-          color: rgba(255, 255, 255, 0.85);
+          color: var(--text-2);
         }
 
         .vlc-submenu-arrow {
-          color: rgba(255, 255, 255, 0.5);
+          color: var(--text-3);
         }
         .vlc-menu-item:hover .vlc-submenu-arrow,
         .vlc-menu-item.active .vlc-submenu-arrow {
-          color: #ffffff;
+          color: var(--text-1);
         }
 
         .vlc-menu-divider {
           height: 1px;
-          background: rgba(255, 255, 255, 0.1);
+          background: var(--border);
           margin: 4px 6px;
         }
 
         .vlc-submenu-container {
-          background: rgba(18, 18, 18, 0.96);
+          background: color-mix(in srgb, var(--surface-1) 96%, transparent);
           backdrop-filter: blur(20px);
           -webkit-backdrop-filter: blur(20px);
-          border: 1px solid rgba(255, 255, 255, 0.14);
-          border-radius: 8px;
-          box-shadow: 0 12px 36px rgba(0, 0, 0, 0.75), 0 0 0 1px rgba(255, 255, 255, 0.05);
+          border: 1px solid var(--border);
+          border-radius: var(--radius-sm, 8px);
+          box-shadow: 0 12px 36px var(--scrim, rgba(0, 0, 0, 0.45)), 0 0 0 1px var(--border);
           min-width: 175px;
           padding: 5px 0;
           scrollbar-width: thin;

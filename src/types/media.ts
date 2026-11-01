@@ -64,6 +64,7 @@ export interface VideoItem {
   season?: number;
   episode?: number;
   hasScrobbledTrakt?: boolean;
+  completed?: boolean;
 }
 
 export interface Bookmark {
