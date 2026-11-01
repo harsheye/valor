@@ -23,6 +23,7 @@ import {
   RotateCcw as RestoreIcon
 } from 'lucide-react';
 import { sidecarService } from '../services/remote/sidecarService';
+import { featureFlagService } from '../services/featureFlags';
 import { 
   initiateTraktPkceAuth, 
   generateTraktDeviceCode, 
@@ -143,7 +144,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
         return 'loading-animation';
       case 'companion':
       case 'local-engine':
-        return 'local-engine';
+        return featureFlagService.isFeatureEnabled('localEngine') ? 'local-engine' : 'general';
       case 'general':
       default:
         return 'general';
@@ -1612,7 +1613,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
             )}
 
             {/* ─── 9. LOCAL ENGINE SECTION ─── */}
-            {(isSearching ? matchesSearch('local engine', 'sidecar', 'service', 'port', 'cache', 'cli', 'command') : activeSection === 'local-engine') && (
+            {featureFlagService.isFeatureEnabled('localEngine') && (isSearching ? matchesSearch('local engine', 'sidecar', 'service', 'port', 'cache', 'cli', 'command') : activeSection === 'local-engine') && (
               <SettingsCard
                 title="Local engine"
                 description="High-speed companion service for local demuxing, cache blocks, and hardware acceleration"

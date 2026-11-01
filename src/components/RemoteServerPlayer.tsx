@@ -32,6 +32,7 @@ import { logger } from '../utils/logger';
 import { saveMediaTimestamp, getMediaTimestamp } from '../utils/mediaTimestampStorage';
 import { isWasmSupported } from '../utils/wasmCheck';
 import { sidecarService } from '../services/remote/sidecarService';
+import { featureFlagService } from '../services/featureFlags';
 import { LocalServicePage } from '../pages/LocalServicePage';
 import { findPreferredStream, getSavedMediaPreferences, getPreferredAudioStreamIndex, getLanguageDisplayLabel } from '../utils/languageMatcher';
 
@@ -9001,7 +9002,7 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
         />
       )}
       {/* Companion Engine Setup & Diagnostics Modal */}
-      {showCompanionModal && (
+      {showCompanionModal && featureFlagService.isFeatureEnabled('localEngine') && (
         <div 
           style={{
             position: 'fixed',

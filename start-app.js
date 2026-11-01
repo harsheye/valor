@@ -12,6 +12,13 @@ import { createReverseProxyTelemetry, parseUserAgent } from './analyticsTracker.
 import { RemoteSessionManager } from './server/remote/remoteSessionManager.js';
 import { handleStreamRoute } from './server/remote/streamController.js';
 import { SessionMediaManager } from './server/remote/sessionMediaManager.js';
+import { globalEventBus } from './server/realtime/eventBus.js';
+import { handleAdminRealtimeRoutes } from './server/realtime/adminRouter.js';
+import { securityManager } from './server/realtime/securityManager.js';
+import { alertEngine } from './server/realtime/alertEngine.js';
+import { outboundWebhookManager } from './server/realtime/outboundWebhooks.js';
+import { auditLogger } from './server/realtime/auditLogger.js';
+import { analyticsAndAdminManager } from './server/realtime/playbackQuality.js';
 
 try {
   dns.setDefaultResultOrder('ipv4first');
@@ -475,6 +482,26 @@ const ADMIN_HARDCODED_PASS = process.env.VALOR_ADMIN_PASS || 'admin';
 const adminStreamClients = new Set();
 
 global.broadcastAdminEvent = function (type, payload) {
+  // 1. Emit into modern enterprise EventBus
+  try {
+    const eventTypeMap = {
+      'traffic_log': 'request.logged',
+      'session_update': 'session.opened',
+      'device_update': 'visitor.seen',
+      'webhook_delivery': 'webhook.delivery'
+    };
+    const mappedType = eventTypeMap[type] || type;
+    globalEventBus.publish({
+      type: mappedType,
+      actor: 'system',
+      subject: payload?.sessionId || payload?.deviceId || payload?.id || 'system',
+      data: payload
+    });
+  } catch (e) {
+    console.error('[EventBus Broadcast Error]', e);
+  }
+
+  // 2. Legacy SSE broadcast fallback
   if (adminStreamClients.size === 0) return;
   const message = `data: ${JSON.stringify({ type, data: payload, timestamp: Date.now() })}\n\n`;
   for (const client of adminStreamClients) {
@@ -622,12 +649,31 @@ const backendServer = http.createServer(async (req, res) => {
   // Global IP block check
   const rawClientIp = req.headers['x-forwarded-for'] ? String(req.headers['x-forwarded-for']).split(',')[0].trim() : (req.socket.remoteAddress || '');
   const cleanClientIp = rawClientIp.replace(/^::ffff:/, '');
-  if (dataStore && dataStore._blockedIpsCache && (dataStore._blockedIpsCache.has(cleanClientIp) || dataStore._blockedIpsCache.has(rawClientIp))) {
+
+  // Enterprise Security Block List Check (IP, CIDR, Device, Country)
+  const blockCheck = securityManager.isBlocked({ ip: cleanClientIp });
+  if (blockCheck.blocked || (dataStore && dataStore._blockedIpsCache && (dataStore._blockedIpsCache.has(cleanClientIp) || dataStore._blockedIpsCache.has(rawClientIp)))) {
     res.statusCode = 403;
     res.setHeader('Content-Type', 'application/json');
-    res.end(JSON.stringify({ error: 'Forbidden', message: 'Your IP address has been administratively blocked.' }));
+    res.end(JSON.stringify({ error: 'Forbidden', message: `Access administratively blocked: ${blockCheck.reason || 'IP Blocked'}` }));
     return;
   }
+
+  // Per-IP Rate Limiting (exclude local admin loopback)
+  if (!['127.0.0.1', '::1', 'localhost'].includes(cleanClientIp)) {
+    const rateLimit = securityManager.checkRateLimit(cleanClientIp);
+    if (!rateLimit.allowed) {
+      res.statusCode = 429;
+      res.setHeader('Content-Type', 'application/json');
+      res.setHeader('Retry-After', String(rateLimit.resetInSeconds || 60));
+      res.end(JSON.stringify({ error: 'Too Many Requests', message: 'Rate limit exceeded. Please slow down.' }));
+      return;
+    }
+  }
+
+  // Real-Time Event Portal Admin API Routes (Stream, Snapshot, Alerts, Webhooks, etc.)
+  const handledRealtime = await handleAdminRealtimeRoutes(req, res, pathname, parsedUrl, cleanClientIp, getJsonBody, isValidAdminToken, dataStore);
+  if (handledRealtime) return;
 
   // Webhook Ingestion Receiver (For external embeds, player telemetry, and video events)
   if ((pathname === '/api/webhook' || pathname === '/api/webhook/visitor') && req.method === 'POST') {
@@ -843,6 +889,13 @@ const backendServer = http.createServer(async (req, res) => {
     if (req.method === 'OPTIONS') {
       res.statusCode = 204;
       res.end();
+      return;
+    }
+
+    if (disableEngine || process.env.VALOR_DISABLE_ENGINE === 'true') {
+      res.statusCode = 404;
+      res.setHeader('Content-Type', 'application/json');
+      res.end(JSON.stringify({ error: 'Local companion engine download is disabled' }));
       return;
     }
 
@@ -1324,6 +1377,26 @@ const backendServer = http.createServer(async (req, res) => {
       if (validUser && validPass) {
         const token = `val_admin_${crypto.randomBytes(24).toString('hex')}`;
         adminAuthTokens.add(token);
+        securityManager.registerAdminSession({
+          token,
+          username: 'admin',
+          role: 'owner',
+          ip: cleanClientIp,
+          userAgent: req.headers['user-agent'] || ''
+        });
+        auditLogger.logAction({
+          actor: 'admin',
+          action: 'ADMIN_LOGIN',
+          subjectType: 'session',
+          subjectId: token,
+          ip: cleanClientIp,
+          userAgent: req.headers['user-agent']
+        });
+        alertEngine.evaluateRule('rule_admin_login', {
+          title: 'Admin Console Login',
+          message: `Admin user 'admin' authenticated from IP ${cleanClientIp}`,
+          data: { ip: cleanClientIp, userAgent: req.headers['user-agent'] }
+        });
         if (dataStore.isRedisConnected && dataStore.redis) {
           try {
             await dataStore.redis.set(`valor:admin_token:${token}`, '1', 'EX', 86400);
@@ -1331,8 +1404,20 @@ const backendServer = http.createServer(async (req, res) => {
         }
         res.statusCode = 200;
         res.setHeader('Content-Type', 'application/json');
-        res.end(JSON.stringify({ success: true, token, username: 'admin' }));
+        res.setHeader('Set-Cookie', `valor_admin_token=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=86400`);
+        res.end(JSON.stringify({ success: true, token, username: 'admin', role: 'owner' }));
       } else {
+        securityManager.recordSuspiciousActivity({
+          ip: cleanClientIp,
+          reason: 'Failed admin credentials attempt'
+        });
+        auditLogger.logAction({
+          actor: username || 'anonymous',
+          action: 'FAILED_ADMIN_LOGIN',
+          subjectType: 'auth',
+          subjectId: username || 'unknown',
+          ip: cleanClientIp
+        });
         res.statusCode = 401;
         res.setHeader('Content-Type', 'application/json');
         res.end(JSON.stringify({ error: 'Invalid admin username or password' }));

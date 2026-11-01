@@ -3,6 +3,7 @@ import {
   Sun, Captions, Pause, Keyboard, LayoutGrid, 
   Database, Link2, Loader2, Zap 
 } from 'lucide-react';
+import { featureFlagService } from '../../services/featureFlags';
 
 export type SettingsSectionId = 
   | 'general'
@@ -110,23 +111,30 @@ export const SettingsNav: React.FC<SettingsNavProps> = ({
   activeSection,
   onSelectSection,
 }) => {
+  const isEngineEnabled = featureFlagService.isFeatureEnabled('localEngine');
+
   return (
     <nav className="settings-sidebar-nav" aria-label="Settings navigation">
-      {SETTINGS_NAV_GROUPS.map((group, groupIdx) => (
-        <div key={groupIdx} className="settings-nav-group">
-          {group.title && (
-            <h4 className="settings-nav-group-title">{group.title}</h4>
-          )}
-          {group.items.map((item) => {
-            const isActive = activeSection === item.id;
-            return (
-              <button
-                key={item.id}
-                type="button"
-                role="tab"
-                aria-selected={isActive}
-                aria-current={isActive ? 'page' : undefined}
-                className={`settings-nav-item ${isActive ? 'active' : ''}`}
+      {SETTINGS_NAV_GROUPS.map((group, groupIdx) => {
+        const visibleItems = group.items.filter(
+          item => item.id !== 'local-engine' || isEngineEnabled
+        );
+        if (visibleItems.length === 0) return null;
+        return (
+          <div key={groupIdx} className="settings-nav-group">
+            {group.title && (
+              <h4 className="settings-nav-group-title">{group.title}</h4>
+            )}
+            {visibleItems.map((item) => {
+              const isActive = activeSection === item.id;
+              return (
+                <button
+                  key={item.id}
+                  type="button"
+                  role="tab"
+                  aria-selected={isActive}
+                  aria-current={isActive ? 'page' : undefined}
+                  className={`settings-nav-item ${isActive ? 'active' : ''}`}
                 onClick={() => onSelectSection(item.id)}
               >
                 <span className="settings-nav-icon">{item.icon}</span>
@@ -138,7 +146,8 @@ export const SettingsNav: React.FC<SettingsNavProps> = ({
             );
           })}
         </div>
-      ))}
+      );
+    })}
     </nav>
   );
 };

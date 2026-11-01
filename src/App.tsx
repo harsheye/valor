@@ -3155,7 +3155,7 @@ function App() {
     );
   }
 
-  const isSidebarCollapsed = activeTab === 'online' || !!selectedActor || !!selectedDetailsMedia;
+  const isSidebarCollapsed = !!selectedActor || !!selectedDetailsMedia;
 
   return (
     <div className={`app-layout ${settings.disableAnimations ? 'no-animations' : ''} ${activeTab === 'settings' ? 'settings-active' : ''} ${isSidebarCollapsed ? 'sidebar-collapsed' : ''}`}>
@@ -3343,10 +3343,10 @@ function App() {
 
               {activeTab === 'companion' && (
                 !features.localEngine.enabled ? (
-                  <UnderConstructionPage
-                    featureName="Local Companion Engine"
-                    message={features.localEngine.maintenanceMessage}
+                  <NotFoundPage
+                    requestedRoute="companion"
                     onBackHome={() => setActiveTab('home')}
+                    onNavigate={(t) => setActiveTab(t)}
                   />
                 ) : (
                   <LocalServicePage />
@@ -5250,6 +5250,13 @@ export default function AppWithErrorBoundary() {
     window.location.hash.startsWith('#/service');
 
   if (isServiceRoute) {
+    if (!featureFlagService.isFeatureEnabled('localEngine')) {
+      return (
+        <ErrorBoundary>
+          <NotFoundPage requestedRoute="service" onBackHome={() => { window.location.href = '/'; }} />
+        </ErrorBoundary>
+      );
+    }
     return (
       <ErrorBoundary>
         <div style={{ minHeight: '100vh', backgroundColor: 'var(--bg-color, #0b0f19)' }}>

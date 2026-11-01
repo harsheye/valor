@@ -63,6 +63,13 @@
   --focus-ring: #8CA9EE;
   --scrim: rgba(15, 18, 23, 0.7);
 
+  /* Chart & Series Colors */
+  --c1: #8CA9EE;
+  --c2: #86CDA6;
+  --c3: #E3BD7A;
+  --c4: #C084FC;
+  --c5: #EC8F95;
+
   --tile-l: 22%;
   --tile-glyph-l: 74%;
 

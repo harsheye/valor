@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { ArrowLeft, Lock, Unlock, Terminal, X, Tv, Zap, Sun } from 'lucide-react';
 import { sidecarService } from '../../services/remote/sidecarService';
+import { featureFlagService } from '../../services/featureFlags';
 import type { ToneMappingMode } from './ToneMappingFilters';
 
 export interface PlayerTopBarProps {
@@ -204,7 +205,7 @@ export const PlayerTopBar: React.FC<PlayerTopBarProps> = ({
         )}
 
         {/* Companion Engine Status Badge */}
-        {onOpenCompanion && (
+        {featureFlagService.isFeatureEnabled('localEngine') && onOpenCompanion && (
           <button 
             onClick={onOpenCompanion}
             title={isSidecarActive 

@@ -89,6 +89,10 @@ class FeatureFlagService {
     return this.features;
   }
 
+  public isFeatureEnabled(feature: 'app' | 'onlineStream' | 'localEngine'): boolean {
+    return Boolean(this.features[feature]?.enabled);
+  }
+
   public isAppDisabled(): boolean {
     return !this.features.app.enabled;
   }

@@ -280,6 +280,70 @@ export class DataStore {
             reason TEXT,
             created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
         );
+
+        CREATE TABLE IF NOT EXISTS realtime_events (
+            id VARCHAR(64) PRIMARY KEY,
+            type VARCHAR(64) NOT NULL,
+            ts TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+            actor VARCHAR(128),
+            subject VARCHAR(255),
+            data JSONB DEFAULT '{}'::jsonb,
+            v INT DEFAULT 1
+        );
+
+        CREATE TABLE IF NOT EXISTS alert_rules (
+            id VARCHAR(128) PRIMARY KEY,
+            name VARCHAR(255) NOT NULL,
+            condition_type VARCHAR(64) NOT NULL,
+            threshold NUMERIC DEFAULT 0,
+            operator VARCHAR(16) DEFAULT '>',
+            severity VARCHAR(32) DEFAULT 'warning',
+            cooldown_minutes INT DEFAULT 15,
+            quiet_hours_start VARCHAR(8),
+            quiet_hours_end VARCHAR(8),
+            channels JSONB DEFAULT '["in_app"]'::jsonb,
+            enabled BOOLEAN DEFAULT TRUE,
+            last_triggered_at TIMESTAMP WITH TIME ZONE,
+            created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+        );
+
+        CREATE TABLE IF NOT EXISTS alerts_history (
+            id VARCHAR(128) PRIMARY KEY,
+            rule_id VARCHAR(128),
+            rule_name VARCHAR(255),
+            severity VARCHAR(32),
+            title VARCHAR(255),
+            message TEXT,
+            data JSONB,
+            status VARCHAR(32) DEFAULT 'active',
+            snoozed_until TIMESTAMP WITH TIME ZONE,
+            acknowledged_at TIMESTAMP WITH TIME ZONE,
+            acknowledged_by VARCHAR(128),
+            created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+        );
+
+        CREATE TABLE IF NOT EXISTS audit_logs (
+            id VARCHAR(128) PRIMARY KEY,
+            actor VARCHAR(128) NOT NULL,
+            action VARCHAR(128) NOT NULL,
+            subject_type VARCHAR(64),
+            subject_id VARCHAR(255),
+            old_values JSONB,
+            new_values JSONB,
+            ip VARCHAR(64),
+            user_agent TEXT,
+            created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+        );
+
+        CREATE TABLE IF NOT EXISTS block_list (
+            id VARCHAR(128) PRIMARY KEY,
+            type VARCHAR(32) NOT NULL,
+            value VARCHAR(255) NOT NULL,
+            reason TEXT,
+            expires_at TIMESTAMP WITH TIME ZONE,
+            created_by VARCHAR(128),
+            created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+        );
       `;
       try {
         await this.pgPool.query(initSql);
@@ -499,6 +563,70 @@ export class DataStore {
             latency_ms INTEGER,
             payload TEXT,
             response_body TEXT,
+            created_at TEXT DEFAULT (datetime('now'))
+          );
+
+          CREATE TABLE IF NOT EXISTS realtime_events (
+            id TEXT PRIMARY KEY,
+            type TEXT NOT NULL,
+            ts TEXT DEFAULT (datetime('now')),
+            actor TEXT,
+            subject TEXT,
+            data TEXT,
+            v INTEGER DEFAULT 1
+          );
+
+          CREATE TABLE IF NOT EXISTS alert_rules (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            condition_type TEXT NOT NULL,
+            threshold REAL DEFAULT 0,
+            operator TEXT DEFAULT '>',
+            severity TEXT DEFAULT 'warning',
+            cooldown_minutes INTEGER DEFAULT 15,
+            quiet_hours_start TEXT,
+            quiet_hours_end TEXT,
+            channels TEXT,
+            enabled INTEGER DEFAULT 1,
+            last_triggered_at TEXT,
+            created_at TEXT DEFAULT (datetime('now'))
+          );
+
+          CREATE TABLE IF NOT EXISTS alerts_history (
+            id TEXT PRIMARY KEY,
+            rule_id TEXT,
+            rule_name TEXT,
+            severity TEXT,
+            title TEXT,
+            message TEXT,
+            data TEXT,
+            status TEXT DEFAULT 'active',
+            snoozed_until TEXT,
+            acknowledged_at TEXT,
+            acknowledged_by TEXT,
+            created_at TEXT DEFAULT (datetime('now'))
+          );
+
+          CREATE TABLE IF NOT EXISTS audit_logs (
+            id TEXT PRIMARY KEY,
+            actor TEXT NOT NULL,
+            action TEXT NOT NULL,
+            subject_type TEXT,
+            subject_id TEXT,
+            old_values TEXT,
+            new_values TEXT,
+            ip TEXT,
+            user_agent TEXT,
+            created_at TEXT DEFAULT (datetime('now'))
+          );
+
+          CREATE TABLE IF NOT EXISTS block_list (
+            id TEXT PRIMARY KEY,
+            type TEXT NOT NULL,
+            value TEXT NOT NULL,
+            reason TEXT,
+            expires_at TEXT,
+            created_by TEXT,
             created_at TEXT DEFAULT (datetime('now'))
           );
         `);

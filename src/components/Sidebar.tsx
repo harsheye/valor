@@ -108,13 +108,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
         label: !features.onlineStream.enabled ? 'Stream (Offline)' : 'Stream', 
         icon: <PlayCircle size={22} color={!features.onlineStream.enabled ? 'var(--text-3)' : undefined} /> 
       },
-      {
+      ...(features.localEngine.enabled ? [{
         id: 'companion' as const,
-        label: !features.localEngine.enabled ? 'Local Engine (Offline)' : 'Local Engine',
+        label: 'Local Engine',
         icon: (
           <div style={{ position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-            <Zap size={22} color={!features.localEngine.enabled ? 'var(--text-3)' : (isSidecarActive ? 'var(--success)' : undefined)} />
-            {isSidecarActive && features.localEngine.enabled && (
+            <Zap size={22} color={isSidecarActive ? 'var(--success)' : undefined} />
+            {isSidecarActive && (
               <span
                 style={{
                   position: 'absolute',
@@ -130,7 +130,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
             )}
           </div>
         )
-      }
+      }] : [])
     ];
 
     return (
@@ -308,31 +308,29 @@ export const Sidebar: React.FC<SidebarProps> = ({
           )}
         </button>
 
-        <button
-          className={`sidebar-menu-item ${activeTab === 'companion' ? 'active' : ''}`}
-          onClick={() => navigateTo('companion')}
-          title={!features.localEngine.enabled ? 'Local Engine (Under Construction)' : 'Local Companion Engine'}
-        >
-          <Zap size={20} color={!features.localEngine.enabled ? 'var(--text-3)' : (isSidecarActive ? 'var(--success)' : undefined)} />
-          <span className="sidebar-menu-text">Local Engine</span>
-          {!features.localEngine.enabled ? (
-            <span style={{ marginLeft: 'auto', fontSize: '0.65rem', fontWeight: 700, padding: '2px 6px', borderRadius: '4px', background: 'var(--surface-3)', color: 'var(--text-3)', border: '1px solid var(--border)' }}>
-              Offline
-            </span>
-          ) : isSidecarActive ? (
-            <span
-              style={{
-                width: '7px',
-                height: '7px',
-                borderRadius: '50%',
-                backgroundColor: 'var(--success)',
-                boxShadow: '0 0 8px var(--success)',
-                marginLeft: 'auto',
-                flexShrink: 0
-              }}
-            />
-          ) : null}
-        </button>
+        {features.localEngine.enabled && (
+          <button
+            className={`sidebar-menu-item ${activeTab === 'companion' ? 'active' : ''}`}
+            onClick={() => navigateTo('companion')}
+            title="Local Companion Engine"
+          >
+            <Zap size={20} color={isSidecarActive ? 'var(--success)' : undefined} />
+            <span className="sidebar-menu-text">Local Engine</span>
+            {isSidecarActive && (
+              <span
+                style={{
+                  width: '7px',
+                  height: '7px',
+                  borderRadius: '50%',
+                  backgroundColor: 'var(--success)',
+                  boxShadow: '0 0 8px var(--success)',
+                  marginLeft: 'auto',
+                  flexShrink: 0
+                }}
+              />
+            )}
+          </button>
+        )}
       </nav>
 
       <div className="sidebar-history-section">

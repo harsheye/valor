@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Compass, History, Film, PlayCircle, Zap } from 'lucide-react';
 import { sidecarService } from '../../services/remote/sidecarService';
+import { featureFlagService } from '../../services/featureFlags';
 import './streaming.css';
 
 export type NavTab = 'home' | 'history' | 'library' | 'online' | 'companion' | 'settings';
@@ -17,12 +18,19 @@ export const Nav: React.FC<NavProps> = ({
   historyCount = 0
 }) => {
   const [isSidecarActive, setIsSidecarActive] = useState<boolean>(() => sidecarService.isEnabled());
+  const [features, setFeatures] = useState(() => featureFlagService.getFeatures());
 
   useEffect(() => {
     const unsub = sidecarService.subscribe((status) => {
       setIsSidecarActive(status.isAvailable);
     });
-    return () => unsub();
+    const unsubFeat = featureFlagService.subscribe(() => {
+      setFeatures({ ...featureFlagService.getFeatures() });
+    });
+    return () => {
+      unsub();
+      unsubFeat();
+    };
   }, []);
 
   const navItems = [
@@ -46,7 +54,7 @@ export const Nav: React.FC<NavProps> = ({
       label: 'Stream',
       icon: <PlayCircle size={22} />
     },
-    {
+    ...(features.localEngine.enabled ? [{
       id: 'companion' as NavTab,
       label: 'Local Engine',
       icon: (
@@ -68,7 +76,7 @@ export const Nav: React.FC<NavProps> = ({
           )}
         </div>
       )
-    }
+    }] : [])
   ];
 
   return (

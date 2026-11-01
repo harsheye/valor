@@ -24,6 +24,7 @@ import { trimSubtitleName } from '../utils/embedSubtitleStorage';
 import { classifyVideoTitle } from '../utils/libraryClassifier';
 import { Play, Pause } from 'lucide-react';
 import { sidecarService } from '../services/remote/sidecarService';
+import { featureFlagService } from '../services/featureFlags';
 import { LocalServicePage } from '../pages/LocalServicePage';
 
 export interface SimpleRemotePlayerProps {
@@ -1010,7 +1011,7 @@ export const SimpleRemotePlayer: React.FC<SimpleRemotePlayerProps> = ({
         </div>
       )}
       {/* Companion Engine Setup & Diagnostics Modal */}
-      {showCompanionModal && (
+      {showCompanionModal && featureFlagService.isFeatureEnabled('localEngine') && (
         <div 
           style={{
             position: 'fixed',
