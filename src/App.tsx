@@ -93,6 +93,9 @@ import { OnlineStreamPage } from './pages/OnlineStreamPage';
 import { SettingsPage } from './pages/SettingsPage';
 import { AdminDashboard } from './pages/AdminDashboard';
 import { LocalServicePage } from './pages/LocalServicePage';
+import { UnderConstructionPage } from './pages/UnderConstructionPage';
+import { NotFoundPage } from './pages/NotFoundPage';
+import { featureFlagService } from './services/featureFlags';
 import { 
   initiateTraktPkceAuth, 
   exchangeTraktCodeForToken, 
@@ -634,9 +637,21 @@ function App() {
     }
   }, [selectedDetailsMedia, selectedActor]);
   const [historyViewMode, setHistoryViewMode] = useState<'list' | 'calendar'>('list');
-  const [activeTab, setActiveTab] = useState<'home' | 'history' | 'calendar' | 'library' | 'settings' | 'online' | 'vlr' | 'companion'>(() => {
+  const [features, setFeatures] = useState(() => featureFlagService.getFeatures());
+
+  useEffect(() => {
+    return featureFlagService.subscribe(() => {
+      setFeatures({ ...featureFlagService.getFeatures() });
+    });
+  }, []);
+
+  const [activeTab, setActiveTab] = useState<'home' | 'history' | 'calendar' | 'library' | 'settings' | 'online' | 'vlr' | 'companion' | 'not-found' | 'under-construction'>(() => {
+    const urlTab = new URLSearchParams(window.location.search).get('tab');
+    if (urlTab) {
+      return urlTab as any;
+    }
     const saved = sessionStorage.getItem('valor_active_tab');
-    if (saved && ['home', 'history', 'calendar', 'library', 'settings', 'online', 'vlr', 'companion'].includes(saved)) {
+    if (saved && ['home', 'history', 'calendar', 'library', 'settings', 'online', 'vlr', 'companion', 'not-found', 'under-construction'].includes(saved)) {
       return saved as any;
     }
     return 'home';
@@ -1577,7 +1592,8 @@ function App() {
   }, []);
 
   useEffect(() => {
-    const theme = settings.theme || 'black-ops';
+    const urlTheme = new URLSearchParams(window.location.search).get('theme');
+    const theme = urlTheme || settings.theme || 'black-ops';
     document.documentElement.setAttribute('data-theme', theme);
     const metaTheme = document.querySelector('meta[name="theme-color"]');
     if (metaTheme) {
@@ -3126,6 +3142,19 @@ function App() {
 
 
 
+  if (!features.app.enabled) {
+    return (
+      <UnderConstructionPage
+        isEntireApp
+        message={features.app.maintenanceMessage}
+        onRetry={() => {
+          featureFlagService.setFeatureState('app', true, true);
+          setFeatures({ ...featureFlagService.getFeatures() });
+        }}
+      />
+    );
+  }
+
   const isSidebarCollapsed = activeTab === 'online' || !!selectedActor || !!selectedDetailsMedia;
 
   return (
@@ -3150,43 +3179,59 @@ function App() {
         {/* Main Content Pane */}
         <main className="main-content full-width-details animate-fade-in">
           {selectedActor ? (
-            <ActorDetailsPage
-              actorId={selectedActor.id}
-              actorName={selectedActor.name}
-              onClose={handleCloseDetails}
-              onSelectMedia={(clickedMedia) => {
-                handleOpenMediaDetails(clickedMedia);
-              }}
-              tmdbApiKey={settings.tmdbApiKey}
-              profilePath={selectedActor.profilePath}
-            />
+            !features.onlineStream.enabled ? (
+              <UnderConstructionPage
+                featureName="Online Stream"
+                message={features.onlineStream.maintenanceMessage}
+                onBackHome={handleCloseDetails}
+              />
+            ) : (
+              <ActorDetailsPage
+                actorId={selectedActor.id}
+                actorName={selectedActor.name}
+                onClose={handleCloseDetails}
+                onSelectMedia={(clickedMedia) => {
+                  handleOpenMediaDetails(clickedMedia);
+                }}
+                tmdbApiKey={settings.tmdbApiKey}
+                profilePath={selectedActor.profilePath}
+              />
+            )
           ) : selectedDetailsMedia ? (
-            <OnlineDetailsPage
-              video={selectedDetailsMedia}
-              onClose={handleCloseDetails}
-              onPlay={(selectedVideo, season, episode) => {
-                const match = videos.find(v => {
-                  if (selectedVideo.type === 'online_movie') {
-                    return v.id === selectedVideo.id;
-                  } else {
-                    return v.id === selectedVideo.id && v.season === season && v.episode === episode;
-                  }
-                });
-                const toPlay = {
-                  ...selectedVideo,
-                  season,
-                  episode,
-                  currentTime: match ? (match.currentTime || 0) : 0
-                };
-                handlePlayVideo(toPlay);
-              }}
-              onSelectMedia={handleOpenMediaDetails}
-              onSelectActor={handleOpenActorDetails}
-              tmdbApiKey={settings.tmdbApiKey}
-              videos={videos}
-              setVideos={setVideos}
-              addToast={addToast}
-            />
+            !features.onlineStream.enabled ? (
+              <UnderConstructionPage
+                featureName="Online Stream"
+                message={features.onlineStream.maintenanceMessage}
+                onBackHome={handleCloseDetails}
+              />
+            ) : (
+              <OnlineDetailsPage
+                video={selectedDetailsMedia}
+                onClose={handleCloseDetails}
+                onPlay={(selectedVideo, season, episode) => {
+                  const match = videos.find(v => {
+                    if (selectedVideo.type === 'online_movie') {
+                      return v.id === selectedVideo.id;
+                    } else {
+                      return v.id === selectedVideo.id && v.season === season && v.episode === episode;
+                    }
+                  });
+                  const toPlay = {
+                    ...selectedVideo,
+                    season,
+                    episode,
+                    currentTime: match ? (match.currentTime || 0) : 0
+                  };
+                  handlePlayVideo(toPlay);
+                }}
+                onSelectMedia={handleOpenMediaDetails}
+                onSelectActor={handleOpenActorDetails}
+                tmdbApiKey={settings.tmdbApiKey}
+                videos={videos}
+                setVideos={setVideos}
+                addToast={addToast}
+              />
+            )
           ) : (
             <>
               {activeTab === 'home' && (
@@ -3248,11 +3293,19 @@ function App() {
               )}
 
               {activeTab === 'online' && (
-                <OnlineStreamPage
-                  onSelectMedia={handleOpenMediaDetails}
-                  tmdbApiKey={settings.tmdbApiKey}
-                  traktAccessToken={settings.traktAccessToken}
-                />
+                !features.onlineStream.enabled ? (
+                  <UnderConstructionPage
+                    featureName="Online Stream"
+                    message={features.onlineStream.maintenanceMessage}
+                    onBackHome={() => setActiveTab('home')}
+                  />
+                ) : (
+                  <OnlineStreamPage
+                    onSelectMedia={handleOpenMediaDetails}
+                    tmdbApiKey={settings.tmdbApiKey}
+                    traktAccessToken={settings.traktAccessToken}
+                  />
+                )
               )}
 
               {activeTab === 'settings' && (
@@ -3289,7 +3342,29 @@ function App() {
               )}
 
               {activeTab === 'companion' && (
-                <LocalServicePage />
+                !features.localEngine.enabled ? (
+                  <UnderConstructionPage
+                    featureName="Local Companion Engine"
+                    message={features.localEngine.maintenanceMessage}
+                    onBackHome={() => setActiveTab('home')}
+                  />
+                ) : (
+                  <LocalServicePage />
+                )
+              )}
+
+              {activeTab === 'under-construction' && (
+                <UnderConstructionPage
+                  onBackHome={() => setActiveTab('home')}
+                />
+              )}
+
+              {(!['home', 'history', 'calendar', 'library', 'online', 'settings', 'companion', 'under-construction'].includes(activeTab) || activeTab === 'not-found') && (
+                <NotFoundPage
+                  requestedRoute={activeTab}
+                  onBackHome={() => setActiveTab('home')}
+                  onNavigate={(t) => setActiveTab(t)}
+                />
               )}
             </>
           )}

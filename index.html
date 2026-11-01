@@ -5,11 +5,13 @@
     <script>
       (function() {
         try {
+          var urlParams = new URLSearchParams(window.location.search);
+          var queryTheme = urlParams.get('theme');
           var activeUserId = localStorage.getItem('valor_active_user_id') || 'local';
           var settingsKey = activeUserId === 'local' ? 'valor_settings' : ('valor_settings_' + activeUserId);
           var raw = localStorage.getItem(settingsKey);
           var settings = raw ? JSON.parse(raw) : {};
-          var theme = settings.theme || 'midnight-slate';
+          var theme = queryTheme || settings.theme || 'black-ops';
 
           if (theme === 'dark' || theme === 'dim' || theme === 'cyberpunk' || theme === 'abyss' || theme === 'aqua' || theme === 'teal') {
             theme = 'midnight-slate';

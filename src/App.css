@@ -1796,12 +1796,14 @@ html, body {
 }
 
 /* 2. Top bars, headers, icon rails */
+[data-theme="black-ops"] header,
 [data-theme="black-ops"] .glass-navbar,
 [data-theme="black-ops"] .netflix-page-top-bar,
 [data-theme="black-ops"] .top-bar,
 [data-theme="black-ops"] .media-details-header,
 [data-theme="black-ops"] .actor-details-header,
 [data-theme="black-ops"] .mobile-bottom-nav,
+[data-theme="oled"] header,
 [data-theme="oled"] .glass-navbar,
 [data-theme="oled"] .netflix-page-top-bar,
 [data-theme="oled"] .top-bar,

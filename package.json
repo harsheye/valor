@@ -9,7 +9,16 @@
     "build": "tsc -b && vite build",
     "lint": "eslint .",
     "preview": "vite preview",
-    "check:contrast": "node scripts/check-contrast.js"
+    "check:contrast": "node scripts/check-contrast.js",
+    "feature": "node scripts/manage-features.mjs",
+    "features:status": "node scripts/manage-features.mjs status",
+    "disable:online": "node scripts/manage-features.mjs disable online",
+    "disable:engine": "node scripts/manage-features.mjs disable engine",
+    "disable:app": "node scripts/manage-features.mjs disable app",
+    "enable:all": "node scripts/manage-features.mjs enable all",
+    "enable:online": "node scripts/manage-features.mjs enable online",
+    "enable:engine": "node scripts/manage-features.mjs enable engine",
+    "enable:app": "node scripts/manage-features.mjs enable app"
   },
   "dependencies": {
     "@ffmpeg-installer/ffmpeg": "^1.1.0",

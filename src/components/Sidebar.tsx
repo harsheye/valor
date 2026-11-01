@@ -4,6 +4,7 @@ import type { VideoItem } from '../types/media';
 import { classifyVideoTitle } from '../utils/libraryClassifier';
 import { smartTitleCase } from '../utils/libraryViewModel';
 import { sidecarService } from '../services/remote/sidecarService';
+import { featureFlagService } from '../services/featureFlags';
 import './streaming/streaming.css';
 
 interface SidebarProps {
@@ -39,6 +40,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   handleRemoveVideo
 }) => {
   const [isSidecarActive, setIsSidecarActive] = useState<boolean>(() => sidecarService.isEnabled());
+  const [features, setFeatures] = useState(() => featureFlagService.getFeatures());
   const [currentTheme, setCurrentTheme] = useState<string>(() => {
     return document.documentElement.getAttribute('data-theme') || 'midnight-slate';
   });
@@ -49,7 +51,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
     const unsub = sidecarService.subscribe((status) => {
       setIsSidecarActive(status.isAvailable);
     });
-    return () => unsub();
+    const unsubFeat = featureFlagService.subscribe(() => {
+      setFeatures({ ...featureFlagService.getFeatures() });
+    });
+    return () => {
+      unsub();
+      unsubFeat();
+    };
   }, []);
 
   useEffect(() => {
@@ -95,14 +103,18 @@ export const Sidebar: React.FC<SidebarProps> = ({
       { id: 'home' as const, label: 'Discover', icon: <Home size={22} /> },
       { id: 'history' as const, label: videos.length > 0 ? `History (${videos.length})` : 'History', icon: <History size={22} /> },
       { id: 'library' as const, label: 'Library', icon: <Film size={22} /> },
-      { id: 'online' as const, label: 'Stream', icon: <PlayCircle size={22} /> },
+      { 
+        id: 'online' as const, 
+        label: !features.onlineStream.enabled ? 'Stream (Offline)' : 'Stream', 
+        icon: <PlayCircle size={22} color={!features.onlineStream.enabled ? 'var(--text-3)' : undefined} /> 
+      },
       {
         id: 'companion' as const,
-        label: 'Local Engine',
+        label: !features.localEngine.enabled ? 'Local Engine (Offline)' : 'Local Engine',
         icon: (
           <div style={{ position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-            <Zap size={22} color={isSidecarActive ? 'var(--success)' : undefined} />
-            {isSidecarActive && (
+            <Zap size={22} color={!features.localEngine.enabled ? 'var(--text-3)' : (isSidecarActive ? 'var(--success)' : undefined)} />
+            {isSidecarActive && features.localEngine.enabled && (
               <span
                 style={{
                   position: 'absolute',
@@ -285,20 +297,29 @@ export const Sidebar: React.FC<SidebarProps> = ({
         <button
           className={`sidebar-menu-item ${activeTab === 'online' ? 'active' : ''}`}
           onClick={() => navigateTo('online')}
-          title="Online Stream"
+          title={!features.onlineStream.enabled ? 'Online Stream (Under Construction)' : 'Online Stream'}
         >
-          <Play size={20} />
+          <Play size={20} color={!features.onlineStream.enabled ? 'var(--text-3)' : undefined} />
           <span className="sidebar-menu-text">Online Stream</span>
+          {!features.onlineStream.enabled && (
+            <span style={{ marginLeft: 'auto', fontSize: '0.65rem', fontWeight: 700, padding: '2px 6px', borderRadius: '4px', background: 'var(--surface-3)', color: 'var(--text-3)', border: '1px solid var(--border)' }}>
+              Offline
+            </span>
+          )}
         </button>
 
         <button
           className={`sidebar-menu-item ${activeTab === 'companion' ? 'active' : ''}`}
           onClick={() => navigateTo('companion')}
-          title="Local Companion Engine"
+          title={!features.localEngine.enabled ? 'Local Engine (Under Construction)' : 'Local Companion Engine'}
         >
-          <Zap size={20} color={isSidecarActive ? 'var(--success)' : undefined} />
+          <Zap size={20} color={!features.localEngine.enabled ? 'var(--text-3)' : (isSidecarActive ? 'var(--success)' : undefined)} />
           <span className="sidebar-menu-text">Local Engine</span>
-          {isSidecarActive && (
+          {!features.localEngine.enabled ? (
+            <span style={{ marginLeft: 'auto', fontSize: '0.65rem', fontWeight: 700, padding: '2px 6px', borderRadius: '4px', background: 'var(--surface-3)', color: 'var(--text-3)', border: '1px solid var(--border)' }}>
+              Offline
+            </span>
+          ) : isSidecarActive ? (
             <span
               style={{
                 width: '7px',
@@ -310,7 +331,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 flexShrink: 0
               }}
             />
-          )}
+          ) : null}
         </button>
       </nav>
 

@@ -619,6 +619,54 @@ const backendServer = http.createServer(async (req, res) => {
     return;
   }
 
+  // Feature Flags API Endpoint
+  if (pathname === '/api/features') {
+    const configPath = path.resolve(appDir, 'src/config/features.json');
+    if (req.method === 'GET') {
+      try {
+        let data = {};
+        if (fs.existsSync(configPath)) {
+          data = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+        }
+        if (process.env.VALOR_DISABLE_APP === 'true') {
+          if (data.app) data.app.enabled = false;
+        }
+        if (process.env.VALOR_DISABLE_ONLINE === 'true') {
+          if (data.onlineStream) data.onlineStream.enabled = false;
+        }
+        if (process.env.VALOR_DISABLE_ENGINE === 'true') {
+          if (data.localEngine) data.localEngine.enabled = false;
+        }
+        res.setHeader('Content-Type', 'application/json');
+        res.end(JSON.stringify(data));
+      } catch (err) {
+        res.statusCode = 500;
+        res.setHeader('Content-Type', 'application/json');
+        res.end(JSON.stringify({ error: err.message }));
+      }
+      return;
+    }
+    if (req.method === 'POST') {
+      let body = '';
+      req.on('data', chunk => { body += chunk; });
+      req.on('end', () => {
+        try {
+          const updates = JSON.parse(body);
+          let current = fs.existsSync(configPath) ? JSON.parse(fs.readFileSync(configPath, 'utf8')) : {};
+          current = { ...current, ...updates };
+          fs.writeFileSync(configPath, JSON.stringify(current, null, 2) + '\n', 'utf8');
+          res.setHeader('Content-Type', 'application/json');
+          res.end(JSON.stringify({ success: true, features: current }));
+        } catch (err) {
+          res.statusCode = 400;
+          res.setHeader('Content-Type', 'application/json');
+          res.end(JSON.stringify({ error: err.message }));
+        }
+      });
+      return;
+    }
+  }
+
   // Remote Streaming Pipeline & HLS Session API
   if (pathname.startsWith('/api/remote/')) {
     handleStreamRoute(req, res, parsedUrl, remoteSessionManager).catch(err => {

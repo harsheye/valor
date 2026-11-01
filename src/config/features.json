@@ -1,0 +1,17 @@
+{
+  "app": {
+    "enabled": true,
+    "title": "Valor Streaming",
+    "maintenanceMessage": "Valor is currently undergoing scheduled platform maintenance and infrastructure upgrades. We will be back online shortly."
+  },
+  "onlineStream": {
+    "enabled": true,
+    "title": "Online Stream",
+    "maintenanceMessage": "The Online Stream portal is temporarily under construction while we upgrade our catalog indexing and provider engines."
+  },
+  "localEngine": {
+    "enabled": true,
+    "title": "Local Engine",
+    "maintenanceMessage": "The Local Companion Engine service is currently undergoing routine maintenance and protocol optimizations."
+  }
+}
