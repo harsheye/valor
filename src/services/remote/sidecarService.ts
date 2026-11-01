@@ -7,6 +7,8 @@
  * taking the bandwidth and processing load off the central server.
  */
 
+import { featureFlagService } from '../featureFlags';
+
 export interface SidecarStatus {
   isAvailable: boolean;
   checking: boolean;
@@ -58,6 +60,7 @@ class SidecarService {
   }
 
   public isEnabled(): boolean {
+    if (!featureFlagService.isFeatureEnabled('localEngine')) return false;
     return this.status.isAvailable;
   }
 
@@ -84,6 +87,13 @@ class SidecarService {
    * Ping local daemon at http://127.0.0.1:45454/api/sidecar/status
    */
   public async checkHealth(): Promise<boolean> {
+    if (!featureFlagService.isFeatureEnabled('localEngine')) {
+      if (this.status.isAvailable) {
+        this.status.isAvailable = false;
+        this.notify();
+      }
+      return false;
+    }
     if (this.status.checking) return this.status.isAvailable;
     
     this.status.checking = true;
@@ -154,6 +164,9 @@ class SidecarService {
    * Otherwise: '' (relative to current server origin)
    */
   public getRemoteApiBase(): string {
+    if (!featureFlagService.isFeatureEnabled('localEngine')) {
+      return '';
+    }
     if (this.status.isAvailable) {
       return `http://127.0.0.1:${this.port}`;
     }

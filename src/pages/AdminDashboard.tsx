@@ -63,6 +63,28 @@ import { WebhooksTab } from '../components/admin/WebhooksTab';
 import { DeviceDetailModal } from '../components/admin/DeviceDetailModal';
 import { SaaSTrendCharts } from '../components/admin/SaaSTrendCharts';
 
+// Real-Time Event Portal Components
+import { useAdminRealtime, type RealtimeEnvelope } from '../components/admin/realtime/useAdminRealtime';
+import { ConnectionStatus } from '../components/admin/realtime/ConnectionStatus';
+import { EventToastContainer, type ToastItem } from '../components/admin/realtime/EventToast';
+import { NotificationCenter, type AlertItem } from '../components/admin/realtime/NotificationCenter';
+import { CommandPalette } from '../components/admin/realtime/CommandPalette';
+import { AlertRuleEditor, type AlertRule } from '../components/admin/realtime/AlertRuleEditor';
+import { BlockListManager, type BlockListItem, type AutoBlockSuggestion, type AdminSession } from '../components/admin/realtime/BlockListManager';
+import { AuditLogViewer, type AuditLogEntry } from '../components/admin/realtime/AuditLogViewer';
+import { SessionList, type PlaybackSession } from '../components/admin/realtime/SessionList';
+import { ErrorGroups, type ErrorGroupItem } from '../components/admin/realtime/ErrorGroups';
+import { PlaybackQuality } from '../components/admin/realtime/PlaybackQuality';
+import { ContentInsights } from '../components/admin/realtime/ContentInsights';
+import { GeoAnalytics } from '../components/admin/realtime/GeoAnalytics';
+import { InfraHealth } from '../components/admin/realtime/InfraHealth';
+import { MaintenanceBroadcast } from '../components/admin/realtime/MaintenanceBroadcast';
+import { DataRetention } from '../components/admin/realtime/DataRetention';
+import { ThirdPartyMonitor } from '../components/admin/realtime/ThirdPartyMonitor';
+import { TrafficTools } from '../components/admin/realtime/TrafficTools';
+import { InboundWebhookModal } from '../components/admin/realtime/InboundWebhookModal';
+import { AdminDashboardSkeleton } from '../components/admin/realtime/AdminSkeletons';
+
 interface ActiveUser {
   sessionId: string;
   deviceId?: string;
@@ -392,13 +414,48 @@ export const AdminDashboard: React.FC = () => {
   const [loginSubmitting, setLoginSubmitting] = useState<boolean>(false);
 
   // Tab & Data State
-  const [activeTab, setActiveTab] = useState<'overview' | 'devices' | 'sessions' | 'traffic' | 'webhooks' | 'thirdparty' | 'users'>('overview');
+  const [activeTab, setActiveTab] = useState<
+    'overview' | 'devices' | 'sessions' | 'traffic' | 'webhooks' | 'thirdparty' | 'users' |
+    'alerts' | 'security' | 'playback' | 'content' | 'geo' | 'errors' | 'infra' | 'audit' | 'system'
+  >('overview');
   const [overview, setOverview] = useState<AdminOverview | null>(null);
   const [analytics, setAnalytics] = useState<DetailedAnalytics | null>(null);
   const [trafficLogs, setTrafficLogs] = useState<TrafficLog[]>([]);
   const [usersList, setUsersList] = useState<UserAccount[]>([]);
   const [webhooksList, setWebhooksList] = useState<Webhook[]>([]);
   const [webhookDeliveries, setWebhookDeliveries] = useState<WebhookDelivery[]>([]);
+
+  // Real-Time Portal Extended State
+  const [alertRules, setAlertRules] = useState<AlertRule[]>([]);
+  const [activeAlerts, setActiveAlerts] = useState<AlertItem[]>([]);
+  const [incidentTimeline, setIncidentTimeline] = useState<any[]>([]);
+  const [blockList, setBlockList] = useState<BlockListItem[]>([]);
+  const [autoBlockSuggestions, setAutoBlockSuggestions] = useState<AutoBlockSuggestion[]>([]);
+  const [adminSessions, setAdminSessions] = useState<AdminSession[]>([]);
+  const [auditLogs, setAuditLogs] = useState<AuditLogEntry[]>([]);
+  const [playbackQualityMetrics, setPlaybackQualityMetrics] = useState<any>({
+    summary: { avgStartupTimeMs: 445, avgBufferingRatioPct: 0.18, avgBitrateKbps: 9420, playbackErrorRatePct: 0.65, totalSessionsTracked: 12480 },
+    byTitle: [], byDevice: [], byRegion: []
+  });
+  const [contentInsights, setContentInsights] = useState<any>({
+    topTitles: [], topEpisodes: [], audienceBreakdown: { newVisitorsPct: 34, returningVisitorsPct: 66, avgDailyWatchTimeMinutes: 72 }, retentionCohorts: []
+  });
+  const [geoStats, setGeoStats] = useState<any>({ countries: [], cities: [] });
+  const [errorGroups, setErrorGroups] = useState<ErrorGroupItem[]>([]);
+  const [infraStatus, setInfraStatus] = useState<any>({ postgres: {}, redis: {}, reverseProxy: {}, system: {} });
+  const [maintenanceConfig, setMaintenanceConfig] = useState<any>({ enabled: false, message: 'Platform maintenance' });
+  const [announcements, setAnnouncements] = useState<any[]>([]);
+  const [dataRetentionConfig, setDataRetentionConfig] = useState<any>({ rawLogsRetentionDays: 30, aggregatesRetentionDays: 365, autoPruneEnabled: true });
+  
+  // Real-Time UI Controls & Modals
+  const [unreadAlertsCount, setUnreadAlertsCount] = useState<number>(0);
+  const [notificationsOpen, setNotificationsOpen] = useState<boolean>(false);
+  const [commandPaletteOpen, setCommandPaletteOpen] = useState<boolean>(false);
+  const [inboundModalOpen, setInboundModalOpen] = useState<boolean>(false);
+  const [toasts, setToasts] = useState<ToastItem[]>([]);
+  const [themeMode, setThemeMode] = useState<'dark' | 'light'>('dark');
+  const [bufferedTraffic, setBufferedTraffic] = useState<any[]>([]);
+  const [adminRole, setAdminRole] = useState<'owner' | 'admin' | 'viewer'>('owner');
 
   // Visitor Devices Directory & Intelligence State
   const [devicesList, setDevicesList] = useState<VisitorDevice[]>([]);
@@ -556,7 +613,47 @@ export const AdminDashboard: React.FC = () => {
     if (!adminToken) return;
     if (isManual) setRefreshing(true);
     try {
-      const authHeaders = { 'x-admin-token': adminToken };
+      const authHeaders = {
+        'x-admin-token': adminToken,
+        'Authorization': `Bearer ${adminToken}`
+      };
+
+      // 1. One-Shot Snapshot Endpoint (Loads all initial metrics, rows and tool states)
+      try {
+        const snapRes = await fetch('/api/admin/snapshot', { headers: authHeaders });
+        if (snapRes.ok) {
+          const snap = await snapRes.json();
+          if (snap.overview) setOverview(snap.overview);
+          if (snap.adminIp) setAdminCallerIp(snap.adminIp);
+          if (Array.isArray(snap.trafficLogs)) setTrafficLogs(snap.trafficLogs);
+          if (Array.isArray(snap.devicesList)) {
+            setDevicesList(snap.devicesList);
+            setTotalDevicesCount(snap.devicesList.length);
+          }
+          if (Array.isArray(snap.webhooks)) setWebhooksList(snap.webhooks);
+          if (Array.isArray(snap.webhookDeliveries)) setWebhookDeliveries(snap.webhookDeliveries);
+          if (Array.isArray(snap.alertRules)) setAlertRules(snap.alertRules);
+          if (Array.isArray(snap.activeAlerts)) setActiveAlerts(snap.activeAlerts);
+          if (typeof snap.unreadAlertsCount === 'number') setUnreadAlertsCount(snap.unreadAlertsCount);
+          if (Array.isArray(snap.incidentTimeline)) setIncidentTimeline(snap.incidentTimeline);
+          if (Array.isArray(snap.blockList)) setBlockList(snap.blockList);
+          if (Array.isArray(snap.autoBlockSuggestions)) setAutoBlockSuggestions(snap.autoBlockSuggestions);
+          if (Array.isArray(snap.adminSessions)) setAdminSessions(snap.adminSessions);
+          if (Array.isArray(snap.auditLogs)) setAuditLogs(snap.auditLogs);
+          if (snap.playbackQuality) setPlaybackQualityMetrics(snap.playbackQuality);
+          if (snap.contentInsights) setContentInsights(snap.contentInsights);
+          if (snap.geoStats) setGeoStats(snap.geoStats);
+          if (Array.isArray(snap.errorGroups)) setErrorGroups(snap.errorGroups);
+          if (snap.infra) setInfraStatus(snap.infra);
+          if (snap.maintenance) setMaintenanceConfig(snap.maintenance);
+          if (Array.isArray(snap.announcements)) setAnnouncements(snap.announcements);
+          if (snap.dataRetention) setDataRetentionConfig(snap.dataRetention);
+          setLoading(false);
+          setRefreshing(false);
+          return;
+        }
+      } catch (e) {}
+
       const tf = overrideTimeframe || activityTimeframe;
       const dt = overrideDate || selectedActivityDate;
 
@@ -735,103 +832,400 @@ export const AdminDashboard: React.FC = () => {
     }
   }, [isAuthenticated, fetchData]);
 
-  // Real-Time Server-Sent Events / Live Webhook Push Stream (Zero API Polling)
-  useEffect(() => {
-    if (!isAuthenticated || !adminToken) return;
+  // Real-Time Event Dispatcher (Zero polling, fully event-driven)
+  const handleRealtimeEvent = useCallback((envelope: RealtimeEnvelope) => {
+    const { type, data } = envelope;
 
-    let eventSource: EventSource | null = null;
-    let reconnectTimeout: any = null;
-
-    const connectLiveStream = () => {
-      try {
-        eventSource = new EventSource(`/api/admin/live-stream?token=${encodeURIComponent(adminToken)}`);
-
-        eventSource.onopen = () => {
-          setIsLiveStreamConnected(true);
-        };
-
-        eventSource.onmessage = (event) => {
-          if (!event.data) return;
-          try {
-            const parsed = JSON.parse(event.data);
-            if (parsed.type === 'connected') {
-              setIsLiveStreamConnected(true);
-              if (parsed.adminIp) setAdminCallerIp(parsed.adminIp);
-            } else if (parsed.type === 'traffic_log' && parsed.data) {
-              const newLog = parsed.data;
-              setTrafficLogs(prev => {
-                if (prev.some(l => l.id === newLog.id)) return prev;
-                return [newLog, ...prev.slice(0, 249)];
-              });
-            } else if (parsed.type === 'session_update' && parsed.data) {
-              const sUpdate = parsed.data;
-              setOverview(prev => {
-                if (!prev) return prev;
-                const existingIdx = prev.activeUsers.findIndex(u => u.sessionId === sUpdate.sessionId);
-                let updatedUsers: ActiveUser[];
-                if (existingIdx >= 0) {
-                  updatedUsers = [...prev.activeUsers];
-                  updatedUsers[existingIdx] = { ...updatedUsers[existingIdx], ...sUpdate };
-                } else {
-                  updatedUsers = [sUpdate, ...prev.activeUsers];
-                }
-                return {
-                  ...prev,
-                  activeUsersCount: updatedUsers.length,
-                  activeUsers: updatedUsers
-                };
-              });
-            } else if (parsed.type === 'device_update' && parsed.data) {
-              const dUpdate = parsed.data;
-              setDevicesList(prev => {
-                const existingIdx = prev.findIndex(d => d.deviceId === dUpdate.deviceId);
-                if (existingIdx >= 0) {
-                  const updated = [...prev];
-                  updated[existingIdx] = {
-                    ...updated[existingIdx],
-                    ...dUpdate,
-                    totalRequests: (updated[existingIdx].totalRequests || 0) + 1,
-                    lastSeen: new Date().toISOString()
-                  };
-                  return updated;
-                } else {
-                  return [dUpdate, ...prev];
-                }
-              });
-            } else if (parsed.type === 'webhook_delivery' && parsed.data) {
-              const delivery = parsed.data;
-              setWebhookDeliveries(prev => [delivery, ...prev.slice(0, 99)]);
-            }
-          } catch (e) {}
-        };
-
-        eventSource.onerror = () => {
-          setIsLiveStreamConnected(false);
-          eventSource?.close();
-          reconnectTimeout = setTimeout(connectLiveStream, 3500);
-        };
-      } catch (err) {
-        setIsLiveStreamConnected(false);
+    if (type === 'request.logged' || type === 'traffic.logged' || type === 'traffic_log') {
+      const logItem = data;
+      if (isStreamPaused) {
+        setBufferedTraffic(prev => [logItem, ...prev.slice(0, 499)]);
+      } else {
+        setTrafficLogs(prev => {
+          if (prev.some(l => l.id === logItem.id)) return prev;
+          return [logItem, ...prev.slice(0, 499)];
+        });
       }
-    };
+      setOverview(prev => {
+        if (!prev) return prev;
+        return {
+          ...prev,
+          totalRequests: (prev.totalRequests || 0) + 1,
+          totalBytes: (prev.totalBytes || 0) + (logItem.bytes || logItem.bytesTransferred || 2048)
+        };
+      });
+    } else if (type === 'visitor.seen' || type === 'device.updated' || type === 'device_update') {
+      setDevicesList(prev => {
+        const idx = prev.findIndex(d => d.deviceId === data.deviceId);
+        if (idx >= 0) {
+          const updated = [...prev];
+          updated[idx] = {
+            ...updated[idx],
+            ...data,
+            totalRequests: (updated[idx].totalRequests || 0) + 1,
+            lastSeen: new Date().toISOString()
+          };
+          return updated;
+        }
+        return [data, ...prev];
+      });
+    } else if (type === 'session.opened' || type === 'session_update') {
+      setOverview(prev => {
+        if (!prev) return prev;
+        const idx = prev.activeUsers.findIndex(u => u.sessionId === data.sessionId);
+        let updated: ActiveUser[];
+        if (idx >= 0) {
+          updated = [...prev.activeUsers];
+          updated[idx] = { ...updated[idx], ...data };
+        } else {
+          updated = [data, ...prev.activeUsers];
+        }
+        return { ...prev, activeUsersCount: updated.length, activeUsers: updated };
+      });
+    } else if (type === 'session.closed') {
+      setOverview(prev => {
+        if (!prev) return prev;
+        const updated = prev.activeUsers.filter(u => u.sessionId !== data.sessionId);
+        return { ...prev, activeUsersCount: updated.length, activeUsers: updated };
+      });
+    } else if (type === 'alert.triggered') {
+      setActiveAlerts(prev => [data, ...prev.slice(0, 99)]);
+      setUnreadAlertsCount(prev => prev + 1);
+      setToasts(prev => [
+        {
+          id: data.id || `t_${Date.now()}`,
+          title: data.title || 'Security / System Alert',
+          message: data.message || '',
+          severity: data.severity || 'warning',
+          timestamp: data.createdAt || new Date().toISOString()
+        },
+        ...prev.slice(0, 4)
+      ]);
+    } else if (type === 'alert.acknowledged') {
+      setActiveAlerts(prev => prev.map(a => a.id === data.id ? { ...a, status: 'acknowledged' } : a));
+      setUnreadAlertsCount(prev => Math.max(0, prev - 1));
+    } else if (type === 'alert.snoozed') {
+      setActiveAlerts(prev => prev.map(a => a.id === data.id ? { ...a, status: 'snoozed' } : a));
+    } else if (type === 'webhook.delivery') {
+      setWebhookDeliveries(prev => [data, ...prev.slice(0, 99)]);
+    } else if (type === 'ip.blocked') {
+      setBlockList(prev => [data, ...prev]);
+    } else if (type === 'ip.unblocked') {
+      setBlockList(prev => prev.filter(b => b.id !== data.id && b.value !== data.value));
+    } else if (type === 'security.audit') {
+      setAuditLogs(prev => [data, ...prev.slice(0, 199)]);
+    } else if (type === 'error.logged') {
+      setErrorGroups(prev => {
+        const idx = prev.findIndex(e => e.fingerprint === data.fingerprint);
+        if (idx >= 0) {
+          const updated = [...prev];
+          updated[idx] = data;
+          return updated;
+        }
+        return [data, ...prev];
+      });
+    } else if (type === 'maintenance.changed') {
+      setMaintenanceConfig(data);
+    }
+  }, [isStreamPaused]);
 
-    connectLiveStream();
+  const {
+    connectionState,
+    reconnectAttempt,
+    nextRetrySeconds,
+    missedEventsApplied,
+    isCatchingUp,
+    manualReconnect
+  } = useAdminRealtime({
+    token: isAuthenticated ? adminToken : null,
+    topics: ['*'],
+    onEvent: handleRealtimeEvent,
+    onBatchEvents: (batch) => {
+      batch.forEach(handleRealtimeEvent);
+    }
+  });
 
-    return () => {
-      if (eventSource) eventSource.close();
-      if (reconnectTimeout) clearTimeout(reconnectTimeout);
-      setIsLiveStreamConnected(false);
-    };
-  }, [isAuthenticated, adminToken]);
+  // Handler: Save Alert Rule
+  const handleSaveAlertRule = async (rule: Partial<AlertRule>) => {
+    if (!adminToken) return;
+    try {
+      const res = await fetch('/api/admin/alerts/rules', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-admin-token': adminToken },
+        body: JSON.stringify(rule)
+      });
+      const data = await res.json();
+      if (res.ok && data.rule) {
+        setAlertRules(prev => {
+          const idx = prev.findIndex(r => r.id === data.rule.id);
+          if (idx >= 0) {
+            const updated = [...prev];
+            updated[idx] = data.rule;
+            return updated;
+          }
+          return [data.rule, ...prev];
+        });
+        showToast('Alert rule saved.');
+      }
+    } catch (e: any) {
+      showToast(`Rule error: ${e.message}`);
+    }
+  };
 
-  // Optional polling interval (disabled by default in favor of zero-polling live stream)
-  useEffect(() => {
-    if (!isAuthenticated || autoRefreshInterval <= 0 || isStreamPaused) return;
-    const interval = setInterval(() => {
-      fetchData(false);
-    }, autoRefreshInterval * 1000);
-    return () => clearInterval(interval);
-  }, [isAuthenticated, autoRefreshInterval, isStreamPaused, fetchData]);
+  // Handler: Delete Alert Rule
+  const handleDeleteAlertRule = async (id: string) => {
+    if (!adminToken) return;
+    try {
+      await fetch(`/api/admin/alerts/rules/${encodeURIComponent(id)}`, {
+        method: 'DELETE',
+        headers: { 'x-admin-token': adminToken }
+      });
+      setAlertRules(prev => prev.filter(r => r.id !== id));
+      showToast('Alert rule deleted.');
+    } catch (e: any) {
+      showToast(`Delete rule error: ${e.message}`);
+    }
+  };
+
+  // Handler: Ack Alert
+  const handleAckAlert = async (id: string) => {
+    if (!adminToken) return;
+    try {
+      await fetch(`/api/admin/alerts/${encodeURIComponent(id)}/ack`, {
+        method: 'POST',
+        headers: { 'x-admin-token': adminToken }
+      });
+      setActiveAlerts(prev => prev.map(a => a.id === id ? { ...a, status: 'acknowledged' } : a));
+      setUnreadAlertsCount(prev => Math.max(0, prev - 1));
+      showToast('Alert acknowledged.');
+    } catch {}
+  };
+
+  // Handler: Snooze Alert
+  const handleSnoozeAlert = async (id: string, minutes: number) => {
+    if (!adminToken) return;
+    try {
+      await fetch(`/api/admin/alerts/${encodeURIComponent(id)}/snooze`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-admin-token': adminToken },
+        body: JSON.stringify({ minutes })
+      });
+      setActiveAlerts(prev => prev.map(a => a.id === id ? { ...a, status: 'snoozed' } : a));
+      showToast(`Alert snoozed for ${minutes} minutes.`);
+    } catch {}
+  };
+
+  // Handler: Mark all alerts as read
+  const handleMarkAllAlertsRead = async () => {
+    if (!adminToken) return;
+    try {
+      await fetch('/api/admin/alerts/read-all', {
+        method: 'POST',
+        headers: { 'x-admin-token': adminToken }
+      });
+      setActiveAlerts(prev => prev.map(a => ({ ...a, status: 'acknowledged' })));
+      setUnreadAlertsCount(0);
+      showToast('All alerts marked as read.');
+    } catch {}
+  };
+
+  // Handler: Block Target (IP, CIDR, Device, Country)
+  const handleBlockTarget = async (item: { type: string; value: string; reason: string; durationHours?: number }) => {
+    if (!adminToken) return;
+    try {
+      const res = await fetch('/api/admin/security/block-list', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-admin-token': adminToken },
+        body: JSON.stringify(item)
+      });
+      const data = await res.json();
+      if (res.ok && data.blocked) {
+        setBlockList(prev => [data.blocked, ...prev]);
+        setAutoBlockSuggestions(prev => prev.filter(s => s.ip !== item.value));
+        showToast(`Target [${item.value}] added to security block list.`);
+      }
+    } catch (e: any) {
+      showToast(`Block error: ${e.message}`);
+    }
+  };
+
+  // Handler: Unblock Target
+  const handleUnblockTarget = async (id: string) => {
+    if (!adminToken) return;
+    try {
+      await fetch(`/api/admin/security/block-list/${encodeURIComponent(id)}`, {
+        method: 'DELETE',
+        headers: { 'x-admin-token': adminToken }
+      });
+      setBlockList(prev => prev.filter(b => b.id !== id));
+      showToast('Target unblocked.');
+    } catch (e: any) {
+      showToast(`Unblock error: ${e.message}`);
+    }
+  };
+
+  // Handler: Dismiss Suggestion
+  const handleDismissAutoBlock = async (ip: string) => {
+    if (!adminToken) return;
+    try {
+      await fetch('/api/admin/security/suggestions/dismiss', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-admin-token': adminToken },
+        body: JSON.stringify({ ip })
+      });
+      setAutoBlockSuggestions(prev => prev.filter(s => s.ip !== ip));
+    } catch {}
+  };
+
+  // Handler: Sign Out Everywhere
+  const handleSignOutEverywhere = async () => {
+    if (!adminToken) return;
+    try {
+      await fetch('/api/admin/security/sessions/sign-out-everywhere', {
+        method: 'POST',
+        headers: { 'x-admin-token': adminToken }
+      });
+      handleLogout();
+    } catch {}
+  };
+
+  // Handler: Send Message to Viewer Session
+  const handleSendSessionMessage = async (sessionId: string, message: string) => {
+    if (!adminToken) return;
+    try {
+      const res = await fetch(`/api/admin/sessions/${encodeURIComponent(sessionId)}/message`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-admin-token': adminToken },
+        body: JSON.stringify({ message })
+      });
+      if (res.ok) {
+        showToast('Message broadcast to viewer stream.');
+      }
+    } catch (e: any) {
+      showToast(`Message error: ${e.message}`);
+    }
+  };
+
+  // Handler: Terminate Session
+  const handleTerminatePlaybackSession = async (sessionId: string, reason: string) => {
+    if (!adminToken) return;
+    try {
+      await fetch(`/api/admin/sessions/${encodeURIComponent(sessionId)}/terminate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-admin-token': adminToken },
+        body: JSON.stringify({ reason })
+      });
+      setOverview(prev => {
+        if (!prev) return prev;
+        const updated = prev.activeUsers.filter(u => u.sessionId !== sessionId);
+        return { ...prev, activeUsersCount: updated.length, activeUsers: updated };
+      });
+      showToast('Session terminated.');
+    } catch (e: any) {
+      showToast(`Termination error: ${e.message}`);
+    }
+  };
+
+  // Handler: Resolve Error
+  const handleResolveError = async (fingerprint: string) => {
+    if (!adminToken) return;
+    try {
+      await fetch('/api/admin/errors/resolve', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-admin-token': adminToken },
+        body: JSON.stringify({ fingerprint })
+      });
+      setErrorGroups(prev => prev.map(e => e.fingerprint === fingerprint ? { ...e, status: 'resolved' } : e));
+      showToast('Error fingerprint marked as resolved.');
+    } catch {}
+  };
+
+  // Handler: Update Maintenance
+  const handleUpdateMaintenance = async (config: any) => {
+    if (!adminToken) return;
+    try {
+      const res = await fetch('/api/admin/system/maintenance', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-admin-token': adminToken },
+        body: JSON.stringify(config)
+      });
+      const data = await res.json();
+      if (res.ok && data.config) {
+        setMaintenanceConfig(data.config);
+        showToast('Maintenance configuration updated.');
+      }
+    } catch (e: any) {
+      showToast(`Maintenance error: ${e.message}`);
+    }
+  };
+
+  // Handler: Save Announcement
+  const handleSaveAnnouncement = async (ann: any) => {
+    if (!adminToken) return;
+    try {
+      const res = await fetch('/api/admin/system/announcements', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-admin-token': adminToken },
+        body: JSON.stringify(ann)
+      });
+      const data = await res.json();
+      if (res.ok && data.announcement) {
+        setAnnouncements(prev => [data.announcement, ...prev.filter(a => a.id !== data.announcement.id)]);
+        showToast('Announcement banner published.');
+      }
+    } catch (e: any) {
+      showToast(`Announcement error: ${e.message}`);
+    }
+  };
+
+  // Handler: Delete Announcement
+  const handleDeleteAnnouncement = async (id: string) => {
+    if (!adminToken) return;
+    try {
+      await fetch(`/api/admin/system/announcements/${encodeURIComponent(id)}`, {
+        method: 'DELETE',
+        headers: { 'x-admin-token': adminToken }
+      });
+      setAnnouncements(prev => prev.filter(a => a.id !== id));
+      showToast('Announcement removed.');
+    } catch {}
+  };
+
+  // Handler: Update Data Retention
+  const handleUpdateDataRetention = async (config: any) => {
+    if (!adminToken) return;
+    try {
+      const res = await fetch('/api/admin/system/retention', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-admin-token': adminToken },
+        body: JSON.stringify(config)
+      });
+      const data = await res.json();
+      if (res.ok && data.config) {
+        setDataRetentionConfig(data.config);
+        showToast('Data retention policies saved.');
+      }
+    } catch (e: any) {
+      showToast(`Retention error: ${e.message}`);
+    }
+  };
+
+  // Handler: Trigger Demo Seeding Wave
+  const handleTriggerSeed = async () => {
+    if (!adminToken) return;
+    try {
+      const res = await fetch('/api/admin/demo/seed?count=20', {
+        method: 'POST',
+        headers: { 'x-admin-token': adminToken }
+      });
+      const data = await res.json();
+      if (res.ok) {
+        showToast(`⚡ Dispatched wave of ${data.generatedCount} realistic live events!`);
+      }
+    } catch (e: any) {
+      showToast(`Seed error: ${e.message}`);
+    }
+  };
 
   const handleTerminateSession = async (sessionId: string) => {
     if (!sessionId || !adminToken) return;
@@ -1510,290 +1904,372 @@ export const AdminDashboard: React.FC = () => {
   // =========================================================================
   // AUTHENTICATED DASHBOARD
   // =========================================================================
+  const toggleTheme = () => {
+    const next = themeMode === 'dark' ? 'light' : 'dark';
+    setThemeMode(next);
+    document.documentElement.setAttribute('data-theme', next === 'light' ? 'soft-paper' : 'midnight-slate');
+  };
+
+  const navTabs = [
+    { id: 'overview', label: 'Overview', icon: BarChart3, group: 'CORE MONITORING' },
+    { id: 'traffic', label: 'Traffic Feed', icon: Radio, group: 'CORE MONITORING', badge: isStreamPaused ? 'Paused' : '● Live' },
+    { id: 'devices', label: 'Visitors & Devices', icon: Laptop, group: 'CORE MONITORING', badge: totalDevicesCount || devicesList.length ? `${totalDevicesCount || devicesList.length}` : undefined },
+    { id: 'sessions', label: 'Open Sessions', icon: Users, group: 'CORE MONITORING', badge: overview?.activeUsersCount ? `${overview.activeUsersCount} live` : undefined },
+    
+    { id: 'alerts', label: 'Alert Rules & Center', icon: AlertTriangle, group: 'PLATFORM OPERATIONS', badge: unreadAlertsCount ? `${unreadAlertsCount} new` : undefined, badgeColor: 'var(--danger, #EC8F95)' },
+    { id: 'security', label: 'Security & Access Control', icon: Lock, group: 'PLATFORM OPERATIONS', badge: blockList.length ? `${blockList.length} blk` : undefined },
+    { id: 'playback', label: 'Playback Quality', icon: Film, group: 'PLATFORM OPERATIONS' },
+    { id: 'content', label: 'Content Insights', icon: TrendingUp, group: 'PLATFORM OPERATIONS' },
+    { id: 'geo', label: 'Geography & Traffic', icon: Globe, group: 'PLATFORM OPERATIONS' },
+    { id: 'errors', label: 'Error Tracking', icon: AlertCircle, group: 'PLATFORM OPERATIONS', badge: errorGroups.filter(e => e.status === 'active').length ? `${errorGroups.filter(e => e.status === 'active').length}` : undefined },
+    { id: 'infra', label: 'Infrastructure Health', icon: Server, group: 'PLATFORM OPERATIONS' },
+
+    { id: 'thirdparty', label: '3rd Party APIs', icon: Zap, group: 'SYSTEM & INTEGRATIONS' },
+    { id: 'webhooks', label: 'Webhooks & Outbound', icon: Send, group: 'SYSTEM & INTEGRATIONS' },
+    { id: 'users', label: 'Registered Accounts', icon: Database, group: 'SYSTEM & INTEGRATIONS' },
+    { id: 'audit', label: 'Audit Log Trail', icon: Shield, group: 'SYSTEM & INTEGRATIONS' },
+    { id: 'system', label: 'Maintenance & Policy', icon: SlidersHorizontal, group: 'SYSTEM & INTEGRATIONS' }
+  ];
+
   return (
-    <div className="admin-dashboard-container" style={{
-      padding: '1.75rem 2rem',
-      maxWidth: '1440px',
-      margin: '0 auto',
-      color: 'var(--text-primary)',
+    <div style={{
+      display: 'flex',
       minHeight: '100vh',
-      boxSizing: 'border-box'
+      background: 'var(--bg, #0F1217)',
+      color: 'var(--text-1, #E4E8EE)',
+      fontFamily: 'var(--font-ui, Inter, sans-serif)'
     }}>
-      {/* Toast Notification */}
-      {toastMessage && (
+      {/* Toast Notification Container */}
+      <EventToastContainer
+        toasts={toasts}
+        onDismiss={id => setToasts(t => t.filter(x => x.id !== id))}
+        onAcknowledge={handleAckAlert}
+      />
+
+      {/* Command Palette Modal (Ctrl+K) */}
+      <CommandPalette
+        isOpen={commandPaletteOpen}
+        onClose={() => setCommandPaletteOpen(false)}
+        onNavigateTab={t => setActiveTab(t as any)}
+        devices={devicesList}
+        sessions={overview?.activeUsers || []}
+        onTriggerSeed={handleTriggerSeed}
+        onSignOutEverywhere={handleSignOutEverywhere}
+      />
+
+      {/* Inbound Webhook Info Modal */}
+      <InboundWebhookModal
+        isOpen={inboundModalOpen}
+        onClose={() => setInboundModalOpen(false)}
+      />
+
+      {/* Left Sidebar Navigation */}
+      <aside style={{
+        width: '260px',
+        background: 'var(--surface-1, #151A21)',
+        borderRight: '1px solid var(--border, #262D39)',
+        display: 'flex',
+        flexDirection: 'column',
+        position: 'sticky',
+        top: 0,
+        height: '100vh',
+        overflowY: 'auto',
+        zIndex: 100,
+        flexShrink: 0
+      }}>
+        {/* Brand Header */}
         <div style={{
-          position: 'fixed',
-          bottom: '24px',
-          right: '24px',
-          backgroundColor: 'var(--surface, #1e293b)',
-          border: '1px solid var(--accent-color, #38bdf8)',
-          boxShadow: '0 10px 25px -5px rgba(0, 0, 0, 0.5)',
-          borderRadius: '8px',
-          padding: '10px 18px',
-          color: 'var(--text-primary)',
-          fontSize: '0.85rem',
+          padding: '20px',
+          borderBottom: '1px solid var(--border, #262D39)',
           display: 'flex',
           alignItems: 'center',
-          gap: '8px',
-          zIndex: 9999,
-          animation: 'fadeIn 0.2s ease-out'
+          gap: '10px'
         }}>
-          <CheckCircle2 size={16} color="var(--accent-color, #38bdf8)" />
-          <span>{toastMessage}</span>
+          <div style={{
+            width: '32px',
+            height: '32px',
+            borderRadius: '8px',
+            background: 'var(--accent, #8CA9EE)',
+            color: 'var(--on-accent, #0C1424)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            fontWeight: 800,
+            fontSize: '1.1rem'
+          }}>
+            V
+          </div>
+          <div>
+            <h2 style={{ margin: 0, fontSize: '1rem', fontWeight: 700, fontFamily: 'var(--font-display, Outfit)', color: 'var(--text-1, #E4E8EE)' }}>
+              Valor Portal
+            </h2>
+            <span style={{ fontSize: '0.7rem', color: 'var(--text-3, #8F99AA)', fontWeight: 600, letterSpacing: '0.04em' }}>
+              REAL-TIME ADMIN v2.0
+            </span>
+          </div>
         </div>
-      )}
 
-      {/* Clean Header Bar */}
-      <div style={{
-        display: 'flex',
-        justifyContent: 'space-between',
-        alignItems: 'center',
-        flexWrap: 'wrap',
-        gap: '1rem',
-        marginBottom: '1.5rem',
-        paddingBottom: '1.25rem',
-        borderBottom: '1px solid var(--border-color, rgba(255, 255, 255, 0.08))'
-      }}>
-        <div>
-          <h1 style={{ margin: 0, fontSize: '1.5rem', fontWeight: 700, letterSpacing: '-0.02em' }}>
-            Admin Console
-          </h1>
-          <p style={{ margin: '4px 0 0', color: 'var(--text-muted, #94a3b8)', fontSize: '0.82rem' }}>
-            Visitor telemetry, active sessions, and database infrastructure
-          </p>
+        {/* Navigation Items Grouped */}
+        <div style={{ padding: '14px 10px', display: 'flex', flexDirection: 'column', gap: '14px', flex: 1 }}>
+          {['CORE MONITORING', 'PLATFORM OPERATIONS', 'SYSTEM & INTEGRATIONS'].map(groupName => {
+            const groupTabs = navTabs.filter(t => t.group === groupName);
+            return (
+              <div key={groupName} style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                <span style={{
+                  padding: '4px 10px',
+                  fontSize: '0.66rem',
+                  fontWeight: 700,
+                  color: 'var(--text-3, #8F99AA)',
+                  letterSpacing: '0.06em'
+                }}>
+                  {groupName}
+                </span>
+
+                {groupTabs.map(tab => {
+                  const Icon = tab.icon;
+                  const isActive = activeTab === tab.id;
+
+                  return (
+                    <button
+                      key={tab.id}
+                      onClick={() => setActiveTab(tab.id as any)}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        padding: '8px 12px',
+                        borderRadius: 'var(--radius-sm, 8px)',
+                        border: 'none',
+                        background: isActive ? 'var(--accent-soft, rgba(140, 169, 238, 0.14))' : 'transparent',
+                        color: isActive ? 'var(--accent, #8CA9EE)' : 'var(--text-2, #A9B2C0)',
+                        cursor: 'pointer',
+                        textAlign: 'left',
+                        fontSize: '0.82rem',
+                        fontWeight: isActive ? 700 : 500,
+                        transition: 'background-color 0.15s ease'
+                      }}
+                    >
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '9px' }}>
+                        <Icon size={16} />
+                        <span>{tab.label}</span>
+                      </div>
+
+                      {tab.badge && (
+                        <span style={{
+                          fontSize: '0.68rem',
+                          fontWeight: 700,
+                          padding: '1px 6px',
+                          borderRadius: '999px',
+                          background: tab.badgeColor || (isActive ? 'var(--accent, #8CA9EE)' : 'var(--surface-3, #232B36)'),
+                          color: isActive ? 'var(--on-accent, #0C1424)' : 'var(--text-1, #E4E8EE)'
+                        }}>
+                          {tab.badge}
+                        </span>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+            );
+          })}
         </div>
 
-        {/* Header Right Actions */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
-          {/* Live Webhook Push Stream Indicator */}
-          <div style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: '6px',
-            backgroundColor: isLiveStreamConnected ? 'rgba(34, 197, 94, 0.12)' : 'rgba(234, 179, 8, 0.12)',
-            border: isLiveStreamConnected ? '1px solid rgba(34, 197, 94, 0.3)' : '1px solid rgba(234, 179, 8, 0.3)',
-            borderRadius: '20px',
-            padding: '4px 10px',
-            fontSize: '0.74rem',
-            fontWeight: 600,
-            color: isLiveStreamConnected ? '#4ade80' : '#facc15'
-          }}>
-            <span style={{
-              width: '7px',
-              height: '7px',
-              borderRadius: '50%',
-              backgroundColor: isLiveStreamConnected ? '#22c55e' : '#eab308',
-              boxShadow: isLiveStreamConnected ? '0 0 8px #22c55e' : 'none'
-            }} />
-            <span>{isLiveStreamConnected ? 'Live Webhook Stream' : 'Connecting Stream...'}</span>
+        {/* Sidebar Footer */}
+        <div style={{
+          padding: '14px',
+          borderTop: '1px solid var(--border, #262D39)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between'
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <Shield size={14} color="var(--accent, #8CA9EE)" />
+            <span style={{ fontSize: '0.76rem', color: 'var(--text-2, #A9B2C0)' }}>Admin: <strong>{adminCallerIp || 'Local'}</strong></span>
           </div>
-
-          {/* Admin User Chip */}
-          <div style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: '6px',
-            backgroundColor: 'rgba(255, 255, 255, 0.04)',
-            border: '1px solid var(--border-color, rgba(255, 255, 255, 0.08))',
-            borderRadius: '6px',
-            padding: '5px 10px',
-            fontSize: '0.78rem',
-            color: 'var(--text-muted, #94a3b8)'
-          }}>
-            <Shield size={13} color="var(--accent-color, #38bdf8)" />
-            <span>Admin {adminCallerIp ? `(${adminCallerIp})` : ''}</span>
-          </div>
-
-          {/* Stream / Polling Selector */}
-          <div style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: '4px',
-            backgroundColor: 'rgba(255, 255, 255, 0.03)',
-            padding: '3px 6px',
-            borderRadius: '6px',
-            border: '1px solid var(--border-color, rgba(255, 255, 255, 0.08))',
-            fontSize: '0.75rem'
-          }}>
-            <span style={{ color: 'var(--text-muted, #94a3b8)', paddingLeft: '4px', fontSize: '0.72rem' }}>Mode:</span>
-            {[
-              { label: '⚡ Push (No Poll)', val: 0 },
-              { label: '5s Poll', val: 5 },
-              { label: '15s Poll', val: 15 }
-            ].map(item => (
-              <button
-                key={item.label}
-                onClick={() => setAutoRefreshInterval(item.val)}
-                style={{
-                  background: autoRefreshInterval === item.val ? 'var(--accent-color, #38bdf8)' : 'transparent',
-                  color: autoRefreshInterval === item.val ? '#000' : 'var(--text-muted, #94a3b8)',
-                  border: 'none',
-                  padding: '2px 8px',
-                  borderRadius: '4px',
-                  cursor: 'pointer',
-                  fontWeight: 600,
-                  fontSize: '0.72rem'
-                }}
-              >
-                {item.label}
-              </button>
-            ))}
-          </div>
-
-          {/* Manual Refresh */}
-          <button
-            onClick={() => fetchData(true)}
-            disabled={refreshing}
-            title="Refresh metrics now"
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: '6px',
-              backgroundColor: 'rgba(255, 255, 255, 0.04)',
-              color: 'var(--text-primary)',
-              border: '1px solid var(--border-color, rgba(255, 255, 255, 0.08))',
-              borderRadius: '6px',
-              padding: '6px 12px',
-              cursor: refreshing ? 'not-allowed' : 'pointer',
-              fontSize: '0.78rem',
-              fontWeight: 500
-            }}
-          >
-            <RefreshCw size={13} className={refreshing ? 'animate-spin' : ''} />
-            <span>{refreshing ? 'Refreshing...' : 'Refresh'}</span>
-          </button>
-
-          {/* Exit to Player Home */}
           <a
             href="/"
-            title="Exit to Valor Player"
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: '6px',
-              backgroundColor: 'rgba(255, 255, 255, 0.04)',
-              color: 'var(--text-primary)',
-              border: '1px solid var(--border-color, rgba(255, 255, 255, 0.08))',
-              borderRadius: '6px',
-              padding: '6px 12px',
-              fontSize: '0.78rem',
-              fontWeight: 500,
-              textDecoration: 'none'
-            }}
+            title="Return to Player"
+            style={{ color: 'var(--text-3, #8F99AA)', display: 'flex', alignItems: 'center' }}
           >
-            <ArrowLeft size={13} />
-            <span>Player Home</span>
+            <ArrowLeft size={15} />
           </a>
-
-          {/* Logout Button */}
-          <button
-            onClick={handleLogout}
-            title="Sign out of Administrator Portal"
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: '6px',
-              backgroundColor: 'rgba(239, 68, 68, 0.08)',
-              color: '#f87171',
-              border: '1px solid rgba(239, 68, 68, 0.2)',
-              borderRadius: '6px',
-              padding: '6px 12px',
-              cursor: 'pointer',
-              fontSize: '0.78rem',
-              fontWeight: 500
-            }}
-          >
-            <LogOut size={13} />
-            <span>Sign Out</span>
-          </button>
         </div>
-      </div>
+      </aside>
 
-      {/* Navigation Tabs Bar */}
-      <div style={{
-        display: 'flex',
-        gap: '6px',
-        borderBottom: '1px solid var(--border-color, rgba(255, 255, 255, 0.08))',
-        marginBottom: '1.75rem',
-        overflowX: 'auto'
-      }}>
-        {[
-          { id: 'overview', label: 'Overview', icon: BarChart3 },
-          { 
-            id: 'devices', 
-            label: `Visitors & Devices (${totalDevicesCount || devicesList.length})`, 
-            icon: Laptop,
-            badge: totalEmbedCallsCount ? `${totalEmbedCallsCount} embeds` : undefined
-          },
-          { 
-            id: 'sessions', 
-            label: `Open Sessions (${overview?.activeUsersCount ?? 0})`, 
-            icon: Users,
-            badge: overview?.activeUsersCount ? `${overview.activeUsersCount} live` : undefined
-          },
-          { 
-            id: 'traffic', 
-            label: 'Traffic Feed', 
-            icon: Radio,
-            badge: isStreamPaused ? 'Paused' : undefined
-          },
-          { 
-            id: 'webhooks', 
-            label: `Webhooks (${webhooksList.length})`, 
-            icon: Send,
-            badge: webhooksList.filter(w => w.enabled).length ? `${webhooksList.filter(w => w.enabled).length} live` : undefined
-          },
-          { 
-            id: 'thirdparty', 
-            label: `3rd Party APIs (${analytics?.thirdPartyStats?.totalRequests ?? 0})`, 
-            icon: Zap,
-            highlight: Boolean(analytics?.thirdPartyStats?.totalRequests && analytics.thirdPartyStats.totalRequests > 0)
-          },
-          { id: 'users', label: `Registered Accounts (${usersList.length})`, icon: Database },
-        ].map(tab => {
-          const Icon = tab.icon;
-          const isActive = activeTab === tab.id;
-          return (
+      {/* Main Content Area */}
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
+        {/* Top Bar */}
+        <header style={{
+          height: '60px',
+          background: 'var(--surface-1, #151A21)',
+          borderBottom: '1px solid var(--border, #262D39)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          padding: '0 24px',
+          position: 'sticky',
+          top: 0,
+          zIndex: 90
+        }}>
+          {/* Active Tab Heading */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+            <h1 style={{
+              margin: 0,
+              fontSize: '1.05rem',
+              fontWeight: 700,
+              fontFamily: 'var(--font-display, Outfit)',
+              color: 'var(--text-1, #E4E8EE)',
+              textTransform: 'capitalize'
+            }}>
+              {navTabs.find(t => t.id === activeTab)?.label || activeTab}
+            </h1>
+          </div>
+
+          {/* Right Action Tools */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+            {/* Real-Time Connection Indicator */}
+            <ConnectionStatus
+              status={connectionState}
+              reconnectAttempt={reconnectAttempt}
+              nextRetrySeconds={nextRetrySeconds}
+              missedEventsApplied={missedEventsApplied}
+              isCatchingUp={isCatchingUp}
+              onManualReconnect={manualReconnect}
+            />
+
+            {/* Command Palette Trigger (Ctrl+K) */}
             <button
-              key={tab.id}
-              onClick={() => setActiveTab(tab.id as any)}
+              onClick={() => setCommandPaletteOpen(true)}
+              title="Open Command Palette (Ctrl+K / Cmd+K)"
               style={{
-                display: 'flex',
+                display: 'inline-flex',
                 alignItems: 'center',
-                gap: '7px',
-                padding: '9px 15px',
-                border: 'none',
-                borderBottom: isActive 
-                  ? (tab.id === 'thirdparty' ? '2px solid #ec4899' : '2px solid var(--accent-color, #38bdf8)') 
-                  : '2px solid transparent',
-                backgroundColor: 'transparent',
-                color: isActive 
-                  ? (tab.id === 'thirdparty' ? '#ec4899' : 'var(--accent-color, #38bdf8)') 
-                  : 'var(--text-muted, #94a3b8)',
-                cursor: 'pointer',
-                fontSize: '0.84rem',
-                fontWeight: isActive ? 600 : 500,
-                transition: 'all 0.12s ease'
+                gap: '6px',
+                background: 'var(--surface-2, #1B212A)',
+                border: '1px solid var(--border, #262D39)',
+                color: 'var(--text-2, #A9B2C0)',
+                padding: '5px 10px',
+                borderRadius: 'var(--radius-sm, 6px)',
+                fontSize: '0.76rem',
+                cursor: 'pointer'
               }}
             >
-              <Icon size={15} color={isActive ? (tab.id === 'thirdparty' ? '#ec4899' : 'var(--accent-color, #38bdf8)') : undefined} />
-              <span>{tab.label}</span>
-              {tab.badge && (
-                <span style={{
-                  padding: '1px 6px',
-                  borderRadius: '10px',
-                  backgroundColor: tab.id === 'devices' ? 'rgba(168, 85, 247, 0.2)' : 'rgba(234, 179, 8, 0.2)',
-                  color: tab.id === 'devices' ? '#c084fc' : '#facc15',
-                  fontSize: '0.68rem',
-                  fontWeight: 700
-                }}>
-                  {tab.badge}
-                </span>
-              )}
+              <Search size={13} />
+              <span>Search…</span>
+              <kbd style={{
+                background: 'var(--surface-3, #232B36)',
+                padding: '1px 4px',
+                borderRadius: '3px',
+                fontSize: '0.68rem',
+                color: 'var(--text-3, #8F99AA)'
+              }}>
+                Ctrl+K
+              </kbd>
             </button>
-          );
-        })}
-      </div>
+
+            {/* Quick Demo Seed Wave Button */}
+            <button
+              onClick={handleTriggerSeed}
+              title="Emit realistic wave of demo events into the live bus"
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '5px',
+                background: 'var(--accent-soft, rgba(140, 169, 238, 0.14))',
+                border: '1px solid var(--accent, #8CA9EE)',
+                color: 'var(--accent, #8CA9EE)',
+                padding: '5px 10px',
+                borderRadius: 'var(--radius-sm, 6px)',
+                fontSize: '0.76rem',
+                fontWeight: 600,
+                cursor: 'pointer'
+              }}
+            >
+              <span>⚡ Seed Wave</span>
+            </button>
+
+            {/* Inbound Webhooks API Modal Trigger */}
+            <button
+              onClick={() => setInboundModalOpen(true)}
+              title="View Inbound Webhooks HMAC-SHA256 documentation"
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '5px',
+                background: 'var(--surface-2, #1B212A)',
+                border: '1px solid var(--border, #262D39)',
+                color: 'var(--text-2, #A9B2C0)',
+                padding: '5px 10px',
+                borderRadius: 'var(--radius-sm, 6px)',
+                fontSize: '0.76rem',
+                cursor: 'pointer'
+              }}
+            >
+              <Radio size={13} />
+              <span>Inbound API</span>
+            </button>
+
+            {/* Notification Center */}
+            <NotificationCenter
+              alerts={activeAlerts}
+              unreadCount={unreadAlertsCount}
+              isOpen={notificationsOpen}
+              onToggle={() => setNotificationsOpen(prev => !prev)}
+              onAcknowledge={handleAckAlert}
+              onSnooze={handleSnoozeAlert}
+              onMarkAllAsRead={handleMarkAllAlertsRead}
+            />
+
+            {/* Dark / Light Theme Toggle */}
+            <button
+              onClick={toggleTheme}
+              title={`Switch to ${themeMode === 'dark' ? 'Light' : 'Dark'} Theme`}
+              style={{
+                background: 'var(--surface-2, #1B212A)',
+                border: '1px solid var(--border, #262D39)',
+                color: 'var(--text-2, #A9B2C0)',
+                padding: '6px 9px',
+                borderRadius: 'var(--radius-sm, 6px)',
+                fontSize: '0.78rem',
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center'
+              }}
+            >
+              {themeMode === 'dark' ? '☀️' : '🌙'}
+            </button>
+
+            {/* Admin Logout */}
+            <button
+              onClick={handleLogout}
+              title="Sign Out"
+              style={{
+                background: 'rgba(236, 143, 149, 0.12)',
+                border: '1px solid var(--danger, #EC8F95)',
+                color: 'var(--danger, #EC8F95)',
+                padding: '5px 10px',
+                borderRadius: 'var(--radius-sm, 6px)',
+                fontSize: '0.76rem',
+                fontWeight: 600,
+                cursor: 'pointer',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '5px'
+              }}
+            >
+              <LogOut size={13} />
+              <span>Exit</span>
+            </button>
+          </div>
+        </header>
+
+        {/* Dashboard Main View Container */}
+        <main style={{ padding: '24px', flex: 1, overflowY: 'auto' }}>
+          {loading ? (
+            <AdminDashboardSkeleton />
+          ) : (
+            <>
 
       {/* ========================================================================= */}
       {/* TAB 1: OVERVIEW & INFRASTRUCTURE (ONLY IN THIS TAB) */}
@@ -4182,6 +4658,11 @@ export const AdminDashboard: React.FC = () => {
           onCopy={handleCopy}
         />
       )}
+
+            </>
+          )}
+        </main>
+      </div>
 
       {/* ========================================================================= */}
       {/* MODAL: VISITOR DEVICE DOSSIER & INTELLIGENCE INSPECTION */}
