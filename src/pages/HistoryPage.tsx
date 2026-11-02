@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useRef, useEffect } from 'react';
+import React, { useState, useMemo, useRef } from 'react';
 import { 
   Play, 
   X, 
@@ -26,26 +26,26 @@ export interface HistoryPageProps {
   formatTime?: (secs: number | string | undefined) => string;
 }
 
-interface HeatCell {
+interface DayCell {
   date: Date;
   dateKey: string;
+  dayOfMonth: number;
   dayOfWeek: number; // 0 = Sun, 1 = Mon ... 6 = Sat
-  x: number;
-  y: number;
+  weekCol: number;
   count: number;
   level: 0 | 1 | 2 | 3 | 4;
+  isFuture: boolean;
 }
 
-interface HeatMonth {
-  name: string;
+interface MonthBlock {
   year: number;
-  month: number;
-  startX: number;
-  width: number;
-  cells: HeatCell[];
+  monthIndex: number;
+  name: string;
+  numCols: number;
+  cells: DayCell[];
 }
 
-interface HistoryRowItem {
+interface HistoryDisplayItem {
   id: string;
   title: string;
   seasonEpisode?: string;
@@ -59,6 +59,7 @@ interface HistoryRowItem {
   progressPercent: number;
   dateKey: string;
   dateGroupLabel: string;
+  timestamp: number;
   letter: string;
   letterBg: string;
   videoItem: VideoItem;
@@ -72,66 +73,53 @@ export const HistoryPage: React.FC<HistoryPageProps> = ({
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [filterPill, setFilterPill] = useState<'all' | 'stopped' | 'finished' | 'trakt'>('all');
-  // Default to null so all days are shown by default
+  
+  // By default, no single day is selected (shows all days by default)
   const [selectedDateKey, setSelectedDateKey] = useState<string | null>(null);
+  
   const [isClearModalOpen, setIsClearModalOpen] = useState(false);
   const [hoveredCell, setHoveredCell] = useState<{ dateKey: string; count: number; x: number; y: number } | null>(null);
 
   const searchInputRef = useRef<HTMLInputElement>(null);
 
-  // 1. Calculate the 6 months (last 5 months + 1 current month) with distinct gaps
-  const { monthsData, totalWidth, totalSessionsIn6Months } = useMemo(() => {
+  // 1. Aggregate real user sessions by dateKey (YYYY-MM-DD)
+  const sessionCountsByDate = useMemo(() => {
     const counts: Record<string, number> = {};
-    const now = new Date();
-
-    // Start of the 6-month window (1st day of month 5 months ago)
-    const windowStart = new Date(now.getFullYear(), now.getMonth() - 5, 1);
-    windowStart.setHours(0, 0, 0, 0);
-
-    let sessionTotal = 0;
     videos.forEach(v => {
       if (v.lastPlayedDate) {
         try {
-          const d = new Date(v.lastPlayedDate);
-          if (d >= windowStart) {
-            const k = d.toISOString().split('T')[0];
-            counts[k] = (counts[k] || 0) + 1;
-            sessionTotal++;
-          }
+          const k = new Date(v.lastPlayedDate).toISOString().split('T')[0];
+          counts[k] = (counts[k] || 0) + 1;
         } catch {}
       }
     });
+    return counts;
+  }, [videos]);
 
-    const monthGap = 16;   // Distinct separation between each month block
-    const colPitch = 14;   // 11px square + 3px gap
-    let currentX = 32;     // Left offset for Mon/Wed/Fri labels
+  // 2. Generate exactly the last 5 months + 1 current month (6 months total), each separated
+  const months = useMemo(() => {
+    const list: MonthBlock[] = [];
+    const now = new Date();
 
-    const months: HeatMonth[] = [];
+    // 5 previous months down to 0 (current month)
+    for (let offset = 5; offset >= 0; offset--) {
+      const d = new Date(now.getFullYear(), now.getMonth() - offset, 1);
+      const year = d.getFullYear();
+      const month = d.getMonth();
+      const name = d.toLocaleDateString([], { month: 'short' });
 
-    // Iterate through the 6 months: (now.getMonth() - 5) up to current month (now.getMonth() - 0)
-    for (let i = 5; i >= 0; i--) {
-      const monthDate = new Date(now.getFullYear(), now.getMonth() - i, 1);
-      const year = monthDate.getFullYear();
-      const month = monthDate.getMonth();
-      const monthName = monthDate.toLocaleDateString([], { month: 'short' });
+      const firstDay = new Date(year, month, 1);
+      const lastDay = new Date(year, month + 1, 0);
+      const totalDays = lastDay.getDate();
+      const startDayOfWeek = firstDay.getDay(); // 0 = Sun, 1 = Mon ... 6 = Sat
 
-      // Number of days in this month
-      const daysInMonth = new Date(year, month + 1, 0).getDate();
-
-      const monthStartX = currentX;
-      let col = 0;
-      const cells: HeatCell[] = [];
-
-      for (let day = 1; day <= daysInMonth; day++) {
+      const cells: DayCell[] = [];
+      for (let day = 1; day <= totalDays; day++) {
         const cellDate = new Date(year, month, day);
-        const dayOfWeek = cellDate.getDay(); // 0 = Sun, 1 = Mon ... 6 = Sat
-
-        if (day > 1 && dayOfWeek === 0) {
-          col++;
-        }
-
-        const dateKey = cellDate.toISOString().split('T')[0];
-        const count = counts[dateKey] || 0;
+        const dateKey = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+        const dayOfWeek = cellDate.getDay();
+        const weekCol = Math.floor((day - 1 + startDayOfWeek) / 7);
+        const count = sessionCountsByDate[dateKey] || 0;
 
         let level: 0 | 1 | 2 | 3 | 4 = 0;
         if (count >= 4) level = 4;
@@ -139,47 +127,69 @@ export const HistoryPage: React.FC<HistoryPageProps> = ({
         else if (count === 2) level = 2;
         else if (count === 1) level = 1;
 
-        const cellX = monthStartX + col * colPitch;
-        const cellY = 22 + dayOfWeek * colPitch;
-
         cells.push({
           date: cellDate,
           dateKey,
+          dayOfMonth: day,
           dayOfWeek,
-          x: cellX,
-          y: cellY,
+          weekCol,
           count,
-          level
+          level,
+          isFuture: cellDate > now
         });
       }
 
-      const monthCols = col + 1;
-      const monthWidth = monthCols * colPitch - 3;
-
-      months.push({
-        name: monthName,
+      const numCols = Math.ceil((totalDays + startDayOfWeek) / 7);
+      list.push({
         year,
-        month,
-        startX: monthStartX,
-        width: monthWidth,
+        monthIndex: month,
+        name,
+        numCols,
         cells
       });
-
-      // Advance X position with monthGap to keep each month distinctly separated
-      currentX += monthWidth + monthGap;
     }
 
-    const totalSvgWidth = currentX + 8;
+    return list;
+  }, [sessionCountsByDate]);
+
+  // Calculate layout coordinates for each separated month block
+  const { monthLayouts, totalSvgWidth } = useMemo(() => {
+    let currentX = 36; // Initial left margin for day labels (Mon, Wed, Fri)
+    const colWidth = 14; // 11px cell + 3px gap
+    const monthGap = 18; // Distinct visible separation gap between months
+
+    const layouts = months.map(m => {
+      const startX = currentX;
+      const monthWidth = m.numCols * colWidth;
+      const labelCenterX = startX + monthWidth / 2 - 1.5;
+      currentX += monthWidth + monthGap;
+      return {
+        ...m,
+        startX,
+        monthWidth,
+        labelCenterX
+      };
+    });
 
     return {
-      monthsData: months,
-      totalWidth: Math.max(560, totalSvgWidth),
-      totalSessionsIn6Months: sessionTotal
+      monthLayouts: layouts,
+      totalSvgWidth: currentX + 6
     };
-  }, [videos]);
+  }, [months]);
 
-  // 2. Real Watch Log Items (100% from user's playback history)
-  const allHistoryItems = useMemo<HistoryRowItem[]>(() => {
+  // Total sessions recorded across the 6-month period
+  const totalSessionsInLast6Months = useMemo(() => {
+    let sum = 0;
+    months.forEach(m => {
+      m.cells.forEach(c => {
+        sum += c.count;
+      });
+    });
+    return sum;
+  }, [months]);
+
+  // 3. Format real videos for display
+  const allHistoryItems = useMemo<HistoryDisplayItem[]>(() => {
     return videos.map((v, idx) => {
       const rawTitle = v.title || 'Untitled';
       const info = classifyVideoTitle(rawTitle);
@@ -192,13 +202,23 @@ export const HistoryPage: React.FC<HistoryPageProps> = ({
 
       const d = v.lastPlayedDate ? new Date(v.lastPlayedDate) : new Date();
       const dateKey = !isNaN(d.getTime()) ? d.toISOString().split('T')[0] : '';
-      const timeStr = !isNaN(d.getTime()) 
-        ? d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) 
-        : '';
-      
-      const durSec = typeof v.duration === 'number' ? v.duration : parseDurationToSeconds(v.duration);
+      const timeStr = !isNaN(d.getTime()) ? d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : '';
+      const durSec = typeof v.duration === 'number' 
+        ? v.duration 
+        : (v.duration ? parseDurationToSeconds(v.duration) : 0);
       const curr = v.currentTime || 0;
       const isFinished = !!(v.completed || (durSec > 0 && curr >= durSec - 15));
+
+      const isToday = !isNaN(d.getTime()) && d.toDateString() === new Date().toDateString();
+      const yesterday = new Date();
+      yesterday.setDate(yesterday.getDate() - 1);
+      const isYesterday = !isNaN(d.getTime()) && d.toDateString() === yesterday.toDateString();
+
+      const dateGroupLabel = isToday
+        ? `Today · ${d.toLocaleDateString([], { day: 'numeric', month: 'short', year: 'numeric' })}`
+        : isYesterday
+        ? `Yesterday · ${d.toLocaleDateString([], { day: 'numeric', month: 'short', year: 'numeric' })}`
+        : d.toLocaleDateString([], { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' });
 
       return {
         id: v.id || `video-${idx}`,
@@ -207,42 +227,37 @@ export const HistoryPage: React.FC<HistoryPageProps> = ({
         resumeText: isFinished ? 'completed' : `resume at ${formatRuntime(curr)}`,
         playedAtTime: timeStr,
         watchedText: `${formatRuntime(curr)} watched`,
-        status: isFinished ? 'finished' : 'stopped',
+        status: (isFinished ? 'finished' : 'stopped') as 'stopped' | 'finished',
         hasTraktSync: true,
         isSyncedToTrakt: !!(v as any).traktSynced,
         stars: isFinished ? 5 : undefined,
-        progressPercent: durSec > 0 ? Math.min(100, Math.round((curr / durSec) * 100)) : 0,
+        progressPercent: durSec > 0 ? Math.min(100, Math.round((curr / durSec) * 100)) : 40,
         dateKey,
-        dateGroupLabel: d.toLocaleDateString([], { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' }),
+        dateGroupLabel,
+        timestamp: !isNaN(d.getTime()) ? d.getTime() : 0,
         letter,
         letterBg: tile.tileBg,
         videoItem: v
       };
-    });
+    }).sort((a, b) => b.timestamp - a.timestamp);
   }, [videos]);
 
-  // 3. Top in-progress Continue Watching cards (if any real in-progress items exist)
-  const topResumeCards = useMemo(() => {
-    const inProgress = allHistoryItems.filter(i => i.status === 'stopped' && (i.videoItem.currentTime || 0) > 2);
-    return inProgress.slice(0, 2);
-  }, [allHistoryItems]);
-
-  // 4. Filter Watch Log items
+  // 4. Filter Watch Log (by search, pill filter, and optional heatmap day selection)
   const filteredItems = useMemo(() => {
     return allHistoryItems.filter(item => {
-      // 1. Search filter
+      // 1. Search Query
       if (searchQuery.trim()) {
         const q = searchQuery.toLowerCase().trim();
         const full = `${item.title} ${item.seasonEpisode || ''}`.toLowerCase();
         if (!full.includes(q)) return false;
       }
 
-      // 2. Status pill filter
+      // 2. Pill Filter
       if (filterPill === 'stopped' && item.status !== 'stopped') return false;
       if (filterPill === 'finished' && item.status !== 'finished') return false;
       if (filterPill === 'trakt' && item.isSyncedToTrakt) return false;
 
-      // 3. Date selection from heatmap (if user clicked a day)
+      // 3. Optional Day Selection from Heatmap
       if (selectedDateKey && item.dateKey !== selectedDateKey) {
         return false;
       }
@@ -251,10 +266,10 @@ export const HistoryPage: React.FC<HistoryPageProps> = ({
     });
   }, [allHistoryItems, searchQuery, filterPill, selectedDateKey]);
 
-  // 5. Group filtered items by date for display
+  // Group items by date for display
   const groupedWatchLog = useMemo(() => {
-    const groups: { label: string; dateKey: string; items: HistoryRowItem[]; totalWatchSec: number }[] = [];
-    const map = new Map<string, HistoryRowItem[]>();
+    const groups: { label: string; dateKey: string; items: HistoryDisplayItem[]; totalWatchSec: number }[] = [];
+    const map = new Map<string, HistoryDisplayItem[]>();
 
     filteredItems.forEach(item => {
       const arr = map.get(item.dateGroupLabel) || [];
@@ -278,8 +293,16 @@ export const HistoryPage: React.FC<HistoryPageProps> = ({
     return groups;
   }, [filteredItems]);
 
-  // Cell fill colors (Graduated crimson tokens)
-  const getCellFill = (level: number) => {
+  // Top Continue Watching Cards (Top 2 in-progress items from real data)
+  const topResumeCards = useMemo(() => {
+    return allHistoryItems
+      .filter(i => i.status === 'stopped' && (i.videoItem.currentTime || 0) > 2)
+      .slice(0, 2);
+  }, [allHistoryItems]);
+
+  // Cell Level Color Map (Token-friendly / Crimson OLED palette)
+  const getCellFill = (level: number, isFuture: boolean) => {
+    if (isFuture) return 'rgba(255, 255, 255, 0.02)';
     switch (level) {
       case 1:
         return '#4c1d24'; // subtle crimson
@@ -291,11 +314,12 @@ export const HistoryPage: React.FC<HistoryPageProps> = ({
         return '#f43f5e'; // bright highlight red
       case 0:
       default:
-        return 'rgba(255, 255, 255, 0.05)'; // dark un-watched
+        return 'rgba(255, 255, 255, 0.05)'; // un-watched
     }
   };
 
   const handleCellClick = (dateKey: string) => {
+    // Clicking a day filters by that day; clicking it again toggles back to all days
     setSelectedDateKey(prev => (prev === dateKey ? null : dateKey));
   };
 
@@ -314,7 +338,7 @@ export const HistoryPage: React.FC<HistoryPageProps> = ({
     <div className="history-heatmap-container" role="main" aria-label="Watch history and activity heatmap">
       <div className="history-heatmap-wrapper">
         {/* ================================================================= */}
-        {/* 1. TOP HEADER (History title, Search input, Clear history)        */}
+        {/* 1. TOP HEADER (History title, Search input, Clear button)          */}
         {/* ================================================================= */}
         <header className="history-header">
           <div className="history-header-left">
@@ -337,7 +361,7 @@ export const HistoryPage: React.FC<HistoryPageProps> = ({
                   type="button"
                   onClick={() => setSearchQuery('')}
                   style={{ background: 'transparent', border: 'none', color: 'var(--text-3)', cursor: 'pointer', padding: 0 }}
-                  aria-label="Clear search query"
+                  aria-label="Clear search"
                 >
                   <X size={13} />
                 </button>
@@ -357,7 +381,7 @@ export const HistoryPage: React.FC<HistoryPageProps> = ({
         </header>
 
         {/* ================================================================= */}
-        {/* 2. TOP RESUME CARDS (Shown only when in-progress videos exist)     */}
+        {/* 2. TOP RESUME CARDS (2 SIDE BY SIDE - If In-Progress items exist) */}
         {/* ================================================================= */}
         {topResumeCards.length > 0 && (
           <section className="history-resume-grid" aria-label="Continue Watching">
@@ -398,14 +422,13 @@ export const HistoryPage: React.FC<HistoryPageProps> = ({
         )}
 
         {/* ================================================================= */}
-        {/* 3. GITHUB-STYLE HEATMAP (LAST 5 MONTHS + CURRENT MONTH)           */}
-        {/* Each month distinctly separated, guaranteed zero horizontal scroll */}
+        {/* 3. GITHUB-STYLE HEATMAP (LAST 5 MONTHS + CURRENT MONTH SEPARATED) */}
         {/* ================================================================= */}
-        <section className="history-heatmap-card" aria-label="Viewing activity heatmap">
+        <section className="history-heatmap-card" aria-label="Contribution and viewing activity heatmap">
           <div className="history-heatmap-top">
             <div className="history-heatmap-title-area">
               <span className="history-heatmap-sessions-count">
-                {totalSessionsIn6Months} session{totalSessionsIn6Months === 1 ? '' : 's'} in the last 6 months
+                {totalSessionsInLast6Months} session{totalSessionsInLast6Months === 1 ? '' : 's'} in the last 6 months
               </span>
               <span className="history-heatmap-subtitle">
                 Each square is a day. Click one to see what you watched.
@@ -415,96 +438,94 @@ export const HistoryPage: React.FC<HistoryPageProps> = ({
             {/* Legend */}
             <div className="history-heatmap-legend">
               <span>Less</span>
-              <span className="history-legend-square" style={{ background: getCellFill(0) }} />
-              <span className="history-legend-square" style={{ background: getCellFill(1) }} />
-              <span className="history-legend-square" style={{ background: getCellFill(2) }} />
-              <span className="history-legend-square" style={{ background: getCellFill(3) }} />
-              <span className="history-legend-square" style={{ background: getCellFill(4) }} />
+              <span className="history-legend-square" style={{ background: getCellFill(0, false) }} />
+              <span className="history-legend-square" style={{ background: getCellFill(1, false) }} />
+              <span className="history-legend-square" style={{ background: getCellFill(2, false) }} />
+              <span className="history-legend-square" style={{ background: getCellFill(3, false) }} />
+              <span className="history-legend-square" style={{ background: getCellFill(4, false) }} />
               <span>More</span>
             </div>
           </div>
 
-          {/* Scalable SVG Heatmap: Separated Month Blocks & Zero Horizontal Scroll */}
+          {/* Scalable SVG Heatmap: Separated Month Groups & Zero Horizontal Scroll */}
           <div className="history-heatmap-svg-wrap">
             <svg
               className="history-heatmap-svg"
-              viewBox={`0 0 ${totalWidth} 125`}
+              viewBox={`0 0 ${totalSvgWidth} 124`}
               preserveAspectRatio="xMidYMid meet"
               aria-hidden="true"
             >
               {/* Day Labels on Y-Axis */}
-              <text x="5" y="44" fontSize="9" fill="var(--text-3)" fontFamily="var(--font-ui)">Mon</text>
-              <text x="5" y="72" fontSize="9" fill="var(--text-3)" fontFamily="var(--font-ui)">Wed</text>
-              <text x="5" y="100" fontSize="9" fill="var(--text-3)" fontFamily="var(--font-ui)">Fri</text>
+              <text x="6" y="40" fontSize="9" fill="var(--text-3)" fontFamily="var(--font-ui)">Mon</text>
+              <text x="6" y="68" fontSize="9" fill="var(--text-3)" fontFamily="var(--font-ui)">Wed</text>
+              <text x="6" y="96" fontSize="9" fill="var(--text-3)" fontFamily="var(--font-ui)">Fri</text>
 
-              {/* Render each of the 6 distinctly separated Month Blocks */}
-              {monthsData.map((m) => {
-                const monthCenterX = m.startX + m.width / 2;
-                return (
-                  <g key={`${m.name}-${m.year}-${m.month}`}>
-                    {/* Centered Month Label above each month cluster */}
-                    <text
-                      x={monthCenterX}
-                      y="13"
-                      fontSize="9.5"
-                      fontWeight="600"
-                      fill="var(--text-3)"
-                      fontFamily="var(--font-ui)"
-                      textAnchor="middle"
-                    >
-                      {m.name}
-                    </text>
+              {/* Separated Month Groups */}
+              {monthLayouts.map((m) => (
+                <g key={`${m.name}-${m.year}`}>
+                  {/* Centered Month Header */}
+                  <text
+                    x={m.labelCenterX}
+                    y="12"
+                    textAnchor="middle"
+                    fontSize="9.5"
+                    fill="var(--text-3)"
+                    fontFamily="var(--font-ui)"
+                  >
+                    {m.name}
+                  </text>
 
-                    {/* Days in Month */}
-                    {m.cells.map((cell) => {
-                      const isSelected = selectedDateKey === cell.dateKey;
-                      const fill = getCellFill(cell.level);
+                  {/* Day Cells inside this month */}
+                  {m.cells.map((cell) => {
+                    const cellX = m.startX + cell.weekCol * 14;
+                    const cellY = 22 + cell.dayOfWeek * 14;
+                    const isSelected = selectedDateKey === cell.dateKey;
+                    const fill = getCellFill(cell.level, cell.isFuture);
 
-                      return (
-                        <g key={cell.dateKey}>
+                    return (
+                      <g key={cell.dateKey}>
+                        <rect
+                          x={cellX}
+                          y={cellY}
+                          width="11"
+                          height="11"
+                          rx="2.5"
+                          fill={fill}
+                          className="history-heat-cell"
+                          onClick={() => handleCellClick(cell.dateKey)}
+                          onMouseEnter={(e) => {
+                            const rect = (e.target as SVGRectElement).getBoundingClientRect();
+                            setHoveredCell({
+                              dateKey: cell.dateKey,
+                              count: cell.count,
+                              x: rect.left + rect.width / 2,
+                              y: rect.top - 8
+                            });
+                          }}
+                          onMouseLeave={() => setHoveredCell(null)}
+                        >
+                          <title>{`${cell.count} session${cell.count === 1 ? '' : 's'} on ${cell.dateKey}`}</title>
+                        </rect>
+
+                        {/* Active/Selected Ring (Pink/crimson outline matching screenshot) */}
+                        {isSelected && (
                           <rect
-                            x={cell.x}
-                            y={cell.y}
-                            width="11"
-                            height="11"
-                            rx="2.5"
-                            fill={fill}
-                            className="history-heat-cell"
-                            onClick={() => handleCellClick(cell.dateKey)}
-                            onMouseEnter={(e) => {
-                              const rect = (e.target as SVGRectElement).getBoundingClientRect();
-                              setHoveredCell({
-                                dateKey: cell.dateKey,
-                                count: cell.count,
-                                x: rect.left + rect.width / 2,
-                                y: rect.top - 8
-                              });
-                            }}
-                            onMouseLeave={() => setHoveredCell(null)}
-                          >
-                            <title>{`${cell.count} session${cell.count === 1 ? '' : 's'} on ${cell.dateKey}`}</title>
-                          </rect>
-
-                          {/* Selected Day Outline Ring */}
-                          {isSelected && (
-                            <rect
-                              x={cell.x - 1.5}
-                              y={cell.y - 1.5}
-                              width="14"
-                              height="14"
-                              rx="3.5"
-                              fill="none"
-                              stroke="#ff4d6d"
-                              strokeWidth="2"
-                              pointerEvents="none"
-                            />
-                          )}
-                        </g>
-                      );
-                    })}
-                  </g>
-                );
-              })}
+                            x={cellX - 1.5}
+                            y={cellY - 1.5}
+                            width="14"
+                            height="14"
+                            rx="3.5"
+                            fill="none"
+                            stroke="#ff4d6d"
+                            strokeWidth="2"
+                            pointerEvents="none"
+                          />
+                        )}
+                      </g>
+                    );
+                  })}
+                </g>
+              ))}
             </svg>
           </div>
         </section>
@@ -514,7 +535,32 @@ export const HistoryPage: React.FC<HistoryPageProps> = ({
         {/* ================================================================= */}
         <section className="history-watchlog-section" aria-label="Watch log history">
           <div className="history-watchlog-header">
-            <h2 className="history-watchlog-title">Watch log</h2>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+              <h2 className="history-watchlog-title">Watch log</h2>
+              {selectedDateKey && (
+                <button
+                  type="button"
+                  onClick={() => setSelectedDateKey(null)}
+                  style={{
+                    background: 'var(--surface-2)',
+                    border: '1px solid var(--border)',
+                    color: 'var(--accent)',
+                    padding: '2px 8px',
+                    borderRadius: '9999px',
+                    fontSize: '0.72rem',
+                    fontWeight: 600,
+                    cursor: 'pointer',
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '4px'
+                  }}
+                  title="Clear day filter to show all days"
+                >
+                  <span>{selectedDateKey}</span>
+                  <X size={11} />
+                </button>
+              )}
+            </div>
 
             {/* Filter Pills */}
             <div className="history-filter-pills" role="tablist">
@@ -554,19 +600,21 @@ export const HistoryPage: React.FC<HistoryPageProps> = ({
             <div className="history-empty-state">
               <Film size={36} color="var(--text-3)" />
               <p style={{ margin: 0, fontWeight: 600, color: 'var(--text-1)' }}>
-                {videos.length === 0 
-                  ? 'No playback history recorded yet.' 
-                  : selectedDateKey 
-                    ? `No playback sessions recorded for ${selectedDateKey}.`
-                    : 'No matching playback sessions found.'}
+                {selectedDateKey ? `No sessions recorded for ${selectedDateKey}` : 'No playback history recorded yet'}
               </p>
               <p style={{ margin: 0, fontSize: '0.8rem' }}>
-                {videos.length === 0 
-                  ? 'Play any video or stream to automatically record watch history.' 
-                  : selectedDateKey 
-                    ? 'Click the selected date square again to view all days.'
-                    : 'Try clearing your search query or filter.'}
+                {selectedDateKey ? 'Click the day again or select another day to view records.' : 'Play any media in Valor to begin recording your watch history.'}
               </p>
+              {selectedDateKey && (
+                <button
+                  type="button"
+                  className="history-filter-pill active"
+                  style={{ marginTop: '8px' }}
+                  onClick={() => setSelectedDateKey(null)}
+                >
+                  View all days
+                </button>
+              )}
             </div>
           ) : (
             groupedWatchLog.map((group) => (
@@ -593,13 +641,10 @@ export const HistoryPage: React.FC<HistoryPageProps> = ({
                       <div className="history-item-info">
                         <h4 className="history-item-title">{item.title}</h4>
                         <div className="history-item-meta-row">
-                          {item.seasonEpisode && (
-                            <span>{item.seasonEpisode}</span>
-                          )}
-                          {item.playedAtTime && (
-                            <span>· {item.playedAtTime}</span>
-                          )}
-                          <span>· {item.watchedText}</span>
+                          <span>
+                            {item.seasonEpisode ? `${item.seasonEpisode} · ` : ''}{item.playedAtTime}
+                          </span>
+                          <span>{item.watchedText}</span>
 
                           {item.status === 'stopped' ? (
                             <span className="history-badge-stopped">Stopped early</span>
