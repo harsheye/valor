@@ -84,12 +84,211 @@ function getVibrantTileGradient(title: string): string {
   return VIBRANT_TILE_PALETTES[Math.abs(hash) % VIBRANT_TILE_PALETTES.length];
 }
 
+/* --------------------------------------------------------------------------
+   CURATED DEMO DATA (Matching screenshot exactly)
+   -------------------------------------------------------------------------- */
+const RAW_DEMO_ITEMS: HistoryDisplayItem[] = [
+  {
+    id: 'demo-1',
+    title: 'The Perfect Lie',
+    seasonEpisode: 'S1E2',
+    resumeText: 'resume at 1:35',
+    playedAtTime: '8:30 pm',
+    watchedText: '2m watched',
+    status: 'stopped',
+    hasTraktSync: false,
+    isSyncedToTrakt: false,
+    progressPercent: 28,
+    dateKey: '2026-11-02',
+    dayKeyword: 'Today',
+    dayDateStr: '2 Nov 2026',
+    dateGroupLabel: '2026-11-02_Today',
+    timestamp: new Date('2026-11-02T20:30:00Z').getTime(),
+    letter: 'T',
+    letterBg: 'linear-gradient(135deg, #e4f952 0%, #b8e622 100%)',
+    videoItem: {
+      id: 'demo-1',
+      title: 'The Perfect Lie S01E02',
+      url: 'https://demo.valor.stream/the-perfect-lie-e02.mp4',
+      currentTime: 95,
+      duration: '360',
+      lastPlayedDate: '2026-11-02T20:30:00Z',
+      type: 'url',
+      audioTracks: [],
+      subtitleTracks: []
+    }
+  },
+  {
+    id: 'demo-2',
+    title: 'Paper Kingdom',
+    seasonEpisode: 'S1E6',
+    resumeText: 'resume at 40:12',
+    playedAtTime: '11:18 pm',
+    watchedText: '40m watched',
+    status: 'stopped',
+    hasTraktSync: false,
+    isSyncedToTrakt: false,
+    progressPercent: 72,
+    dateKey: '2026-11-01',
+    dayKeyword: 'Yesterday',
+    dayDateStr: '1 Nov 2026',
+    dateGroupLabel: '2026-11-01_Yesterday',
+    timestamp: new Date('2026-11-01T23:18:00Z').getTime(),
+    letter: 'P',
+    letterBg: 'linear-gradient(135deg, #ff7a59 0%, #ea580c 100%)',
+    videoItem: {
+      id: 'demo-2',
+      title: 'Paper Kingdom S01E06',
+      url: 'https://demo.valor.stream/paper-kingdom-e06.mp4',
+      currentTime: 2412,
+      duration: '3300',
+      lastPlayedDate: '2026-11-01T23:18:00Z',
+      type: 'url',
+      audioTracks: [],
+      subtitleTracks: []
+    }
+  },
+  {
+    id: 'demo-3',
+    title: 'The Perfect Lie',
+    seasonEpisode: 'S1E1',
+    resumeText: 'completed',
+    playedAtTime: '8:30 pm',
+    watchedText: '1h 6m watched',
+    status: 'finished',
+    hasTraktSync: true,
+    isSyncedToTrakt: false,
+    stars: 5,
+    progressPercent: 100,
+    dateKey: '2026-11-01',
+    dayKeyword: 'Yesterday',
+    dayDateStr: '1 Nov 2026',
+    dateGroupLabel: '2026-11-01_Yesterday',
+    timestamp: new Date('2026-11-01T20:30:00Z').getTime(),
+    letter: 'T',
+    letterBg: 'linear-gradient(135deg, #e4f952 0%, #b8e622 100%)',
+    videoItem: {
+      id: 'demo-3',
+      title: 'The Perfect Lie S01E01',
+      url: 'https://demo.valor.stream/the-perfect-lie-e01.mp4',
+      currentTime: 3960,
+      duration: '3960',
+      completed: true,
+      lastPlayedDate: '2026-11-01T20:30:00Z',
+      type: 'url',
+      audioTracks: [],
+      subtitleTracks: []
+    }
+  },
+  {
+    id: 'demo-4',
+    title: 'Paper Kingdom',
+    seasonEpisode: 'S2E4',
+    resumeText: 'completed',
+    playedAtTime: '11:48 pm',
+    watchedText: '1h 1m watched',
+    status: 'finished',
+    hasTraktSync: true,
+    isSyncedToTrakt: true,
+    stars: 5,
+    progressPercent: 100,
+    dateKey: '2026-10-31',
+    dayKeyword: 'Sat',
+    dayDateStr: '31 Oct 2026',
+    dateGroupLabel: '2026-10-31_Sat',
+    timestamp: new Date('2026-10-31T23:48:00Z').getTime(),
+    letter: 'P',
+    letterBg: 'linear-gradient(135deg, #ff7a59 0%, #ea580c 100%)',
+    videoItem: {
+      id: 'demo-4',
+      title: 'Paper Kingdom S02E04',
+      url: 'https://demo.valor.stream/paper-kingdom-s02e04.mp4',
+      currentTime: 3660,
+      duration: '3660',
+      completed: true,
+      lastPlayedDate: '2026-10-31T23:48:00Z',
+      type: 'url',
+      audioTracks: [],
+      subtitleTracks: []
+    }
+  },
+  {
+    id: 'demo-5',
+    title: 'Until I Destroyed My Husbands Other Family',
+    seasonEpisode: 'S1E1',
+    resumeText: 'resume at 2:34',
+    playedAtTime: '7:30 pm',
+    watchedText: '3m watched',
+    status: 'stopped',
+    hasTraktSync: false,
+    isSyncedToTrakt: false,
+    progressPercent: 35,
+    dateKey: '2026-10-31',
+    dayKeyword: 'Sat',
+    dayDateStr: '31 Oct 2026',
+    dateGroupLabel: '2026-10-31_Sat',
+    timestamp: new Date('2026-10-31T19:30:00Z').getTime(),
+    letter: 'U',
+    letterBg: 'linear-gradient(135deg, #ff7a59 0%, #ea580c 100%)',
+    videoItem: {
+      id: 'demo-5',
+      title: 'Until I Destroyed My Husbands Other Family S01E01',
+      url: 'https://demo.valor.stream/until-i-destroyed-e01.mp4',
+      currentTime: 154,
+      duration: '450',
+      lastPlayedDate: '2026-10-31T19:30:00Z',
+      type: 'url',
+      audioTracks: [],
+      subtitleTracks: []
+    }
+  },
+  {
+    id: 'demo-6',
+    title: 'Night Harbor',
+    seasonEpisode: 'S1E3',
+    resumeText: 'resume at 43:10',
+    playedAtTime: '10:04 pm',
+    watchedText: '43m watched',
+    status: 'stopped',
+    hasTraktSync: true,
+    isSyncedToTrakt: false,
+    progressPercent: 68,
+    dateKey: '2026-10-29',
+    dayKeyword: 'Thu',
+    dayDateStr: '29 Oct 2026',
+    dateGroupLabel: '2026-10-29_Thu',
+    timestamp: new Date('2026-10-29T22:04:00Z').getTime(),
+    letter: 'N',
+    letterBg: 'linear-gradient(135deg, #ff6b8b 0%, #f43f5e 100%)',
+    videoItem: {
+      id: 'demo-6',
+      title: 'Night Harbor S01E03',
+      url: 'https://demo.valor.stream/night-harbor-e03.mp4',
+      currentTime: 2590,
+      duration: '3800',
+      lastPlayedDate: '2026-10-29T22:04:00Z',
+      type: 'url',
+      audioTracks: [],
+      subtitleTracks: []
+    }
+  }
+];
+
 export const HistoryPage: React.FC<HistoryPageProps> = ({
   videos,
   handlePlayVideo,
   handleRemoveVideo,
   syncVideoToTraktHistory,
 }) => {
+  // Toggle demo data mode (defaults to true if user has 0 items)
+  const [showDemoData, setShowDemoData] = useState<boolean>(() => {
+    try {
+      const saved = localStorage.getItem('valor_history_demo');
+      if (saved !== null) return saved === 'true';
+    } catch {}
+    return videos.length === 0;
+  });
+
   const [searchQuery, setSearchQuery] = useState('');
   const [filterPill, setFilterPill] = useState<'all' | 'stopped' | 'finished' | 'trakt'>('all');
   
@@ -101,9 +300,18 @@ export const HistoryPage: React.FC<HistoryPageProps> = ({
 
   const searchInputRef = useRef<HTMLInputElement>(null);
 
-  // 1. Aggregate real user sessions by dateKey (YYYY-MM-DD)
+  const toggleDemoData = () => {
+    setShowDemoData(prev => {
+      const next = !prev;
+      try { localStorage.setItem('valor_history_demo', String(next)); } catch {}
+      return next;
+    });
+  };
+
+  // 1. Aggregate sessions by dateKey (YYYY-MM-DD)
   const sessionCountsByDate = useMemo(() => {
     const counts: Record<string, number> = {};
+
     videos.forEach(v => {
       if (v.lastPlayedDate) {
         try {
@@ -112,16 +320,48 @@ export const HistoryPage: React.FC<HistoryPageProps> = ({
         } catch {}
       }
     });
-    return counts;
-  }, [videos]);
 
-  // 2. Generate exactly the last 5 months + 1 current month (6 months total), each separated
+    if (showDemoData) {
+      // Seed pseudo-random clusters matching the user's screenshot (308 sessions)
+      let seed = 42;
+      const pseudoRand = () => {
+        seed = (seed * 9301 + 49297) % 233280;
+        return seed / 233280;
+      };
+
+      const now = new Date();
+      // Generate across ~38 weeks (March to November)
+      for (let w = 0; w < 38; w++) {
+        for (let d = 0; d < 7; d++) {
+          const daysAgo = (37 - w) * 7 + (6 - d);
+          const cellDate = new Date(now.getTime() - daysAgo * 86400000);
+          const k = cellDate.toISOString().split('T')[0];
+
+          if (pseudoRand() < 0.42) {
+            const r = pseudoRand();
+            const sessionNum = r < 0.4 ? 1 : r < 0.72 ? 2 : r < 0.9 ? 3 : 4;
+            counts[k] = (counts[k] || 0) + sessionNum;
+          }
+        }
+      }
+
+      // Exact values for known screenshot days
+      counts['2026-11-02'] = 1;
+      counts['2026-11-01'] = 2;
+      counts['2026-10-31'] = 2;
+      counts['2026-10-29'] = 2;
+    }
+
+    return counts;
+  }, [videos, showDemoData]);
+
+  // 2. Generate exactly 9 months (March to November)
   const months = useMemo(() => {
     const list: MonthBlock[] = [];
     const now = new Date();
 
-    // 5 previous months down to 0 (current month)
-    for (let offset = 5; offset >= 0; offset--) {
+    // 8 previous months down to 0 (current month) = 9 months total (Mar - Nov)
+    for (let offset = 8; offset >= 0; offset--) {
       const d = new Date(now.getFullYear(), now.getMonth() - offset, 1);
       const year = d.getFullYear();
       const month = d.getMonth();
@@ -173,9 +413,9 @@ export const HistoryPage: React.FC<HistoryPageProps> = ({
 
   // Calculate layout coordinates for each separated month block
   const { monthLayouts, totalSvgWidth } = useMemo(() => {
-    let currentX = 28; // Initial left margin for day labels (Mon, Wed, Fri)
-    const colWidth = 13; // 10px cell + 3px gap
-    const monthGap = 12; // Distinct visible separation gap between months
+    let currentX = 32; // Left margin for day labels (Mon, Wed, Fri)
+    const colWidth = 14; // 11px cell + 3px gap
+    const monthGap = 16; // Separation gap between months
 
     const layouts = months.map(m => {
       const startX = currentX;
@@ -192,12 +432,13 @@ export const HistoryPage: React.FC<HistoryPageProps> = ({
 
     return {
       monthLayouts: layouts,
-      totalSvgWidth: currentX + 4
+      totalSvgWidth: currentX + 6
     };
   }, [months]);
 
-  // Total sessions recorded across the 6-month period
-  const totalSessionsInLast6Months = useMemo(() => {
+  // Total sessions recorded across the period
+  const totalSessionsInLastYear = useMemo(() => {
+    if (showDemoData) return 308;
     let sum = 0;
     months.forEach(m => {
       m.cells.forEach(c => {
@@ -205,10 +446,14 @@ export const HistoryPage: React.FC<HistoryPageProps> = ({
       });
     });
     return sum;
-  }, [months]);
+  }, [months, showDemoData]);
 
-  // 3. Format real videos for display
+  // 3. Format videos for display
   const allHistoryItems = useMemo<HistoryDisplayItem[]>(() => {
+    if (showDemoData || videos.length === 0) {
+      return RAW_DEMO_ITEMS;
+    }
+
     return videos.map((v, idx) => {
       const rawTitle = v.title || 'Untitled';
       const info = classifyVideoTitle(rawTitle);
@@ -271,7 +516,7 @@ export const HistoryPage: React.FC<HistoryPageProps> = ({
         videoItem: v
       };
     }).sort((a, b) => b.timestamp - a.timestamp);
-  }, [videos]);
+  }, [videos, showDemoData]);
 
   // 4. Filter Watch Log (by search, pill filter, and optional heatmap day selection)
   const filteredItems = useMemo(() => {
@@ -321,28 +566,34 @@ export const HistoryPage: React.FC<HistoryPageProps> = ({
     return Array.from(map.values());
   }, [filteredItems]);
 
-  // Top Continue Watching Cards (Top 2 in-progress items from real data)
+  // Top Continue Watching Cards (2 cards side by side)
   const topResumeCards = useMemo(() => {
+    if (showDemoData) {
+      return [
+        RAW_DEMO_ITEMS[0], // The Perfect Lie S1E2 (resume at 1:35)
+        RAW_DEMO_ITEMS[4], // Until I Destroyed My Husbands Other Family S1E1 (resume at 2:34)
+      ];
+    }
     return allHistoryItems
       .filter(i => i.status === 'stopped' && (i.videoItem.currentTime || 0) > 2)
       .slice(0, 2);
-  }, [allHistoryItems]);
+  }, [allHistoryItems, showDemoData]);
 
-  // GitHub Dark Theme Palette (exact 1:1 match to screenshot)
+  // Crimson / Coral Palette (exact match to user screenshot)
   const getCellFill = (level: number, isFuture: boolean) => {
     if (isFuture) return 'rgba(255, 255, 255, 0.02)';
     switch (level) {
       case 1:
-        return '#0e4429';
+        return '#4c1626'; // subtle dark crimson
       case 2:
-        return '#006d32';
+        return '#8a1c36'; // mid crimson
       case 3:
-        return '#26a641';
+        return '#d9254c'; // vibrant crimson
       case 4:
-        return '#39d353';
+        return '#fb7185'; // bright coral pink
       case 0:
       default:
-        return '#161b22';
+        return '#1a1d26'; // dark empty square
     }
   };
 
@@ -371,6 +622,13 @@ export const HistoryPage: React.FC<HistoryPageProps> = ({
         <header className="history-header">
           <div className="history-header-left">
             <h1 className="history-title">History</h1>
+            <button
+              type="button"
+              className={`history-demo-pill ${showDemoData ? 'active' : ''}`}
+              onClick={toggleDemoData}
+            >
+              Demo data
+            </button>
           </div>
 
           <div className="history-header-right">
@@ -450,19 +708,37 @@ export const HistoryPage: React.FC<HistoryPageProps> = ({
         )}
 
         {/* ================================================================= */}
-        {/* 3. GITHUB HEATMAP CARD (EXACT 1:1 REPLICA FOR 6 MONTHS)           */}
+        {/* 3. GITHUB HEATMAP CARD (EXACT 1:1 REPLICA - ZERO SCROLLING)       */}
         {/* ================================================================= */}
         <section className="history-heatmap-card" aria-label="Contribution and viewing activity heatmap">
-          {/* Scalable SVG Heatmap: Separated Month Groups & Native Compact Scale */}
+          {/* Top Info & Legend */}
+          <div className="history-heatmap-top">
+            <div className="history-heatmap-title-area">
+              <span className="history-heatmap-sessions-count">
+                {showDemoData ? '308 sessions in the last year' : `${totalSessionsInLastYear} session${totalSessionsInLastYear === 1 ? '' : 's'} in the last year`}
+              </span>
+              <span className="history-heatmap-subtitle">
+                Each square is a day. Click one to see what you watched.
+              </span>
+            </div>
+            <div className="history-heatmap-legend">
+              <span>Less</span>
+              <span className="history-legend-square" style={{ background: getCellFill(0, false) }} />
+              <span className="history-legend-square" style={{ background: getCellFill(1, false) }} />
+              <span className="history-legend-square" style={{ background: getCellFill(2, false) }} />
+              <span className="history-legend-square" style={{ background: getCellFill(3, false) }} />
+              <span className="history-legend-square" style={{ background: getCellFill(4, false) }} />
+              <span>More</span>
+            </div>
+          </div>
+
+          {/* Scalable SVG Heatmap: Separated Month Groups & Responsive Fit */}
           <div className="history-heatmap-svg-wrap">
             <svg
               className="history-heatmap-svg"
-              width={totalSvgWidth}
-              height="116"
-              viewBox={`0 0 ${totalSvgWidth} 116`}
+              viewBox={`0 0 ${totalSvgWidth} 118`}
               preserveAspectRatio="xMidYMid meet"
               aria-hidden="true"
-              style={{ width: `${totalSvgWidth}px`, maxWidth: '100%', height: 'auto', display: 'block' }}
             >
               {/* Day Labels on Y-Axis (Mon, Wed, Fri) */}
               <text x="4" y="41" fontSize="9" fill="var(--text-3)" fontFamily="var(--font-ui)">Mon</text>
@@ -516,7 +792,7 @@ export const HistoryPage: React.FC<HistoryPageProps> = ({
                           <title>{`${cell.count} session${cell.count === 1 ? '' : 's'} on ${cell.dateKey}`}</title>
                         </rect>
 
-                        {/* Active/Selected Ring (GitHub bright green highlight outline) */}
+                        {/* Active/Selected Ring */}
                         {isSelected && (
                           <rect
                             x={cellX - 1.5}
@@ -525,7 +801,7 @@ export const HistoryPage: React.FC<HistoryPageProps> = ({
                             height="13"
                             rx="3"
                             fill="none"
-                            stroke="#39d353"
+                            stroke="var(--accent, #ff4d6d)"
                             strokeWidth="1.5"
                             pointerEvents="none"
                           />
@@ -536,23 +812,6 @@ export const HistoryPage: React.FC<HistoryPageProps> = ({
                 </g>
               ))}
             </svg>
-          </div>
-
-          {/* Bottom Bar: Learn link on left, Less...More legend on right */}
-          <div className="history-heatmap-bottom">
-            <span className="history-heatmap-learn-link">
-              Learn how we count watch activity
-            </span>
-
-            <div className="history-heatmap-legend">
-              <span>Less</span>
-              <span className="history-legend-square" style={{ background: getCellFill(0, false) }} />
-              <span className="history-legend-square" style={{ background: getCellFill(1, false) }} />
-              <span className="history-legend-square" style={{ background: getCellFill(2, false) }} />
-              <span className="history-legend-square" style={{ background: getCellFill(3, false) }} />
-              <span className="history-legend-square" style={{ background: getCellFill(4, false) }} />
-              <span>More</span>
-            </div>
           </div>
         </section>
 

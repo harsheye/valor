@@ -53,25 +53,28 @@
   letter-spacing: -0.02em;
 }
 
+.history-demo-pill,
 .history-demo-badge {
   background: var(--surface-2);
   color: var(--text-2);
   border: 1px solid var(--border);
-  padding: 3px 9px;
+  padding: 4px 10px;
   border-radius: 9999px;
-  font-size: 0.72rem;
+  font-size: 0.74rem;
   font-weight: 600;
   cursor: pointer;
   transition: all 0.15s ease;
   user-select: none;
 }
 
+.history-demo-pill:hover,
 .history-demo-badge:hover {
   background: var(--surface-3);
   color: var(--text-1);
   border-color: var(--control-border);
 }
 
+.history-demo-pill.active,
 .history-demo-badge.active {
   background: var(--accent-soft);
   color: var(--accent);
@@ -271,67 +274,73 @@
 }
 
 /* --------------------------------------------------------------------------
-   3. GITHUB HEATMAP CARD (EXACT 1:1 REPLICA FOR 6 MONTHS)
+   3. HEATMAP CARD (FULL-WIDTH TOKEN-DRIVEN, ZERO SCROLLING)
    -------------------------------------------------------------------------- */
 .history-heatmap-card {
   background: var(--surface-1);
   border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  padding: 12px 16px;
+  border-radius: var(--radius-md);
+  padding: 18px 22px;
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  width: fit-content;
-  max-width: 100%;
-  box-sizing: border-box;
-}
-
-.history-heatmap-svg-wrap {
-  width: 100%;
-  display: flex;
-  justify-content: flex-start;
-  overflow: visible;
-}
-
-.history-heatmap-svg {
-  height: auto;
-  display: block;
-}
-
-/* Bottom bar: Learn link on left, Less...More legend on right */
-.history-heatmap-bottom {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
   gap: var(--space-4);
   width: 100%;
-  padding-top: 2px;
+  box-sizing: border-box;
+  overflow: hidden;
 }
 
-.history-heatmap-learn-link {
-  font-size: 0.72rem;
+.history-heatmap-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+}
+
+.history-heatmap-title-area {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.history-heatmap-sessions-count {
+  font-family: var(--font-display);
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: var(--text-1);
+}
+
+.history-heatmap-subtitle {
+  font-size: 0.8rem;
   color: var(--text-3);
-  user-select: none;
-}
-
-.history-heatmap-learn-link:hover {
-  color: var(--text-2);
 }
 
 /* Legend */
 .history-heatmap-legend {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  font-size: 0.7rem;
+  gap: 5px;
+  font-size: 0.72rem;
   color: var(--text-3);
-  margin-left: auto;
 }
 
 .history-legend-square {
   width: 10px;
   height: 10px;
   border-radius: 2px;
+}
+
+/* Heatmap SVG Wrap - 100% WIDTH, ZERO HORIZONTAL SCROLL */
+.history-heatmap-svg-wrap {
+  width: 100%;
+  overflow: hidden;
+  display: block;
+}
+
+.history-heatmap-svg {
+  width: 100%;
+  height: auto;
+  display: block;
 }
 
 .history-heat-cell {
