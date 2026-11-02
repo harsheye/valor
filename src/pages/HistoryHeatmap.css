@@ -1,0 +1,651 @@
+/* ==========================================================================
+   VALOR HISTORY PAGE - GITHUB-STYLE HEATMAP & WATCH LOG
+   100% Token-driven, zero horizontal scroll, responsive layout.
+   ========================================================================== */
+
+.history-heatmap-container {
+  width: 100%;
+  min-height: 100%;
+  flex: 1;
+  background: var(--bg);
+  color: var(--text-1);
+  font-family: var(--font-ui);
+  padding: var(--space-6) var(--space-5) var(--space-8);
+  box-sizing: border-box;
+  overflow-y: auto;
+  overflow-x: hidden;
+  -webkit-overflow-scrolling: touch;
+}
+
+.history-heatmap-wrapper {
+  max-width: 1020px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+  box-sizing: border-box;
+  width: 100%;
+}
+
+/* --------------------------------------------------------------------------
+   1. TOP HEADER
+   -------------------------------------------------------------------------- */
+.history-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--space-4);
+}
+
+.history-header-left {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.history-title {
+  font-family: var(--font-display);
+  font-size: 1.85rem;
+  font-weight: 800;
+  color: var(--text-1);
+  margin: 0;
+  letter-spacing: -0.02em;
+}
+
+.history-demo-badge {
+  background: var(--surface-2);
+  color: var(--text-2);
+  border: 1px solid var(--border);
+  padding: 3px 9px;
+  border-radius: 9999px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  user-select: none;
+}
+
+.history-demo-badge:hover {
+  background: var(--surface-3);
+  color: var(--text-1);
+  border-color: var(--control-border);
+}
+
+.history-demo-badge.active {
+  background: var(--accent-soft);
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 35%, var(--border));
+}
+
+.history-header-right {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+.history-search-box {
+  position: relative;
+  display: flex;
+  align-items: center;
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: 9999px;
+  padding: 6px 14px 6px 12px;
+  gap: 8px;
+  width: 240px;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.history-search-box:focus-within {
+  border-color: var(--focus-ring);
+  box-shadow: 0 0 0 1px var(--focus-ring);
+}
+
+.history-search-input {
+  background: transparent;
+  border: none;
+  outline: none;
+  color: var(--text-1);
+  font-size: 0.82rem;
+  font-family: var(--font-ui);
+  width: 100%;
+}
+
+.history-search-input::placeholder {
+  color: var(--text-3);
+}
+
+.history-clear-btn {
+  background: transparent;
+  color: #ef4444;
+  border: 1px solid rgba(239, 68, 68, 0.3);
+  padding: 6px 14px;
+  border-radius: var(--radius-sm);
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background-color 0.15s ease, border-color 0.15s ease, transform 0.1s ease;
+}
+
+.history-clear-btn:hover {
+  background: rgba(239, 68, 68, 0.1);
+  border-color: #ef4444;
+}
+
+.history-clear-btn:active {
+  transform: scale(0.97);
+}
+
+/* --------------------------------------------------------------------------
+   2. TOP RESUME CARDS (SIDE BY SIDE)
+   -------------------------------------------------------------------------- */
+.history-resume-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-4);
+  width: 100%;
+}
+
+@media (max-width: 640px) {
+  .history-resume-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.history-resume-card {
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 14px 18px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  box-sizing: border-box;
+  transition: border-color 0.15s ease, transform 0.15s ease;
+}
+
+.history-resume-card:hover {
+  border-color: var(--control-border);
+}
+
+.history-resume-left {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 0;
+  flex: 1;
+}
+
+.history-avatar-tile {
+  width: 44px;
+  height: 44px;
+  min-width: 44px;
+  border-radius: var(--radius-sm);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--font-display);
+  font-size: 1.25rem;
+  font-weight: 800;
+  color: #ffffff;
+  user-select: none;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.history-avatar-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.history-resume-info {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+  flex: 1;
+}
+
+.history-resume-title {
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: var(--text-1);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin: 0;
+}
+
+.history-resume-sub {
+  font-size: 0.78rem;
+  color: var(--text-3);
+  margin: 0;
+}
+
+.history-progress-track {
+  width: 100%;
+  max-width: 160px;
+  height: 3px;
+  background: rgba(255, 255, 255, 0.12);
+  border-radius: 2px;
+  margin-top: 4px;
+  overflow: hidden;
+}
+
+.history-progress-fill {
+  height: 100%;
+  background: var(--accent);
+  border-radius: 2px;
+}
+
+.history-resume-btn {
+  background: var(--accent-fill);
+  color: var(--on-accent);
+  border: none;
+  border-radius: var(--radius-sm);
+  padding: 8px 16px;
+  font-size: 0.82rem;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: opacity 0.15s ease, transform 0.1s ease;
+}
+
+.history-resume-btn:hover {
+  opacity: 0.92;
+}
+
+.history-resume-btn:active {
+  transform: scale(0.97);
+}
+
+/* --------------------------------------------------------------------------
+   3. GITHUB HEATMAP CARD (NO SCROLLING ALLOWED)
+   -------------------------------------------------------------------------- */
+.history-heatmap-card {
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 20px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.history-heatmap-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+}
+
+.history-heatmap-title-area {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.history-heatmap-sessions-count {
+  font-family: var(--font-display);
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: var(--text-1);
+}
+
+.history-heatmap-subtitle {
+  font-size: 0.8rem;
+  color: var(--text-3);
+}
+
+/* Legend */
+.history-heatmap-legend {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 0.72rem;
+  color: var(--text-3);
+}
+
+.history-legend-square {
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+}
+
+/* Heatmap SVG Grid (Guaranteed No Horizontal Scroll) */
+.history-heatmap-svg-wrap {
+  width: 100%;
+  overflow: visible;
+}
+
+.history-heatmap-svg {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+
+.history-heat-cell {
+  cursor: pointer;
+  transition: transform 0.1s ease, filter 0.1s ease;
+}
+
+.history-heat-cell:hover {
+  filter: brightness(1.25);
+}
+
+/* --------------------------------------------------------------------------
+   4. WATCH LOG SECTION
+   -------------------------------------------------------------------------- */
+.history-watchlog-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  width: 100%;
+}
+
+.history-watchlog-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+}
+
+.history-watchlog-title {
+  font-family: var(--font-display);
+  font-size: 1.25rem;
+  font-weight: 700;
+  color: var(--text-1);
+  margin: 0;
+}
+
+.history-filter-pills {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.history-filter-pill {
+  background: var(--surface-2);
+  color: var(--text-2);
+  border: 1px solid var(--border);
+  padding: 5px 12px;
+  border-radius: 9999px;
+  font-size: 0.76rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.history-filter-pill:hover {
+  background: var(--surface-3);
+  color: var(--text-1);
+}
+
+.history-filter-pill.active {
+  background: var(--accent-fill);
+  color: var(--on-accent);
+  border-color: var(--accent);
+}
+
+/* Day Groups */
+.history-day-group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.history-day-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  padding: 4px 2px;
+  margin-top: 6px;
+}
+
+.history-day-title {
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: var(--text-1);
+}
+
+.history-day-meta {
+  font-size: 0.76rem;
+  color: var(--text-3);
+  font-family: ui-monospace, monospace;
+}
+
+/* History Row Card */
+.history-item-row {
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 12px 16px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  box-sizing: border-box;
+  transition: border-color 0.15s ease, background-color 0.15s ease;
+}
+
+.history-item-row:hover {
+  border-color: var(--control-border);
+  background: var(--surface-2);
+}
+
+.history-item-left {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 0;
+  flex: 1;
+}
+
+.history-item-info {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+  flex: 1;
+}
+
+.history-item-title {
+  font-size: 0.92rem;
+  font-weight: 700;
+  color: var(--text-1);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin: 0;
+}
+
+.history-item-meta-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-size: 0.76rem;
+  color: var(--text-3);
+}
+
+.history-badge-stopped {
+  background: var(--surface-3);
+  color: var(--text-2);
+  border: 1px solid var(--border);
+  padding: 1px 7px;
+  border-radius: 4px;
+  font-size: 0.7rem;
+  font-weight: 600;
+}
+
+.history-badge-finished {
+  background: color-mix(in srgb, var(--success) 14%, var(--surface-1));
+  color: var(--success);
+  border: 1px solid color-mix(in srgb, var(--success) 32%, transparent);
+  padding: 1px 7px;
+  border-radius: 4px;
+  font-size: 0.7rem;
+  font-weight: 600;
+}
+
+.history-stars {
+  color: #facc15;
+  font-size: 0.72rem;
+  letter-spacing: 1px;
+}
+
+/* Right Action Buttons */
+.history-item-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.history-btn-play {
+  background: var(--surface-3);
+  color: var(--text-1);
+  border: 1px solid var(--border);
+  padding: 6px 12px;
+  border-radius: var(--radius-sm);
+  font-size: 0.78rem;
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.history-btn-play:hover {
+  background: var(--surface-2);
+  border-color: var(--control-border);
+}
+
+.history-btn-play:active {
+  transform: scale(0.97);
+}
+
+.history-btn-resume {
+  background: var(--accent-fill);
+  color: var(--on-accent);
+  border: none;
+  padding: 6px 14px;
+  border-radius: var(--radius-sm);
+  font-size: 0.78rem;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  cursor: pointer;
+  transition: opacity 0.15s ease, transform 0.1s ease;
+}
+
+.history-btn-resume:hover {
+  opacity: 0.92;
+}
+
+.history-btn-resume:active {
+  transform: scale(0.97);
+}
+
+.history-btn-trakt-sync {
+  background: transparent;
+  color: var(--accent);
+  border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent);
+  padding: 5px 10px;
+  border-radius: var(--radius-sm);
+  font-size: 0.74rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.history-btn-trakt-sync:hover {
+  background: var(--accent-soft);
+}
+
+.history-btn-trakt-synced {
+  background: color-mix(in srgb, var(--success) 12%, var(--surface-1));
+  color: var(--success);
+  border: 1px solid color-mix(in srgb, var(--success) 30%, transparent);
+  padding: 5px 10px;
+  border-radius: var(--radius-sm);
+  font-size: 0.74rem;
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  cursor: default;
+}
+
+.history-btn-remove {
+  background: transparent;
+  color: var(--text-3);
+  border: none;
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-sm);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.history-btn-remove:hover {
+  background: rgba(239, 68, 68, 0.12);
+  color: #ef4444;
+}
+
+/* Empty State */
+.history-empty-state {
+  text-align: center;
+  padding: 48px 24px;
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-3);
+  color: var(--text-3);
+}
+
+/* Clear Modal */
+.history-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.75);
+  backdrop-filter: blur(4px);
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+}
+
+.history-modal-box {
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 24px;
+  max-width: 400px;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  box-shadow: 0 20px 40px var(--scrim);
+}
