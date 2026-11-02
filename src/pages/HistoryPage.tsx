@@ -4,7 +4,6 @@ import {
   X, 
   Search, 
   Check, 
-  Trash2, 
   Film,
   AlertTriangle
 } from 'lucide-react';
@@ -31,15 +30,24 @@ interface HeatCell {
   date: Date;
   dateKey: string;
   dayOfWeek: number; // 0 = Sun, 1 = Mon ... 6 = Sat
-  weekIndex: number; // 0 to 51
+  x: number;
+  y: number;
   count: number;
   level: 0 | 1 | 2 | 3 | 4;
 }
 
-interface DemoHistoryItem {
+interface HeatMonth {
+  name: string;
+  year: number;
+  month: number;
+  startX: number;
+  width: number;
+  cells: HeatCell[];
+}
+
+interface HistoryRowItem {
   id: string;
   title: string;
-  seriesTitle?: string;
   seasonEpisode?: string;
   resumeText: string;
   playedAtTime: string;
@@ -56,292 +64,74 @@ interface DemoHistoryItem {
   videoItem: VideoItem;
 }
 
-/* --------------------------------------------------------------------------
-   CURATED DEMO DATA (Matching the screenshot pixel-for-pixel)
-   -------------------------------------------------------------------------- */
-const RAW_DEMO_ITEMS: DemoHistoryItem[] = [
-  {
-    id: 'demo-1',
-    title: 'The Perfect Lie',
-    seasonEpisode: 'S1E2',
-    resumeText: 'resume at 1:35',
-    playedAtTime: '9:30 pm',
-    watchedText: '2m watched',
-    status: 'stopped',
-    hasTraktSync: false,
-    isSyncedToTrakt: false,
-    progressPercent: 28,
-    dateKey: '2026-11-02',
-    dateGroupLabel: 'Today · 2 Nov 2026',
-    letter: 'T',
-    letterBg: '#65a30d',
-    videoItem: {
-      id: 'demo-1',
-      title: 'The Perfect Lie S01E02',
-      url: 'https://demo.valor.stream/the-perfect-lie-e02.mp4',
-      currentTime: 95,
-      duration: '360',
-      lastPlayedDate: '2026-11-02T21:30:00Z',
-      type: 'url',
-      audioTracks: [],
-      subtitleTracks: []
-    }
-  },
-  {
-    id: 'demo-2',
-    title: 'Paper Kingdom',
-    seasonEpisode: 'S1E6',
-    resumeText: 'resume at 40:12',
-    playedAtTime: '11:18 pm',
-    watchedText: '40m watched',
-    status: 'stopped',
-    hasTraktSync: false,
-    isSyncedToTrakt: false,
-    progressPercent: 72,
-    dateKey: '2026-11-01',
-    dateGroupLabel: 'Yesterday · 1 Nov 2026',
-    letter: 'P',
-    letterBg: '#c2410c',
-    videoItem: {
-      id: 'demo-2',
-      title: 'Paper Kingdom S01E06',
-      url: 'https://demo.valor.stream/paper-kingdom-e06.mp4',
-      currentTime: 2412,
-      duration: '3300',
-      lastPlayedDate: '2026-11-01T23:18:00Z',
-      type: 'url',
-      audioTracks: [],
-      subtitleTracks: []
-    }
-  },
-  {
-    id: 'demo-3',
-    title: 'The Perfect Lie',
-    seasonEpisode: 'S1E1',
-    resumeText: 'completed',
-    playedAtTime: '8:30 pm',
-    watchedText: '1h 6m watched',
-    status: 'finished',
-    hasTraktSync: true,
-    isSyncedToTrakt: false,
-    stars: 5,
-    progressPercent: 100,
-    dateKey: '2026-11-01',
-    dateGroupLabel: 'Yesterday · 1 Nov 2026',
-    letter: 'T',
-    letterBg: '#65a30d',
-    videoItem: {
-      id: 'demo-3',
-      title: 'The Perfect Lie S01E01',
-      url: 'https://demo.valor.stream/the-perfect-lie-e01.mp4',
-      currentTime: 3960,
-      duration: '3960',
-      completed: true,
-      lastPlayedDate: '2026-11-01T20:30:00Z',
-      type: 'url',
-      audioTracks: [],
-      subtitleTracks: []
-    }
-  },
-  {
-    id: 'demo-4',
-    title: 'Paper Kingdom',
-    seasonEpisode: 'S2E4',
-    resumeText: 'completed',
-    playedAtTime: '11:48 pm',
-    watchedText: '1h 1m watched',
-    status: 'finished',
-    hasTraktSync: true,
-    isSyncedToTrakt: true,
-    stars: 5,
-    progressPercent: 100,
-    dateKey: '2026-10-31',
-    dateGroupLabel: 'Sat · 31 Oct 2026',
-    letter: 'P',
-    letterBg: '#c2410c',
-    videoItem: {
-      id: 'demo-4',
-      title: 'Paper Kingdom S02E04',
-      url: 'https://demo.valor.stream/paper-kingdom-s02e04.mp4',
-      currentTime: 3660,
-      duration: '3660',
-      completed: true,
-      lastPlayedDate: '2026-10-31T23:48:00Z',
-      type: 'url',
-      audioTracks: [],
-      subtitleTracks: []
-    }
-  },
-  {
-    id: 'demo-5',
-    title: 'Until I Destroyed My Husbands Other Family',
-    seasonEpisode: 'S1E1',
-    resumeText: 'resume at 2:34',
-    playedAtTime: '7:30 pm',
-    watchedText: '3m watched',
-    status: 'stopped',
-    hasTraktSync: false,
-    isSyncedToTrakt: false,
-    progressPercent: 35,
-    dateKey: '2026-10-31',
-    dateGroupLabel: 'Sat · 31 Oct 2026',
-    letter: 'U',
-    letterBg: '#ea580c',
-    videoItem: {
-      id: 'demo-5',
-      title: 'Until I Destroyed My Husbands Other Family S01E01',
-      url: 'https://demo.valor.stream/until-i-destroyed-e01.mp4',
-      currentTime: 154,
-      duration: '450',
-      lastPlayedDate: '2026-10-31T19:30:00Z',
-      type: 'url',
-      audioTracks: [],
-      subtitleTracks: []
-    }
-  },
-  {
-    id: 'demo-6',
-    title: 'Night Harbor',
-    seasonEpisode: 'S1E3',
-    resumeText: 'resume at 43:10',
-    playedAtTime: '10:04 pm',
-    watchedText: '43m watched',
-    status: 'stopped',
-    hasTraktSync: true,
-    isSyncedToTrakt: false,
-    progressPercent: 68,
-    dateKey: '2026-10-29',
-    dateGroupLabel: 'Thu · 29 Oct 2026',
-    letter: 'N',
-    letterBg: '#db2777',
-    videoItem: {
-      id: 'demo-6',
-      title: 'Night Harbor S01E03',
-      url: 'https://demo.valor.stream/night-harbor-e03.mp4',
-      currentTime: 2590,
-      duration: '3800',
-      lastPlayedDate: '2026-10-29T22:04:00Z',
-      type: 'url',
-      audioTracks: [],
-      subtitleTracks: []
-    }
-  }
-];
-
 export const HistoryPage: React.FC<HistoryPageProps> = ({
   videos,
   handlePlayVideo,
   handleRemoveVideo,
   syncVideoToTraktHistory,
 }) => {
-  // 1. Data mode: Show demo data if user has 0 items, or allow toggling
-  const [showDemoData, setShowDemoData] = useState<boolean>(() => {
-    try {
-      const saved = localStorage.getItem('valor_history_demo');
-      if (saved !== null) return saved === 'true';
-    } catch {}
-    return videos.length === 0;
-  });
-
   const [searchQuery, setSearchQuery] = useState('');
   const [filterPill, setFilterPill] = useState<'all' | 'stopped' | 'finished' | 'trakt'>('all');
-  const [selectedDateKey, setSelectedDateKey] = useState<string | null>('2026-11-02');
+  // Default to null so all days are shown by default
+  const [selectedDateKey, setSelectedDateKey] = useState<string | null>(null);
   const [isClearModalOpen, setIsClearModalOpen] = useState(false);
   const [hoveredCell, setHoveredCell] = useState<{ dateKey: string; count: number; x: number; y: number } | null>(null);
 
   const searchInputRef = useRef<HTMLInputElement>(null);
 
-  // Toggle demo data mode
-  const toggleDemoData = () => {
-    setShowDemoData(prev => {
-      const next = !prev;
-      try { localStorage.setItem('valor_history_demo', String(next)); } catch {}
-      return next;
-    });
-  };
-
-  // 2. Compute date range: 52 weeks ending today
-  const today = useMemo(() => new Date('2026-11-02T12:00:00Z'), []);
-
-  // 3. Aggregate video sessions by dateKey (YYYY-MM-DD)
-  const sessionCountsByDate = useMemo(() => {
+  // 1. Calculate the 6 months (last 5 months + 1 current month) with distinct gaps
+  const { monthsData, totalWidth, totalSessionsIn6Months } = useMemo(() => {
     const counts: Record<string, number> = {};
+    const now = new Date();
 
-    // First populate from real videos
+    // Start of the 6-month window (1st day of month 5 months ago)
+    const windowStart = new Date(now.getFullYear(), now.getMonth() - 5, 1);
+    windowStart.setHours(0, 0, 0, 0);
+
+    let sessionTotal = 0;
     videos.forEach(v => {
       if (v.lastPlayedDate) {
         try {
-          const k = new Date(v.lastPlayedDate).toISOString().split('T')[0];
-          counts[k] = (counts[k] || 0) + 1;
+          const d = new Date(v.lastPlayedDate);
+          if (d >= windowStart) {
+            const k = d.toISOString().split('T')[0];
+            counts[k] = (counts[k] || 0) + 1;
+            sessionTotal++;
+          }
         } catch {}
       }
     });
 
-    // If demo mode active or few real items, seed realistic heatmap pattern (~308 sessions)
-    if (showDemoData) {
-      // Seed pseudo-random clusters matching the user's screenshot
-      const seedWeeks = [
-        { startWeek: 8, endWeek: 14, density: 0.65 },   // Mar
-        { startWeek: 15, endWeek: 18, density: 0.8 },   // Apr
-        { startWeek: 19, endWeek: 22, density: 0.9 },   // May
-        { startWeek: 26, endWeek: 31, density: 0.75 },  // Jul
-        { startWeek: 34, endWeek: 38, density: 0.7 },   // Aug/Sep
-        { startWeek: 40, endWeek: 45, density: 0.85 },  // Oct
-        { startWeek: 46, endWeek: 51, density: 0.9 }    // late Oct / Nov
-      ];
+    const monthGap = 16;   // Distinct separation between each month block
+    const colPitch = 14;   // 11px square + 3px gap
+    let currentX = 32;     // Left offset for Mon/Wed/Fri labels
 
-      // Deterministic pseudo-random generation
-      let seed = 42;
-      const pseudoRand = () => {
-        seed = (seed * 9301 + 49297) % 233280;
-        return seed / 233280;
-      };
+    const months: HeatMonth[] = [];
 
-      for (let w = 0; w < 52; w++) {
-        const cluster = seedWeeks.find(c => w >= c.startWeek && w <= c.endWeek);
-        const baseProb = cluster ? cluster.density : 0.22;
+    // Iterate through the 6 months: (now.getMonth() - 5) up to current month (now.getMonth() - 0)
+    for (let i = 5; i >= 0; i--) {
+      const monthDate = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      const year = monthDate.getFullYear();
+      const month = monthDate.getMonth();
+      const monthName = monthDate.toLocaleDateString([], { month: 'short' });
 
-        for (let d = 0; d < 7; d++) {
-          const daysAgo = (51 - w) * 7 + (6 - d);
-          const cellDate = new Date(today.getTime() - daysAgo * 86400000);
-          const k = cellDate.toISOString().split('T')[0];
+      // Number of days in this month
+      const daysInMonth = new Date(year, month + 1, 0).getDate();
 
-          if (pseudoRand() < baseProb) {
-            const r = pseudoRand();
-            const sessionNum = r < 0.4 ? 1 : r < 0.75 ? 2 : r < 0.92 ? 3 : 5;
-            counts[k] = (counts[k] || 0) + sessionNum;
-          }
+      const monthStartX = currentX;
+      let col = 0;
+      const cells: HeatCell[] = [];
+
+      for (let day = 1; day <= daysInMonth; day++) {
+        const cellDate = new Date(year, month, day);
+        const dayOfWeek = cellDate.getDay(); // 0 = Sun, 1 = Mon ... 6 = Sat
+
+        if (day > 1 && dayOfWeek === 0) {
+          col++;
         }
-      }
 
-      // Exact values for known screenshot days
-      counts['2026-11-02'] = 1;
-      counts['2026-11-01'] = 2;
-      counts['2026-10-31'] = 2;
-      counts['2026-10-29'] = 2;
-    }
-
-    return counts;
-  }, [videos, showDemoData, today]);
-
-  // Total session count in the last year
-  const totalSessionsInLastYear = useMemo(() => {
-    let sum = 0;
-    Object.values(sessionCountsByDate).forEach(c => { sum += c; });
-    return sum > 0 ? sum : (showDemoData ? 308 : 0);
-  }, [sessionCountsByDate, showDemoData]);
-
-  // 4. Build 52-week grid (columns = 52, rows = 7)
-  const heatmapCells = useMemo(() => {
-    const cells: HeatCell[] = [];
-
-    for (let w = 0; w < 52; w++) {
-      for (let d = 0; d < 7; d++) {
-        // daysAgo calculated from today
-        const daysAgo = (51 - w) * 7 + (6 - d);
-        const cellDate = new Date(today.getTime() - daysAgo * 86400000);
         const dateKey = cellDate.toISOString().split('T')[0];
-        const count = sessionCountsByDate[dateKey] || 0;
+        const count = counts[dateKey] || 0;
 
         let level: 0 | 1 | 2 | 3 | 4 = 0;
         if (count >= 4) level = 4;
@@ -349,45 +139,47 @@ export const HistoryPage: React.FC<HistoryPageProps> = ({
         else if (count === 2) level = 2;
         else if (count === 1) level = 1;
 
+        const cellX = monthStartX + col * colPitch;
+        const cellY = 22 + dayOfWeek * colPitch;
+
         cells.push({
           date: cellDate,
           dateKey,
-          dayOfWeek: d,
-          weekIndex: w,
+          dayOfWeek,
+          x: cellX,
+          y: cellY,
           count,
           level
         });
       }
+
+      const monthCols = col + 1;
+      const monthWidth = monthCols * colPitch - 3;
+
+      months.push({
+        name: monthName,
+        year,
+        month,
+        startX: monthStartX,
+        width: monthWidth,
+        cells
+      });
+
+      // Advance X position with monthGap to keep each month distinctly separated
+      currentX += monthWidth + monthGap;
     }
 
-    return cells;
-  }, [today, sessionCountsByDate]);
+    const totalSvgWidth = currentX + 8;
 
-  // Month labels across the 52 weeks
-  const monthLabels = useMemo(() => {
-    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-    const labels: { name: string; weekIndex: number }[] = [];
-    let lastMonth = -1;
+    return {
+      monthsData: months,
+      totalWidth: Math.max(560, totalSvgWidth),
+      totalSessionsIn6Months: sessionTotal
+    };
+  }, [videos]);
 
-    for (let w = 0; w < 52; w++) {
-      const daysAgo = (51 - w) * 7;
-      const d = new Date(today.getTime() - daysAgo * 86400000);
-      const m = d.getMonth();
-      if (m !== lastMonth) {
-        labels.push({ name: months[m], weekIndex: w });
-        lastMonth = m;
-      }
-    }
-
-    return labels;
-  }, [today]);
-
-  // 5. Watch log items (real videos formatted + fallback demo items)
-  const allHistoryItems = useMemo<DemoHistoryItem[]>(() => {
-    if (videos.length === 0 || showDemoData) {
-      return RAW_DEMO_ITEMS;
-    }
-
+  // 2. Real Watch Log Items (100% from user's playback history)
+  const allHistoryItems = useMemo<HistoryRowItem[]>(() => {
     return videos.map((v, idx) => {
       const rawTitle = v.title || 'Untitled';
       const info = classifyVideoTitle(rawTitle);
@@ -399,8 +191,11 @@ export const HistoryPage: React.FC<HistoryPageProps> = ({
       const letter = getFirstAlphanumeric(rawTitle);
 
       const d = v.lastPlayedDate ? new Date(v.lastPlayedDate) : new Date();
-      const dateKey = !isNaN(d.getTime()) ? d.toISOString().split('T')[0] : '2026-11-02';
-      const timeStr = !isNaN(d.getTime()) ? d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : '9:30 pm';
+      const dateKey = !isNaN(d.getTime()) ? d.toISOString().split('T')[0] : '';
+      const timeStr = !isNaN(d.getTime()) 
+        ? d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) 
+        : '';
+      
       const durSec = typeof v.duration === 'number' ? v.duration : parseDurationToSeconds(v.duration);
       const curr = v.currentTime || 0;
       const isFinished = !!(v.completed || (durSec > 0 && curr >= durSec - 15));
@@ -416,7 +211,7 @@ export const HistoryPage: React.FC<HistoryPageProps> = ({
         hasTraktSync: true,
         isSyncedToTrakt: !!(v as any).traktSynced,
         stars: isFinished ? 5 : undefined,
-        progressPercent: durSec > 0 ? Math.min(100, Math.round((curr / durSec) * 100)) : 40,
+        progressPercent: durSec > 0 ? Math.min(100, Math.round((curr / durSec) * 100)) : 0,
         dateKey,
         dateGroupLabel: d.toLocaleDateString([], { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' }),
         letter,
@@ -424,24 +219,30 @@ export const HistoryPage: React.FC<HistoryPageProps> = ({
         videoItem: v
       };
     });
-  }, [videos, showDemoData]);
+  }, [videos]);
 
-  // Filter Watch log
+  // 3. Top in-progress Continue Watching cards (if any real in-progress items exist)
+  const topResumeCards = useMemo(() => {
+    const inProgress = allHistoryItems.filter(i => i.status === 'stopped' && (i.videoItem.currentTime || 0) > 2);
+    return inProgress.slice(0, 2);
+  }, [allHistoryItems]);
+
+  // 4. Filter Watch Log items
   const filteredItems = useMemo(() => {
     return allHistoryItems.filter(item => {
-      // 1. Search Query
+      // 1. Search filter
       if (searchQuery.trim()) {
         const q = searchQuery.toLowerCase().trim();
         const full = `${item.title} ${item.seasonEpisode || ''}`.toLowerCase();
         if (!full.includes(q)) return false;
       }
 
-      // 2. Pill Filter
+      // 2. Status pill filter
       if (filterPill === 'stopped' && item.status !== 'stopped') return false;
       if (filterPill === 'finished' && item.status !== 'finished') return false;
       if (filterPill === 'trakt' && item.isSyncedToTrakt) return false;
 
-      // 3. Date Selection from Heatmap
+      // 3. Date selection from heatmap (if user clicked a day)
       if (selectedDateKey && item.dateKey !== selectedDateKey) {
         return false;
       }
@@ -450,10 +251,10 @@ export const HistoryPage: React.FC<HistoryPageProps> = ({
     });
   }, [allHistoryItems, searchQuery, filterPill, selectedDateKey]);
 
-  // Group items by date for display
+  // 5. Group filtered items by date for display
   const groupedWatchLog = useMemo(() => {
-    const groups: { label: string; dateKey: string; items: DemoHistoryItem[]; totalWatchSec: number }[] = [];
-    const map = new Map<string, DemoHistoryItem[]>();
+    const groups: { label: string; dateKey: string; items: HistoryRowItem[]; totalWatchSec: number }[] = [];
+    const map = new Map<string, HistoryRowItem[]>();
 
     filteredItems.forEach(item => {
       const arr = map.get(item.dateGroupLabel) || [];
@@ -464,7 +265,7 @@ export const HistoryPage: React.FC<HistoryPageProps> = ({
     map.forEach((items, label) => {
       let totalWatchSec = 0;
       items.forEach(i => {
-        totalWatchSec += (i.videoItem.currentTime || 120);
+        totalWatchSec += (i.videoItem.currentTime || 0);
       });
       groups.push({
         label,
@@ -477,15 +278,7 @@ export const HistoryPage: React.FC<HistoryPageProps> = ({
     return groups;
   }, [filteredItems]);
 
-  // Top Continue Watching Cards (Top 2 in-progress items)
-  const topResumeCards = useMemo(() => {
-    const inProgress = allHistoryItems.filter(i => i.status === 'stopped');
-    if (inProgress.length >= 2) return inProgress.slice(0, 2);
-    if (inProgress.length === 1) return [inProgress[0], allHistoryItems[1] || allHistoryItems[0]];
-    return allHistoryItems.slice(0, 2);
-  }, [allHistoryItems]);
-
-  // Cell Level Color Map (Token-friendly / Crimson OLED palette)
+  // Cell fill colors (Graduated crimson tokens)
   const getCellFill = (level: number) => {
     switch (level) {
       case 1:
@@ -521,19 +314,11 @@ export const HistoryPage: React.FC<HistoryPageProps> = ({
     <div className="history-heatmap-container" role="main" aria-label="Watch history and activity heatmap">
       <div className="history-heatmap-wrapper">
         {/* ================================================================= */}
-        {/* 1. TOP HEADER (History title, Demo badge, Search, Clear)          */}
+        {/* 1. TOP HEADER (History title, Search input, Clear history)        */}
         {/* ================================================================= */}
         <header className="history-header">
           <div className="history-header-left">
             <h1 className="history-title">History</h1>
-            <button
-              type="button"
-              className={`history-demo-badge ${showDemoData ? 'active' : ''}`}
-              onClick={toggleDemoData}
-              title="Click to toggle demo sample history"
-            >
-              Demo data
-            </button>
           </div>
 
           <div className="history-header-right">
@@ -552,24 +337,27 @@ export const HistoryPage: React.FC<HistoryPageProps> = ({
                   type="button"
                   onClick={() => setSearchQuery('')}
                   style={{ background: 'transparent', border: 'none', color: 'var(--text-3)', cursor: 'pointer', padding: 0 }}
+                  aria-label="Clear search query"
                 >
                   <X size={13} />
                 </button>
               )}
             </div>
 
-            <button
-              type="button"
-              className="history-clear-btn"
-              onClick={handleClearHistory}
-            >
-              Clear history
-            </button>
+            {videos.length > 0 && (
+              <button
+                type="button"
+                className="history-clear-btn"
+                onClick={handleClearHistory}
+              >
+                Clear history
+              </button>
+            )}
           </div>
         </header>
 
         {/* ================================================================= */}
-        {/* 2. TOP RESUME CARDS (2 SIDE BY SIDE)                             */}
+        {/* 2. TOP RESUME CARDS (Shown only when in-progress videos exist)     */}
         {/* ================================================================= */}
         {topResumeCards.length > 0 && (
           <section className="history-resume-grid" aria-label="Continue Watching">
@@ -610,34 +398,17 @@ export const HistoryPage: React.FC<HistoryPageProps> = ({
         )}
 
         {/* ================================================================= */}
-        {/* 3. GITHUB-STYLE HEATMAP (NO SCROLLING ALLOWED)                    */}
+        {/* 3. GITHUB-STYLE HEATMAP (LAST 5 MONTHS + CURRENT MONTH)           */}
+        {/* Each month distinctly separated, guaranteed zero horizontal scroll */}
         {/* ================================================================= */}
-        <section className="history-heatmap-card" aria-label="Contribution and viewing activity heatmap">
+        <section className="history-heatmap-card" aria-label="Viewing activity heatmap">
           <div className="history-heatmap-top">
             <div className="history-heatmap-title-area">
               <span className="history-heatmap-sessions-count">
-                {totalSessionsInLastYear} sessions in the last year
+                {totalSessionsIn6Months} session{totalSessionsIn6Months === 1 ? '' : 's'} in the last 6 months
               </span>
               <span className="history-heatmap-subtitle">
                 Each square is a day. Click one to see what you watched.
-                {selectedDateKey && (
-                  <button
-                    type="button"
-                    onClick={() => setSelectedDateKey(null)}
-                    style={{
-                      background: 'transparent',
-                      border: 'none',
-                      color: 'var(--accent)',
-                      fontSize: '0.8rem',
-                      fontWeight: 600,
-                      cursor: 'pointer',
-                      marginLeft: '8px',
-                      textDecoration: 'underline'
-                    }}
-                  >
-                    (Show all days)
-                  </button>
-                )}
               </span>
             </div>
 
@@ -653,79 +424,84 @@ export const HistoryPage: React.FC<HistoryPageProps> = ({
             </div>
           </div>
 
-          {/* Scalable SVG Heatmap: Guaranteed Zero Horizontal Scroll */}
+          {/* Scalable SVG Heatmap: Separated Month Blocks & Zero Horizontal Scroll */}
           <div className="history-heatmap-svg-wrap">
             <svg
               className="history-heatmap-svg"
-              viewBox="0 0 780 120"
-              preserveAspectRatio="xMinYMin meet"
+              viewBox={`0 0 ${totalWidth} 125`}
+              preserveAspectRatio="xMidYMid meet"
               aria-hidden="true"
             >
               {/* Day Labels on Y-Axis */}
-              <text x="5" y="38" fontSize="9" fill="var(--text-3)" fontFamily="var(--font-ui)">Mon</text>
-              <text x="5" y="66" fontSize="9" fill="var(--text-3)" fontFamily="var(--font-ui)">Wed</text>
-              <text x="5" y="94" fontSize="9" fill="var(--text-3)" fontFamily="var(--font-ui)">Fri</text>
+              <text x="5" y="44" fontSize="9" fill="var(--text-3)" fontFamily="var(--font-ui)">Mon</text>
+              <text x="5" y="72" fontSize="9" fill="var(--text-3)" fontFamily="var(--font-ui)">Wed</text>
+              <text x="5" y="100" fontSize="9" fill="var(--text-3)" fontFamily="var(--font-ui)">Fri</text>
 
-              {/* Month Labels on X-Axis */}
-              {monthLabels.map((m, idx) => (
-                <text
-                  key={`${m.name}-${idx}`}
-                  x={32 + m.weekIndex * 14.2}
-                  y="12"
-                  fontSize="9.5"
-                  fill="var(--text-3)"
-                  fontFamily="var(--font-ui)"
-                >
-                  {m.name}
-                </text>
-              ))}
-
-              {/* Heatmap Grid Cells (52 Weeks x 7 Days) */}
-              {heatmapCells.map((cell) => {
-                const cellX = 32 + cell.weekIndex * 14.2;
-                const cellY = 20 + cell.dayOfWeek * 14;
-                const isSelected = selectedDateKey === cell.dateKey;
-                const fill = getCellFill(cell.level);
-
+              {/* Render each of the 6 distinctly separated Month Blocks */}
+              {monthsData.map((m) => {
+                const monthCenterX = m.startX + m.width / 2;
                 return (
-                  <g key={cell.dateKey}>
-                    <rect
-                      x={cellX}
-                      y={cellY}
-                      width="11"
-                      height="11"
-                      rx="2.5"
-                      fill={fill}
-                      className="history-heat-cell"
-                      onClick={() => handleCellClick(cell.dateKey)}
-                      onMouseEnter={(e) => {
-                        const rect = (e.target as SVGRectElement).getBoundingClientRect();
-                        setHoveredCell({
-                          dateKey: cell.dateKey,
-                          count: cell.count,
-                          x: rect.left + rect.width / 2,
-                          y: rect.top - 8
-                        });
-                      }}
-                      onMouseLeave={() => setHoveredCell(null)}
+                  <g key={`${m.name}-${m.year}-${m.month}`}>
+                    {/* Centered Month Label above each month cluster */}
+                    <text
+                      x={monthCenterX}
+                      y="13"
+                      fontSize="9.5"
+                      fontWeight="600"
+                      fill="var(--text-3)"
+                      fontFamily="var(--font-ui)"
+                      textAnchor="middle"
                     >
-                      <title>{`${cell.count} session${cell.count === 1 ? '' : 's'} on ${cell.dateKey}`}</title>
-                    </rect>
+                      {m.name}
+                    </text>
 
-                    {/* Active/Selected Ring (Matching the pink/crimson outline from user screenshot) */}
-                    {isSelected && (
-                      <rect
-                        x={cellX - 1.5}
-                        y={cellY - 1.5}
-                        width="14"
-                        height="14"
-                        rx="3.5"
-                        fill="none"
-                        stroke="#ff4d6d"
-                        strokeWidth="2"
-                        pointerEvents="none"
-                      />
-                    )}
+                    {/* Days in Month */}
+                    {m.cells.map((cell) => {
+                      const isSelected = selectedDateKey === cell.dateKey;
+                      const fill = getCellFill(cell.level);
+
+                      return (
+                        <g key={cell.dateKey}>
+                          <rect
+                            x={cell.x}
+                            y={cell.y}
+                            width="11"
+                            height="11"
+                            rx="2.5"
+                            fill={fill}
+                            className="history-heat-cell"
+                            onClick={() => handleCellClick(cell.dateKey)}
+                            onMouseEnter={(e) => {
+                              const rect = (e.target as SVGRectElement).getBoundingClientRect();
+                              setHoveredCell({
+                                dateKey: cell.dateKey,
+                                count: cell.count,
+                                x: rect.left + rect.width / 2,
+                                y: rect.top - 8
+                              });
+                            }}
+                            onMouseLeave={() => setHoveredCell(null)}
+                          >
+                            <title>{`${cell.count} session${cell.count === 1 ? '' : 's'} on ${cell.dateKey}`}</title>
+                          </rect>
+
+                          {/* Selected Day Outline Ring */}
+                          {isSelected && (
+                            <rect
+                              x={cell.x - 1.5}
+                              y={cell.y - 1.5}
+                              width="14"
+                              height="14"
+                              rx="3.5"
+                              fill="none"
+                              stroke="#ff4d6d"
+                              strokeWidth="2"
+                              pointerEvents="none"
+                            />
+                          )}
+                        </g>
+                      );
+                    })}
                   </g>
                 );
               })}
@@ -777,20 +553,20 @@ export const HistoryPage: React.FC<HistoryPageProps> = ({
           {groupedWatchLog.length === 0 ? (
             <div className="history-empty-state">
               <Film size={36} color="var(--text-3)" />
-              <p style={{ margin: 0, fontWeight: 600, color: 'var(--text-1)' }}>No playback history found</p>
-              <p style={{ margin: 0, fontSize: '0.8rem' }}>
-                {selectedDateKey ? `No sessions recorded for ${selectedDateKey}.` : 'Play media to start tracking your history.'}
+              <p style={{ margin: 0, fontWeight: 600, color: 'var(--text-1)' }}>
+                {videos.length === 0 
+                  ? 'No playback history recorded yet.' 
+                  : selectedDateKey 
+                    ? `No playback sessions recorded for ${selectedDateKey}.`
+                    : 'No matching playback sessions found.'}
               </p>
-              {selectedDateKey && (
-                <button
-                  type="button"
-                  className="history-filter-pill active"
-                  style={{ marginTop: '8px' }}
-                  onClick={() => setSelectedDateKey(null)}
-                >
-                  View all history
-                </button>
-              )}
+              <p style={{ margin: 0, fontSize: '0.8rem' }}>
+                {videos.length === 0 
+                  ? 'Play any video or stream to automatically record watch history.' 
+                  : selectedDateKey 
+                    ? 'Click the selected date square again to view all days.'
+                    : 'Try clearing your search query or filter.'}
+              </p>
             </div>
           ) : (
             groupedWatchLog.map((group) => (
@@ -817,10 +593,13 @@ export const HistoryPage: React.FC<HistoryPageProps> = ({
                       <div className="history-item-info">
                         <h4 className="history-item-title">{item.title}</h4>
                         <div className="history-item-meta-row">
-                          <span>
-                            {item.seasonEpisode ? `${item.seasonEpisode} · ` : ''}{item.playedAtTime}
-                          </span>
-                          <span>{item.watchedText}</span>
+                          {item.seasonEpisode && (
+                            <span>{item.seasonEpisode}</span>
+                          )}
+                          {item.playedAtTime && (
+                            <span>· {item.playedAtTime}</span>
+                          )}
+                          <span>· {item.watchedText}</span>
 
                           {item.status === 'stopped' ? (
                             <span className="history-badge-stopped">Stopped early</span>
