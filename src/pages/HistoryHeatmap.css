@@ -53,33 +53,7 @@
   letter-spacing: -0.02em;
 }
 
-.history-demo-pill,
-.history-demo-badge {
-  background: var(--surface-2);
-  color: var(--text-2);
-  border: 1px solid var(--border);
-  padding: 4px 10px;
-  border-radius: 9999px;
-  font-size: 0.74rem;
-  font-weight: 600;
-  cursor: pointer;
-  transition: all 0.15s ease;
-  user-select: none;
-}
 
-.history-demo-pill:hover,
-.history-demo-badge:hover {
-  background: var(--surface-3);
-  color: var(--text-1);
-  border-color: var(--control-border);
-}
-
-.history-demo-pill.active,
-.history-demo-badge.active {
-  background: var(--accent-soft);
-  color: var(--accent);
-  border-color: color-mix(in srgb, var(--accent) 35%, var(--border));
-}
 
 .history-header-right {
   display: flex;
