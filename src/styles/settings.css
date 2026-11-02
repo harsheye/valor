@@ -82,7 +82,7 @@
   flex-direction: column;
   overflow-y: auto;
   overflow-x: hidden;
-  padding: 6px 12px 24px 16px;
+  padding: 6px 16px 24px 0;
   gap: 14px;
   flex-shrink: 0;
   box-sizing: border-box;
@@ -201,7 +201,7 @@
   flex: 1;
   overflow-y: auto;
   overflow-x: hidden;
-  padding: 6px 20px 60px 16px;
+  padding: 6px 0 60px 24px;
   display: flex;
   flex-direction: column;
   position: relative;
@@ -212,12 +212,12 @@
 /* Content Column */
 .settings-column {
   width: 100%;
-  max-width: 880px;
+  max-width: 100%;
   display: flex;
   flex-direction: column;
   gap: 22px;
   padding-bottom: 60px;
-  margin: 0 auto;
+  margin: 0;
 }
 
 /* Section Header in Content */
@@ -249,7 +249,7 @@
   align-items: center;
   gap: 8px;
   flex-wrap: wrap;
-  max-width: 680px;
+  width: 100%;
   margin-top: 6px;
 }
 
@@ -280,15 +280,9 @@
 /* Theme Grid & Cards */
 .settings-theme-grid {
   display: grid;
-  grid-template-columns: repeat(5, 1fr);
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
   gap: 12px;
   margin-top: 6px;
-}
-
-@media (max-width: 900px) {
-  .settings-theme-grid {
-    grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
-  }
 }
 
 .settings-theme-card {
