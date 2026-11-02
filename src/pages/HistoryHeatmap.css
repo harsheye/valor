@@ -122,8 +122,8 @@
 
 .history-clear-btn {
   background: transparent;
-  color: #ef4444;
-  border: 1px solid rgba(239, 68, 68, 0.3);
+  color: var(--danger, #ef4444);
+  border: 1px solid color-mix(in srgb, var(--danger, #ef4444) 30%, transparent);
   padding: 6px 14px;
   border-radius: var(--radius-sm);
   font-size: 0.8rem;
@@ -133,8 +133,8 @@
 }
 
 .history-clear-btn:hover {
-  background: rgba(239, 68, 68, 0.1);
-  border-color: #ef4444;
+  background: color-mix(in srgb, var(--danger, #ef4444) 10%, transparent);
+  border-color: var(--danger, #ef4444);
 }
 
 .history-clear-btn:active {
@@ -432,26 +432,26 @@
 .history-day-keyword {
   font-size: 0.98rem;
   font-weight: 800;
-  color: #ffffff;
+  color: var(--text-1);
 }
 
 .history-day-date {
   font-size: 0.82rem;
   font-weight: 400;
-  color: #94a3b8;
+  color: var(--text-3);
 }
 
 .history-day-meta {
   font-size: 0.8rem;
   font-weight: 500;
-  color: #94a3b8;
+  color: var(--text-3);
 }
 
 /* History Row Card */
 .history-item-row {
-  background: #1b202c;
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 14px;
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
   padding: 12px 18px;
   display: flex;
   align-items: center;
@@ -463,8 +463,8 @@
 }
 
 .history-item-row:hover {
-  border-color: rgba(255, 255, 255, 0.16);
-  background: #212634;
+  border-color: var(--control-border);
+  background: var(--surface-2);
 }
 
 .history-item-left {
@@ -479,7 +479,7 @@
   width: 44px;
   height: 44px;
   min-width: 44px;
-  border-radius: 10px;
+  border-radius: var(--radius-sm);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -487,8 +487,8 @@
   font-weight: 800;
   color: #ffffff;
   font-family: var(--font-display);
-  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
   flex-shrink: 0;
 }
 
@@ -503,7 +503,7 @@
 .history-item-title {
   font-size: 0.94rem;
   font-weight: 700;
-  color: #ffffff;
+  color: var(--text-1);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -516,13 +516,13 @@
   gap: 8px;
   flex-wrap: wrap;
   font-size: 0.78rem;
-  color: #94a3b8;
+  color: var(--text-3);
 }
 
 .history-badge-stopped {
-  background: #2a3140;
-  color: #cbd5e1;
-  border: 1px solid rgba(255, 255, 255, 0.06);
+  background: var(--surface-2);
+  color: var(--text-2);
+  border: 1px solid var(--border);
   padding: 2px 10px;
   border-radius: 9999px;
   font-size: 0.72rem;
@@ -530,9 +530,9 @@
 }
 
 .history-badge-finished {
-  background: rgba(35, 134, 54, 0.22);
-  color: #3fb950;
-  border: 1px solid rgba(46, 160, 67, 0.38);
+  background: rgba(34, 197, 94, 0.12);
+  color: var(--success, #4ade80);
+  border: 1px solid rgba(34, 197, 94, 0.28);
   padding: 2px 10px;
   border-radius: 9999px;
   font-size: 0.72rem;
@@ -543,7 +543,7 @@
 }
 
 .history-stars {
-  color: #e3b341;
+  color: var(--warning, #eab308);
   font-size: 0.78rem;
   letter-spacing: 1px;
 }
@@ -557,9 +557,9 @@
 }
 
 .history-btn-play {
-  background: #1e2430;
-  color: #ffffff;
-  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: var(--surface-2);
+  color: var(--text-1);
+  border: 1px solid var(--border);
   padding: 7px 16px;
   border-radius: 9999px;
   font-size: 0.8rem;
@@ -572,8 +572,8 @@
 }
 
 .history-btn-play:hover {
-  background: #283040;
-  border-color: rgba(255, 255, 255, 0.25);
+  background: var(--surface-3);
+  border-color: var(--control-border);
 }
 
 .history-btn-play:active {
@@ -581,8 +581,8 @@
 }
 
 .history-btn-resume {
-  background: linear-gradient(135deg, #ff4071 0%, #ff2b5e 100%);
-  color: #ffffff;
+  background: var(--accent-fill, #d92d40);
+  color: var(--on-accent, #ffffff);
   border: none;
   padding: 7px 18px;
   border-radius: 9999px;
@@ -592,14 +592,14 @@
   align-items: center;
   gap: 6px;
   cursor: pointer;
-  box-shadow: 0 2px 10px rgba(255, 51, 102, 0.35);
+  box-shadow: 0 2px 8px rgba(217, 45, 64, 0.3);
   transition: all 0.15s ease;
 }
 
 .history-btn-resume:hover {
   opacity: 0.92;
   transform: translateY(-1px);
-  box-shadow: 0 4px 14px rgba(255, 51, 102, 0.45);
+  box-shadow: 0 4px 12px rgba(217, 45, 64, 0.4);
 }
 
 .history-btn-resume:active {
@@ -607,9 +607,9 @@
 }
 
 .history-btn-trakt-sync {
-  background: #1e2430;
-  color: #ffffff;
-  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: transparent;
+  color: var(--text-2);
+  border: 1px solid var(--border);
   padding: 7px 16px;
   border-radius: 9999px;
   font-size: 0.8rem;
@@ -622,14 +622,15 @@
 }
 
 .history-btn-trakt-sync:hover {
-  background: #283040;
-  border-color: rgba(255, 255, 255, 0.25);
+  background: var(--surface-2);
+  color: var(--text-1);
+  border-color: var(--control-border);
 }
 
 .history-btn-trakt-synced {
-  background: rgba(35, 134, 54, 0.2);
-  color: #3fb950;
-  border: 1px solid rgba(46, 160, 67, 0.45);
+  background: rgba(31, 59, 51, 0.65);
+  color: #34d399;
+  border: 1px solid rgba(46, 125, 95, 0.45);
   padding: 7px 16px;
   border-radius: 9999px;
   font-size: 0.8rem;
@@ -641,11 +642,11 @@
 
 .history-btn-remove {
   background: transparent;
-  color: #64748b;
+  color: var(--text-3);
   border: none;
   width: 28px;
   height: 28px;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -654,12 +655,8 @@
 }
 
 .history-btn-remove:hover {
-  color: #ffffff;
-}
-
-.history-btn-remove:hover {
   background: rgba(239, 68, 68, 0.12);
-  color: #ef4444;
+  color: var(--danger, #ef4444);
 }
 
 /* Empty State */

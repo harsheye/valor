@@ -68,14 +68,14 @@ interface HistoryDisplayItem {
 }
 
 const VIBRANT_TILE_PALETTES = [
-  'linear-gradient(135deg, #e4f952 0%, #b8e622 100%)', // lime-yellow (The Perfect Lie)
-  'linear-gradient(135deg, #ff7a59 0%, #ea580c 100%)', // coral-salmon (Paper Kingdom)
-  'linear-gradient(135deg, #ff6b8b 0%, #f43f5e 100%)', // warm rose
-  'linear-gradient(135deg, #38bdf8 0%, #0284c7 100%)', // sky blue
-  'linear-gradient(135deg, #a78bfa 0%, #7c3aed 100%)', // violet purple
-  'linear-gradient(135deg, #34d399 0%, #059669 100%)', // emerald green
-  'linear-gradient(135deg, #fbbf24 0%, #d97706 100%)', // amber gold
-  'linear-gradient(135deg, #f472b6 0%, #db2777 100%)', // rose pink
+  'linear-gradient(135deg, #9a882e 0%, #7b7929 100%)', // olive khaki (The Perfect Lie)
+  'linear-gradient(135deg, #9c342e 0%, #7e2b1e 100%)', // brick terracotta (Paper Kingdom)
+  'linear-gradient(135deg, #8c2d3a 0%, #6e202a 100%)', // muted wine/crimson
+  'linear-gradient(135deg, #2a5f78 0%, #1e4558 100%)', // steel ocean
+  'linear-gradient(135deg, #5b427b 0%, #43315a 100%)', // muted royal purple
+  'linear-gradient(135deg, #2b6b55 0%, #1d4d3c 100%)', // deep forest emerald
+  'linear-gradient(135deg, #9c6c2e 0%, #785220 100%)', // warm amber bronze
+  'linear-gradient(135deg, #78354f 0%, #592539 100%)', // plum rose
 ];
 
 function getVibrantTileGradient(title: string): string {
@@ -105,7 +105,7 @@ const RAW_DEMO_ITEMS: HistoryDisplayItem[] = [
     dateGroupLabel: '2026-11-02_Today',
     timestamp: new Date('2026-11-02T20:30:00Z').getTime(),
     letter: 'T',
-    letterBg: 'linear-gradient(135deg, #e4f952 0%, #b8e622 100%)',
+    letterBg: 'linear-gradient(135deg, #9a882e 0%, #7b7929 100%)',
     videoItem: {
       id: 'demo-1',
       title: 'The Perfect Lie S01E02',
@@ -135,7 +135,7 @@ const RAW_DEMO_ITEMS: HistoryDisplayItem[] = [
     dateGroupLabel: '2026-11-01_Yesterday',
     timestamp: new Date('2026-11-01T23:18:00Z').getTime(),
     letter: 'P',
-    letterBg: 'linear-gradient(135deg, #ff7a59 0%, #ea580c 100%)',
+    letterBg: 'linear-gradient(135deg, #9c342e 0%, #7e2b1e 100%)',
     videoItem: {
       id: 'demo-2',
       title: 'Paper Kingdom S01E06',
@@ -166,7 +166,7 @@ const RAW_DEMO_ITEMS: HistoryDisplayItem[] = [
     dateGroupLabel: '2026-11-01_Yesterday',
     timestamp: new Date('2026-11-01T20:30:00Z').getTime(),
     letter: 'T',
-    letterBg: 'linear-gradient(135deg, #e4f952 0%, #b8e622 100%)',
+    letterBg: 'linear-gradient(135deg, #9a882e 0%, #7b7929 100%)',
     videoItem: {
       id: 'demo-3',
       title: 'The Perfect Lie S01E01',
@@ -198,7 +198,7 @@ const RAW_DEMO_ITEMS: HistoryDisplayItem[] = [
     dateGroupLabel: '2026-10-31_Sat',
     timestamp: new Date('2026-10-31T23:48:00Z').getTime(),
     letter: 'P',
-    letterBg: 'linear-gradient(135deg, #ff7a59 0%, #ea580c 100%)',
+    letterBg: 'linear-gradient(135deg, #9c342e 0%, #7e2b1e 100%)',
     videoItem: {
       id: 'demo-4',
       title: 'Paper Kingdom S02E04',
@@ -229,7 +229,7 @@ const RAW_DEMO_ITEMS: HistoryDisplayItem[] = [
     dateGroupLabel: '2026-10-31_Sat',
     timestamp: new Date('2026-10-31T19:30:00Z').getTime(),
     letter: 'U',
-    letterBg: 'linear-gradient(135deg, #ff7a59 0%, #ea580c 100%)',
+    letterBg: 'linear-gradient(135deg, #9c342e 0%, #7e2b1e 100%)',
     videoItem: {
       id: 'demo-5',
       title: 'Until I Destroyed My Husbands Other Family S01E01',
@@ -259,7 +259,7 @@ const RAW_DEMO_ITEMS: HistoryDisplayItem[] = [
     dateGroupLabel: '2026-10-29_Thu',
     timestamp: new Date('2026-10-29T22:04:00Z').getTime(),
     letter: 'N',
-    letterBg: 'linear-gradient(135deg, #ff6b8b 0%, #f43f5e 100%)',
+    letterBg: 'linear-gradient(135deg, #8c2d3a 0%, #6e202a 100%)',
     videoItem: {
       id: 'demo-6',
       title: 'Night Harbor S01E03',
