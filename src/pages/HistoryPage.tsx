@@ -58,11 +58,30 @@ interface HistoryDisplayItem {
   stars?: number;
   progressPercent: number;
   dateKey: string;
+  dayKeyword: string;
+  dayDateStr: string;
   dateGroupLabel: string;
   timestamp: number;
   letter: string;
   letterBg: string;
   videoItem: VideoItem;
+}
+
+const VIBRANT_TILE_PALETTES = [
+  'linear-gradient(135deg, #e4f952 0%, #b8e622 100%)', // lime-yellow (The Perfect Lie)
+  'linear-gradient(135deg, #ff7a59 0%, #ea580c 100%)', // coral-salmon (Paper Kingdom)
+  'linear-gradient(135deg, #ff6b8b 0%, #f43f5e 100%)', // warm rose
+  'linear-gradient(135deg, #38bdf8 0%, #0284c7 100%)', // sky blue
+  'linear-gradient(135deg, #a78bfa 0%, #7c3aed 100%)', // violet purple
+  'linear-gradient(135deg, #34d399 0%, #059669 100%)', // emerald green
+  'linear-gradient(135deg, #fbbf24 0%, #d97706 100%)', // amber gold
+  'linear-gradient(135deg, #f472b6 0%, #db2777 100%)', // rose pink
+];
+
+function getVibrantTileGradient(title: string): string {
+  let hash = 0;
+  for (let i = 0; i < title.length; i++) hash = (hash << 5) - hash + title.charCodeAt(i);
+  return VIBRANT_TILE_PALETTES[Math.abs(hash) % VIBRANT_TILE_PALETTES.length];
 }
 
 export const HistoryPage: React.FC<HistoryPageProps> = ({
@@ -197,7 +216,7 @@ export const HistoryPage: React.FC<HistoryPageProps> = ({
       const code = (info.season !== undefined && info.episode !== undefined)
         ? `S${info.season}E${info.episode}`
         : '';
-      const tile = getTileColors(rawTitle);
+      const tileBg = getVibrantTileGradient(rawTitle);
       const letter = getFirstAlphanumeric(rawTitle);
 
       const d = v.lastPlayedDate ? new Date(v.lastPlayedDate) : new Date();
@@ -207,18 +226,28 @@ export const HistoryPage: React.FC<HistoryPageProps> = ({
         ? v.duration 
         : (v.duration ? parseDurationToSeconds(v.duration) : 0);
       const curr = v.currentTime || 0;
-      const isFinished = !!(v.completed || (durSec > 0 && curr >= durSec - 15));
+
+      // Auto complete media if within 3-5 minutes (default 240s = 4 min) before time remaining:
+      const remainingSec = durSec > 0 ? durSec - curr : Infinity;
+      const completionThresholdSec = durSec > 360 ? 240 : (durSec > 120 ? 60 : 15);
+      const isFinished = !!(
+        v.completed || 
+        (durSec > 0 && (remainingSec <= completionThresholdSec || curr >= durSec * 0.92))
+      );
 
       const isToday = !isNaN(d.getTime()) && d.toDateString() === new Date().toDateString();
       const yesterday = new Date();
       yesterday.setDate(yesterday.getDate() - 1);
       const isYesterday = !isNaN(d.getTime()) && d.toDateString() === yesterday.toDateString();
 
-      const dateGroupLabel = isToday
-        ? `Today · ${d.toLocaleDateString([], { day: 'numeric', month: 'short', year: 'numeric' })}`
+      const dayKeyword = isToday
+        ? 'Today'
         : isYesterday
-        ? `Yesterday · ${d.toLocaleDateString([], { day: 'numeric', month: 'short', year: 'numeric' })}`
-        : d.toLocaleDateString([], { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' });
+        ? 'Yesterday'
+        : d.toLocaleDateString([], { weekday: 'short' });
+
+      const dayDateStr = d.toLocaleDateString([], { day: 'numeric', month: 'short', year: 'numeric' });
+      const dateGroupLabel = `${dateKey}_${dayKeyword}`;
 
       return {
         id: v.id || `video-${idx}`,
@@ -233,10 +262,12 @@ export const HistoryPage: React.FC<HistoryPageProps> = ({
         stars: isFinished ? 5 : undefined,
         progressPercent: durSec > 0 ? Math.min(100, Math.round((curr / durSec) * 100)) : 40,
         dateKey,
+        dayKeyword,
+        dayDateStr,
         dateGroupLabel,
         timestamp: !isNaN(d.getTime()) ? d.getTime() : 0,
         letter,
-        letterBg: tile.tileBg,
+        letterBg: tileBg,
         videoItem: v
       };
     }).sort((a, b) => b.timestamp - a.timestamp);
@@ -266,31 +297,28 @@ export const HistoryPage: React.FC<HistoryPageProps> = ({
     });
   }, [allHistoryItems, searchQuery, filterPill, selectedDateKey]);
 
-  // Group items by date for display
+  // Group items by date for display (exact match to screenshot)
   const groupedWatchLog = useMemo(() => {
-    const groups: { label: string; dateKey: string; items: HistoryDisplayItem[]; totalWatchSec: number }[] = [];
-    const map = new Map<string, HistoryDisplayItem[]>();
+    const map = new Map<string, { dayKeyword: string; dayDateStr: string; dateKey: string; items: HistoryDisplayItem[]; totalWatchSec: number }>();
 
     filteredItems.forEach(item => {
-      const arr = map.get(item.dateGroupLabel) || [];
-      arr.push(item);
-      map.set(item.dateGroupLabel, arr);
+      const key = item.dateKey || 'unknown';
+      let grp = map.get(key);
+      if (!grp) {
+        grp = {
+          dayKeyword: item.dayKeyword,
+          dayDateStr: item.dayDateStr,
+          dateKey: item.dateKey,
+          items: [],
+          totalWatchSec: 0
+        };
+        map.set(key, grp);
+      }
+      grp.items.push(item);
+      grp.totalWatchSec += (item.videoItem.currentTime || 0);
     });
 
-    map.forEach((items, label) => {
-      let totalWatchSec = 0;
-      items.forEach(i => {
-        totalWatchSec += (i.videoItem.currentTime || 0);
-      });
-      groups.push({
-        label,
-        dateKey: items[0].dateKey,
-        items,
-        totalWatchSec
-      });
-    });
-
-    return groups;
+    return Array.from(map.values());
   }, [filteredItems]);
 
   // Top Continue Watching Cards (Top 2 in-progress items from real data)
@@ -616,12 +644,15 @@ export const HistoryPage: React.FC<HistoryPageProps> = ({
             </div>
           ) : (
             groupedWatchLog.map((group) => (
-              <div key={group.label} className="history-day-group">
+              <div key={group.dateKey} className="history-day-group">
                 {/* Day Header Row */}
                 <div className="history-day-header">
-                  <span className="history-day-title">{group.label}</span>
+                  <div className="history-day-title">
+                    <span className="history-day-keyword">{group.dayKeyword}</span>
+                    <span className="history-day-date">{group.dayDateStr}</span>
+                  </div>
                   <span className="history-day-meta">
-                    {formatRuntime(group.totalWatchSec)} · {group.items.length} session{group.items.length === 1 ? '' : 's'}
+                    {formatRuntime(group.totalWatchSec) || '0m'} · {group.items.length} session{group.items.length === 1 ? '' : 's'}
                   </span>
                 </div>
 
@@ -631,7 +662,7 @@ export const HistoryPage: React.FC<HistoryPageProps> = ({
                     <div className="history-item-left">
                       <div
                         className="history-avatar-tile"
-                        style={{ background: item.letterBg, width: '40px', height: '40px', minWidth: '40px', fontSize: '1.1rem' }}
+                        style={{ background: item.letterBg }}
                       >
                         {item.letter}
                       </div>
@@ -647,13 +678,12 @@ export const HistoryPage: React.FC<HistoryPageProps> = ({
                           {item.status === 'stopped' ? (
                             <span className="history-badge-stopped">Stopped early</span>
                           ) : (
-                            <span className="history-badge-finished">✓ Finished</span>
-                          )}
-
-                          {item.stars && (
-                            <span className="history-stars" aria-label={`${item.stars} stars`}>
-                              {'★'.repeat(item.stars)}
-                            </span>
+                            <>
+                              <span className="history-badge-finished">✓ Finished</span>
+                              <span className="history-stars" aria-label="5 stars">
+                                ★★★★★
+                              </span>
+                            </>
                           )}
                         </div>
                       </div>
@@ -667,35 +697,37 @@ export const HistoryPage: React.FC<HistoryPageProps> = ({
                           className="history-btn-resume"
                           onClick={() => handlePlayVideo(item.videoItem)}
                         >
-                          <Play size={11} fill="currentColor" />
+                          <Play size={11} fill="white" />
                           <span>Resume</span>
                         </button>
                       ) : (
-                        <button
-                          type="button"
-                          className="history-btn-play"
-                          onClick={() => handlePlayVideo(item.videoItem)}
-                        >
-                          <Play size={11} fill="currentColor" />
-                          <span>Play again</span>
-                        </button>
-                      )}
-
-                      {item.hasTraktSync && (
-                        item.isSyncedToTrakt ? (
-                          <span className="history-btn-trakt-synced">
-                            <Check size={12} strokeWidth={2.5} />
-                            <span>Trakt</span>
-                          </span>
-                        ) : (
+                        <>
                           <button
                             type="button"
-                            className="history-btn-trakt-sync"
-                            onClick={(e) => syncVideoToTraktHistory(item.videoItem, e)}
+                            className="history-btn-play"
+                            onClick={() => handlePlayVideo(item.videoItem)}
                           >
-                            Sync to Trakt
+                            <Play size={11} fill="white" />
+                            <span>Play again</span>
                           </button>
-                        )
+
+                          {item.hasTraktSync && (
+                            item.isSyncedToTrakt ? (
+                              <span className="history-btn-trakt-synced">
+                                <Check size={12} strokeWidth={2.5} />
+                                <span>Trakt</span>
+                              </span>
+                            ) : (
+                              <button
+                                type="button"
+                                className="history-btn-trakt-sync"
+                                onClick={(e) => syncVideoToTraktHistory(item.videoItem, e)}
+                              >
+                                Sync to Trakt
+                              </button>
+                            )
+                          )}
+                        </>
                       )}
 
                       <button

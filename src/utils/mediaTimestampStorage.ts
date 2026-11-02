@@ -195,8 +195,9 @@ export function saveMediaTimestamp(
     const { primaryKey, allKeys } = getMediaStorageKeys(media);
     const numDur = typeof duration === 'number' && isFinite(duration) && duration > 0 ? duration : undefined;
     
-    // Check if media completed or near end (within 3 seconds)
-    const isCompleted = forceCompleted || (numDur !== undefined && currentTime >= numDur - 3);
+    // Auto complete media if within 3-5 minutes (default 240s = 4 min) before time remaining:
+    const completionThreshold = numDur !== undefined ? (numDur > 360 ? 240 : (numDur > 120 ? 60 : 10)) : 10;
+    const isCompleted = forceCompleted || (numDur !== undefined && (numDur - currentTime <= completionThreshold || currentTime >= numDur * 0.92));
 
     const record: SavedMediaTimestamp = {
       currentTime: isCompleted ? 0 : Number(currentTime.toFixed(3)),

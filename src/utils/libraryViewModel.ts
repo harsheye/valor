@@ -241,8 +241,7 @@ export function buildMovieViewModel(video: VideoItem, customRenames: Record<stri
   const isCompleted = !!(
     (video as any).completed === true ||
     video.timeToFinish ||
-    (durationSec > 0 && currentTime >= durationSec * 0.95) ||
-    (durationSec > 0 && currentTime >= durationSec - 15)
+    (durationSec > 0 && ((durationSec - currentTime <= (durationSec > 360 ? 240 : (durationSec > 120 ? 60 : 15))) || currentTime >= durationSec * 0.92))
   );
 
   let status: MediaStatus = 'new';
@@ -328,8 +327,7 @@ export function buildEpisodeViewModel(video: VideoItem, customRenames: Record<st
   const isCompleted = !!(
     (video as any).completed === true ||
     video.timeToFinish ||
-    (durationSec > 0 && currentTime >= durationSec * 0.95) ||
-    (durationSec > 0 && currentTime >= durationSec - 15)
+    (durationSec > 0 && ((durationSec - currentTime <= (durationSec > 360 ? 240 : (durationSec > 120 ? 60 : 15))) || currentTime >= durationSec * 0.92))
   );
 
   let status: MediaStatus = 'new';
