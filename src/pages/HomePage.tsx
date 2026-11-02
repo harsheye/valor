@@ -158,22 +158,34 @@ export const HomePage: React.FC<HomePageProps> = ({
   };
 
   return (
-    <div style={{
-      flex: 1,
-      minHeight: 0,
-      height: '100%',
-      overflowY: 'auto',
-      padding: '2rem',
-      display: 'flex',
-      flexDirection: 'column',
-      gap: '1.75rem',
-      boxSizing: 'border-box',
-      width: '100%',
-      position: 'relative',
-      background: 'transparent',
-      maxWidth: '1400px',
-      margin: '0 auto'
-    }}>
+    <div
+      className="home-page-scroll-container"
+      style={{
+        flex: 1,
+        minHeight: 0,
+        height: '100%',
+        width: '100%',
+        overflowY: 'auto',
+        overflowX: 'hidden',
+        boxSizing: 'border-box',
+        position: 'relative',
+        background: 'transparent'
+      }}
+    >
+      <div
+        className="home-page-content-wrapper"
+        style={{
+          maxWidth: '1400px',
+          width: '100%',
+          margin: '0 auto',
+          padding: '2rem',
+          display: 'flex',
+          flexDirection: 'column',
+          gap: '1.75rem',
+          boxSizing: 'border-box',
+          minHeight: '100%'
+        }}
+      >
       {/* Paste Modal */}
       {isPasteModalOpen && (
         <div style={{
@@ -632,6 +644,7 @@ export const HomePage: React.FC<HomePageProps> = ({
           </div>
         </div>
       )}
+      </div>
     </div>
   );
 };

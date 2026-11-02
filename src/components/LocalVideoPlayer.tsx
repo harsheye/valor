@@ -2003,8 +2003,40 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
   const [playPauseFeedback, setPlayPauseFeedback] = useState<{ action: 'play' | 'pause'; id: number } | null>(null);
   const playPauseFeedbackTimeoutRef = useRef<any>(null);
 
-  // Ambiance Lighting frame drawer (70% blur ambient mode behind video)
+  // Ambiance Lighting Controls & Persistence
+  const [isAmbianceEnabled, setIsAmbianceEnabled] = useState<boolean>(() => {
+    try {
+      const saved = localStorage.getItem('valor_ambiance_enabled');
+      if (saved !== null) return saved === 'true';
+    } catch {}
+    return true;
+  });
+
+  const [ambianceBlur, setAmbianceBlur] = useState<number>(() => {
+    try {
+      const saved = localStorage.getItem('valor_ambiance_blur');
+      if (saved) {
+        const val = parseInt(saved, 10);
+        if (!isNaN(val) && val >= 0) return val;
+      }
+    } catch {}
+    return 54;
+  });
+
+  const [ambianceOpacity, setAmbianceOpacity] = useState<number>(() => {
+    try {
+      const saved = localStorage.getItem('valor_ambiance_opacity');
+      if (saved) {
+        const val = parseFloat(saved);
+        if (!isNaN(val) && val >= 0 && val <= 1) return val;
+      }
+    } catch {}
+    return 0.7;
+  });
+
+  // Ambiance Lighting frame drawer (ambient mode behind video)
   const drawAmbientFrame = useCallback(() => {
+    if (!isAmbianceEnabled) return;
     const v = videoRef.current;
     const c = ambientCanvasRef.current;
     if (v && c && v.readyState >= 2) {
@@ -2017,10 +2049,11 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
         setAmbientCanvasError(true);
       }
     }
-  }, []);
+  }, [isAmbianceEnabled]);
 
   // Ambiance lighting render loop (runs at ~25-30fps during playback)
   useEffect(() => {
+    if (!isAmbianceEnabled) return;
     let animId: number;
     let lastRender = 0;
 
@@ -2045,7 +2078,7 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
 
     animId = requestAnimationFrame(renderAmbiance);
     return () => cancelAnimationFrame(animId);
-  }, []);
+  }, [isAmbianceEnabled]);
 
   // Sync fallback ambient video element if canvas cannot read frames (CORS)
   useEffect(() => {
@@ -2093,6 +2126,27 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
       setSwitchToast(prev => ({ ...prev, visible: false }));
     }, dur * 1000);
   };
+
+  const handleToggleAmbiance = useCallback(() => {
+    setIsAmbianceEnabled(prev => {
+      const next = !prev;
+      try { localStorage.setItem('valor_ambiance_enabled', String(next)); } catch {}
+      triggerSwitchToast(next ? 'Ambiance Lighting: Turned On' : 'Ambiance Lighting: Turned Off');
+      return next;
+    });
+  }, [triggerSwitchToast]);
+
+  const handleSetAmbianceBlur = useCallback((blurPx: number) => {
+    setAmbianceBlur(blurPx);
+    try { localStorage.setItem('valor_ambiance_blur', String(blurPx)); } catch {}
+    triggerSwitchToast(`Ambiance Blur: ${blurPx}px`);
+  }, [triggerSwitchToast]);
+
+  const handleSetAmbianceOpacity = useCallback((opacity: number) => {
+    setAmbianceOpacity(opacity);
+    try { localStorage.setItem('valor_ambiance_opacity', String(opacity)); } catch {}
+    triggerSwitchToast(`Ambiance Glow: ${Math.round(opacity * 100)}%`);
+  }, [triggerSwitchToast]);
 
   const cycleAspectRatio = useCallback(() => {
     const ratios = [
@@ -4142,6 +4196,9 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
         triggerSwitchToast(next ? 'Timeline Only (VLC Mode)' : 'Standard Controls');
         return next;
       });
+    } else if (pressedKey === 'a') {
+      e.preventDefault();
+      handleToggleAmbiance();
     } else if (pressedKey === 'arrowup') {
       e.preventDefault();
       if (showVolumeControlMode === 'disable') {
@@ -5123,62 +5180,68 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
           setVlcContextMenuState(prev => prev.visible ? { visible: false, x: 0, y: 0 } : { visible: true, x: e.clientX, y: e.clientY });
         }}
       >
-        {/* Ambiance Lighting Layer (70% blur ambient mode filling blank letterbox / pillarbox bars) */}
-        <div
-          className="video-ambiance-layer"
-          aria-hidden="true"
-          style={{
-            position: 'absolute',
-            inset: 0,
-            width: '100%',
-            height: '100%',
-            overflow: 'hidden',
-            pointerEvents: 'none',
-            zIndex: 1,
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            backgroundColor: '#000000'
-          }}
-        >
-          <canvas
-            ref={ambientCanvasRef}
-            width={160}
-            height={90}
+        {/* Ambiance Lighting Layer */}
+        {isAmbianceEnabled && (
+          <div
+            className="video-ambiance-layer"
+            aria-hidden="true"
             style={{
               position: 'absolute',
               inset: 0,
               width: '100%',
               height: '100%',
-              objectFit: 'cover',
-              filter: 'blur(54px) saturate(1.4) brightness(0.92)',
-              opacity: 0.7,
-              transform: 'scale(1.22)',
-              transformOrigin: 'center center',
-              display: ambientCanvasError ? 'none' : 'block'
+              overflow: 'hidden',
+              pointerEvents: 'none',
+              zIndex: 1,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              backgroundColor: '#000000',
+              transition: 'opacity 0.25s ease'
             }}
-          />
-          {ambientCanvasError && (
-            <video
-              ref={ambientVideoRef}
-              src={video.url}
-              muted
-              playsInline
-              aria-hidden="true"
+          >
+            <canvas
+              ref={ambientCanvasRef}
+              width={160}
+              height={90}
               style={{
                 position: 'absolute',
                 inset: 0,
                 width: '100%',
                 height: '100%',
                 objectFit: 'cover',
-                filter: 'blur(54px) saturate(1.4) brightness(0.92)',
-                opacity: 0.7,
+                filter: `blur(${ambianceBlur}px) saturate(1.4) brightness(0.92)`,
+                opacity: ambianceOpacity,
                 transform: 'scale(1.22)',
-                transformOrigin: 'center center'
+                transformOrigin: 'center center',
+                display: ambientCanvasError ? 'none' : 'block',
+                transition: 'filter 0.25s ease, opacity 0.25s ease'
               }}
             />
-          )}
-        </div>
+            {ambientCanvasError && (
+              <video
+                ref={ambientVideoRef}
+                src={video.url}
+                muted
+                playsInline
+                aria-hidden="true"
+                style={{
+                  position: 'absolute',
+                  inset: 0,
+                  width: '100%',
+                  height: '100%',
+                  objectFit: 'cover',
+                  filter: `blur(${ambianceBlur}px) saturate(1.4) brightness(0.92)`,
+                  opacity: ambianceOpacity,
+                  transform: 'scale(1.22)',
+                  transformOrigin: 'center center',
+                  display: 'block',
+                  transition: 'filter 0.25s ease, opacity 0.25s ease'
+                }}
+              />
+            )}
+          </div>
+        )}
 
         <video
           ref={videoRef}
@@ -9426,6 +9489,12 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
             };
             triggerSwitchToast(`Aspect Ratio: ${labels[ratio] || ratio}`);
           }}
+          isAmbianceEnabled={isAmbianceEnabled}
+          onToggleAmbiance={handleToggleAmbiance}
+          ambianceBlur={ambianceBlur}
+          onSetAmbianceBlur={handleSetAmbianceBlur}
+          ambianceOpacity={ambianceOpacity}
+          onSetAmbianceOpacity={handleSetAmbianceOpacity}
           onOpenSettings={() => setShowSettingsPanel(true)}
           onOpenAudioSubMenu={() => setShowAudioSubMenu(true)}
           bookmarks={bookmarks}

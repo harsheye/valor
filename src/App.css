@@ -114,6 +114,43 @@ html, body {
   overflow-y: auto !important;
   -webkit-overflow-scrolling: touch !important;
 }
+.history-hero-banner:hover {
+  border-color: var(--control-border) !important;
+  transform: translateY(-2px);
+}
+.history-poster-card:hover .poster-container,
+.history-poster-card:hover > div:first-child {
+  border-color: var(--accent) !important;
+  transform: translateY(-4px);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+}
+.history-list-row:hover {
+  border-color: var(--control-border) !important;
+  background: var(--surface-2) !important;
+  transform: translateY(-2px);
+}
+.home-page-scroll-container,
+.history-page-scroll-container {
+  scrollbar-gutter: stable;
+}
+.home-page-scroll-container::-webkit-scrollbar,
+.history-page-scroll-container::-webkit-scrollbar {
+  width: 8px;
+}
+.home-page-scroll-container::-webkit-scrollbar-track,
+.history-page-scroll-container::-webkit-scrollbar-track {
+  background: transparent;
+}
+.home-page-scroll-container::-webkit-scrollbar-thumb,
+.history-page-scroll-container::-webkit-scrollbar-thumb {
+  background: var(--surface-3);
+  border-radius: 4px;
+}
+.home-page-scroll-container::-webkit-scrollbar-thumb:hover,
+.history-page-scroll-container::-webkit-scrollbar-thumb:hover {
+  background: var(--control-border);
+}
+
 .history-list {
   flex: 1 !important;
   min-height: 0 !important;
@@ -1162,6 +1199,43 @@ html, body {
   margin: 0;
   font-size: 0.95rem;
   color: var(--text-muted);
+}
+
+.history-hero-banner:hover {
+  border-color: var(--control-border) !important;
+  transform: translateY(-2px);
+}
+.history-poster-card:hover .poster-container,
+.history-poster-card:hover > div:first-child {
+  border-color: var(--accent) !important;
+  transform: translateY(-4px);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+}
+.history-list-row:hover {
+  border-color: var(--control-border) !important;
+  background: var(--surface-2) !important;
+  transform: translateY(-2px);
+}
+.home-page-scroll-container,
+.history-page-scroll-container {
+  scrollbar-gutter: stable;
+}
+.home-page-scroll-container::-webkit-scrollbar,
+.history-page-scroll-container::-webkit-scrollbar {
+  width: 8px;
+}
+.home-page-scroll-container::-webkit-scrollbar-track,
+.history-page-scroll-container::-webkit-scrollbar-track {
+  background: transparent;
+}
+.home-page-scroll-container::-webkit-scrollbar-thumb,
+.history-page-scroll-container::-webkit-scrollbar-thumb {
+  background: var(--surface-3);
+  border-radius: 4px;
+}
+.home-page-scroll-container::-webkit-scrollbar-thumb:hover,
+.history-page-scroll-container::-webkit-scrollbar-thumb:hover {
+  background: var(--control-border);
 }
 
 .history-list {

@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useLayoutEffect } from 'react';
 import { 
   Play, Pause, Square, SkipBack, SkipForward, Camera,
   Volume2, VolumeX, LogOut, ChevronRight, Check,
-  FolderOpen, Globe, PlusCircle, List
+  FolderOpen, Globe, PlusCircle, List, Sparkles
 } from 'lucide-react';
 import type { CustomAudioTrack, CustomSubtitleTrack } from '../../types/media';
 import type { MediaStream } from '../../services/ffmpeg';
@@ -44,6 +44,13 @@ export interface VlcContextMenuProps {
   onTakeSnapshot: () => void;
   aspectRatio?: string;
   onSetAspectRatio?: (ratio: string) => void;
+  // Ambiance Lighting
+  isAmbianceEnabled?: boolean;
+  onToggleAmbiance?: () => void;
+  ambianceBlur?: number;
+  onSetAmbianceBlur?: (blurPx: number) => void;
+  ambianceOpacity?: number;
+  onSetAmbianceOpacity?: (opacity: number) => void;
   // Subtitles
   subtitleStreams: MediaStream[];
   subtitleTracks: CustomSubtitleTrack[];
@@ -176,6 +183,12 @@ export const VlcContextMenu: React.FC<VlcContextMenuProps> = ({
   onTakeSnapshot,
   aspectRatio = 'default',
   onSetAspectRatio,
+  isAmbianceEnabled = true,
+  onToggleAmbiance,
+  ambianceBlur = 54,
+  onSetAmbianceBlur,
+  ambianceOpacity = 0.7,
+  onSetAmbianceOpacity,
   subtitleStreams = [],
   subtitleTracks = [],
   selectedSubTrack,
@@ -562,6 +575,137 @@ export const VlcContextMenu: React.FC<VlcContextMenuProps> = ({
             }
           ]
         },
+        {
+          id: 'ambiance-lighting',
+          label: <span><u>A</u>mbiance Lighting</span>,
+          icon: <Sparkles size={12} color="#000" />,
+          children: [
+            {
+              id: 'amb-toggle',
+              label: isAmbianceEnabled ? 'Turn Off Ambiance' : 'Turn On Ambiance',
+              checked: isAmbianceEnabled,
+              onClick: () => {
+                onToggleAmbiance?.();
+                onClose();
+              }
+            },
+            { id: 'amb-div-1', isDivider: true, label: '' },
+            {
+              id: 'amb-blur',
+              label: <span><u>B</u>lur Amount ({ambianceBlur}px)</span>,
+              disabled: !isAmbianceEnabled,
+              children: [
+                {
+                  id: 'blur-16',
+                  label: 'Very Light (16px)',
+                  isRadio: true,
+                  checked: isAmbianceEnabled && ambianceBlur === 16,
+                  onClick: () => {
+                    onSetAmbianceBlur?.(16);
+                    onClose();
+                  }
+                },
+                {
+                  id: 'blur-32',
+                  label: 'Subtle / Low (32px)',
+                  isRadio: true,
+                  checked: isAmbianceEnabled && ambianceBlur === 32,
+                  onClick: () => {
+                    onSetAmbianceBlur?.(32);
+                    onClose();
+                  }
+                },
+                {
+                  id: 'blur-54',
+                  label: 'Medium (54px) — Default',
+                  isRadio: true,
+                  checked: isAmbianceEnabled && ambianceBlur === 54,
+                  onClick: () => {
+                    onSetAmbianceBlur?.(54);
+                    onClose();
+                  }
+                },
+                {
+                  id: 'blur-75',
+                  label: 'Soft / High (75px)',
+                  isRadio: true,
+                  checked: isAmbianceEnabled && ambianceBlur === 75,
+                  onClick: () => {
+                    onSetAmbianceBlur?.(75);
+                    onClose();
+                  }
+                },
+                {
+                  id: 'blur-100',
+                  label: 'Strong Glow (100px)',
+                  isRadio: true,
+                  checked: isAmbianceEnabled && ambianceBlur === 100,
+                  onClick: () => {
+                    onSetAmbianceBlur?.(100);
+                    onClose();
+                  }
+                },
+                {
+                  id: 'blur-140',
+                  label: 'Ultra Dreamy (140px)',
+                  isRadio: true,
+                  checked: isAmbianceEnabled && ambianceBlur === 140,
+                  onClick: () => {
+                    onSetAmbianceBlur?.(140);
+                    onClose();
+                  }
+                }
+              ]
+            },
+            {
+              id: 'amb-opacity',
+              label: <span><u>I</u>ntensity / Opacity ({Math.round(ambianceOpacity * 100)}%)</span>,
+              disabled: !isAmbianceEnabled,
+              children: [
+                {
+                  id: 'op-40',
+                  label: 'Soft (40%)',
+                  isRadio: true,
+                  checked: isAmbianceEnabled && ambianceOpacity === 0.4,
+                  onClick: () => {
+                    onSetAmbianceOpacity?.(0.4);
+                    onClose();
+                  }
+                },
+                {
+                  id: 'op-70',
+                  label: 'Balanced (70%) — Default',
+                  isRadio: true,
+                  checked: isAmbianceEnabled && ambianceOpacity === 0.7,
+                  onClick: () => {
+                    onSetAmbianceOpacity?.(0.7);
+                    onClose();
+                  }
+                },
+                {
+                  id: 'op-90',
+                  label: 'Vivid (90%)',
+                  isRadio: true,
+                  checked: isAmbianceEnabled && ambianceOpacity === 0.9,
+                  onClick: () => {
+                    onSetAmbianceOpacity?.(0.9);
+                    onClose();
+                  }
+                },
+                {
+                  id: 'op-100',
+                  label: 'Maximum (100%)',
+                  isRadio: true,
+                  checked: isAmbianceEnabled && ambianceOpacity === 1.0,
+                  onClick: () => {
+                    onSetAmbianceOpacity?.(1.0);
+                    onClose();
+                  }
+                }
+              ]
+            }
+          ]
+        },
         { id: 'vid-div-1', isDivider: true, label: '' },
         {
           id: 'snapshot',
@@ -700,6 +844,16 @@ export const VlcContextMenu: React.FC<VlcContextMenuProps> = ({
           checked: isTimelineOnly,
           onClick: () => {
             onToggleTimelineOnly();
+            onClose();
+          }
+        },
+        {
+          id: 'view-ambiance-toggle',
+          label: isAmbianceEnabled ? 'Turn Off Ambiance' : 'Turn On Ambiance',
+          shortcut: 'A',
+          checked: isAmbianceEnabled,
+          onClick: () => {
+            onToggleAmbiance?.();
             onClose();
           }
         },

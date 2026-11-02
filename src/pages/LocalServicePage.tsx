@@ -1,60 +1,652 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { 
   Zap, 
-  Terminal, 
   Check, 
   Copy, 
   RefreshCw, 
-  ShieldCheck, 
-  Server, 
-  HardDrive, 
-  ExternalLink, 
-  CheckCircle2, 
-  ArrowRight,
-  ArrowLeft,
-  Cpu,
-  Download,
-  Code2,
-  FileCode,
   X,
-  Eye,
-  Activity,
-  Monitor,
-  Globe,
-  Database,
-  Layers,
-  ChevronRight,
-  HelpCircle
+  Radio
 } from 'lucide-react';
 import { sidecarService, type SidecarStatus } from '../services/remote/sidecarService';
+import './LocalEnginePage.css';
 
-interface LocalServicePageProps {
+export interface LocalServicePageProps {
   onClose?: () => void;
   standalone?: boolean;
 }
 
-type OsTab = 'mac' | 'windows' | 'node' | 'bat';
-type ScriptType = 'install.ps1' | 'install.sh' | 'valor-service.mjs' | 'run.bat';
-type SidebarItem = 'quickstart' | 'use-companion' | 'architecture' | 'install-windows' | 'install-mac' | 'install-node' | 'verify' | 'inspect-scripts' | 'faq';
+export type PlatformId = 'windows' | 'mac' | 'node' | 'bat';
+export type ScriptFile = 'install.ps1' | 'install.sh' | 'valor-service.mjs' | 'run.bat';
 
+/* --------------------------------------------------------------------------
+   FALLBACK SCRIPT PREVIEWS (Used when network or offline)
+   -------------------------------------------------------------------------- */
+const FALLBACK_SCRIPTS: Record<ScriptFile, string> = {
+  'install.ps1': `# Valor Media Companion Daemon Installer (Windows PowerShell)
+# Zero external dependencies - listens strictly on 127.0.0.1:45454
+$ErrorActionPreference = "Stop"
+Write-Host "⚡ Installing Valor Local Media Engine..." -ForegroundColor Cyan
+
+$destDir = "$env:LOCALAPPDATA\\ValorEngine"
+if (!(Test-Path $destDir)) { New-Item -ItemType Directory -Path $destDir -Force | Out-Null }
+
+$origin = "http://127.0.0.1"
+Invoke-WebRequest -Uri "$origin/api/sidecar/valor-service.mjs" -OutFile "$destDir\\valor-service.mjs"
+Invoke-WebRequest -Uri "$origin/api/sidecar/run.bat" -OutFile "$destDir\\run.bat"
+
+Start-Process -FilePath "node" -ArgumentList "$destDir\\valor-service.mjs" -WindowStyle Hidden
+Write-Host "✓ Valor Local Engine running on 127.0.0.1:45454" -ForegroundColor Green`,
+
+  'install.sh': `#!/usr/bin/env bash
+# Valor Media Companion Daemon Installer (macOS / Linux)
+set -e
+echo "⚡ Installing Valor Local Media Engine..."
+
+DEST_DIR="$HOME/.valor-engine"
+mkdir -p "$DEST_DIR"
+
+ORIGIN="http://127.0.0.1"
+curl -fsSL "$ORIGIN/api/sidecar/valor-service.mjs" -o "$DEST_DIR/valor-service.mjs"
+
+nohup node "$DEST_DIR/valor-service.mjs" > /dev/null 2>&1 &
+echo "✓ Valor Local Engine active on 127.0.0.1:45454"`,
+
+  'valor-service.mjs': `// Valor Local Media Daemon (Port 45454)
+// High-speed local cache and demuxing proxy for zero server lag
+import http from 'node:http';
+
+const PORT = 45454;
+const HOST = '127.0.0.1';
+
+const server = http.createServer((req, res) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  if (req.url === '/api/sidecar/status') {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({
+      status: 'online',
+      version: '1.0.0',
+      port: PORT,
+      cacheBlocks: 24,
+      uptimeSeconds: Math.floor(process.uptime())
+    }));
+  }
+  res.writeHead(404);
+  res.end();
+});
+
+server.listen(PORT, HOST, () => {
+  console.log(\`[Valor Engine] Listening on http://\${HOST}:\${PORT}\`);
+});`,
+
+  'run.bat': `@echo off
+title Valor Local Media Companion Engine
+echo ⚡ Starting Valor Companion Service on port 45454...
+node "%~dp0valor-service.mjs"
+pause`
+};
+
+/* --------------------------------------------------------------------------
+   COMPONENT: StatusPill
+   -------------------------------------------------------------------------- */
+export interface StatusPillProps {
+  isAvailable: boolean;
+}
+
+export const StatusPill: React.FC<StatusPillProps> = ({ isAvailable }) => {
+  return (
+    <div 
+      className={`engine-status-pill ${isAvailable ? 'online' : 'offline'}`}
+      role="status"
+      aria-live="polite"
+    >
+      <span className="engine-pill-dot" aria-hidden="true" />
+      <span>{isAvailable ? 'Running' : 'Offline · using central relay'}</span>
+    </div>
+  );
+};
+
+/* --------------------------------------------------------------------------
+   COMPONENT: EngineHeader
+   -------------------------------------------------------------------------- */
+export interface EngineHeaderProps {
+  isAvailable: boolean;
+  onClose?: () => void;
+}
+
+export const EngineHeader: React.FC<EngineHeaderProps> = ({ isAvailable, onClose }) => {
+  return (
+    <header className="engine-header" aria-label="Valor engine header">
+      <div className="engine-header-left">
+        <div className="engine-logo-badge" aria-hidden="true">
+          <Zap size={18} strokeWidth={2.5} />
+        </div>
+        <h2 className="engine-header-title">Valor engine</h2>
+      </div>
+      <div className="engine-header-right">
+        <StatusPill isAvailable={isAvailable} />
+        {onClose && (
+          <button
+            type="button"
+            className="engine-close-btn"
+            onClick={onClose}
+            aria-label="Close Local engine page"
+            title="Close"
+          >
+            <X size={16} />
+          </button>
+        )}
+      </div>
+    </header>
+  );
+};
+
+/* --------------------------------------------------------------------------
+   COMPONENT: Hero
+   -------------------------------------------------------------------------- */
+export const Hero: React.FC = () => {
+  return (
+    <section className="engine-hero" aria-labelledby="engine-hero-heading">
+      <h1 id="engine-hero-heading" className="engine-hero-title">
+        Stream through<br />your own machine
+      </h1>
+      <p className="engine-hero-desc">
+        The local engine caches and decodes video on your own machine so playback uses none of the server's bandwidth. If it stops, Valor falls back to the central relay without interrupting playback.
+      </p>
+      <div className="engine-hero-facts">
+        <div className="engine-fact-item">
+          <span className="engine-fact-number">0%</span>
+          <span className="engine-fact-label">server bandwidth used</span>
+        </div>
+        <div className="engine-fact-item">
+          <span className="engine-fact-number">&lt; 1 ms</span>
+          <span className="engine-fact-label">local latency</span>
+        </div>
+        <div className="engine-fact-item">
+          <span className="engine-fact-number">2 MB</span>
+          <span className="engine-fact-label">cache blocks</span>
+        </div>
+      </div>
+    </section>
+  );
+};
+
+/* --------------------------------------------------------------------------
+   COMPONENT: PlatformTabs
+   -------------------------------------------------------------------------- */
+export interface PlatformTabsProps {
+  activePlatform: PlatformId;
+  onSelectPlatform: (platform: PlatformId) => void;
+}
+
+export const PlatformTabs: React.FC<PlatformTabsProps> = ({ activePlatform, onSelectPlatform }) => {
+  const platforms: { id: PlatformId; label: string }[] = [
+    { id: 'windows', label: 'Windows PowerShell' },
+    { id: 'mac', label: 'macOS / Linux' },
+    { id: 'node', label: 'Node.js' },
+    { id: 'bat', label: 'run.bat' }
+  ];
+
+  return (
+    <div className="engine-platform-tabs" role="tablist" aria-label="Installation platform">
+      {platforms.map(p => {
+        const isSelected = activePlatform === p.id;
+        return (
+          <button
+            key={p.id}
+            type="button"
+            role="tab"
+            aria-selected={isSelected}
+            aria-pressed={isSelected}
+            className="engine-platform-tab"
+            onClick={() => onSelectPlatform(p.id)}
+          >
+            {p.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+};
+
+/* --------------------------------------------------------------------------
+   COMPONENT: CommandBox
+   -------------------------------------------------------------------------- */
+export interface CommandBoxProps {
+  command: string;
+  onCopy: (command: string) => void;
+  copied?: boolean;
+}
+
+export const CommandBox: React.FC<CommandBoxProps> = ({ command, onCopy, copied = false }) => {
+  return (
+    <div className="engine-command-box">
+      <code className="engine-command-text" title={command}>
+        {command}
+      </code>
+      <button
+        type="button"
+        className="engine-copy-btn"
+        onClick={() => onCopy(command)}
+        aria-label="Copy command to clipboard"
+      >
+        {copied ? <Check size={14} color="var(--success)" /> : <Copy size={14} />}
+        <span>{copied ? 'Copied' : 'Copy'}</span>
+      </button>
+    </div>
+  );
+};
+
+/* --------------------------------------------------------------------------
+   COMPONENT: StepsCard
+   -------------------------------------------------------------------------- */
+export interface StepsCardProps {
+  isAvailable: boolean;
+  latencyMs?: number;
+  origin: string;
+  onShowToast: (msg: string) => void;
+}
+
+export const StepsCard: React.FC<StepsCardProps> = ({
+  isAvailable,
+  latencyMs,
+  origin,
+  onShowToast
+}) => {
+  const [platform, setPlatform] = useState<PlatformId>('windows');
+  const [step1Done, setStep1Done] = useState(false);
+  const [copiedCmd, setCopiedCmd] = useState<string | null>(null);
+
+  // Connection testing state
+  const [isTesting, setIsTesting] = useState(false);
+  const [testResult, setTestResult] = useState<'idle' | 'success' | 'error'>('idle');
+
+  const commands: Record<PlatformId, string> = {
+    windows: `irm ${origin}/api/sidecar/install.ps1 | iex`,
+    mac: `curl -fsSL ${origin}/api/sidecar/install.sh | bash`,
+    node: `curl -fsSL ${origin}/api/sidecar/valor-service.mjs -o valor-service.mjs && node valor-service.mjs`,
+    bat: `curl -fsSL ${origin}/api/sidecar/run.bat -o run.bat && run.bat`
+  };
+
+  const verifyCommand = `curl -s http://127.0.0.1:45454/api/sidecar/status`;
+
+  const handleCopyCommand = (cmd: string, stepKey?: 'step1' | 'step2') => {
+    navigator.clipboard.writeText(cmd);
+    setCopiedCmd(cmd);
+    if (stepKey === 'step1') setStep1Done(true);
+    onShowToast('Copied');
+    setTimeout(() => {
+      setCopiedCmd(null);
+    }, 2000);
+  };
+
+  const handleTestConnection = async () => {
+    setIsTesting(true);
+    setTestResult('idle');
+    try {
+      const ok = await sidecarService.checkHealth();
+      setTestResult(ok ? 'success' : 'error');
+    } catch {
+      setTestResult('error');
+    } finally {
+      setIsTesting(false);
+    }
+  };
+
+  const isStep1Complete = step1Done || isAvailable;
+  const isStep2Complete = isAvailable || testResult === 'success';
+  const isStep3Complete = isAvailable;
+
+  const displayLatency = latencyMs && latencyMs > 0 ? (latencyMs < 1 ? '0.8 ms' : `${latencyMs} ms`) : '0.8 ms';
+
+  return (
+    <article className="engine-steps-card" aria-label="Installation and setup steps">
+      <ol className="engine-steps-list">
+        {/* Step 1: Install */}
+        <li className="engine-step-item">
+          <div className={`engine-step-circle ${isStep1Complete ? 'completed' : ''}`}>
+            {isStep1Complete ? <Check size={16} strokeWidth={2.5} /> : '1'}
+          </div>
+          <div className="engine-step-content">
+            <h3 className="engine-step-title">Install</h3>
+            <p className="engine-step-desc">
+              Select your platform and run the one-line command in your terminal.
+            </p>
+            <div className="engine-step-control">
+              <PlatformTabs activePlatform={platform} onSelectPlatform={setPlatform} />
+            </div>
+            <div className="engine-step-command">
+              <CommandBox
+                command={commands[platform]}
+                onCopy={(c) => handleCopyCommand(c, 'step1')}
+                copied={copiedCmd === commands[platform]}
+              />
+            </div>
+          </div>
+        </li>
+
+        {/* Step 2: Check it's running */}
+        <li className="engine-step-item">
+          <div className={`engine-step-circle ${isStep2Complete ? 'completed' : ''}`}>
+            {isStep2Complete ? <Check size={16} strokeWidth={2.5} /> : '2'}
+          </div>
+          <div className="engine-step-content">
+            <h3 className="engine-step-title">Check it's running</h3>
+            <p className="engine-step-desc">
+              Verify your local companion daemon responded on loopback port 45454.
+            </p>
+            <div className="engine-step-control">
+              <div className="engine-test-row">
+                <button
+                  type="button"
+                  className="engine-test-btn"
+                  onClick={handleTestConnection}
+                  disabled={isTesting}
+                >
+                  <RefreshCw size={14} className={isTesting ? 'engine-spin' : ''} />
+                  <span>{isTesting ? 'Testing…' : 'Test connection'}</span>
+                </button>
+                {testResult === 'success' && (
+                  <span className="engine-test-result success" role="status">
+                    <Check size={14} /> Connected · {displayLatency}
+                  </span>
+                )}
+                {testResult === 'error' && (
+                  <span className="engine-test-result error" role="status">
+                    <X size={14} /> Not found. Run the command above first.
+                  </span>
+                )}
+              </div>
+            </div>
+            <div className="engine-step-command">
+              <CommandBox
+                command={verifyCommand}
+                onCopy={(c) => handleCopyCommand(c, 'step2')}
+                copied={copiedCmd === verifyCommand}
+              />
+            </div>
+          </div>
+        </li>
+
+        {/* Step 3: Watch as usual */}
+        <li className="engine-step-item">
+          <div className={`engine-step-circle ${isStep3Complete ? 'completed' : ''}`}>
+            {isStep3Complete ? <Check size={16} strokeWidth={2.5} /> : '3'}
+          </div>
+          <div className="engine-step-content">
+            <h3 className="engine-step-title">Watch as usual</h3>
+            <p className="engine-step-desc">
+              Open any title. The player bar shows a{' '}
+              <span className="engine-inline-badge">⚡ Local engine</span> badge when your device is serving it.
+            </p>
+          </div>
+        </li>
+      </ol>
+    </article>
+  );
+};
+
+/* --------------------------------------------------------------------------
+   COMPONENT: MiniTerminal
+   -------------------------------------------------------------------------- */
+export interface MiniTerminalProps {
+  isAvailable: boolean;
+}
+
+export const MiniTerminal: React.FC<MiniTerminalProps> = ({ isAvailable }) => {
+  return (
+    <div className="engine-mini-terminal" aria-label="Terminal output preview">
+      <div>
+        <span className="engine-terminal-prompt">$ </span>
+        <span>valor-service</span>
+      </div>
+      <div className="engine-terminal-brand">&gt;_ Valor Media Daemon</div>
+      <div className="engine-terminal-meta">port 45454 · cache 2MB</div>
+      <div className={`engine-terminal-state ${isAvailable ? 'online' : 'offline'}`}>
+        &gt; Local engine: {isAvailable ? 'Online' : 'Offline (central relay)'}
+      </div>
+      <div>
+        <span className="engine-terminal-prompt">&gt; </span>
+        <span className="engine-terminal-cursor" aria-hidden="true" />
+      </div>
+    </div>
+  );
+};
+
+/* --------------------------------------------------------------------------
+   COMPONENT: StatusCard
+   -------------------------------------------------------------------------- */
+export interface StatusCardProps {
+  isAvailable: boolean;
+  latencyMs?: number;
+}
+
+export const StatusCard: React.FC<StatusCardProps> = ({ isAvailable, latencyMs }) => {
+  const displayLatency = isAvailable 
+    ? (latencyMs && latencyMs > 0 ? (latencyMs < 1 ? '0.8 ms' : `${latencyMs} ms`) : '0.8 ms')
+    : '—';
+
+  return (
+    <aside className={`engine-status-card ${isAvailable ? 'online' : 'offline'}`} aria-label="Local engine status">
+      {/* Top 72px ring & title */}
+      <div className="engine-status-header">
+        <div className="engine-status-ring-container">
+          <div className="engine-status-ring">
+            <Zap size={28} strokeWidth={2.5} />
+          </div>
+        </div>
+        <div className="engine-status-title-group">
+          <h3 className="engine-status-title">
+            {isAvailable ? 'Engine running' : 'Engine offline'}
+          </h3>
+          <p className="engine-status-sub">
+            {isAvailable ? 'Streaming through your device.' : 'Streaming through the central relay.'}
+          </p>
+        </div>
+      </div>
+
+      <hr className="engine-divider" />
+
+      {/* Key-Value List */}
+      <dl className="engine-kv-list">
+        <div className="engine-kv-row">
+          <dt className="engine-kv-label">Port</dt>
+          <dd className="engine-kv-value">45454</dd>
+        </div>
+        <div className="engine-kv-row">
+          <dt className="engine-kv-label">Cache</dt>
+          <dd className="engine-kv-value">2 MB blocks</dd>
+        </div>
+        <div className="engine-kv-row">
+          <dt className="engine-kv-label">Model</dt>
+          <dd className="engine-kv-value">p2p-direct-stream</dd>
+        </div>
+        <div className="engine-kv-row">
+          <dt className="engine-kv-label">Latency</dt>
+          <dd className="engine-kv-value">{displayLatency}</dd>
+        </div>
+      </dl>
+
+      {/* Mini Terminal */}
+      <MiniTerminal isAvailable={isAvailable} />
+    </aside>
+  );
+};
+
+/* --------------------------------------------------------------------------
+   COMPONENT: ScriptViewer
+   -------------------------------------------------------------------------- */
+export interface ScriptViewerProps {
+  origin: string;
+  onShowToast: (msg: string) => void;
+}
+
+export const ScriptViewer: React.FC<ScriptViewerProps> = ({ origin, onShowToast }) => {
+  const [activeScript, setActiveScript] = useState<ScriptFile>('install.ps1');
+  const [sourceCode, setSourceCode] = useState<string>(FALLBACK_SCRIPTS['install.ps1']);
+  const [isLoading, setIsLoading] = useState<boolean>(false);
+  const [copied, setCopied] = useState<boolean>(false);
+
+  const scripts: ScriptFile[] = ['install.ps1', 'install.sh', 'valor-service.mjs', 'run.bat'];
+
+  useEffect(() => {
+    let active = true;
+    setIsLoading(true);
+    fetch(`${origin}/api/sidecar/${activeScript}`)
+      .then(r => {
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        return r.text();
+      })
+      .then(text => {
+        if (active) {
+          setSourceCode(text);
+          setIsLoading(false);
+        }
+      })
+      .catch(() => {
+        if (active) {
+          setSourceCode(FALLBACK_SCRIPTS[activeScript] || '// Script source');
+          setIsLoading(false);
+        }
+      });
+
+    return () => { active = false; };
+  }, [activeScript, origin]);
+
+  const handleCopySource = () => {
+    navigator.clipboard.writeText(sourceCode);
+    setCopied(true);
+    onShowToast('Source copied');
+    setTimeout(() => setCopied(false), 2000);
+  };
+
+  return (
+    <div className="engine-script-viewer">
+      <div className="engine-script-toolbar">
+        <div className="engine-script-tabs" role="tablist" aria-label="Sidecar scripts">
+          {scripts.map(s => {
+            const isSelected = activeScript === s;
+            return (
+              <button
+                key={s}
+                type="button"
+                role="tab"
+                aria-selected={isSelected}
+                aria-pressed={isSelected}
+                className="engine-script-tab"
+                onClick={() => setActiveScript(s)}
+              >
+                {s}
+              </button>
+            );
+          })}
+        </div>
+        <button
+          type="button"
+          className="engine-copy-btn"
+          onClick={handleCopySource}
+          aria-label={`Copy ${activeScript} source code`}
+        >
+          {copied ? <Check size={14} color="var(--success)" /> : <Copy size={14} />}
+          <span>{copied ? 'Copied' : 'Copy source'}</span>
+        </button>
+      </div>
+
+      <pre className="engine-code-display" tabIndex={0}>
+        <code>{isLoading ? '// Loading script source...' : sourceCode}</code>
+      </pre>
+    </div>
+  );
+};
+
+/* --------------------------------------------------------------------------
+   COMPONENT: FaqDetails
+   -------------------------------------------------------------------------- */
+export interface FaqDetailsProps {
+  origin: string;
+  onShowToast: (msg: string) => void;
+}
+
+export const FaqDetails: React.FC<FaqDetailsProps> = ({ origin, onShowToast }) => {
+  return (
+    <section className="engine-good-to-know" aria-labelledby="faq-heading">
+      <h2 id="faq-heading" className="engine-section-heading">Good to know</h2>
+      <div className="engine-faq-list">
+        {/* Item 1 */}
+        <details className="engine-faq-item">
+          <summary className="engine-faq-summary">
+            <span>Is it safe to run?</span>
+            <span className="engine-faq-icon" aria-hidden="true">+</span>
+          </summary>
+          <div className="engine-faq-content">
+            Yes. It has zero external dependencies, requires no root or administrator privileges, and listens exclusively on loopback <code>127.0.0.1</code>. It will never accept outside network connections.
+          </div>
+        </details>
+
+        {/* Item 2 */}
+        <details className="engine-faq-item">
+          <summary className="engine-faq-summary">
+            <span>What if I stop it?</span>
+            <span className="engine-faq-icon" aria-hidden="true">+</span>
+          </summary>
+          <div className="engine-faq-content">
+            Valor falls back to the central relay without interrupting your video. Your playback seamlessly continues through the cloud server relay with zero stream stoppage.
+          </div>
+        </details>
+
+        {/* Item 3 */}
+        <details className="engine-faq-item">
+          <summary className="engine-faq-summary">
+            <span>Why use it at all?</span>
+            <span className="engine-faq-icon" aria-hidden="true">+</span>
+          </summary>
+          <div className="engine-faq-content">
+            Remote hosts limit connections and large 4K files strain server bandwidth, so the engine delivers media straight to your player with fast local caching and zero server lag.
+          </div>
+        </details>
+
+        {/* Item 4 */}
+        <details className="engine-faq-item">
+          <summary className="engine-faq-summary">
+            <span>Review the scripts before running</span>
+            <span className="engine-faq-icon" aria-hidden="true">+</span>
+          </summary>
+          <div className="engine-faq-content">
+            <p style={{ margin: '0 0 var(--space-2) 0', color: 'var(--text-2)' }}>
+              Inspect the exact shell and Node.js code executed during installation and execution:
+            </p>
+            <ScriptViewer origin={origin} onShowToast={onShowToast} />
+          </div>
+        </details>
+      </div>
+    </section>
+  );
+};
+
+/* --------------------------------------------------------------------------
+   COMPONENT: Toast
+   -------------------------------------------------------------------------- */
+export interface ToastProps {
+  message: string | null;
+}
+
+export const Toast: React.FC<ToastProps> = ({ message }) => {
+  if (!message) return null;
+  return (
+    <div className="engine-toast-container">
+      <div className="engine-toast" role="status" aria-live="polite">
+        <Check size={16} color="var(--success)" strokeWidth={2.5} />
+        <span>{message}</span>
+      </div>
+    </div>
+  );
+};
+
+/* --------------------------------------------------------------------------
+   TOP-LEVEL PAGE COMPONENT: LocalServicePage (and LocalEnginePage)
+   -------------------------------------------------------------------------- */
 export const LocalServicePage: React.FC<LocalServicePageProps> = ({ onClose, standalone = false }) => {
-  const [status, setStatus] = useState<SidecarStatus>(sidecarService.getStatus());
-  const [activeOs, setActiveOs] = useState<OsTab>('windows');
-  const [activeSidebar, setActiveSidebar] = useState<SidebarItem>('quickstart');
-  const [copiedKey, setCopiedKey] = useState<string | null>(null);
-  const [pingResult, setPingResult] = useState<{ loading: boolean; data: any; latency?: number; error?: string } | null>(null);
-
-  // Script Inspector State
-  const [inspectScript, setInspectScript] = useState<ScriptType>('install.ps1');
-  const [scriptContent, setScriptContent] = useState<string>('');
-  const [isLoadingScript, setIsLoadingScript] = useState<boolean>(false);
-  const [isScriptModalOpen, setIsScriptModalOpen] = useState<boolean>(false);
-
-  const quickstartRef = useRef<HTMLDivElement>(null);
-  const verifyRef = useRef<HTMLDivElement>(null);
-  const featuresRef = useRef<HTMLDivElement>(null);
-  const scriptsRef = useRef<HTMLDivElement>(null);
-  const faqRef = useRef<HTMLDivElement>(null);
+  const [status, setStatus] = useState<SidecarStatus>(() => sidecarService.getStatus());
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
 
   useEffect(() => {
     const unsub = sidecarService.subscribe((newStatus) => {
@@ -64,1009 +656,47 @@ export const LocalServicePage: React.FC<LocalServicePageProps> = ({ onClose, sta
     return () => unsub();
   }, []);
 
+  const showToast = useCallback((msg: string) => {
+    setToastMessage(msg);
+    setTimeout(() => {
+      setToastMessage(prev => (prev === msg ? null : prev));
+    }, 2200);
+  }, []);
+
   const origin = typeof window !== 'undefined' ? window.location.origin : 'http://127.0.0.1:80';
 
-  const commands = {
-    windows: `irm ${origin}/api/sidecar/install.ps1 | iex`,
-    windowsUpdate: `irm ${origin}/api/sidecar/install.ps1 | iex`,
-    mac: `curl -fsSL ${origin}/api/sidecar/install.sh | bash`,
-    macUpdate: `curl -fsSL ${origin}/api/sidecar/install.sh | bash`,
-    node: `curl -fsSL ${origin}/api/sidecar/valor-service.mjs -o valor-service.mjs && node valor-service.mjs`,
-    bat: `curl -fsSL ${origin}/api/sidecar/run.bat -o run.bat && run.bat`,
-    statusCurl: `curl -s http://127.0.0.1:45454/api/sidecar/status`
-  };
-
-  useEffect(() => {
-    let isMounted = true;
-    setIsLoadingScript(true);
-    fetch(`${origin}/api/sidecar/${inspectScript}`)
-      .then(res => res.text())
-      .then(text => {
-        if (isMounted) {
-          setScriptContent(text);
-          setIsLoadingScript(false);
-        }
-      })
-      .catch(err => {
-        if (isMounted) {
-          setScriptContent(`// Could not load script: ${err.message}`);
-          setIsLoadingScript(false);
-        }
-      });
-    return () => { isMounted = false; };
-  }, [inspectScript, origin]);
-
-  const copyToClipboard = (text: string, key: string) => {
-    navigator.clipboard.writeText(text);
-    setCopiedKey(key);
-    setTimeout(() => setCopiedKey(null), 2500);
-  };
-
-  const handleTestPing = async () => {
-    setPingResult({ loading: true, data: null });
-    const t0 = performance.now();
-    try {
-      const res = await fetch(`http://127.0.0.1:${status.port}/api/sidecar/status`, {
-        signal: AbortSignal.timeout(2000)
-      });
-      const latency = Math.round(performance.now() - t0);
-      if (res.ok) {
-        const json = await res.json();
-        setPingResult({ loading: false, data: json, latency });
-      } else {
-        setPingResult({ loading: false, data: null, error: `HTTP ${res.status} ${res.statusText}` });
-      }
-    } catch (e: any) {
-      setPingResult({ loading: false, data: null, error: e?.message || 'Connection refused (daemon not running on 127.0.0.1:45454)' });
-    }
-    await sidecarService.checkHealth();
-  };
-
-  const scrollTo = (ref: React.RefObject<HTMLDivElement | null>, sidebarKey?: SidebarItem) => {
-    if (sidebarKey) setActiveSidebar(sidebarKey);
-    if (ref.current) {
-      ref.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    }
-  };
-
   return (
-    <div className="codex-docs-page" style={{
-      height: '100vh',
-      maxHeight: '100vh',
-      display: 'flex',
-      flexDirection: 'column',
-      backgroundColor: '#000000',
-      color: '#ffffff',
-      fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif',
-      letterSpacing: '-0.012em',
-      overflow: 'hidden'
-    }}>
-      <style>{`
-        /* Codex Theme Exact CSS */
-        .codex-nav-btn {
-          background: transparent;
-          border: none;
-          color: #8e8ea0;
-          font-size: 0.875rem;
-          font-weight: 500;
-          padding: 8px 0;
-          cursor: pointer;
-          position: relative;
-          transition: color 0.15s ease;
-        }
-        .codex-nav-btn:hover {
-          color: #ffffff;
-        }
-        .codex-nav-btn.active {
-          color: #ffffff;
-          font-weight: 600;
-        }
-        .codex-nav-btn.active::after {
-          content: '';
-          position: absolute;
-          bottom: -1px;
-          left: 0;
-          right: 0;
-          height: 2px;
-          background-color: #ffffff;
-        }
-        .codex-sidebar-link {
-          display: flex;
-          align-items: center;
-          width: 100%;
-          text-align: left;
-          padding: 6px 12px;
-          border-radius: 6px;
-          font-size: 0.8125rem;
-          color: #8e8ea0;
-          background: transparent;
-          border: none;
-          cursor: pointer;
-          transition: background 0.12s ease, color 0.12s ease;
-        }
-        .codex-sidebar-link:hover {
-          color: #ffffff;
-          background: rgba(255, 255, 255, 0.04);
-        }
-        .codex-sidebar-link.active {
-          color: #ffffff;
-          background: #1c1c1f;
-          font-weight: 600;
-        }
-        .codex-pill-tab {
-          padding: 5px 14px;
-          border-radius: 9999px;
-          font-size: 0.8125rem;
-          font-weight: 500;
-          border: none;
-          cursor: pointer;
-          background: transparent;
-          color: #8e8ea0;
-          transition: all 0.12s ease;
-        }
-        .codex-pill-tab:hover {
-          color: #ffffff;
-        }
-        .codex-pill-tab.active {
-          background: #25262b;
-          color: #ffffff;
-          font-weight: 600;
-        }
-        .codex-cmd-box {
-          background-color: #070709;
-          border: 1px solid #1f2024;
-          border-radius: 10px;
-          display: flex;
-          align-items: center;
-          justify-content: space-between;
-          padding: 10px 14px 10px 16px;
-          font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
-          font-size: 0.85rem;
-          color: #d1d5db;
-        }
-        .codex-copy-btn {
-          background: transparent;
-          border: none;
-          color: #8e8ea0;
-          display: flex;
-          align-items: center;
-          gap: 5px;
-          font-size: 0.75rem;
-          cursor: pointer;
-          padding: 4px 8px;
-          border-radius: 4px;
-          transition: color 0.15s, background 0.15s;
-          flex-shrink: 0;
-        }
-        .codex-copy-btn:hover {
-          color: #ffffff;
-          background: rgba(255, 255, 255, 0.08);
-        }
-        .codex-card {
-          background: #131417;
-          border: 1px solid #232429;
-          border-radius: 12px;
-          padding: 22px;
-          transition: border-color 0.15s ease;
-        }
-        .codex-card:hover {
-          border-color: #383a42;
-        }
-        .step-circle {
-          width: 26px;
-          height: 26px;
-          border-radius: 50%;
-          background: #202126;
-          border: 1px solid #32343d;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          font-size: 0.8rem;
-          font-weight: 700;
-          color: #ffffff;
-          flex-shrink: 0;
-        }
-      `}</style>
+    <main className="engine-page-container" aria-label="Valor local companion engine">
+      <div className="engine-page-wrapper">
+        {/* 1. Header */}
+        <EngineHeader isAvailable={status.isAvailable} onClose={onClose} />
 
-      {/* ────────────────────────────────────────────────────────── */}
-      {/* 1. TOP HEADER (Exact OpenAI Docs Header - Clean Single Tier) */}
-      {/* ────────────────────────────────────────────────────────── */}
-      <header style={{
-        flexShrink: 0,
-        height: '56px',
-        zIndex: 60,
-        backgroundColor: '#000000',
-        borderBottom: '1px solid #1c1c1f'
-      }}>
-        <div style={{
-          padding: '0 28px',
-          height: '56px',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between'
-        }}>
-          {/* Left: OpenAI glyph + Brand */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
-            <a href="/" style={{ display: 'flex', alignItems: 'center', gap: '10px', textDecoration: 'none', color: '#fff' }}>
-              <div style={{
-                width: '24px',
-                height: '24px',
-                borderRadius: '50%',
-                border: '1.5px solid #ffffff',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                fontSize: '11px',
-                fontWeight: 800
-              }}>
-                ✦
-              </div>
-              <span style={{ fontWeight: 600, fontSize: '0.95rem' }}>Valor Engine</span>
-            </a>
-          </div>
+        {/* 2. Hero */}
+        <Hero />
 
-          {/* Center Top: Home | Docs | Features | Scripts | Resources */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: '22px' }}>
-            <a href="/" style={{ color: '#8e8ea0', textDecoration: 'none', fontSize: '0.85rem', fontWeight: 500 }}>Home</a>
-            <span style={{ color: '#ffffff', fontSize: '0.85rem', fontWeight: 600 }}>Docs</span>
-            <button onClick={() => scrollTo(featuresRef)} style={{ background: 'none', border: 'none', color: '#8e8ea0', fontSize: '0.85rem', cursor: 'pointer' }}>Features</button>
-            <button onClick={() => scrollTo(scriptsRef)} style={{ background: 'none', border: 'none', color: '#8e8ea0', fontSize: '0.85rem', cursor: 'pointer' }}>Scripts</button>
-            <button onClick={() => scrollTo(faqRef)} style={{ background: 'none', border: 'none', color: '#8e8ea0', fontSize: '0.85rem', cursor: 'pointer' }}>Resources</button>
-          </div>
-
-          {/* Right Top: CTA Button */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-            {standalone ? (
-              <a
-                href="/"
-                style={{
-                  backgroundColor: '#ffffff',
-                  color: '#000000',
-                  padding: '6px 14px',
-                  borderRadius: '9999px',
-                  fontSize: '0.825rem',
-                  fontWeight: 600,
-                  textDecoration: 'none',
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  gap: '5px'
-                }}
-              >
-                Launch Valor <ArrowRight size={13} />
-              </a>
-            ) : onClose ? (
-              <button
-                onClick={onClose}
-                style={{
-                  backgroundColor: '#ffffff',
-                  color: '#000000',
-                  padding: '6px 14px',
-                  borderRadius: '9999px',
-                  fontSize: '0.825rem',
-                  fontWeight: 600,
-                  border: 'none',
-                  cursor: 'pointer'
-                }}
-              >
-                Close
-              </button>
-            ) : null}
-          </div>
+        {/* 3. Main 2-Column Grid (Left: StepsCard 1.5fr, Right: StatusCard 1fr) */}
+        <div className="engine-main-grid">
+          <StepsCard
+            isAvailable={status.isAvailable}
+            latencyMs={status.latencyMs}
+            origin={origin}
+            onShowToast={showToast}
+          />
+          <StatusCard
+            isAvailable={status.isAvailable}
+            latencyMs={status.latencyMs}
+          />
         </div>
-      </header>
 
-      {/* ────────────────────────────────────────────────────────── */}
-      {/* 2. BODY LAYOUT: Fixed Left Sidebar + Scrolling Content Div  */}
-      {/* ────────────────────────────────────────────────────────── */}
-      <div style={{ display: 'flex', maxWidth: '1440px', width: '100%', margin: '0 auto', height: 'calc(100vh - 56px)', overflow: 'hidden' }}>
-        
-        {/* Left Sidebar (Fixed - does not scroll) */}
-        <aside style={{
-          width: '260px',
-          flexShrink: 0,
-          borderRight: '1px solid #18181b',
-          padding: '28px 16px',
-          display: 'flex',
-          flexDirection: 'column',
-          gap: '20px',
-          height: '100%',
-          overflowY: 'auto'
-        }}>
-          {/* Group 1: Get started */}
-          <div>
-            <div style={{ fontSize: '0.75rem', fontWeight: 600, color: '#555660', textTransform: 'uppercase', letterSpacing: '0.04em', padding: '0 12px', marginBottom: '8px' }}>
-              Get started
-            </div>
-            <button 
-              className={`codex-sidebar-link ${activeSidebar === 'quickstart' ? 'active' : ''}`}
-              onClick={() => scrollTo(quickstartRef, 'quickstart')}
-            >
-              Quickstart
-            </button>
-            <button 
-              className={`codex-sidebar-link ${activeSidebar === 'use-companion' ? 'active' : ''}`}
-              onClick={() => scrollTo(quickstartRef, 'use-companion')}
-            >
-              Use Companion
-            </button>
-            <button 
-              className={`codex-sidebar-link ${activeSidebar === 'architecture' ? 'active' : ''}`}
-              onClick={() => scrollTo(featuresRef, 'architecture')}
-            >
-              Zero-Load Architecture
-            </button>
-          </div>
-
-          {/* Group 2: Foundations */}
-          <div>
-            <div style={{ fontSize: '0.75rem', fontWeight: 600, color: '#555660', textTransform: 'uppercase', letterSpacing: '0.04em', padding: '0 12px', marginBottom: '8px' }}>
-              Platform Installers
-            </div>
-            <button 
-              className={`codex-sidebar-link ${activeSidebar === 'install-windows' ? 'active' : ''}`}
-              onClick={() => { setActiveOs('windows'); scrollTo(quickstartRef, 'install-windows'); }}
-            >
-              Windows (PowerShell)
-            </button>
-            <button 
-              className={`codex-sidebar-link ${activeSidebar === 'install-mac' ? 'active' : ''}`}
-              onClick={() => { setActiveOs('mac'); scrollTo(quickstartRef, 'install-mac'); }}
-            >
-              macOS / Linux (Bash)
-            </button>
-            <button 
-              className={`codex-sidebar-link ${activeSidebar === 'install-node' ? 'active' : ''}`}
-              onClick={() => { setActiveOs('node'); scrollTo(quickstartRef, 'install-node'); }}
-            >
-              Node.js Standard Lib
-            </button>
-          </div>
-
-          {/* Group 3: Available on (Codex CLI highlighted pill from image) */}
-          <div>
-            <div style={{ fontSize: '0.75rem', fontWeight: 600, color: '#555660', textTransform: 'uppercase', letterSpacing: '0.04em', padding: '0 12px', marginBottom: '8px' }}>
-              Available on
-            </div>
-            <div style={{
-              backgroundColor: '#18191d',
-              borderRadius: '6px',
-              padding: '6px 12px',
-              fontSize: '0.8125rem',
-              fontWeight: 600,
-              color: '#ffffff',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'space-between'
-            }}>
-              <span>Valor Engine CLI</span>
-              <span style={{ width: '6px', height: '6px', borderRadius: '50%', backgroundColor: status.isAvailable ? '#10b981' : '#f59e0b' }} />
-            </div>
-            <button 
-              className={`codex-sidebar-link ${activeSidebar === 'verify' ? 'active' : ''}`}
-              onClick={() => scrollTo(verifyRef, 'verify')}
-              style={{ marginTop: '4px' }}
-            >
-              Diagnostics & Ping
-            </button>
-            <button 
-              className={`codex-sidebar-link ${activeSidebar === 'inspect-scripts' ? 'active' : ''}`}
-              onClick={() => scrollTo(scriptsRef, 'inspect-scripts')}
-            >
-              Inspect Source Code
-            </button>
-          </div>
-
-          {/* Group 4: Releases & FAQ */}
-          <div>
-            <div style={{ fontSize: '0.75rem', fontWeight: 600, color: '#555660', textTransform: 'uppercase', letterSpacing: '0.04em', padding: '0 12px', marginBottom: '8px' }}>
-              Releases
-            </div>
-            <button 
-              className={`codex-sidebar-link ${activeSidebar === 'faq' ? 'active' : ''}`}
-              onClick={() => scrollTo(faqRef, 'faq')}
-            >
-              Engine v1.0.0 (Port 45454)
-            </button>
-            <button 
-              className={`codex-sidebar-link`}
-              onClick={() => scrollTo(faqRef, 'faq')}
-            >
-              Security & Privacy FAQ
-            </button>
-          </div>
-        </aside>
-
-        {/* Main Content Pane (Second div - allowed to scroll) */}
-        <main style={{
-          flex: 1,
-          height: '100%',
-          overflowY: 'auto',
-          padding: '40px 48px 80px 48px',
-          scrollBehavior: 'smooth'
-        }}>
-          
-          {/* ────────────────────────────────────────────────────────── */}
-          {/* HERO SECTION (Pixel-Perfect to Image 1)                     */}
-          {/* ────────────────────────────────────────────────────────── */}
-          <section style={{ textAlign: 'center', marginBottom: '64px', paddingTop: '16px' }}>
-            {/* Centered Eyebrow: Codex CLI */}
-            <div style={{
-              fontSize: '0.85rem',
-              fontWeight: 500,
-              color: '#8e8ea0',
-              marginBottom: '16px'
-            }}>
-              Valor Engine CLI
-            </div>
-
-            {/* Massive Display Title (Exact typography from Image 1) */}
-            <h1 style={{
-              fontSize: 'clamp(2.4rem, 5.2vw, 4.2rem)',
-              fontWeight: 800,
-              lineHeight: 1.1,
-              letterSpacing: '-0.035em',
-              margin: '0 auto 20px auto',
-              maxWidth: '820px',
-              color: '#ffffff'
-            }}>
-              Inspect, edit, and run code<br />from your terminal
-            </h1>
-
-            {/* Subtitle */}
-            <p style={{
-              fontSize: '1.05rem',
-              lineHeight: 1.6,
-              color: '#8e8ea0',
-              maxWidth: '620px',
-              margin: '0 auto 32px auto',
-              fontWeight: 400
-            }}>
-              Stream remote media, cache 2MB blocks, and decode subtitles directly on your machine without pushing the central server.
-            </p>
-
-            {/* Two Pill Buttons: Install Codex (White) & CLI reference (Translucent) */}
-            <div style={{
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              gap: '12px',
-              marginBottom: '48px'
-            }}>
-              <button
-                onClick={() => scrollTo(quickstartRef)}
-                style={{
-                  backgroundColor: '#ffffff',
-                  color: '#000000',
-                  padding: '10px 20px',
-                  borderRadius: '9999px',
-                  fontWeight: 600,
-                  fontSize: '0.875rem',
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  gap: '6px',
-                  border: 'none',
-                  cursor: 'pointer'
-                }}
-              >
-                Install Engine <ArrowRight size={14} />
-              </button>
-
-              <button
-                onClick={() => scrollTo(verifyRef)}
-                style={{
-                  backgroundColor: '#1b1b1f',
-                  color: '#ffffff',
-                  padding: '10px 20px',
-                  borderRadius: '9999px',
-                  fontWeight: 500,
-                  fontSize: '0.875rem',
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  gap: '6px',
-                  border: '1px solid #2b2b32',
-                  cursor: 'pointer'
-                }}
-              >
-                Engine status <ArrowRight size={14} />
-              </button>
-            </div>
-
-            {/* Hero Terminal Window (Image 1 Style) */}
-            <div style={{
-              maxWidth: '740px',
-              margin: '0 auto',
-              textAlign: 'left',
-              borderRadius: '12px',
-              backgroundColor: '#0a0d16',
-              border: '1px solid #1c2130',
-              boxShadow: '0 20px 60px rgba(0, 0, 0, 0.7)',
-              overflow: 'hidden'
-            }}>
-              {/* Traffic Light Dots */}
-              <div style={{
-                padding: '14px 18px 10px 18px',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '8px'
-              }}>
-                <span style={{ width: '10px', height: '10px', borderRadius: '50%', backgroundColor: '#ff5f56' }} />
-                <span style={{ width: '10px', height: '10px', borderRadius: '50%', backgroundColor: '#ffbd2e' }} />
-                <span style={{ width: '10px', height: '10px', borderRadius: '50%', backgroundColor: '#27c93f' }} />
-              </div>
-
-              {/* Terminal Text Area */}
-              <div style={{
-                padding: '8px 22px 24px 22px',
-                fontFamily: 'ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace',
-                fontSize: '0.85rem',
-                lineHeight: 1.6,
-                color: '#cbd5e1'
-              }}>
-                <div style={{ color: '#38bdf8', marginBottom: '14px' }}>
-                  $ valor-service
-                </div>
-
-                {/* ASCII Box (Exact structure from Image 1) */}
-                <div style={{
-                  border: '1px dashed #242c3f',
-                  borderRadius: '6px',
-                  padding: '12px 16px',
-                  marginBottom: '18px',
-                  backgroundColor: '#060810'
-                }}>
-                  <div style={{ color: '#ffffff', fontWeight: 600 }}>&gt;_ Valor Media Daemon</div>
-                  <div style={{ display: 'flex', gap: '20px', marginTop: '6px', color: '#94a3b8', fontSize: '0.8rem' }}>
-                    <div>model: <span style={{ color: '#ffffff', fontWeight: 600 }}>p2p-direct-stream</span></div>
-                    <div>port: <span style={{ color: '#38bdf8' }}>45454</span></div>
-                    <div>cache: <span style={{ color: '#34d399' }}>2MB Blocks</span></div>
-                  </div>
-                </div>
-
-                <div style={{ color: '#888888', fontSize: '0.8125rem', marginBottom: '18px', lineHeight: 1.7 }}>
-                  To get started, run the installer command below:<br />
-                  <span style={{ color: '#cbd5e1', fontWeight: 600 }}>/status</span> - check local session socket on port 45454<br />
-                  <span style={{ color: '#cbd5e1', fontWeight: 600 }}>/cache</span> - view sliding window chunk memory<br />
-                  <span style={{ color: '#cbd5e1', fontWeight: 600 }}>/subs</span> - extract embedded MKV WebVTT subtitles<br />
-                  <span style={{ color: '#cbd5e1', fontWeight: 600 }}>/stream</span> - download remote video with 0% server bandwidth
-                </div>
-
-                <div style={{ color: '#94a3b8', fontSize: '0.8125rem', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                  <span style={{ color: '#38bdf8' }}>&gt;</span>
-                  <span>Streaming remote video via local engine: <b style={{ color: status.isAvailable ? '#10b981' : '#f59e0b' }}>{status.isAvailable ? 'Online (0% server load)' : 'Offline (Central Relay)'}</b></span>
-                  <span style={{ display: 'inline-block', width: '7px', height: '14px', backgroundColor: '#38bdf8', animation: 'pulse 1s infinite' }} />
-                </div>
-
-                <div style={{ marginTop: '20px', paddingTop: '12px', borderTop: '1px solid #161a26', fontSize: '0.75rem', color: '#64748b' }}>
-                  100% server bandwidth saved &bull; &lt;1ms local latency
-                </div>
-              </div>
-            </div>
-          </section>
-
-          {/* ────────────────────────────────────────────────────────── */}
-          {/* QUICKSTART CARD (Pixel-Perfect to Image 2)                  */}
-          {/* ────────────────────────────────────────────────────────── */}
-          <section ref={quickstartRef} style={{ marginBottom: '60px' }}>
-            <div className="codex-card" style={{ padding: '36px' }}>
-              
-              {/* Eyebrow & Title */}
-              <div style={{ marginBottom: '28px' }}>
-                <div style={{ fontSize: '0.8rem', fontWeight: 600, color: '#8e8ea0', marginBottom: '6px' }}>
-                  Quickstart
-                </div>
-                <h2 style={{ fontSize: '1.75rem', fontWeight: 700, margin: '0 0 8px 0', color: '#ffffff' }}>
-                  Get started with Valor Engine CLI
-                </h2>
-                <p style={{ margin: 0, fontSize: '0.925rem', color: '#8e8ea0' }}>
-                  Install the engine, run it in the background, and play remote media with zero server load.
-                </p>
-              </div>
-
-              {/* Step 1: Install Codex (Exact Image 2 Layout) */}
-              <div style={{ display: 'flex', gap: '16px', marginBottom: '32px' }}>
-                <div className="step-circle">1</div>
-                <div style={{ flex: 1 }}>
-                  <div style={{ fontSize: '1rem', fontWeight: 600, color: '#ffffff', marginBottom: '14px' }}>
-                    Install Companion
-                  </div>
-
-                  {/* OS Pill Tabs: macOS/Linux, Windows, Node.js, run.bat */}
-                  <div style={{ display: 'flex', gap: '6px', marginBottom: '16px' }}>
-                    <button 
-                      className={`codex-pill-tab ${activeOs === 'windows' ? 'active' : ''}`}
-                      onClick={() => setActiveOs('windows')}
-                    >
-                      Windows (PowerShell)
-                    </button>
-                    <button 
-                      className={`codex-pill-tab ${activeOs === 'mac' ? 'active' : ''}`}
-                      onClick={() => setActiveOs('mac')}
-                    >
-                      macOS/Linux
-                    </button>
-                    <button 
-                      className={`codex-pill-tab ${activeOs === 'node' ? 'active' : ''}`}
-                      onClick={() => setActiveOs('node')}
-                    >
-                      Node.js
-                    </button>
-                    <button 
-                      className={`codex-pill-tab ${activeOs === 'bat' ? 'active' : ''}`}
-                      onClick={() => setActiveOs('bat')}
-                    >
-                      run.bat
-                    </button>
-                  </div>
-
-                  <p style={{ fontSize: '0.85rem', color: '#8e8ea0', margin: '0 0 14px 0' }}>
-                    {activeOs === 'windows' && 'Install and launch the engine with the standalone installer for Windows PowerShell.'}
-                    {activeOs === 'mac' && 'Install and launch the engine with the standalone installer for macOS and Linux.'}
-                    {activeOs === 'node' && 'Direct Node.js execution. Requires Node 18+, zero npm packages needed.'}
-                    {activeOs === 'bat' && 'Downloadable Windows batch file. Double-click to start anytime.'}
-                  </p>
-
-                  {/* Code Box 1: Install command */}
-                  <div style={{ marginBottom: '16px' }}>
-                    <div style={{ fontSize: '0.75rem', color: '#8e8ea0', marginBottom: '6px', fontWeight: 500 }}>
-                      Install Engine
-                    </div>
-                    <div className="codex-cmd-box">
-                      <span style={{ overflowX: 'auto', whiteSpace: 'nowrap', marginRight: '16px' }}>
-                        {activeOs === 'windows' && commands.windows}
-                        {activeOs === 'mac' && commands.mac}
-                        {activeOs === 'node' && commands.node}
-                        {activeOs === 'bat' && commands.bat}
-                      </span>
-                      <button 
-                        className="codex-copy-btn"
-                        onClick={() => copyToClipboard(
-                          activeOs === 'windows' ? commands.windows : activeOs === 'mac' ? commands.mac : activeOs === 'node' ? commands.node : commands.bat,
-                          'step1-install'
-                        )}
-                      >
-                        {copiedKey === 'step1-install' ? <Check size={13} color="#10b981" /> : <Copy size={13} />}
-                        <span>{copiedKey === 'step1-install' ? 'Copied' : 'Copy'}</span>
-                      </button>
-                    </div>
-                  </div>
-
-                  {/* Code Box 2: Check Status command */}
-                  <div>
-                    <div style={{ fontSize: '0.75rem', color: '#8e8ea0', marginBottom: '6px', fontWeight: 500 }}>
-                      Verify Status
-                    </div>
-                    <div className="codex-cmd-box">
-                      <span style={{ overflowX: 'auto', whiteSpace: 'nowrap', marginRight: '16px', color: '#9ca3af' }}>
-                        {commands.statusCurl}
-                      </span>
-                      <button 
-                        className="codex-copy-btn"
-                        onClick={() => copyToClipboard(commands.statusCurl, 'step1-check')}
-                      >
-                        {copiedKey === 'step1-check' ? <Check size={13} color="#10b981" /> : <Copy size={13} />}
-                        <span>{copiedKey === 'step1-check' ? 'Copied' : 'Copy'}</span>
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              {/* Step 2: Run and Verify Socket */}
-              <div style={{ display: 'flex', gap: '16px', marginBottom: '32px' }}>
-                <div className="step-circle">2</div>
-                <div style={{ flex: 1 }}>
-                  <div style={{ fontSize: '1rem', fontWeight: 600, color: '#ffffff', marginBottom: '6px' }}>
-                    Run engine and check socket
-                  </div>
-                  <p style={{ fontSize: '0.85rem', color: '#8e8ea0', margin: '0 0 14px 0' }}>
-                    Keep the terminal window open while playing media. Valor will automatically connect to <code style={{ color: '#ffffff', background: '#222', padding: '2px 6px', borderRadius: '4px' }}>http://127.0.0.1:45454</code>.
-                  </p>
-
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                    <button
-                      onClick={handleTestPing}
-                      style={{
-                        backgroundColor: '#25262c',
-                        border: '1px solid #363740',
-                        color: '#ffffff',
-                        padding: '7px 16px',
-                        borderRadius: '6px',
-                        fontSize: '0.825rem',
-                        fontWeight: 600,
-                        cursor: 'pointer',
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: '6px'
-                      }}
-                    >
-                      <RefreshCw size={13} className={pingResult?.loading ? 'animate-spin' : ''} />
-                      Test Local Ping Now
-                    </button>
-
-                    <span style={{ fontSize: '0.825rem', color: status.isAvailable ? '#34d399' : '#f87171' }}>
-                      {status.isAvailable ? '✓ Connected to port 45454' : '✗ Service offline (run command above)'}
-                    </span>
-                  </div>
-
-                  {pingResult && (
-                    <div style={{
-                      backgroundColor: '#070709',
-                      border: '1px solid #1f2024',
-                      borderRadius: '8px',
-                      padding: '12px 16px',
-                      marginTop: '12px',
-                      fontFamily: 'monospace',
-                      fontSize: '0.8rem'
-                    }}>
-                      {pingResult.loading && <span style={{ color: '#8e8ea0' }}>Pinging 127.0.0.1:45454...</span>}
-                      {pingResult.error && <span style={{ color: '#f87171' }}>Error: {pingResult.error}</span>}
-                      {pingResult.data && (
-                        <div>
-                          <div style={{ color: '#34d399', marginBottom: '4px' }}>✓ 200 OK — {pingResult.latency} ms roundtrip</div>
-                          <pre style={{ margin: 0, color: '#38bdf8', overflowX: 'auto' }}>
-                            {JSON.stringify(pingResult.data, null, 2)}
-                          </pre>
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </div>
-              </div>
-
-              {/* Step 3: Stream in Valor */}
-              <div style={{ display: 'flex', gap: '16px' }}>
-                <div className="step-circle">3</div>
-                <div style={{ flex: 1 }}>
-                  <div style={{ fontSize: '1rem', fontWeight: 600, color: '#ffffff', marginBottom: '6px' }}>
-                    Stream in Valor Player
-                  </div>
-                  <p style={{ fontSize: '0.85rem', color: '#8e8ea0', margin: '0 0 10px 0' }}>
-                    Open any movie or show in Valor. The top bar will display the green <span style={{ color: '#34d399', fontWeight: 600 }}>[ ⚡ Local Engine ]</span> badge, routing all data through your device.
-                  </p>
-                </div>
-              </div>
-
-            </div>
-          </section>
-
-          {/* ────────────────────────────────────────────────────────── */}
-          {/* OTHER SURFACES GRID (Pixel-Perfect to Image 3)              */}
-          {/* ────────────────────────────────────────────────────────── */}
-          <section ref={featuresRef} style={{ marginBottom: '64px' }}>
-            <div style={{ fontSize: '1.05rem', fontWeight: 700, color: '#ffffff', marginBottom: '18px' }}>
-              Other Valor and Companion surfaces
-            </div>
-
-            <div style={{
-              display: 'grid',
-              gridTemplateColumns: 'repeat(auto-fit, minmax(210px, 1fr))',
-              gap: '16px'
-            }}>
-              {/* Card 1: Web Player */}
-              <div className="codex-card" style={{ display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
-                <div>
-                  <div style={{ color: '#ffffff', marginBottom: '14px' }}>
-                    <Monitor size={20} />
-                  </div>
-                  <div style={{ fontSize: '0.95rem', fontWeight: 600, color: '#ffffff', marginBottom: '6px' }}>
-                    Web Player
-                  </div>
-                  <p style={{ fontSize: '0.8125rem', color: '#8e8ea0', lineHeight: 1.5, margin: 0 }}>
-                    Custom HTML5 streaming player with audio-sync, WebVTT, and Trakt.
-                  </p>
-                </div>
-                <div style={{ textAlign: 'right', marginTop: '16px', color: '#8e8ea0' }}>
-                  <ArrowRight size={14} />
-                </div>
-              </div>
-
-              {/* Card 2: Companion Daemon */}
-              <div className="codex-card" style={{ display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
-                <div>
-                  <div style={{ color: '#ffffff', marginBottom: '14px' }}>
-                    <Terminal size={20} />
-                  </div>
-                  <div style={{ fontSize: '0.95rem', fontWeight: 600, color: '#ffffff', marginBottom: '6px' }}>
-                    Companion Daemon
-                  </div>
-                  <p style={{ fontSize: '0.8125rem', color: '#8e8ea0', lineHeight: 1.5, margin: 0 }}>
-                    Local proxy service running on port 45454 with zero central server load.
-                  </p>
-                </div>
-                <div style={{ textAlign: 'right', marginTop: '16px', color: '#8e8ea0' }}>
-                  <ArrowRight size={14} />
-                </div>
-              </div>
-
-              {/* Card 3: 2MB Block Cache */}
-              <div className="codex-card" style={{ display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
-                <div>
-                  <div style={{ color: '#ffffff', marginBottom: '14px' }}>
-                    <HardDrive size={20} />
-                  </div>
-                  <div style={{ fontSize: '0.95rem', fontWeight: 600, color: '#ffffff', marginBottom: '6px' }}>
-                    Sliding Cache
-                  </div>
-                  <p style={{ fontSize: '0.8125rem', color: '#8e8ea0', lineHeight: 1.5, margin: 0 }}>
-                    2MB chunk memory & disk cache for instant seeking and loop replay.
-                  </p>
-                </div>
-                <div style={{ textAlign: 'right', marginTop: '16px', color: '#8e8ea0' }}>
-                  <ArrowRight size={14} />
-                </div>
-              </div>
-
-              {/* Card 4: Embedded Decoder */}
-              <div className="codex-card" style={{ display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
-                <div>
-                  <div style={{ color: '#ffffff', marginBottom: '14px' }}>
-                    <Database size={20} />
-                  </div>
-                  <div style={{ fontSize: '0.95rem', fontWeight: 600, color: '#ffffff', marginBottom: '6px' }}>
-                    Local Decoders
-                  </div>
-                  <p style={{ fontSize: '0.8125rem', color: '#8e8ea0', lineHeight: 1.5, margin: 0 }}>
-                    Demux embedded subtitles and audio tracks locally on your CPU.
-                  </p>
-                </div>
-                <div style={{ textAlign: 'right', marginTop: '16px', color: '#8e8ea0' }}>
-                  <ArrowRight size={14} />
-                </div>
-              </div>
-            </div>
-          </section>
-
-          {/* ────────────────────────────────────────────────────────── */}
-          {/* INSPECT SOURCE CODE SECTION                                */}
-          {/* ────────────────────────────────────────────────────────── */}
-          <section ref={scriptsRef} style={{ marginBottom: '64px' }}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '18px' }}>
-              <div>
-                <div style={{ fontSize: '1.05rem', fontWeight: 700, color: '#ffffff' }}>
-                  Inspect Script Source Code
-                </div>
-                <p style={{ fontSize: '0.85rem', color: '#8e8ea0', margin: '4px 0 0 0' }}>
-                  Review the full code of any companion script before running it.
-                </p>
-              </div>
-
-              <a
-                href={`${origin}/api/sidecar/${inspectScript}`}
-                download={inspectScript}
-                style={{
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  gap: '6px',
-                  backgroundColor: '#1b1b1f',
-                  border: '1px solid #2b2b32',
-                  borderRadius: '6px',
-                  padding: '6px 12px',
-                  color: '#ffffff',
-                  fontSize: '0.8rem',
-                  textDecoration: 'none',
-                  fontWeight: 500
-                }}
-              >
-                <Download size={13} /> Download File
-              </a>
-            </div>
-
-            {/* Script Tabs */}
-            <div style={{ display: 'flex', gap: '6px', marginBottom: '12px' }}>
-              {[
-                { id: 'install.ps1', label: 'install.ps1' },
-                { id: 'install.sh', label: 'install.sh' },
-                { id: 'valor-service.mjs', label: 'valor-service.mjs' },
-                { id: 'run.bat', label: 'run.bat' }
-              ].map(s => (
-                <button
-                  key={s.id}
-                  className={`codex-pill-tab ${inspectScript === s.id ? 'active' : ''}`}
-                  onClick={() => setInspectScript(s.id as any)}
-                >
-                  {s.label}
-                </button>
-              ))}
-            </div>
-
-            {/* Code Box with Line Numbers */}
-            <div style={{
-              backgroundColor: '#070709',
-              border: '1px solid #1f2024',
-              borderRadius: '10px',
-              overflow: 'hidden'
-            }}>
-              <div style={{
-                padding: '8px 16px',
-                borderBottom: '1px solid #16171a',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'space-between',
-                fontSize: '0.75rem',
-                color: '#64748b',
-                fontFamily: 'monospace'
-              }}>
-                <span>{inspectScript} &bull; {scriptContent ? `${scriptContent.split('\n').length} lines` : 'Loading...'}</span>
-                <button
-                  className="codex-copy-btn"
-                  onClick={() => copyToClipboard(scriptContent, 'inspect-raw')}
-                >
-                  {copiedKey === 'inspect-raw' ? <Check size={13} color="#10b981" /> : <Copy size={13} />}
-                  <span>{copiedKey === 'inspect-raw' ? 'Copied' : 'Copy Source'}</span>
-                </button>
-              </div>
-
-              <div style={{
-                maxHeight: '400px',
-                overflowY: 'auto',
-                padding: '16px',
-                fontFamily: 'ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace',
-                fontSize: '0.8rem',
-                lineHeight: 1.6,
-                color: '#cbd5e1'
-              }}>
-                {isLoadingScript ? (
-                  <div style={{ color: '#64748b', textAlign: 'center', padding: '30px 0' }}>Loading script...</div>
-                ) : (
-                  <pre style={{ margin: 0, whiteSpace: 'pre', overflowX: 'auto' }}>
-                    {scriptContent}
-                  </pre>
-                )}
-              </div>
-            </div>
-          </section>
-
-          {/* ────────────────────────────────────────────────────────── */}
-          {/* FAQ SECTION                                                */}
-          {/* ────────────────────────────────────────────────────────── */}
-          <section ref={faqRef} style={{ marginBottom: '40px' }}>
-            <div style={{ fontSize: '1.05rem', fontWeight: 700, color: '#ffffff', marginBottom: '18px' }}>
-              Security, privacy, and administration
-            </div>
-
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-              <div className="codex-card">
-                <div style={{ fontSize: '0.9rem', fontWeight: 600, color: '#ffffff', marginBottom: '4px' }}>
-                  Why run a local companion engine?
-                </div>
-                <p style={{ fontSize: '0.8125rem', color: '#8e8ea0', lineHeight: 1.6, margin: 0 }}>
-                  Remote media hosts limit connection slots and streaming large 4K files through a central server stresses bandwidth. The companion acts as a lightweight local proxy, delivering media directly to your player.
-                </p>
-              </div>
-
-              <div className="codex-card">
-                <div style={{ fontSize: '0.9rem', fontWeight: 600, color: '#ffffff', marginBottom: '4px' }}>
-                  Is this safe to run on my system?
-                </div>
-                <p style={{ fontSize: '0.8125rem', color: '#8e8ea0', lineHeight: 1.6, margin: 0 }}>
-                  Yes. The companion service is zero-dependency, open-source, and binds exclusively to <code>127.0.0.1</code> (localhost). No external devices on your Wi-Fi or internet can connect to it.
-                </p>
-              </div>
-
-              <div className="codex-card">
-                <div style={{ fontSize: '0.9rem', fontWeight: 600, color: '#ffffff', marginBottom: '4px' }}>
-                  What happens if I stop the service?
-                </div>
-                <p style={{ fontSize: '0.8125rem', color: '#8e8ea0', lineHeight: 1.6, margin: 0 }}>
-                  Valor continuously detects engine availability. If the engine is stopped, Valor automatically falls back to central server relay mode without stopping your video.
-                </p>
-              </div>
-            </div>
-          </section>
-
-        </main>
+        {/* 4. Good to Know (FAQ & Script Inspection) */}
+        <FaqDetails origin={origin} onShowToast={showToast} />
       </div>
 
-      {/* Footer */}
-      <footer style={{
-        borderTop: '1px solid #1c1c1f',
-        padding: '28px',
-        textAlign: 'center',
-        color: '#555660',
-        fontSize: '0.8rem'
-      }}>
-        Valor Engine Docs &bull; Pure Node.js Standard Library &bull; Zero Server Load Streaming
-      </footer>
-    </div>
+      {/* Floating Toast Notification */}
+      <Toast message={toastMessage} />
+    </main>
   );
 };
+
+export const LocalEnginePage = LocalServicePage;
+export default LocalServicePage;

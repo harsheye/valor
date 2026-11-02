@@ -1,0 +1,904 @@
+/* ==========================================================================
+   VALOR LOCAL ENGINE PAGE - TOKEN-DRIVEN STYLESHEET
+   100% token-based layout: uses app theme CSS variables.
+   ========================================================================== */
+
+.engine-page-container {
+  width: 100%;
+  min-height: 100%;
+  background: var(--bg);
+  color: var(--text-1);
+  font-family: var(--font-ui);
+  padding: var(--space-6) var(--space-4) var(--space-8);
+  box-sizing: border-box;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.engine-page-wrapper {
+  max-width: 960px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+}
+
+/* --------------------------------------------------------------------------
+   1. HEADER
+   -------------------------------------------------------------------------- */
+.engine-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-bottom: var(--space-4);
+  border-bottom: 1px solid var(--border);
+}
+
+.engine-header-left {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.engine-logo-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-sm);
+  background: var(--accent-soft);
+  color: var(--accent);
+  border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
+}
+
+.engine-header-title {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 1.15rem;
+  letter-spacing: -0.02em;
+  color: var(--text-1);
+  margin: 0;
+}
+
+.engine-header-right {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.engine-close-btn {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-2);
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-sm);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: background-color 0.15s ease, color 0.15s ease, transform 0.1s ease;
+}
+
+.engine-close-btn:hover {
+  background: var(--surface-2);
+  color: var(--text-1);
+}
+
+.engine-close-btn:active {
+  transform: scale(0.97);
+}
+
+/* Status Pill */
+.engine-status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 6px 14px;
+  border-radius: 9999px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  transition: all 0.2s ease;
+  line-height: 1;
+}
+
+.engine-status-pill.offline {
+  background: color-mix(in srgb, var(--warning) 12%, var(--surface-1));
+  color: var(--warning);
+  border: 1px solid color-mix(in srgb, var(--warning) 30%, var(--border));
+}
+
+.engine-status-pill.online {
+  background: color-mix(in srgb, var(--success) 12%, var(--surface-1));
+  color: var(--success);
+  border: 1px solid color-mix(in srgb, var(--success) 30%, var(--border));
+}
+
+.engine-pill-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.engine-status-pill.offline .engine-pill-dot {
+  background: var(--warning);
+}
+
+.engine-status-pill.online .engine-pill-dot {
+  background: var(--success);
+  box-shadow: 0 0 6px var(--success);
+  animation: enginePulseDot 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+/* --------------------------------------------------------------------------
+   2. HERO
+   -------------------------------------------------------------------------- */
+.engine-hero {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  animation: engineFadeInUp 0.4s ease 0ms both;
+}
+
+.engine-hero-title {
+  font-family: var(--font-display);
+  font-size: clamp(2rem, 4vw, 2.75rem);
+  font-weight: 800;
+  line-height: 1.1;
+  letter-spacing: -0.03em;
+  color: var(--text-1);
+  margin: 0;
+  max-width: 16ch;
+}
+
+.engine-hero-desc {
+  font-size: 0.975rem;
+  line-height: 1.6;
+  color: var(--text-2);
+  max-width: 64ch;
+  margin: 0;
+}
+
+.engine-hero-facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-6);
+  margin-top: var(--space-2);
+}
+
+.engine-fact-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.engine-fact-number {
+  font-family: var(--font-display);
+  font-size: clamp(1.2rem, 2.2vw, 1.45rem);
+  font-weight: 700;
+  color: var(--accent);
+  line-height: 1.2;
+}
+
+.engine-fact-label {
+  font-size: 0.8rem;
+  color: var(--text-3);
+  font-weight: 500;
+}
+
+/* --------------------------------------------------------------------------
+   3. MAIN GRID (2 COLUMNS: STEPS 1.5fr, STATUS 1fr)
+   -------------------------------------------------------------------------- */
+.engine-main-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr);
+  gap: var(--space-6);
+  align-items: stretch;
+  animation: engineFadeInUp 0.4s ease 80ms both;
+}
+
+/* --------------------------------------------------------------------------
+   4. STEPS CARD (LEFT)
+   -------------------------------------------------------------------------- */
+.engine-steps-card {
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: var(--space-7) var(--space-6);
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.engine-steps-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-7);
+}
+
+.engine-step-item {
+  position: relative;
+  display: flex;
+  gap: var(--space-4);
+  align-items: flex-start;
+}
+
+/* Connecting Line between steps */
+.engine-step-item:not(:last-child)::before {
+  content: '';
+  position: absolute;
+  top: 36px;
+  bottom: calc(-1 * var(--space-7) + 4px);
+  left: 15px;
+  width: 2px;
+  background: var(--border);
+}
+
+.engine-step-circle {
+  width: 32px;
+  height: 32px;
+  min-width: 32px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 0.9rem;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  color: var(--text-2);
+  transition: all 0.25s ease;
+  z-index: 1;
+}
+
+.engine-step-circle.completed {
+  background: var(--accent-fill);
+  border-color: var(--accent);
+  color: var(--on-accent);
+}
+
+.engine-step-content {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.engine-step-title {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 1.05rem;
+  line-height: 32px; /* Aligns vertically with 32px circle */
+  color: var(--text-1);
+  margin: 0;
+}
+
+.engine-step-desc {
+  margin: var(--space-1) 0 0 0;
+  font-size: 0.86rem;
+  line-height: 1.5;
+  color: var(--text-2);
+}
+
+.engine-step-control {
+  margin-top: var(--space-4);
+}
+
+.engine-step-command {
+  margin-top: var(--space-4);
+}
+
+/* Platform Tabs */
+.engine-platform-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.engine-platform-tab {
+  background: var(--surface-2);
+  color: var(--text-2);
+  border: 1px solid var(--border);
+  padding: 6px 12px;
+  border-radius: var(--radius-sm);
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background-color 0.15s ease, color 0.15s ease, border-color 0.15s ease, transform 0.1s ease;
+}
+
+.engine-platform-tab:hover {
+  background: var(--surface-3);
+  color: var(--text-1);
+}
+
+.engine-platform-tab:active {
+  transform: scale(0.97);
+}
+
+.engine-platform-tab[aria-pressed="true"] {
+  background: var(--accent-soft);
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 40%, var(--border));
+}
+
+/* Command Box */
+.engine-command-box {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 8px 10px 8px 14px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.engine-command-text {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  font-size: 0.82rem;
+  color: var(--text-1);
+  overflow-x: auto;
+  white-space: nowrap;
+  scrollbar-width: thin;
+  padding: 4px 0;
+  user-select: all;
+  flex: 1;
+}
+
+.engine-command-text::-webkit-scrollbar {
+  height: 4px;
+}
+
+.engine-command-text::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 4px;
+}
+
+.engine-copy-btn {
+  flex-shrink: 0;
+  background: var(--surface-3);
+  border: 1px solid var(--control-border);
+  color: var(--text-1);
+  padding: 6px 12px;
+  border-radius: var(--radius-sm);
+  font-size: 0.78rem;
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  cursor: pointer;
+  transition: background-color 0.15s ease, border-color 0.15s ease, transform 0.1s ease;
+}
+
+.engine-copy-btn:hover {
+  background: color-mix(in srgb, var(--accent) 15%, var(--surface-3));
+  border-color: var(--accent);
+}
+
+.engine-copy-btn:active {
+  transform: scale(0.97);
+}
+
+/* Step 2 Test Connection Row */
+.engine-test-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+}
+
+.engine-test-btn {
+  background: var(--accent-fill);
+  color: var(--on-accent);
+  border: none;
+  padding: 8px 16px;
+  border-radius: var(--radius-sm);
+  font-size: 0.82rem;
+  font-weight: 600;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  transition: opacity 0.15s ease, transform 0.1s ease;
+}
+
+.engine-test-btn:hover:not(:disabled) {
+  opacity: 0.92;
+}
+
+.engine-test-btn:active:not(:disabled) {
+  transform: scale(0.97);
+}
+
+.engine-test-btn:disabled {
+  opacity: 0.7;
+  cursor: not-allowed;
+}
+
+.engine-test-result {
+  font-size: 0.82rem;
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.engine-test-result.success {
+  color: var(--success);
+}
+
+.engine-test-result.error {
+  color: var(--danger);
+}
+
+/* Step 3 Inline Badge */
+.engine-inline-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 9999px;
+  background: color-mix(in srgb, var(--success) 14%, var(--surface-1));
+  color: var(--success);
+  border: 1px solid color-mix(in srgb, var(--success) 32%, transparent);
+  font-size: 0.75rem;
+  font-weight: 600;
+  vertical-align: middle;
+}
+
+/* --------------------------------------------------------------------------
+   5. STATUS CARD (RIGHT)
+   -------------------------------------------------------------------------- */
+.engine-status-card {
+  border-radius: var(--radius-lg);
+  padding: var(--space-6);
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+  height: 100%;
+  position: static; /* Explicitly NOT sticky */
+  transition: background 0.3s ease, border-color 0.3s ease;
+}
+
+.engine-status-card.offline {
+  background: linear-gradient(180deg, color-mix(in srgb, var(--warning) 10%, var(--surface-1)) 0%, var(--surface-1) 55%);
+  border: 1px solid color-mix(in srgb, var(--warning) 28%, var(--border));
+}
+
+.engine-status-card.online {
+  background: linear-gradient(180deg, color-mix(in srgb, var(--success) 10%, var(--surface-1)) 0%, var(--surface-1) 55%);
+  border: 1px solid color-mix(in srgb, var(--success) 28%, var(--border));
+}
+
+.engine-status-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+}
+
+/* 72px Status Ring */
+.engine-status-ring-container {
+  position: relative;
+  width: 72px;
+  height: 72px;
+  min-width: 72px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.engine-status-ring {
+  width: 72px;
+  height: 72px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.25s ease;
+}
+
+.engine-status-card.offline .engine-status-ring {
+  border: 2px solid var(--warning);
+  background: color-mix(in srgb, var(--warning) 12%, var(--surface-1));
+  color: var(--warning);
+}
+
+.engine-status-card.online .engine-status-ring {
+  border: 2px solid var(--success);
+  background: color-mix(in srgb, var(--success) 12%, var(--surface-1));
+  color: var(--success);
+}
+
+.engine-status-card.online .engine-status-ring-container::before {
+  content: '';
+  position: absolute;
+  inset: -6px;
+  border-radius: 50%;
+  border: 2px solid var(--success);
+  opacity: 0.6;
+  animation: engineRingPulse 2.4s cubic-bezier(0.2, 0.8, 0.4, 1) infinite;
+}
+
+.engine-status-title-group {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.engine-status-title {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 1.15rem;
+  color: var(--text-1);
+  margin: 0;
+}
+
+.engine-status-sub {
+  font-size: 0.84rem;
+  color: var(--text-2);
+  margin: 0;
+  line-height: 1.4;
+}
+
+.engine-divider {
+  height: 1px;
+  background: var(--border);
+  border: none;
+  margin: 0;
+  width: 100%;
+}
+
+/* Key-Value List */
+.engine-kv-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  margin: 0;
+  padding: 0;
+}
+
+.engine-kv-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+}
+
+.engine-kv-label {
+  font-size: 0.84rem;
+  color: var(--text-3);
+  font-weight: 500;
+}
+
+.engine-kv-value {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  font-size: 0.84rem;
+  color: var(--text-1);
+  font-weight: 600;
+}
+
+/* Mini Terminal */
+.engine-mini-terminal {
+  flex: 1;
+  min-height: 150px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: var(--space-4) var(--space-5);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  font-size: 0.8rem;
+  line-height: 1.6;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  box-sizing: border-box;
+  overflow: hidden;
+}
+
+.engine-terminal-prompt {
+  color: var(--text-3);
+}
+
+.engine-terminal-brand {
+  color: var(--focus-ring);
+  font-weight: 600;
+}
+
+.engine-terminal-meta {
+  color: var(--text-2);
+}
+
+.engine-terminal-state.offline {
+  color: var(--warning);
+}
+
+.engine-terminal-state.online {
+  color: var(--success);
+}
+
+.engine-terminal-cursor {
+  display: inline-block;
+  width: 8px;
+  height: 14px;
+  background: var(--focus-ring);
+  vertical-align: -2px;
+  animation: engineBlinkCursor 1.1s steps(2, start) infinite;
+}
+
+/* --------------------------------------------------------------------------
+   6. GOOD TO KNOW (COLLAPSIBLE DETAILS)
+   -------------------------------------------------------------------------- */
+.engine-good-to-know {
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: var(--space-6);
+  box-sizing: border-box;
+  animation: engineFadeInUp 0.4s ease 160ms both;
+}
+
+.engine-section-heading {
+  font-family: var(--font-display);
+  font-size: 1.25rem;
+  font-weight: 700;
+  color: var(--text-1);
+  margin: 0 0 var(--space-4) 0;
+}
+
+.engine-faq-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.engine-faq-item {
+  border-bottom: 1px solid var(--border);
+}
+
+.engine-faq-item:last-child {
+  border-bottom: none;
+}
+
+.engine-faq-summary {
+  list-style: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-4) 0;
+  font-family: var(--font-ui);
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--text-1);
+  user-select: none;
+  transition: color 0.15s ease;
+}
+
+.engine-faq-summary::-webkit-details-marker {
+  display: none;
+}
+
+.engine-faq-summary:hover {
+  color: var(--accent);
+}
+
+.engine-faq-icon {
+  font-size: 1.25rem;
+  font-weight: 400;
+  color: var(--text-3);
+  transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1), color 0.15s ease;
+  line-height: 1;
+}
+
+.engine-faq-item[open] .engine-faq-icon {
+  transform: rotate(45deg);
+  color: var(--accent);
+}
+
+.engine-faq-content {
+  padding: 0 0 var(--space-4) 0;
+  font-size: 0.88rem;
+  line-height: 1.6;
+  color: var(--text-2);
+}
+
+/* Script Viewer inside Good to know */
+.engine-script-viewer {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  margin-top: var(--space-2);
+}
+
+.engine-script-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.engine-script-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.engine-script-tab {
+  background: var(--surface-2);
+  color: var(--text-2);
+  border: 1px solid var(--border);
+  padding: 4px 10px;
+  border-radius: var(--radius-sm);
+  font-size: 0.76rem;
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.engine-script-tab:hover {
+  background: var(--surface-3);
+  color: var(--text-1);
+}
+
+.engine-script-tab[aria-pressed="true"] {
+  background: var(--accent-soft);
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 40%, var(--border));
+}
+
+.engine-code-display {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: var(--space-4);
+  max-height: 280px;
+  overflow: auto;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  font-size: 0.78rem;
+  line-height: 1.55;
+  color: var(--text-1);
+  white-space: pre;
+}
+
+/* --------------------------------------------------------------------------
+   7. TOAST NOTIFICATION
+   -------------------------------------------------------------------------- */
+.engine-toast-container {
+  position: fixed;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 9999;
+  pointer-events: none;
+}
+
+.engine-toast {
+  pointer-events: auto;
+  background: var(--surface-3);
+  color: var(--text-1);
+  border: 1px solid var(--control-border);
+  border-radius: var(--radius-md);
+  box-shadow: 0 8px 24px var(--scrim);
+  padding: 10px 18px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  animation: engineToastEnter 0.25s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+/* --------------------------------------------------------------------------
+   8. ANIMATIONS & REDUCED MOTION
+   -------------------------------------------------------------------------- */
+@keyframes engineFadeInUp {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes enginePulseDot {
+  0%, 100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+  50% {
+    transform: scale(1.4);
+    opacity: 0.7;
+  }
+}
+
+@keyframes engineRingPulse {
+  0% {
+    transform: scale(0.95);
+    opacity: 0.7;
+  }
+  70% {
+    transform: scale(1.15);
+    opacity: 0;
+  }
+  100% {
+    transform: scale(1.15);
+    opacity: 0;
+  }
+}
+
+@keyframes engineBlinkCursor {
+  0%, 49% {
+    opacity: 1;
+  }
+  50%, 100% {
+    opacity: 0;
+  }
+}
+
+@keyframes engineToastEnter {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.engine-spin {
+  animation: engineSpin 0.8s linear infinite;
+}
+
+@keyframes engineSpin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .engine-hero,
+  .engine-main-grid,
+  .engine-good-to-know,
+  .engine-toast {
+    animation: none !important;
+    transform: none !important;
+  }
+  .engine-status-pill.online .engine-pill-dot,
+  .engine-status-card.online .engine-status-ring-container::before,
+  .engine-terminal-cursor {
+    animation: none !important;
+  }
+}
+
+/* --------------------------------------------------------------------------
+   9. RESPONSIVE BREAKPOINTS
+   -------------------------------------------------------------------------- */
+@media (max-width: 820px) {
+  .engine-main-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .engine-page-container {
+    padding: var(--space-4) var(--space-3) var(--space-6);
+  }
+  .engine-steps-card {
+    padding: var(--space-5) var(--space-4);
+  }
+  .engine-status-card {
+    padding: var(--space-5);
+  }
+  .engine-hero-title {
+    max-width: 100%;
+  }
+}
