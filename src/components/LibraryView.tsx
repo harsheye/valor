@@ -323,7 +323,7 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
       backgroundColor: 'var(--bg)',
       color: 'var(--text-1)',
       overflowY: 'auto',
-      padding: '1.25rem 2rem 3rem 2rem',
+      padding: 'var(--space-6) var(--page-padding-x, var(--space-7)) var(--space-8) var(--page-padding-x, var(--space-7))',
       boxSizing: 'border-box'
     }}>
       {/* Visually Hidden h1 */}
@@ -349,7 +349,7 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
         />
       ) : (
         /* Normal Library Browser */
-        <div style={{ width: '100%', maxWidth: '1600px', margin: '0 auto', display: 'flex', flexDirection: 'column' }}>
+        <div style={{ width: '100%', maxWidth: 'var(--page-max-width, 1400px)', margin: '0 auto', display: 'flex', flexDirection: 'column' }}>
           {/* Sticky Toolbar */}
           <LibraryToolbar
             activeTab={activeTab}

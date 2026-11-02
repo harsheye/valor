@@ -236,42 +236,52 @@ export const OnlineSearchTab: React.FC<OnlineSearchTabProps> = ({
           backdropFilter: 'blur(16px)',
           WebkitBackdropFilter: 'blur(16px)',
           borderBottom: '1px solid var(--border)',
-          padding: 'var(--space-4) var(--space-7)',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          flexWrap: 'wrap',
-          gap: 'var(--space-3)'
+          padding: 'var(--space-4) var(--page-padding-x, var(--space-7))',
+          boxSizing: 'border-box'
         }}
       >
-        {/* Left: Type Segmented Control (All / Series / Movies) */}
-        <SegmentedControl<MediaFilterType>
-          options={typeOptions}
-          value={mediaTypeFilter}
-          onChange={(val) => {
-            setMediaTypeFilter(val);
-            // Brief skeleton transition feedback
-            setLoading(true);
-            setTimeout(() => setLoading(false), 80);
+        <div
+          style={{
+            width: '100%',
+            maxWidth: 'var(--page-max-width, 1400px)',
+            margin: '0 auto',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            flexWrap: 'wrap',
+            gap: 'var(--space-3)'
           }}
-          ariaLabel="Filter media type"
-        />
+        >
+          {/* Left: Type Segmented Control (All / Series / Movies) */}
+          <SegmentedControl<MediaFilterType>
+            options={typeOptions}
+            value={mediaTypeFilter}
+            onChange={(val) => {
+              setMediaTypeFilter(val);
+              // Brief skeleton transition feedback
+              setLoading(true);
+              setTimeout(() => setLoading(false), 80);
+            }}
+            ariaLabel="Filter media type"
+          />
 
-        {/* Right: Pill Search Input with "/" shortcut & 250ms debounce */}
-        <SearchBar
-          value={query}
-          onChange={(q) => setQuery(q)}
-          placeholder="Search movies, TV series, anime..."
-          debounceMs={250}
-        />
+          {/* Right: Pill Search Input with "/" shortcut & 250ms debounce */}
+          <SearchBar
+            value={query}
+            onChange={(q) => setQuery(q)}
+            placeholder="Search movies, TV series, anime..."
+            debounceMs={250}
+          />
+        </div>
       </header>
 
       {/* Main Content Area */}
       <main
         style={{
-          maxWidth: '1600px',
+          width: '100%',
+          maxWidth: 'var(--page-max-width, 1400px)',
           margin: '0 auto',
-          padding: 'var(--space-6) var(--space-7)',
+          padding: 'var(--space-6) var(--page-padding-x, var(--space-7))',
           boxSizing: 'border-box'
         }}
       >

@@ -53,7 +53,7 @@ export const SeriesDetailPage: React.FC<SeriesDetailPageProps> = ({
       flexDirection: 'column',
       gap: '1.5rem',
       width: '100%',
-      maxWidth: '1600px',
+      maxWidth: 'var(--page-max-width, 1400px)',
       margin: '0 auto',
       animation: 'fadeIn 0.15s ease-out'
     }}>

@@ -175,10 +175,10 @@ export const HomePage: React.FC<HomePageProps> = ({
       <div
         className="home-page-content-wrapper"
         style={{
-          maxWidth: '1400px',
+          maxWidth: 'var(--page-max-width, 1400px)',
           width: '100%',
           margin: '0 auto',
-          padding: '2rem',
+          padding: 'var(--space-6) var(--page-padding-x, var(--space-7)) var(--space-8) var(--page-padding-x, var(--space-7))',
           display: 'flex',
           flexDirection: 'column',
           gap: '1.75rem',
