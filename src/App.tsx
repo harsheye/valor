@@ -2625,8 +2625,10 @@ function App() {
     }
   };
 
-  const handleRemoveVideo = async (id: string, e: React.MouseEvent) => {
-    e.stopPropagation();
+  const handleRemoveVideo = async (id: string, e?: React.MouseEvent) => {
+    if (e?.stopPropagation) {
+      e.stopPropagation();
+    }
     const removedItem = videos.find(v => v.id === id);
     setVideos(prev => prev.filter(v => v.id !== id));
     try {

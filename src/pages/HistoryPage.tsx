@@ -358,8 +358,14 @@ export const HistoryPage: React.FC<HistoryPageProps> = ({
   };
 
   const executeClear = () => {
+    const mockEvent = { stopPropagation: () => {}, preventDefault: () => {} } as unknown as React.MouseEvent;
     videos.forEach(v => {
-      if (v.id) handleRemoveVideo(v.id, {} as any);
+      const vidId = v.id || (v as any).url;
+      if (vidId) {
+        try {
+          handleRemoveVideo(vidId, mockEvent);
+        } catch {}
+      }
     });
     setIsClearModalOpen(false);
   };
