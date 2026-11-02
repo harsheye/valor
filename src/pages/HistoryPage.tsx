@@ -117,13 +117,13 @@ export const HistoryPage: React.FC<HistoryPageProps> = ({
     return counts;
   }, [videos]);
 
-  // 2. Generate exactly 6 months (5 previous months + 1 current month)
+  // 2. Generate full last year of activity (12 months total)
   const months = useMemo(() => {
     const list: MonthBlock[] = [];
     const now = new Date();
 
-    // 5 previous months down to 0 (current month) = 6 months total
-    for (let offset = 5; offset >= 0; offset--) {
+    // 11 previous months down to 0 (current month) = 12 months total
+    for (let offset = 11; offset >= 0; offset--) {
       const d = new Date(now.getFullYear(), now.getMonth() - offset, 1);
       const year = d.getFullYear();
       const month = d.getMonth();
@@ -465,7 +465,7 @@ export const HistoryPage: React.FC<HistoryPageProps> = ({
           <div className="history-heatmap-top">
             <div className="history-heatmap-title-area">
               <span className="history-heatmap-sessions-count">
-                {`${totalSessions} session${totalSessions === 1 ? '' : 's'} in the last 6 months`}
+                {`${totalSessions} session${totalSessions === 1 ? '' : 's'} in the last year`}
               </span>
               <span className="history-heatmap-subtitle">
                 Each square is a day. Click one to see what you watched.
