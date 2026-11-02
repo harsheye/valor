@@ -9,18 +9,20 @@
   background: var(--bg);
   color: var(--text-1);
   font-family: var(--font-ui);
-  padding: var(--space-6) var(--space-4) var(--space-8);
+  padding: var(--space-6) var(--page-padding-x, var(--space-7)) var(--space-8);
   box-sizing: border-box;
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
 }
 
 .engine-page-wrapper {
-  max-width: 960px;
+  max-width: var(--page-max-width, 1400px);
   margin: 0 auto;
   display: flex;
   flex-direction: column;
   gap: var(--space-6);
+  width: 100%;
+  box-sizing: border-box;
 }
 
 /* --------------------------------------------------------------------------

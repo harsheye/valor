@@ -154,9 +154,9 @@ export const HistoryPage: React.FC<HistoryPageProps> = ({
 
   // Calculate layout coordinates for each separated month block
   const { monthLayouts, totalSvgWidth } = useMemo(() => {
-    let currentX = 36; // Initial left margin for day labels (Mon, Wed, Fri)
-    const colWidth = 14; // 11px cell + 3px gap
-    const monthGap = 18; // Distinct visible separation gap between months
+    let currentX = 28; // Initial left margin for day labels (Mon, Wed, Fri)
+    const colWidth = 13; // 10px cell + 3px gap
+    const monthGap = 12; // Distinct visible separation gap between months
 
     const layouts = months.map(m => {
       const startX = currentX;
@@ -173,7 +173,7 @@ export const HistoryPage: React.FC<HistoryPageProps> = ({
 
     return {
       monthLayouts: layouts,
-      totalSvgWidth: currentX + 6
+      totalSvgWidth: currentX + 4
     };
   }, [months]);
 
@@ -300,21 +300,21 @@ export const HistoryPage: React.FC<HistoryPageProps> = ({
       .slice(0, 2);
   }, [allHistoryItems]);
 
-  // Cell Level Color Map (Token-friendly / Crimson OLED palette)
+  // GitHub Dark Theme Palette (exact 1:1 match to screenshot)
   const getCellFill = (level: number, isFuture: boolean) => {
     if (isFuture) return 'rgba(255, 255, 255, 0.02)';
     switch (level) {
       case 1:
-        return '#4c1d24'; // subtle crimson
+        return '#0e4429';
       case 2:
-        return '#881337'; // mid dark red
+        return '#006d32';
       case 3:
-        return '#be123c'; // vibrant crimson
+        return '#26a641';
       case 4:
-        return '#f43f5e'; // bright highlight red
+        return '#39d353';
       case 0:
       default:
-        return 'rgba(255, 255, 255, 0.05)'; // un-watched
+        return '#161b22';
     }
   };
 
@@ -422,43 +422,24 @@ export const HistoryPage: React.FC<HistoryPageProps> = ({
         )}
 
         {/* ================================================================= */}
-        {/* 3. GITHUB-STYLE HEATMAP (LAST 5 MONTHS + CURRENT MONTH SEPARATED) */}
+        {/* 3. GITHUB HEATMAP CARD (EXACT 1:1 REPLICA FOR 6 MONTHS)           */}
         {/* ================================================================= */}
         <section className="history-heatmap-card" aria-label="Contribution and viewing activity heatmap">
-          <div className="history-heatmap-top">
-            <div className="history-heatmap-title-area">
-              <span className="history-heatmap-sessions-count">
-                {totalSessionsInLast6Months} session{totalSessionsInLast6Months === 1 ? '' : 's'} in the last 6 months
-              </span>
-              <span className="history-heatmap-subtitle">
-                Each square is a day. Click one to see what you watched.
-              </span>
-            </div>
-
-            {/* Legend */}
-            <div className="history-heatmap-legend">
-              <span>Less</span>
-              <span className="history-legend-square" style={{ background: getCellFill(0, false) }} />
-              <span className="history-legend-square" style={{ background: getCellFill(1, false) }} />
-              <span className="history-legend-square" style={{ background: getCellFill(2, false) }} />
-              <span className="history-legend-square" style={{ background: getCellFill(3, false) }} />
-              <span className="history-legend-square" style={{ background: getCellFill(4, false) }} />
-              <span>More</span>
-            </div>
-          </div>
-
-          {/* Scalable SVG Heatmap: Separated Month Groups & Zero Horizontal Scroll */}
+          {/* Scalable SVG Heatmap: Separated Month Groups & Native Compact Scale */}
           <div className="history-heatmap-svg-wrap">
             <svg
               className="history-heatmap-svg"
-              viewBox={`0 0 ${totalSvgWidth} 124`}
+              width={totalSvgWidth}
+              height="116"
+              viewBox={`0 0 ${totalSvgWidth} 116`}
               preserveAspectRatio="xMidYMid meet"
               aria-hidden="true"
+              style={{ width: `${totalSvgWidth}px`, maxWidth: '100%', height: 'auto', display: 'block' }}
             >
-              {/* Day Labels on Y-Axis */}
-              <text x="6" y="40" fontSize="9" fill="var(--text-3)" fontFamily="var(--font-ui)">Mon</text>
-              <text x="6" y="68" fontSize="9" fill="var(--text-3)" fontFamily="var(--font-ui)">Wed</text>
-              <text x="6" y="96" fontSize="9" fill="var(--text-3)" fontFamily="var(--font-ui)">Fri</text>
+              {/* Day Labels on Y-Axis (Mon, Wed, Fri) */}
+              <text x="4" y="41" fontSize="9" fill="var(--text-3)" fontFamily="var(--font-ui)">Mon</text>
+              <text x="4" y="67" fontSize="9" fill="var(--text-3)" fontFamily="var(--font-ui)">Wed</text>
+              <text x="4" y="93" fontSize="9" fill="var(--text-3)" fontFamily="var(--font-ui)">Fri</text>
 
               {/* Separated Month Groups */}
               {monthLayouts.map((m) => (
@@ -466,7 +447,7 @@ export const HistoryPage: React.FC<HistoryPageProps> = ({
                   {/* Centered Month Header */}
                   <text
                     x={m.labelCenterX}
-                    y="12"
+                    y="11"
                     textAnchor="middle"
                     fontSize="9.5"
                     fill="var(--text-3)"
@@ -477,8 +458,8 @@ export const HistoryPage: React.FC<HistoryPageProps> = ({
 
                   {/* Day Cells inside this month */}
                   {m.cells.map((cell) => {
-                    const cellX = m.startX + cell.weekCol * 14;
-                    const cellY = 22 + cell.dayOfWeek * 14;
+                    const cellX = m.startX + cell.weekCol * 13;
+                    const cellY = 20 + cell.dayOfWeek * 13;
                     const isSelected = selectedDateKey === cell.dateKey;
                     const fill = getCellFill(cell.level, cell.isFuture);
 
@@ -487,9 +468,9 @@ export const HistoryPage: React.FC<HistoryPageProps> = ({
                         <rect
                           x={cellX}
                           y={cellY}
-                          width="11"
-                          height="11"
-                          rx="2.5"
+                          width="10"
+                          height="10"
+                          rx="2"
                           fill={fill}
                           className="history-heat-cell"
                           onClick={() => handleCellClick(cell.dateKey)}
@@ -507,17 +488,17 @@ export const HistoryPage: React.FC<HistoryPageProps> = ({
                           <title>{`${cell.count} session${cell.count === 1 ? '' : 's'} on ${cell.dateKey}`}</title>
                         </rect>
 
-                        {/* Active/Selected Ring (Pink/crimson outline matching screenshot) */}
+                        {/* Active/Selected Ring (GitHub bright green highlight outline) */}
                         {isSelected && (
                           <rect
                             x={cellX - 1.5}
                             y={cellY - 1.5}
-                            width="14"
-                            height="14"
-                            rx="3.5"
+                            width="13"
+                            height="13"
+                            rx="3"
                             fill="none"
-                            stroke="#ff4d6d"
-                            strokeWidth="2"
+                            stroke="#39d353"
+                            strokeWidth="1.5"
                             pointerEvents="none"
                           />
                         )}
@@ -527,6 +508,23 @@ export const HistoryPage: React.FC<HistoryPageProps> = ({
                 </g>
               ))}
             </svg>
+          </div>
+
+          {/* Bottom Bar: Learn link on left, Less...More legend on right */}
+          <div className="history-heatmap-bottom">
+            <span className="history-heatmap-learn-link">
+              Learn how we count watch activity
+            </span>
+
+            <div className="history-heatmap-legend">
+              <span>Less</span>
+              <span className="history-legend-square" style={{ background: getCellFill(0, false) }} />
+              <span className="history-legend-square" style={{ background: getCellFill(1, false) }} />
+              <span className="history-legend-square" style={{ background: getCellFill(2, false) }} />
+              <span className="history-legend-square" style={{ background: getCellFill(3, false) }} />
+              <span className="history-legend-square" style={{ background: getCellFill(4, false) }} />
+              <span>More</span>
+            </div>
           </div>
         </section>
 

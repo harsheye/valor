@@ -271,62 +271,21 @@
 }
 
 /* --------------------------------------------------------------------------
-   3. GITHUB HEATMAP CARD (NO SCROLLING ALLOWED)
+   3. GITHUB HEATMAP CARD (EXACT 1:1 REPLICA FOR 6 MONTHS)
    -------------------------------------------------------------------------- */
 .history-heatmap-card {
   background: var(--surface-1);
   border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  padding: 20px 24px;
+  border-radius: var(--radius-sm);
+  padding: 12px 16px;
   display: flex;
   flex-direction: column;
-  gap: var(--space-4);
-  width: 100%;
+  gap: 8px;
+  width: fit-content;
+  max-width: 100%;
   box-sizing: border-box;
 }
 
-.history-heatmap-top {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  flex-wrap: wrap;
-  gap: var(--space-3);
-}
-
-.history-heatmap-title-area {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.history-heatmap-sessions-count {
-  font-family: var(--font-display);
-  font-size: 1.05rem;
-  font-weight: 700;
-  color: var(--text-1);
-}
-
-.history-heatmap-subtitle {
-  font-size: 0.8rem;
-  color: var(--text-3);
-}
-
-/* Legend */
-.history-heatmap-legend {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  font-size: 0.72rem;
-  color: var(--text-3);
-}
-
-.history-legend-square {
-  width: 10px;
-  height: 10px;
-  border-radius: 2px;
-}
-
-/* Heatmap SVG Grid (Guaranteed No Horizontal Scroll) */
 .history-heatmap-svg-wrap {
   width: 100%;
   display: flex;
@@ -335,10 +294,44 @@
 }
 
 .history-heatmap-svg {
-  width: 100%;
-  max-width: 920px;
   height: auto;
   display: block;
+}
+
+/* Bottom bar: Learn link on left, Less...More legend on right */
+.history-heatmap-bottom {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  width: 100%;
+  padding-top: 2px;
+}
+
+.history-heatmap-learn-link {
+  font-size: 0.72rem;
+  color: var(--text-3);
+  user-select: none;
+}
+
+.history-heatmap-learn-link:hover {
+  color: var(--text-2);
+}
+
+/* Legend */
+.history-heatmap-legend {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.7rem;
+  color: var(--text-3);
+  margin-left: auto;
+}
+
+.history-legend-square {
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
 }
 
 .history-heat-cell {
