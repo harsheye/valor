@@ -81,10 +81,14 @@
   box-shadow: 0 0 0 1px var(--focus-ring);
 }
 
-.history-search-input {
+.history-search-input,
+.history-search-input:focus,
+.history-search-input:focus-visible {
   background: transparent;
-  border: none;
-  outline: none;
+  border: none !important;
+  outline: none !important;
+  outline-offset: 0 !important;
+  box-shadow: none !important;
   color: var(--text-1);
   font-size: 0.82rem;
   font-family: var(--font-ui);
