@@ -350,6 +350,7 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
 
 
 
+  const [isVolumeHovered, setIsVolumeHovered] = useState(false);
   const [isPlaying, setIsPlaying] = useState(false);
   const [showPauseMetadataOverlay, setShowPauseMetadataOverlay] = useState(false);
   const showPauseMetadataOverlayRef = useRef(false);
@@ -2955,7 +2956,11 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
       streamIndex,
       codec
     });
-    if (!skipNotification) {
+    if (playbackControllerRef.current) {
+      playbackControllerRef.current.setVolume(volume, isMuted);
+      playbackControllerRef.current.setAudioBoost(audioBoost);
+    }
+    if (!skipNotification && !showAudioSubMenu && !vlcContextMenuState.visible) {
       const str = audioStreams.find(s => s.index === streamIndex);
       island.notify({
         type: 'audio',
@@ -2992,7 +2997,7 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
       streamIndex,
       format: /ass|ssa/i.test(codec) ? 'ass' : (/webvtt/i.test(codec) ? 'vtt' : 'srt')
     });
-    if (!skipNotification) {
+    if (!skipNotification && !showAudioSubMenu && !vlcContextMenuState.visible) {
       const str = subtitleStreams.find(s => s.index === streamIndex);
       island.notify({
         type: 'subtitle',
@@ -3507,24 +3512,32 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
     const targetIdx = track === null ? -1 : (track.streamIndex !== undefined ? track.streamIndex : -1);
     setActiveAudioStreamIndex(targetIdx === -1 ? null : targetIdx);
     
-    if (track === null) {
-      island.notify({ type: 'audio', language: 'und', index: 0, title: 'Default Audio' });
-    } else if (track.streamIndex !== undefined) {
-      const s = audioStreams.find(str => str.index === track.streamIndex);
-      island.notify({
-        type: 'audio',
-        language: track.language || s?.language,
-        channels: (s as any)?.channels ? String((s as any).channels) : undefined,
-        codec: track.codec || s?.codec,
-        index: track.streamIndex,
-        title: track.name || s?.title
-      });
-    } else {
-      island.notify({ type: 'audio', title: track.name, language: track.language });
+    if (!showAudioSubMenu && !vlcContextMenuState.visible) {
+      if (track === null) {
+        island.notify({ type: 'audio', language: 'und', index: 0, title: 'Default Audio' });
+      } else if (track.streamIndex !== undefined) {
+        const s = audioStreams.find(str => str.index === track.streamIndex);
+        island.notify({
+          type: 'audio',
+          language: track.language || s?.language,
+          channels: (s as any)?.channels ? String((s as any).channels) : undefined,
+          codec: track.codec || s?.codec,
+          index: track.streamIndex,
+          title: track.name || s?.title
+        });
+      } else {
+        island.notify({ type: 'audio', title: track.name, language: track.language });
+      }
     }
 
     if (targetIdx !== -1) {
       playbackControllerRef.current?.switchAudioTrack(targetIdx);
+    } else {
+      playbackControllerRef.current?.switchAudioTrack(null);
+    }
+    if (playbackControllerRef.current) {
+      playbackControllerRef.current.setVolume(volume, isMuted);
+      playbackControllerRef.current.setAudioBoost(audioBoost);
     }
     
     if (track === null) {
@@ -3543,19 +3556,23 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
     }
     if (track === null) {
       userExplicitlyTurnedOffSubRef.current = true;
-      island.notify({ type: 'subtitle', language: null });
+      if (!showAudioSubMenu && !vlcContextMenuState.visible) {
+        island.notify({ type: 'subtitle', language: null });
+      }
     } else {
       userExplicitlyTurnedOffSubRef.current = false;
-      if (track.streamIndex !== undefined) {
-        const s = subtitleStreams.find(str => str.index === track.streamIndex);
-        island.notify({
-          type: 'subtitle',
-          language: track.language ?? s?.language ?? null,
-          index: track.streamIndex,
-          title: track.name || s?.title
-        });
-      } else {
-        island.notify({ type: 'subtitle', language: track.language ?? null, title: track.name });
+      if (!showAudioSubMenu && !vlcContextMenuState.visible) {
+        if (track.streamIndex !== undefined) {
+          const s = subtitleStreams.find(str => str.index === track.streamIndex);
+          island.notify({
+            type: 'subtitle',
+            language: track.language ?? s?.language ?? null,
+            index: track.streamIndex,
+            title: track.name || s?.title
+          });
+        } else {
+          island.notify({ type: 'subtitle', language: track.language ?? null, title: track.name });
+        }
       }
     }
     setSelectedSubTrack(track);
@@ -5646,7 +5663,14 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
           
           {/* Seekbar timeline row */}
           {(showPlayBar || showTimeDisplay || hoveredSetting === 'showPlayBar' || hoveredSetting === 'showTimeDisplay') && (
-            <div className="seekbar-row">
+            <div 
+              className={`seekbar-row ${isVolumeHovered ? 'hide-for-volume' : ''}`}
+              style={{
+                opacity: isVolumeHovered ? 0 : 1,
+                pointerEvents: isVolumeHovered ? 'none' : 'auto',
+                transition: 'opacity 0.22s cubic-bezier(0.16, 1, 0.3, 1)'
+              }}
+            >
               {(showPlayBar || hoveredSetting === 'showPlayBar') && (
                 <div 
                   className={`scrub-container-premium ${uiConfig.blockSeekingCompletely ? 'seeking-blocked' : ''} ${getHighlightClass('showPlayBar') || getHighlightClass('blockSeekingCompletely')}`}
@@ -5866,11 +5890,13 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
 
                 {(showVolumeControl || hoveredSetting === 'showVolumeControl') && (
                   <div 
-                    className={`volume-control-group-premium ${getHighlightClass('showVolumeControl')}`}
+                    className={`volume-control-group-premium ${isVolumeHovered ? 'volume-open ' : ''}${getHighlightClass('showVolumeControl')}`}
                     style={{
                       opacity: showVolumeControlMode === 'enable' ? 1 : 0.5,
                       pointerEvents: showVolumeControlMode === 'enable' ? 'auto' : 'none'
                     }}
+                    onMouseEnter={() => setIsVolumeHovered(true)}
+                    onMouseLeave={() => setIsVolumeHovered(false)}
                     onWheel={(e) => {
                       e.preventDefault();
                       setIsMuted(false);
@@ -5888,33 +5914,31 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
                       }}
                       title={isMuted ? "Unmute" : "Mute"}
                     >
-                      {isMuted || volume === 0 ? <VolumeX size={18} /> : volume < 0.5 ? <Volume1 size={18} /> : <Volume2 size={18} />}
+                      {isMuted || volume === 0 ? <VolumeX size={20} /> : volume < 0.5 ? <Volume1 size={20} /> : <Volume2 size={20} />}
                     </button>
-                    <div className="volume-slider-container-premium">
-                      <input 
-                        type="range"
-                        min={0}
-                        max={1}
-                        step={0.01}
-                        onWheel={(e) => {
-                          // Prevent default range wheel scroll to let parent's high-res free wheel scroll control take over
-                          e.preventDefault();
-                        }}
-                        value={isMuted ? 0 : volume}
-                        onChange={(e) => {
-                          const nextVol = parseFloat(e.target.value);
-                          setVolume(nextVol);
-                          setIsMuted(nextVol === 0);
-                        }}
-                        className="volume-slider-premium"
-                        style={{
-                          background: `linear-gradient(to right, #007aff 0%, #007aff ${(isMuted ? 0 : volume) * 100}%, rgba(255, 255, 255, 0.08) ${(isMuted ? 0 : volume) * 100}%, rgba(255, 255, 255, 0.08) 100%)`
-                        }}
-                      />
+                    <div className="volume-slider-vertical-popover" onClick={(e) => e.stopPropagation()}>
+                      <span className="volume-vertical-percent-text" style={{ color: audioBoost > 100 ? '#ff7a00' : '#ffffff' }}>
+                        {isMuted ? '0%' : audioBoost > 100 ? `${audioBoost}%` : `${Math.round(volume * 100)}%`}
+                      </span>
+                      <div className="volume-vertical-track-wrapper">
+                        <input 
+                          type="range"
+                          min={0}
+                          max={1}
+                          step={0.01}
+                          value={isMuted ? 0 : volume}
+                          onChange={(e) => {
+                            const nextVol = parseFloat(e.target.value);
+                            setVolume(nextVol);
+                            setIsMuted(nextVol === 0);
+                          }}
+                          className="volume-slider-vertical"
+                          style={{
+                            background: `linear-gradient(to top, ${audioBoost > 100 ? '#ff7a00' : '#ffffff'} 0%, ${audioBoost > 100 ? '#ff7a00' : '#ffffff'} ${(isMuted ? 0 : volume) * 100}%, rgba(255, 255, 255, 0.18) ${(isMuted ? 0 : volume) * 100}%, rgba(255, 255, 255, 0.18) 100%)`
+                          }}
+                        />
+                      </div>
                     </div>
-                    <span className="volume-percent-text-premium">
-                      {Math.round((isMuted ? 0 : volume) * 100)}
-                    </span>
                   </div>
                 )}
               </div>
@@ -8339,9 +8363,9 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
           color: white !important;
         }
 
-        /* Horizontal Volume Slider on Hover */
-        /* Redesigned Premium Volume Pill-Container */
+        /* Netflix-style Vertical Volume Popover */
         .volume-control-group-premium {
+          position: relative;
           display: flex;
           align-items: center;
           background: transparent !important;
@@ -8350,124 +8374,130 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
           padding: 2px;
           height: 38px;
           box-sizing: border-box;
-          gap: 0px;
           margin-left: 0.5rem;
-          transition: gap 0.25s cubic-bezier(0.16, 1, 0.3, 1), padding 0.25s cubic-bezier(0.16, 1, 0.3, 1);
-        }
-        .volume-control-group-premium:hover {
-          gap: 12px;
-          padding-right: 12px;
         }
         .control-btn-volume {
-          width: 32px;
-          height: 32px;
+          width: 38px;
+          height: 38px;
           background: transparent !important;
-          border: 1px solid transparent !important;
-          border-radius: 6px;
+          border: none !important;
+          border-radius: 50% !important;
           display: flex;
           align-items: center;
           justify-content: center;
           cursor: pointer;
-          transition: background 0.25s ease, border-color 0.25s ease, color 0.18s ease, transform 0.18s cubic-bezier(0.175, 0.885, 0.32, 1.275);
-          color: var(--text-secondary, rgba(255, 255, 255, 0.8)) !important;
+          transition: background 0.2s ease, color 0.18s ease, transform 0.18s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+          color: #ffffff !important;
           outline: none;
           padding: 0 !important;
           flex-shrink: 0;
         }
         .control-btn-volume:hover {
-          transform: scale(1.22);
+          transform: scale(1.12);
+          color: #ffffff !important;
+          background: rgba(255, 255, 255, 0.15) !important;
         }
         .control-btn-volume:active {
           transform: scale(0.95);
-        }
-        .volume-control-group-premium:hover .control-btn-volume {
-          background: var(--border-subtle, rgba(255, 255, 255, 0.12)) !important;
-          border: 1px solid var(--border-color, rgba(255, 255, 255, 0.15)) !important;
-        }
-        .volume-control-group-premium:hover .control-btn-volume:hover {
-          background: var(--surface-hover, rgba(255, 255, 255, 0.18)) !important;
-          color: var(--text-primary, #ffffff) !important;
-          border-color: var(--border-color, rgba(255, 255, 255, 0.25)) !important;
-          transform: scale(1.22);
-        }
-        .volume-slider-container-premium {
-          width: 0;
-          min-width: 0;
-          overflow: hidden;
-          opacity: 0;
-          display: flex;
-          align-items: center;
-          transition: width 0.25s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.25s ease;
-          flex-shrink: 0;
-        }
-        .volume-control-group-premium:hover .volume-slider-container-premium {
-          width: calc(130px * var(--player-ui-scale, 1));
-          opacity: 1;
         }
         .control-btn-volume svg {
           width: calc(20px * var(--player-ui-scale, 1)) !important;
           height: calc(20px * var(--player-ui-scale, 1)) !important;
         }
-        .volume-slider-premium {
-          width: calc(130px * var(--player-ui-scale, 1));
-          height: calc(3px * var(--player-ui-scale, 1));
+        .volume-slider-vertical-popover {
+          position: absolute;
+          bottom: 44px;
+          left: 50%;
+          transform: translateX(-50%) translateY(8px);
+          width: 36px;
+          height: 136px;
+          background: rgba(18, 18, 18, 0.92);
+          backdrop-filter: blur(16px);
+          -webkit-backdrop-filter: blur(16px);
+          border: 1px solid rgba(255, 255, 255, 0.15);
+          border-radius: 20px;
+          padding: 10px 0;
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          justify-content: space-between;
+          box-shadow: 0 10px 30px rgba(0, 0, 0, 0.7);
+          opacity: 0;
+          pointer-events: none;
+          transition: opacity 0.2s cubic-bezier(0.16, 1, 0.3, 1), transform 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+          z-index: 500;
+          box-sizing: border-box;
+        }
+        .volume-slider-vertical-popover::after {
+          content: '';
+          position: absolute;
+          bottom: -16px;
+          left: -8px;
+          right: -8px;
+          height: 20px;
+          background: transparent;
+        }
+        .volume-control-group-premium:hover .volume-slider-vertical-popover,
+        .volume-control-group-premium.volume-open .volume-slider-vertical-popover {
+          opacity: 1;
+          pointer-events: auto;
+          transform: translateX(-50%) translateY(0);
+        }
+        .volume-vertical-percent-text {
+          font-family: 'Outfit', sans-serif;
+          font-size: 11px;
+          font-weight: 700;
+          color: #ffffff;
+          user-select: none;
+          text-align: center;
+          min-height: 14px;
+        }
+        .volume-vertical-track-wrapper {
+          flex: 1;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          width: 100%;
+          padding: 6px 0;
+        }
+        .volume-slider-vertical {
           -webkit-appearance: none;
-          background: rgba(255, 255, 255, 0.15);
+          writing-mode: vertical-lr;
+          direction: rtl;
+          width: 4px;
+          height: 86px;
           border-radius: 2px;
+          background: rgba(255, 255, 255, 0.2);
           outline: none;
           cursor: pointer;
-          transition: background 0.15s;
-          flex-shrink: 0;
+          padding: 0;
+          margin: 0;
         }
-        .volume-slider-premium::-webkit-slider-runnable-track {
-          height: calc(3px * var(--player-ui-scale, 1));
-        }
-        .volume-slider-premium::-webkit-slider-thumb {
+        .volume-slider-vertical::-webkit-slider-thumb {
           -webkit-appearance: none;
-          width: calc(12px * var(--player-ui-scale, 1));
-          height: calc(12px * var(--player-ui-scale, 1));
-          border-radius: 9999px !important;
-          background: #ffffff !important;
-          margin-top: calc(-4.5px * var(--player-ui-scale, 1)); /* centers thumb on track */
-          box-shadow: 0 1px 4px rgba(0, 0, 0, 0.4);
-          transition: transform 0.15s cubic-bezier(0.16, 1, 0.3, 1), background-color 0.15s;
-          border: none !important;
+          width: 12px;
+          height: 12px;
+          border-radius: 50%;
+          background: #ffffff;
+          box-shadow: 0 1px 4px rgba(0, 0, 0, 0.6);
+          cursor: pointer;
+          transition: transform 0.15s ease;
         }
-        .volume-slider-premium:hover::-webkit-slider-thumb {
-          transform: scale(1.2);
-          background-color: #ffffff !important;
+        .volume-slider-vertical:hover::-webkit-slider-thumb {
+          transform: scale(1.25);
         }
-        .volume-slider-premium::-moz-range-thumb {
-          width: calc(12px * var(--player-ui-scale, 1));
-          height: calc(12px * var(--player-ui-scale, 1));
-          border: none !important;
-          border-radius: 9999px !important;
-          background: #ffffff !important;
-          box-shadow: 0 1px 4px rgba(0, 0, 0, 0.4);
-          transition: transform 0.15s cubic-bezier(0.16, 1, 0.3, 1), background-color 0.15s;
+        .volume-slider-vertical::-moz-range-thumb {
+          width: 12px;
+          height: 12px;
+          border-radius: 50%;
+          background: #ffffff;
+          border: none;
+          box-shadow: 0 1px 4px rgba(0, 0, 0, 0.6);
+          cursor: pointer;
+          transition: transform 0.15s ease;
         }
-        .volume-slider-premium:hover::-moz-range-thumb {
-          transform: scale(1.2);
-          background-color: #ffffff !important;
-        }
-
-        .volume-percent-text-premium {
-          color: #ffffff;
-          font-size: 0.85rem;
-          font-weight: 500;
-          width: 0;
-          min-width: 0;
-          overflow: hidden;
-          opacity: 0;
-          text-align: right;
-          font-family: 'Outfit', sans-serif;
-          user-select: none;
-          transition: width 0.25s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.25s ease;
-          flex-shrink: 0;
-        }
-        .volume-control-group-premium:hover .volume-percent-text-premium {
-          width: 28px;
-          opacity: 1;
+        .volume-slider-vertical:hover::-moz-range-thumb {
+          transform: scale(1.25);
         }
 
         /* Disable animations overrides */

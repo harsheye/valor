@@ -147,9 +147,14 @@ export class PlaybackController {
 
   async initialize(videoEl: HTMLVideoElement, streamIndex: number | null): Promise<void> {
     this.videoEl = videoEl;
-    this.videoEl.muted = true; // Mute video element - audio is played via AudioContext
     this.state.activeStreamIndex = typeof streamIndex === 'number' ? streamIndex : -1;
+    this.videoEl.muted = this.state.activeStreamIndex >= 0; // Only mute video element when separate audio track is played via AudioContext
     this.bufferManager.resetFailures();
+
+    if (this.state.activeStreamIndex < 0) {
+      logger.playback('controller=' + this.instanceId + ' initialized for native video audio.');
+      return;
+    }
     
     // 1. Setup new playback generation to initialize abort signals and sessionId correctly
     const generation = this.startNewPlaybackGeneration('initialize');
@@ -849,6 +854,16 @@ export class PlaybackController {
     this.bufferManager.clear();
     this.bufferManager.resetFailures();
     this.scheduler.reset();
+
+    if (this.videoEl) {
+      this.videoEl.muted = this.state.activeStreamIndex >= 0;
+      this.applyVolumeAndBoost();
+    }
+
+    if (this.state.activeStreamIndex < 0) {
+      this.pauseAudioOnly();
+      return;
+    }
 
     if (this.videoEl) {
       const isPlaying = !this.videoEl.paused;

@@ -72,24 +72,29 @@ export function getLanguageDisplayName(code?: string | null): string {
 // Extract a clean language display name from language code or track title
 export function resolveLanguage(code?: string | null, title?: string): string {
   // 1. Direct code check if valid
-  if (code && code !== 'und') {
+  if (code && code.toLowerCase() !== 'und') {
     const fromCode = getLanguageDisplayName(code);
     if (fromCode && fromCode.toLowerCase() !== code.toLowerCase() && fromCode !== 'Undetermined') {
       return fromCode;
     }
   }
 
-  // 2. Parse language code enclosed in [ ] or ( ) from title (e.g. "[ENG]", "(hin)", "Track 3 - [ENG]")
-  if (title) {
-    const bracketMatch = title.match(/(?:\[|\()([a-zA-Z]{2,4})(?:\]|\))/);
+  // 2. Parse language code or name enclosed in [ ] or ( ) from title or code (e.g. "[ENG]", "(hin)", "Track 3 - [ENG]")
+  const candidates = [title, code].filter(Boolean) as string[];
+  for (const text of candidates) {
+    const bracketMatch = text.match(/(?:\[|\()([a-zA-Z]{2,12})(?:\]|\))/);
     if (bracketMatch && bracketMatch[1]) {
       const parsed = getLanguageDisplayName(bracketMatch[1]);
       if (parsed && parsed.toLowerCase() !== bracketMatch[1].toLowerCase() && parsed !== 'Undetermined') {
         return parsed;
       }
+      const cap = bracketMatch[1].charAt(0).toUpperCase() + bracketMatch[1].slice(1).toLowerCase();
+      if (['English', 'Hindi', 'Japanese', 'Spanish', 'French', 'German', 'Italian', 'Korean', 'Chinese', 'Russian', 'Portuguese'].includes(cap)) {
+        return cap;
+      }
     }
 
-    // 3. Check for common language names in title
+    // 3. Check for common language names in string
     const commonLangs = [
       'Hindi', 'English', 'Japanese', 'Spanish', 'French', 'German', 'Italian',
       'Korean', 'Chinese', 'Russian', 'Portuguese', 'Arabic', 'Bengali', 'Tamil',
@@ -98,14 +103,14 @@ export function resolveLanguage(code?: string | null, title?: string): string {
     ];
     for (const lang of commonLangs) {
       const reg = new RegExp(`\\b${lang}\\b`, 'i');
-      if (reg.test(title)) {
+      if (reg.test(text)) {
         return lang;
       }
     }
   }
 
   // Fallback to direct name if available
-  if (code && code !== 'und') {
+  if (code && code.toLowerCase() !== 'und') {
     return getLanguageDisplayName(code);
   }
 
@@ -220,7 +225,7 @@ export const PlayerIsland: React.FC<PlayerIslandProps> = ({
   const [stage, setStage] = useState<IslandStage>('idle');
   const [isCrossfading, setIsCrossfading] = useState(false);
   const [isHovered, setIsHovered] = useState(false);
-  const [islandDimensions, setIslandDimensions] = useState<{ width: number; height: number }>({ width: 44, height: 44 });
+  const [islandDimensions, setIslandDimensions] = useState<{ width: number; height: number }>({ width: 50, height: 50 });
 
   const containerRef = useRef<HTMLDivElement>(null);
   const contentMeasureRef = useRef<HTMLDivElement>(null);
@@ -254,14 +259,14 @@ export const PlayerIsland: React.FC<PlayerIslandProps> = ({
       const el = expandedMeasureRef.current;
       const w = Math.min(window.innerWidth - 24, el.offsetWidth + 28);
       const h = el.offsetHeight + 24;
-      setIslandDimensions({ width: Math.max(240, w), height: Math.max(60, h) });
+      setIslandDimensions({ width: Math.max(260, w), height: Math.max(64, h) });
     } else if (contentMeasureRef.current) {
       const el = contentMeasureRef.current;
-      const measuredWidth = el.offsetWidth;
-      const measuredHeight = el.offsetHeight;
-      const finalWidth = Math.min(window.innerWidth - 24, measuredWidth + 24);
-      const finalHeight = Math.max(44, measuredHeight + 14);
-      setIslandDimensions({ width: finalWidth, height: finalHeight });
+      const measuredWidth = Math.ceil(el.scrollWidth || el.offsetWidth);
+      const measuredHeight = Math.ceil(el.scrollHeight || el.offsetHeight);
+      const finalWidth = Math.min(window.innerWidth - 32, measuredWidth + 36);
+      const finalHeight = Math.max(50, measuredHeight + 14);
+      setIslandDimensions({ width: Math.max(160, finalWidth), height: finalHeight });
     }
   }, []);
 
@@ -273,9 +278,9 @@ export const PlayerIsland: React.FC<PlayerIslandProps> = ({
     // Step 1: Details fade out (.16s)
     setStage('closing-details');
 
-    // Step 2: Contract to 44x44 circle after 170ms
+    // Step 2: Contract to 50x50 circle after 170ms
     stageTimerRef.current = setTimeout(() => {
-      setIslandDimensions({ width: 44, height: 44 });
+      setIslandDimensions({ width: 50, height: 50 });
       setStage('contract');
 
       // Step 3: Scale down to .35 and fade out after 520ms
@@ -368,12 +373,12 @@ export const PlayerIsland: React.FC<PlayerIslandProps> = ({
       }
 
       // Fresh Open sequence:
-      // 1. Appears as 44x44 circle with icon (.45s cubic-bezier)
+      // 1. Appears as 50x50 circle with icon (.45s cubic-bezier)
       if (stageTimerRef.current) clearTimeout(stageTimerRef.current);
       if (dismissTimerRef.current) clearTimeout(dismissTimerRef.current);
 
       setCurrentNotif(notif);
-      setIslandDimensions({ width: 44, height: 44 });
+      setIslandDimensions({ width: 50, height: 50 });
       setStage('pop-in');
 
       stageTimerRef.current = setTimeout(() => {
@@ -481,27 +486,27 @@ export const PlayerIsland: React.FC<PlayerIslandProps> = ({
         if (muted || value === 0) {
           return (
             <div className="player-island-icon-disc">
-              <VolumeX size={18} color="#ef4444" />
+              <VolumeX size={20} color="#ef4444" />
             </div>
           );
         }
         if (isBoosted) {
           return (
             <div className="player-island-icon-disc" style={{ background: 'rgba(255, 122, 0, 0.25)', color: '#ff7a00' }}>
-              <Volume2 size={18} color="#ff7a00" />
+              <Volume2 size={20} color="#ff7a00" />
             </div>
           );
         }
         if (value < 0.4) {
           return (
             <div className="player-island-icon-disc">
-              <Volume1 size={18} />
+              <Volume1 size={20} />
             </div>
           );
         }
         return (
           <div className="player-island-icon-disc">
-            <Volume2 size={18} />
+            <Volume2 size={20} />
           </div>
         );
       }
@@ -509,21 +514,21 @@ export const PlayerIsland: React.FC<PlayerIslandProps> = ({
       case 'audio':
         return (
           <div className="player-island-icon-disc audio-disc">
-            <Disc3 size={18} />
+            <Disc3 size={20} />
           </div>
         );
 
       case 'subtitle':
         return (
           <div className="player-island-icon-disc accent-disc">
-            <SubtitlesIcon size={18} />
+            <SubtitlesIcon size={20} />
           </div>
         );
 
       case 'speed':
         return (
           <div className="player-island-icon-disc">
-            <Gauge size={18} />
+            <Gauge size={20} />
           </div>
         );
 
@@ -531,9 +536,9 @@ export const PlayerIsland: React.FC<PlayerIslandProps> = ({
         return (
           <div className="player-island-icon-disc">
             {currentNotif.delta < 0 ? (
-              <RotateCcw size={17} />
+              <RotateCcw size={19} />
             ) : (
-              <RotateCw size={17} />
+              <RotateCw size={19} />
             )}
           </div>
         );
@@ -541,14 +546,14 @@ export const PlayerIsland: React.FC<PlayerIslandProps> = ({
       case 'bookmark':
         return (
           <div className="player-island-icon-disc gold-disc">
-            <BookmarkIcon size={17} />
+            <BookmarkIcon size={19} />
           </div>
         );
 
       case 'cast':
         return (
           <div className="player-island-icon-disc">
-            <Cast size={17} />
+            <Cast size={19} />
           </div>
         );
 

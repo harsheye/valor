@@ -51,7 +51,6 @@ export const SpeedPopover: React.FC<SpeedPopoverProps> = ({ playbackRate, setPla
               videoRef.current.playbackRate = speed;
             }
             setPlaybackRate(speed);
-            playerIslandStore.notify({ type: 'speed', value: speed });
             onClose();
           }}
           style={{
