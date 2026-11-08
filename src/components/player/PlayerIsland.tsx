@@ -30,7 +30,7 @@ export interface PlayerIslandProps {
 }
 
 // Convert ISO 639-2/1 code to full display name
-function getLanguageDisplayName(code?: string | null): string {
+export function getLanguageDisplayName(code?: string | null): string {
   if (!code) return '';
   const trimmed = code.trim().toLowerCase();
   try {
@@ -69,6 +69,123 @@ function getLanguageDisplayName(code?: string | null): string {
   return map[trimmed] || code.toUpperCase();
 }
 
+// Extract a clean language display name from language code or track title
+export function resolveLanguage(code?: string | null, title?: string): string {
+  // 1. Direct code check if valid
+  if (code && code !== 'und') {
+    const fromCode = getLanguageDisplayName(code);
+    if (fromCode && fromCode.toLowerCase() !== code.toLowerCase() && fromCode !== 'Undetermined') {
+      return fromCode;
+    }
+  }
+
+  // 2. Parse language code enclosed in [ ] or ( ) from title (e.g. "[ENG]", "(hin)", "Track 3 - [ENG]")
+  if (title) {
+    const bracketMatch = title.match(/(?:\[|\()([a-zA-Z]{2,4})(?:\]|\))/);
+    if (bracketMatch && bracketMatch[1]) {
+      const parsed = getLanguageDisplayName(bracketMatch[1]);
+      if (parsed && parsed.toLowerCase() !== bracketMatch[1].toLowerCase() && parsed !== 'Undetermined') {
+        return parsed;
+      }
+    }
+
+    // 3. Check for common language names in title
+    const commonLangs = [
+      'Hindi', 'English', 'Japanese', 'Spanish', 'French', 'German', 'Italian',
+      'Korean', 'Chinese', 'Russian', 'Portuguese', 'Arabic', 'Bengali', 'Tamil',
+      'Telugu', 'Kannada', 'Malayalam', 'Punjabi', 'Marathi', 'Gujarati', 'Turkish',
+      'Vietnamese', 'Thai', 'Indonesian', 'Dutch', 'Polish', 'Swedish'
+    ];
+    for (const lang of commonLangs) {
+      const reg = new RegExp(`\\b${lang}\\b`, 'i');
+      if (reg.test(title)) {
+        return lang;
+      }
+    }
+  }
+
+  // Fallback to direct name if available
+  if (code && code !== 'und') {
+    return getLanguageDisplayName(code);
+  }
+
+  return '';
+}
+
+export function formatAudioInfo(notif: {
+  language?: string | null;
+  channels?: string;
+  codec?: string;
+  index?: number;
+  title?: string;
+}): { label: string; sub: string } {
+  if (notif.title === 'Default Audio' || notif.title === 'Original Audio') {
+    return {
+      label: 'Default Audio',
+      sub: notif.codec ? `${notif.codec.toUpperCase()} · Audio` : 'Audio'
+    };
+  }
+
+  const lang = resolveLanguage(notif.language, notif.title);
+  let label = lang;
+  if (!label) {
+    if (notif.title && !/^(?:audio\s*)?track\s*#?\d+/i.test(notif.title)) {
+      label = notif.title;
+    } else {
+      label = notif.index !== undefined ? `Audio Track ${notif.index}` : 'Audio Track';
+    }
+  }
+
+  const metaParts: string[] = [];
+  if (notif.channels) metaParts.push(notif.channels);
+  if (notif.codec) metaParts.push(notif.codec.toUpperCase());
+  if (notif.index !== undefined && notif.index > 0) metaParts.push(`Track ${notif.index}`);
+  if (metaParts.length === 0) metaParts.push('Audio');
+
+  return {
+    label,
+    sub: metaParts.join(' · ')
+  };
+}
+
+export function formatSubtitleInfo(notif: {
+  language?: string | null;
+  title?: string;
+  index?: number;
+}): { label: string; sub: string } {
+  const isOff =
+    notif.language === null ||
+    notif.title?.toLowerCase() === 'off' ||
+    notif.language?.toLowerCase() === 'off';
+
+  if (isOff) {
+    return {
+      label: 'Subtitles Off',
+      sub: 'Press C to turn on'
+    };
+  }
+
+  const lang = resolveLanguage(notif.language, notif.title);
+  let label = lang;
+  if (!label) {
+    if (notif.title && !/^(?:subtitle\s*)?track\s*#?\d+/i.test(notif.title)) {
+      label = notif.title;
+    } else {
+      label = notif.index !== undefined ? `Subtitle Track ${notif.index}` : 'Subtitles';
+    }
+  }
+
+  const metaParts: string[] = ['Subtitles'];
+  if (notif.index !== undefined && notif.index > 0) {
+    metaParts.push(`Track ${notif.index}`);
+  }
+
+  return {
+    label,
+    sub: metaParts.join(' · ')
+  };
+}
+
 // Format seconds into MM:SS or HH:MM:SS
 function formatTime(seconds: number): string {
   if (!isFinite(seconds) || seconds < 0) return '00:00';
@@ -103,7 +220,7 @@ export const PlayerIsland: React.FC<PlayerIslandProps> = ({
   const [stage, setStage] = useState<IslandStage>('idle');
   const [isCrossfading, setIsCrossfading] = useState(false);
   const [isHovered, setIsHovered] = useState(false);
-  const [islandDimensions, setIslandDimensions] = useState<{ width: number; height: number }>({ width: 40, height: 40 });
+  const [islandDimensions, setIslandDimensions] = useState<{ width: number; height: number }>({ width: 44, height: 44 });
 
   const containerRef = useRef<HTMLDivElement>(null);
   const contentMeasureRef = useRef<HTMLDivElement>(null);
@@ -135,15 +252,15 @@ export const PlayerIsland: React.FC<PlayerIslandProps> = ({
   const updateMeasuredDimensions = useCallback((expanded = false) => {
     if (expanded && expandedMeasureRef.current) {
       const el = expandedMeasureRef.current;
-      const w = Math.min(window.innerWidth - 32, el.offsetWidth + 28);
+      const w = Math.min(window.innerWidth - 24, el.offsetWidth + 28);
       const h = el.offsetHeight + 24;
-      setIslandDimensions({ width: Math.max(220, w), height: Math.max(60, h) });
+      setIslandDimensions({ width: Math.max(240, w), height: Math.max(60, h) });
     } else if (contentMeasureRef.current) {
       const el = contentMeasureRef.current;
       const measuredWidth = el.offsetWidth;
       const measuredHeight = el.offsetHeight;
-      const finalWidth = Math.min(window.innerWidth - 32, measuredWidth + 20);
-      const finalHeight = Math.max(40, measuredHeight + 14);
+      const finalWidth = Math.min(window.innerWidth - 24, measuredWidth + 24);
+      const finalHeight = Math.max(44, measuredHeight + 14);
       setIslandDimensions({ width: finalWidth, height: finalHeight });
     }
   }, []);
@@ -156,146 +273,170 @@ export const PlayerIsland: React.FC<PlayerIslandProps> = ({
     // Step 1: Details fade out (.16s)
     setStage('closing-details');
 
-    // Step 2: Contract to 40x40 circle after 170ms
+    // Step 2: Contract to 44x44 circle after 170ms
     stageTimerRef.current = setTimeout(() => {
-      setIslandDimensions({ width: 40, height: 40 });
+      setIslandDimensions({ width: 44, height: 44 });
       setStage('contract');
 
       // Step 3: Scale down to .35 and fade out after 520ms
       stageTimerRef.current = setTimeout(() => {
         setStage('pop-out');
 
-        // Step 4: Unmount after animation completes (.45s)
         stageTimerRef.current = setTimeout(() => {
           setStage('idle');
           setCurrentNotif(null);
-          playerIslandStore.dismiss();
-        }, 450);
+        }, 240);
       }, 520);
     }, 170);
   }, []);
 
-  // Schedule auto-dismiss with hover pause
-  const scheduleAutoDismiss = useCallback((durationMs: number) => {
-    if (dismissTimerRef.current) clearTimeout(dismissTimerRef.current);
+  // Schedule auto-dismiss with hover check
+  const scheduleAutoDismiss = useCallback(
+    (durationMs: number) => {
+      if (dismissTimerRef.current) clearTimeout(dismissTimerRef.current);
 
-    const checkAndDismiss = () => {
-      if (isHoveredRef.current) {
-        dismissTimerRef.current = setTimeout(checkAndDismiss, 900);
-      } else {
+      const checkDismiss = () => {
+        if (isHoveredRef.current) {
+          // Hover pauses timer; re-check every 900ms
+          dismissTimerRef.current = setTimeout(checkDismiss, 900);
+          return;
+        }
         startCloseSequence();
-      }
-    };
+      };
 
-    dismissTimerRef.current = setTimeout(checkAndDismiss, durationMs);
-  }, [startCloseSequence]);
+      dismissTimerRef.current = setTimeout(checkDismiss, durationMs);
+    },
+    [startCloseSequence]
+  );
 
-  // Open sequence
-  const runOpenSequence = useCallback((notif: PlayerIslandNotification) => {
-    if (stageTimerRef.current) clearTimeout(stageTimerRef.current);
-    if (dismissTimerRef.current) clearTimeout(dismissTimerRef.current);
-
-    setCurrentNotif(notif);
-    setIslandDimensions({ width: 40, height: 40 });
-    setStage('pop-in');
-
-    // Pop-in circle transition starts immediately, reaches 40x40
-    stageTimerRef.current = setTimeout(() => {
-      setStage('circle');
-
-      // After 260ms, expand width/height to fit content
-      stageTimerRef.current = setTimeout(() => {
-        updateMeasuredDimensions(false);
-        setStage('open');
-
-        // Compute auto-dismiss timer
-        let dur = 2000;
-        switch (notif.type) {
-          case 'volume':
-            dur = 1600;
-            break;
-          case 'seek':
-            dur = 1400;
-            break;
-          case 'speed':
-            dur = 1500;
-            break;
-          case 'bookmark':
-            dur = 2200;
-            break;
-          case 'audio':
-          case 'subtitle':
-            dur = 2400;
-            break;
-          case 'cast':
-            dur = 2600;
-            break;
-        }
-        scheduleAutoDismiss(dur);
-      }, 260);
-    }, 20);
-  }, [scheduleAutoDismiss, updateMeasuredDimensions]);
-
-  // Listen to store updates
+  // Subscribe to island notifications
   useEffect(() => {
-    return playerIslandStore.subscribe((nextNotif) => {
-      if (!nextNotif) {
-        if (stageRef.current !== 'idle' && stageRef.current !== 'pop-out') {
-          startCloseSequence();
-        }
+    const unsubscribe = playerIslandStore.subscribe((notif) => {
+      if (!notif) {
+        startCloseSequence();
         return;
       }
 
-      const prev = currentNotifRef.current;
-      const currentStage = stageRef.current;
+      const prevNotif = currentNotifRef.current;
+      const prevStage = stageRef.current;
 
-      // 1. Same-type volume updates update in place with no re-animation; restarts 1.6s timer
-      if (prev?.type === 'volume' && nextNotif.type === 'volume' && (currentStage === 'open' || currentStage === 'circle')) {
-        setCurrentNotif(nextNotif);
+      // Rule: Same-type volume updates update in place with no re-animation; restarts 1.6s timer
+      if (
+        notif.type === 'volume' &&
+        prevNotif?.type === 'volume' &&
+        (prevStage === 'open' || prevStage === 'circle')
+      ) {
+        setCurrentNotif(notif);
         scheduleAutoDismiss(1600);
         return;
       }
 
-      // 2. New notification while open or expanded: crossfade content with blur (~110ms) and resize
-      if (currentStage === 'open' || currentStage === 'expanded') {
+      // Rule: New notification while closing -> cancel closing and reopen from current size
+      if (
+        prevStage === 'closing-details' ||
+        prevStage === 'contract' ||
+        prevStage === 'pop-out'
+      ) {
+        if (stageTimerRef.current) clearTimeout(stageTimerRef.current);
+        if (dismissTimerRef.current) clearTimeout(dismissTimerRef.current);
+
+        setCurrentNotif(notif);
         setIsCrossfading(true);
         setTimeout(() => {
-          setCurrentNotif(nextNotif);
           setIsCrossfading(false);
-          updateMeasuredDimensions(false);
           setStage('open');
+          requestAnimationFrame(() => updateMeasuredDimensions(false));
+        }, 110);
 
-          let dur = 2000;
-          switch (nextNotif.type) {
-            case 'volume': dur = 1600; break;
-            case 'seek': dur = 1400; break;
-            case 'speed': dur = 1500; break;
-            case 'bookmark': dur = 2200; break;
-            case 'audio':
-            case 'subtitle': dur = 2400; break;
-            case 'cast': dur = 2600; break;
-          }
-          scheduleAutoDismiss(dur);
+        scheduleNotificationDismiss(notif);
+        return;
+      }
+
+      // Rule: New notification while already open -> crossfade content with blur (~110ms) and resize
+      if (prevStage === 'open' || prevStage === 'expanded') {
+        if (dismissTimerRef.current) clearTimeout(dismissTimerRef.current);
+        setIsCrossfading(true);
+
+        setTimeout(() => {
+          setCurrentNotif(notif);
+          setStage('open');
+          setIsCrossfading(false);
+          requestAnimationFrame(() => updateMeasuredDimensions(false));
+          scheduleNotificationDismiss(notif);
         }, 110);
         return;
       }
 
-      // 3. New notification while closing: cancel close and reopen smoothly
-      if (currentStage === 'closing-details' || currentStage === 'contract' || currentStage === 'pop-out') {
-        runOpenSequence(nextNotif);
-        return;
-      }
+      // Fresh Open sequence:
+      // 1. Appears as 44x44 circle with icon (.45s cubic-bezier)
+      if (stageTimerRef.current) clearTimeout(stageTimerRef.current);
+      if (dismissTimerRef.current) clearTimeout(dismissTimerRef.current);
 
-      // 4. Default: fresh open sequence
-      runOpenSequence(nextNotif);
+      setCurrentNotif(notif);
+      setIslandDimensions({ width: 44, height: 44 });
+      setStage('pop-in');
+
+      stageTimerRef.current = setTimeout(() => {
+        setStage('circle');
+
+        // 2. After 260ms island widens to fit content
+        stageTimerRef.current = setTimeout(() => {
+          setStage('open');
+          updateMeasuredDimensions(false);
+          scheduleNotificationDismiss(notif);
+        }, 260);
+      }, 50);
     });
-  }, [runOpenSequence, scheduleAutoDismiss, startCloseSequence, updateMeasuredDimensions]);
 
-  // Handle outside click & Esc to close expanded panel or island
+    return () => {
+      unsubscribe();
+      if (stageTimerRef.current) clearTimeout(stageTimerRef.current);
+      if (dismissTimerRef.current) clearTimeout(dismissTimerRef.current);
+    };
+  }, [scheduleAutoDismiss, startCloseSequence, updateMeasuredDimensions]);
+
+  // Determine auto-dismiss timeout per type
+  const scheduleNotificationDismiss = useCallback(
+    (notif: PlayerIslandNotification) => {
+      switch (notif.type) {
+        case 'volume':
+          scheduleAutoDismiss(1600);
+          break;
+        case 'seek':
+          scheduleAutoDismiss(1400);
+          break;
+        case 'speed':
+          scheduleAutoDismiss(1500);
+          break;
+        case 'bookmark':
+          scheduleAutoDismiss(2200);
+          break;
+        case 'audio':
+        case 'subtitle':
+          scheduleAutoDismiss(2400);
+          break;
+        case 'cast':
+          scheduleAutoDismiss(2600);
+          break;
+        default:
+          scheduleAutoDismiss(2000);
+          break;
+      }
+    },
+    [scheduleAutoDismiss]
+  );
+
+  // Keyboard shortcut listener (Esc closes expanded panel or island)
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && stageRef.current !== 'idle') {
-        startCloseSequence();
+      if (e.key === 'Escape') {
+        if (stageRef.current === 'expanded') {
+          setStage('open');
+          updateMeasuredDimensions(false);
+          scheduleAutoDismiss(2400);
+        } else if (stageRef.current === 'open') {
+          startCloseSequence();
+        }
       }
     };
 
@@ -311,7 +452,7 @@ export const PlayerIsland: React.FC<PlayerIslandProps> = ({
       window.removeEventListener('keydown', handleKeyDown);
       document.removeEventListener('mousedown', handleClickOutside);
     };
-  }, [startCloseSequence]);
+  }, [scheduleAutoDismiss, startCloseSequence, updateMeasuredDimensions]);
 
   // Toggle expanded panel for audio/subtitle
   const handleIslandClick = () => {
@@ -335,24 +476,32 @@ export const PlayerIsland: React.FC<PlayerIslandProps> = ({
 
     switch (currentNotif.type) {
       case 'volume': {
-        const { value, muted } = currentNotif;
+        const { value, muted, boost = 100 } = currentNotif;
+        const isBoosted = boost > 100 || value > 1.0;
         if (muted || value === 0) {
           return (
             <div className="player-island-icon-disc">
-              <VolumeX size={16} color="#ef4444" />
+              <VolumeX size={18} color="#ef4444" />
+            </div>
+          );
+        }
+        if (isBoosted) {
+          return (
+            <div className="player-island-icon-disc" style={{ background: 'rgba(255, 122, 0, 0.25)', color: '#ff7a00' }}>
+              <Volume2 size={18} color="#ff7a00" />
             </div>
           );
         }
         if (value < 0.4) {
           return (
             <div className="player-island-icon-disc">
-              <Volume1 size={16} />
+              <Volume1 size={18} />
             </div>
           );
         }
         return (
           <div className="player-island-icon-disc">
-            <Volume2 size={16} />
+            <Volume2 size={18} />
           </div>
         );
       }
@@ -360,21 +509,21 @@ export const PlayerIsland: React.FC<PlayerIslandProps> = ({
       case 'audio':
         return (
           <div className="player-island-icon-disc audio-disc">
-            <Disc3 size={16} />
+            <Disc3 size={18} />
           </div>
         );
 
       case 'subtitle':
         return (
           <div className="player-island-icon-disc accent-disc">
-            <SubtitlesIcon size={16} />
+            <SubtitlesIcon size={18} />
           </div>
         );
 
       case 'speed':
         return (
           <div className="player-island-icon-disc">
-            <Gauge size={16} />
+            <Gauge size={18} />
           </div>
         );
 
@@ -382,9 +531,9 @@ export const PlayerIsland: React.FC<PlayerIslandProps> = ({
         return (
           <div className="player-island-icon-disc">
             {currentNotif.delta < 0 ? (
-              <RotateCcw size={15} />
+              <RotateCcw size={17} />
             ) : (
-              <RotateCw size={15} />
+              <RotateCw size={17} />
             )}
           </div>
         );
@@ -392,14 +541,14 @@ export const PlayerIsland: React.FC<PlayerIslandProps> = ({
       case 'bookmark':
         return (
           <div className="player-island-icon-disc gold-disc">
-            <BookmarkIcon size={15} />
+            <BookmarkIcon size={17} />
           </div>
         );
 
       case 'cast':
         return (
           <div className="player-island-icon-disc">
-            <Cast size={15} />
+            <Cast size={17} />
           </div>
         );
 
@@ -415,50 +564,50 @@ export const PlayerIsland: React.FC<PlayerIslandProps> = ({
     switch (currentNotif.type) {
       case 'volume': {
         const { value, muted, boost = 100 } = currentNotif;
+        const isBoosted = boost > 100 || value > 1.0;
         const percent = Math.round(value * 100);
+        const displayPercent = boost > 100 ? boost : percent;
         return (
           <div className="player-island-volume-group">
             <div className="player-island-volume-bar-bg">
               <div
                 className="player-island-volume-bar-fill"
                 style={{
-                  width: muted ? '0%' : `${Math.min(100, percent)}%`,
-                  background: boost > 100 ? 'var(--accent, #ff5a68)' : '#ffffff'
+                  width: muted ? '0%' : `${Math.min(100, isBoosted ? (displayPercent > 100 ? displayPercent - 100 : 100) : percent)}%`,
+                  background: isBoosted ? '#ff7a00' : '#ffffff',
+                  boxShadow: isBoosted ? '0 0 10px rgba(255, 122, 0, 0.7)' : undefined
                 }}
               />
             </div>
-            <span className="player-island-volume-val">
-              {muted ? 'Muted' : boost > 100 ? `${boost}%` : `${percent}%`}
+            <span
+              className="player-island-volume-val"
+              style={{
+                color: isBoosted && !muted ? '#ff7a00' : '#ffffff',
+                fontWeight: isBoosted ? 700 : 600
+              }}
+            >
+              {muted ? 'Muted' : `${displayPercent}%`}
             </span>
           </div>
         );
       }
 
       case 'audio': {
-        const { language, channels, codec, index = 1, title } = currentNotif;
-        const langName = getLanguageDisplayName(language) || title || `Audio track ${index}`;
-        const metaParts = [];
-        if (channels) metaParts.push(channels);
-        if (codec) metaParts.push(codec.toUpperCase());
-        metaParts.push(`Track ${index}`);
+        const info = formatAudioInfo(currentNotif);
         return (
           <div className="player-island-text-group">
-            <span className="player-island-label">{langName}</span>
-            <span className="player-island-sub">{metaParts.join(' · ')}</span>
+            <span className="player-island-label">{info.label}</span>
+            <span className="player-island-sub">{info.sub}</span>
           </div>
         );
       }
 
       case 'subtitle': {
-        const { language, title } = currentNotif;
-        const isOff = !language;
-        const langName = isOff ? 'Subtitles off' : getLanguageDisplayName(language) || title || 'Subtitles';
+        const info = formatSubtitleInfo(currentNotif);
         return (
           <div className="player-island-text-group">
-            <span className="player-island-label">{langName}</span>
-            <span className="player-island-sub">
-              {isOff ? 'Press C to turn on' : 'Subtitles'}
-            </span>
+            <span className="player-island-label">{info.label}</span>
+            <span className="player-island-sub">{info.sub}</span>
           </div>
         );
       }
@@ -466,9 +615,10 @@ export const PlayerIsland: React.FC<PlayerIslandProps> = ({
       case 'speed':
         return (
           <div className="player-island-text-group">
-            <span className="player-island-label" style={{ fontSize: '14px' }}>
+            <span className="player-island-label" style={{ fontSize: '15px' }}>
               {currentNotif.value}x
             </span>
+            <span className="player-island-sub">Playback Speed</span>
           </div>
         );
 
@@ -478,7 +628,7 @@ export const PlayerIsland: React.FC<PlayerIslandProps> = ({
         const ratio = duration > 0 ? Math.min(1, Math.max(0, time / duration)) : 0;
         return (
           <div className="player-island-seek-group">
-            <span className="player-island-label" style={{ fontSize: '12px' }}>
+            <span className="player-island-label" style={{ fontSize: '13px' }}>
               {sign} s · {formatTime(time)}
             </span>
             <div className="player-island-seek-progress-bg">
@@ -553,16 +703,16 @@ export const PlayerIsland: React.FC<PlayerIslandProps> = ({
               style={{ background: 'none', border: 'none', color: '#9a9ca8', cursor: 'pointer', padding: 2 }}
               aria-label="Close"
             >
-              <X size={14} />
+              <X size={15} />
             </button>
           </div>
           <div className="player-island-chips-grid">
             {audioTracks.length === 0 ? (
-              <span style={{ fontSize: '12px', color: '#9a9ca8' }}>Default Audio</span>
+              <span style={{ fontSize: '13px', color: '#9a9ca8' }}>Default Audio</span>
             ) : (
               audioTracks.map((tr) => {
                 const isSelected = selectedAudioIndex === tr.index;
-                const langLabel = getLanguageDisplayName(tr.language) || tr.label || `Track ${tr.index}`;
+                const langLabel = resolveLanguage(tr.language, tr.label) || tr.label || `Track ${tr.index}`;
                 return (
                   <button
                     key={tr.index}
@@ -608,7 +758,7 @@ export const PlayerIsland: React.FC<PlayerIslandProps> = ({
             style={{ background: 'none', border: 'none', color: '#9a9ca8', cursor: 'pointer', padding: 2 }}
             aria-label="Close"
           >
-            <X size={14} />
+            <X size={15} />
           </button>
         </div>
         <div className="player-island-chips-grid">
@@ -628,7 +778,7 @@ export const PlayerIsland: React.FC<PlayerIslandProps> = ({
           </button>
           {subtitleTracks.map((st) => {
             const isSelected = selectedSubtitleIndex === st.index;
-            const langLabel = getLanguageDisplayName(st.language) || st.label || `Track ${st.index}`;
+            const langLabel = resolveLanguage(st.language, st.label) || st.label || `Track ${st.index}`;
             return (
               <button
                 key={st.index}
@@ -638,7 +788,7 @@ export const PlayerIsland: React.FC<PlayerIslandProps> = ({
                 onClick={(e) => {
                   e.stopPropagation();
                   if (onSelectSubtitle) onSelectSubtitle(st.index);
-                  playerIslandStore.notify({ type: 'subtitle', language: st.language ?? null, title: st.label });
+                  playerIslandStore.notify({ type: 'subtitle', language: st.language ?? null, title: st.label, index: st.index });
                   scheduleAutoDismiss(6000);
                 }}
               >

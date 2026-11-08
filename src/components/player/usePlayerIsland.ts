@@ -1,7 +1,7 @@
 export type PlayerIslandNotification =
   | { type: 'volume'; value: number; muted: boolean; boost?: number }
   | { type: 'audio'; language?: string; channels?: string; codec?: string; index?: number; title?: string }
-  | { type: 'subtitle'; language: string | null; title?: string }
+  | { type: 'subtitle'; language: string | null; title?: string; index?: number }
   | { type: 'speed'; value: number }
   | { type: 'seek'; delta: number; time: number; duration: number }
   | { type: 'bookmark'; time: number; count: number }

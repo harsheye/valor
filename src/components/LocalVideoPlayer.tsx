@@ -1949,23 +1949,7 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
     }, dur * 1000);
   };
 
-  const triggerTrackNotification = (text: string) => {
-    if (text.startsWith('Audio track:')) {
-      const rest = text.replace('Audio track:', '').trim();
-      if (rest.includes('Default Audio') || rest.includes('Original')) {
-        island.notify({ type: 'audio', language: 'und', index: 0, title: 'Default Audio' });
-      } else {
-        island.notify({ type: 'audio', title: rest });
-      }
-    } else if (text.startsWith('Subtitle track:')) {
-      const rest = text.replace('Subtitle track:', '').trim();
-      if (rest === 'Off') {
-        island.notify({ type: 'subtitle', language: null });
-      } else {
-        island.notify({ type: 'subtitle', language: rest, title: rest });
-      }
-    }
-  };
+
   const audioRef = useRef<HTMLAudioElement>(null);
   const playbackControllerRef = useRef<PlaybackController | null>(null);
   const prevDestroyPromiseRef = useRef<Promise<void>>(Promise.resolve());
@@ -2972,7 +2956,15 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
       codec
     });
     if (!skipNotification) {
-      triggerTrackNotification(`Audio track: Track ${streamIndex} - [${label}]`);
+      const str = audioStreams.find(s => s.index === streamIndex);
+      island.notify({
+        type: 'audio',
+        language: language || str?.language,
+        channels: (str as any)?.channels ? String((str as any).channels) : undefined,
+        codec: codec || str?.codec,
+        index: streamIndex,
+        title: label || str?.title
+      });
     }
     syncAudioRef(null, streamIndex);
     if (!skipLoad) {
@@ -3001,7 +2993,13 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
       format: /ass|ssa/i.test(codec) ? 'ass' : (/webvtt/i.test(codec) ? 'vtt' : 'srt')
     });
     if (!skipNotification) {
-      triggerTrackNotification(`Subtitle track: Track ${streamIndex} - [${label}]`);
+      const str = subtitleStreams.find(s => s.index === streamIndex);
+      island.notify({
+        type: 'subtitle',
+        language: language || str?.language || 'und',
+        index: streamIndex,
+        title: label || str?.title
+      });
     }
     syncSubRef(null, streamIndex);
     if (!skipLoad) {
@@ -3510,12 +3508,19 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
     setActiveAudioStreamIndex(targetIdx === -1 ? null : targetIdx);
     
     if (track === null) {
-      triggerTrackNotification('Audio track: Default Audio');
+      island.notify({ type: 'audio', language: 'und', index: 0, title: 'Default Audio' });
     } else if (track.streamIndex !== undefined) {
-      const label = getLangLabel(track.language, `Track #${track.streamIndex}`);
-      triggerTrackNotification(`Audio track: Track ${track.streamIndex} - [${label}]`);
+      const s = audioStreams.find(str => str.index === track.streamIndex);
+      island.notify({
+        type: 'audio',
+        language: track.language || s?.language,
+        channels: (s as any)?.channels ? String((s as any).channels) : undefined,
+        codec: track.codec || s?.codec,
+        index: track.streamIndex,
+        title: track.name || s?.title
+      });
     } else {
-      triggerTrackNotification(`Audio track: [${track.name}]`);
+      island.notify({ type: 'audio', title: track.name, language: track.language });
     }
 
     if (targetIdx !== -1) {
@@ -3538,14 +3543,19 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
     }
     if (track === null) {
       userExplicitlyTurnedOffSubRef.current = true;
-      triggerTrackNotification('Subtitle track: Off');
+      island.notify({ type: 'subtitle', language: null });
     } else {
       userExplicitlyTurnedOffSubRef.current = false;
       if (track.streamIndex !== undefined) {
-        const label = getLangLabel(track.language, `Track #${track.streamIndex}`);
-        triggerTrackNotification(`Subtitle track: Track ${track.streamIndex} - [${label}]`);
+        const s = subtitleStreams.find(str => str.index === track.streamIndex);
+        island.notify({
+          type: 'subtitle',
+          language: track.language ?? s?.language ?? null,
+          index: track.streamIndex,
+          title: track.name || s?.title
+        });
       } else {
-        triggerTrackNotification(`Subtitle track: [${track.name}]`);
+        island.notify({ type: 'subtitle', language: track.language ?? null, title: track.name });
       }
     }
     setSelectedSubTrack(track);
@@ -3591,7 +3601,7 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
       setSelectedSubTrack(null);
       setActiveSubStreamIndex(null);
       setIsKeyInitiated(false);
-      triggerTrackNotification('Subtitle track: Off');
+      island.notify({ type: 'subtitle', language: null });
     } else if (nextOpt.type === 'embedded') {
       handleSelectEmbeddedSubtitle(nextOpt.streamIndex, nextOpt.codec, nextOpt.language, true);
       subDebounceTimeoutRef.current = setTimeout(async () => {
@@ -3604,7 +3614,7 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
       setSelectedSubTrack(nextOpt.track);
       setActiveSubStreamIndex(null);
       setIsKeyInitiated(false);
-      triggerTrackNotification(`Subtitle track: [${nextOpt.name}]`);
+      island.notify({ type: 'subtitle', language: (nextOpt.track as any)?.language ?? null, title: nextOpt.name });
     }
   };
 
@@ -3638,7 +3648,7 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
       setSelectedAudioTrack(null);
       setActiveAudioStreamIndex(null);
       setIsKeyInitiated(false);
-      triggerTrackNotification('Audio track: Default Audio');
+      island.notify({ type: 'audio', language: 'und', index: 0, title: 'Default Audio' });
     } else if (nextOpt.type === 'embedded') {
       handleSelectEmbeddedAudio(nextOpt.streamIndex, nextOpt.codec, nextOpt.language, true);
       audioDebounceTimeoutRef.current = setTimeout(async () => {
@@ -3651,7 +3661,7 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
       setSelectedAudioTrack(nextOpt.track);
       setActiveAudioStreamIndex(null);
       setIsKeyInitiated(false);
-      triggerTrackNotification(`Audio track: [${nextOpt.name}]`);
+      island.notify({ type: 'audio', title: nextOpt.name, language: (nextOpt.track as any)?.language });
     }
   };
 
@@ -8221,16 +8231,7 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
           }
         }
 
-        /* Side Skip HUD (Left for rewind, Right for forward) */
-          40% {
-            transform: scale(1.08);
-            opacity: 1;
-          }
-          100% {
-            transform: scale(1);
-            opacity: 1;
-          }
-        }
+
 
         /* Switch Toast CSS Styles */
         @media (max-width: 768px) {
@@ -8286,7 +8287,6 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
             transform: scale(1.4) !important;
             opacity: 1 !important;
           }
-        }
 
         @media (max-width: 600px) {
           .audio-sub-trigger-btn span {
@@ -8311,6 +8311,8 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
             font-size: 1.05rem !important;
             max-width: 70%;
           }
+        }
+
         .player-container.has-file-access-blocked,
         .player-container.has-file-access-blocked * {
           cursor: default !important;
@@ -8447,6 +8449,25 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
         .volume-slider-premium:hover::-moz-range-thumb {
           transform: scale(1.2);
           background-color: #ffffff !important;
+        }
+
+        .volume-percent-text-premium {
+          color: #ffffff;
+          font-size: 0.85rem;
+          font-weight: 500;
+          width: 0;
+          min-width: 0;
+          overflow: hidden;
+          opacity: 0;
+          text-align: right;
+          font-family: 'Outfit', sans-serif;
+          user-select: none;
+          transition: width 0.25s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.25s ease;
+          flex-shrink: 0;
+        }
+        .volume-control-group-premium:hover .volume-percent-text-premium {
+          width: 28px;
+          opacity: 1;
         }
 
         /* Disable animations overrides */

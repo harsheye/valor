@@ -8148,16 +8148,7 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
           }
         }
 
-        /* Side Skip HUD (Left for rewind, Right for forward) */
-          40% {
-            transform: scale(1.08);
-            opacity: 1;
-          }
-          100% {
-            transform: scale(1);
-            opacity: 1;
-          }
-        }
+
 
         /* Switch Toast CSS Styles */
         .switch-toast-overlay {
@@ -8264,6 +8255,8 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
             font-size: 1.05rem !important;
             max-width: 70%;
           }
+        }
+
         .control-btn-volume:hover {
           color: white !important;
         }
