@@ -6540,7 +6540,7 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
         .top-overlay-clean {
           top: 0;
           background: var(--player-overlay-gradient-top, linear-gradient(to bottom, rgba(0,0,0,0.85) 0%, rgba(0,0,0,0.4) 60%, transparent 100%));
-          padding: calc(2.2rem * var(--player-ui-scale, 1)) calc(3.5rem * var(--player-ui-scale, 1));
+          padding: calc(1.5rem * var(--player-ui-scale, 1)) calc(1rem * var(--player-ui-scale, 1));
           display: flex;
           align-items: center;
           justify-content: space-between;
@@ -7134,7 +7134,7 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
         .bottom-overlay {
           bottom: 0;
           background: var(--player-overlay-gradient-bottom, linear-gradient(to top, rgba(0,0,0,0.85) 0%, rgba(0,0,0,0.4) 60%, transparent 100%));
-          padding: calc(1.5rem * var(--player-ui-scale, 1)) calc(3.5rem * var(--player-ui-scale, 1)) calc(2rem * var(--player-ui-scale, 1)) calc(3.5rem * var(--player-ui-scale, 1));
+          padding: calc(1rem * var(--player-ui-scale, 1)) calc(1rem * var(--player-ui-scale, 1)) calc(1.25rem * var(--player-ui-scale, 1)) calc(1rem * var(--player-ui-scale, 1));
           display: flex;
           flex-direction: column;
           gap: calc(0.25rem * var(--player-ui-scale, 1));
@@ -8088,7 +8088,7 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
         .non-blocking-toast {
           position: absolute;
           top: 2.2rem;
-          right: 3.5rem;
+          right: 1.25rem;
           z-index: 650;
           background: rgba(15,15,15,0.92);
           border: 1px solid rgba(255,255,255,0.12);
@@ -8109,7 +8109,7 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
         .auto-probing-indicator {
           position: absolute;
           top: 2.2rem;
-          right: 3.5rem;
+          right: 1.25rem;
           z-index: 30;
           background: rgba(0,0,0,0.7);
           border: 1px solid rgba(255,255,255,0.08);
@@ -8334,18 +8334,18 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
         }
         .volume-slider-vertical-popover {
           position: absolute;
-          bottom: 44px;
+          bottom: 48px;
           left: 50%;
           transform: translateX(-50%) translateY(6px);
-          width: 24px;
-          height: 104px;
+          width: 32px;
+          height: 148px;
           background: #282828;
-          border-radius: 4px;
-          padding: 8px 0;
+          border-radius: 6px;
+          padding: 10px 0;
           display: flex;
           align-items: center;
           justify-content: center;
-          box-shadow: 0 4px 16px rgba(0, 0, 0, 0.6);
+          box-shadow: 0 8px 24px rgba(0, 0, 0, 0.7);
           opacity: 0;
           pointer-events: none;
           transition: opacity 0.18s ease, transform 0.18s ease;
@@ -8355,10 +8355,10 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
         .volume-slider-vertical-popover::after {
           content: '';
           position: absolute;
-          bottom: -16px;
-          left: -10px;
-          right: -10px;
-          height: 20px;
+          bottom: -22px;
+          left: -12px;
+          right: -12px;
+          height: 26px;
           background: transparent;
         }
         .volume-control-group-premium:hover .volume-slider-vertical-popover,
@@ -8380,9 +8380,9 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
           appearance: none;
           writing-mode: vertical-lr;
           direction: rtl;
-          width: 6px;
-          height: 88px;
-          border-radius: 3px;
+          width: 8px;
+          height: 128px;
+          border-radius: 4px;
           outline: none;
           cursor: pointer;
           padding: 0;
@@ -8391,11 +8391,11 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
         .volume-slider-vertical::-webkit-slider-thumb {
           -webkit-appearance: none;
           appearance: none;
-          width: 14px;
-          height: 14px;
+          width: 18px;
+          height: 18px;
           border-radius: 50%;
           background: var(--volume-thumb-color, #e50914);
-          box-shadow: 0 1px 3px rgba(0, 0, 0, 0.5);
+          box-shadow: 0 2px 5px rgba(0, 0, 0, 0.6);
           cursor: pointer;
           border: none;
           transition: transform 0.12s ease;
@@ -8404,12 +8404,12 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
           transform: scale(1.15);
         }
         .volume-slider-vertical::-moz-range-thumb {
-          width: 14px;
-          height: 14px;
+          width: 18px;
+          height: 18px;
           border-radius: 50%;
           background: var(--volume-thumb-color, #e50914);
           border: none;
-          box-shadow: 0 1px 3px rgba(0, 0, 0, 0.5);
+          box-shadow: 0 2px 5px rgba(0, 0, 0, 0.6);
           cursor: pointer;
           transition: transform 0.12s ease;
         }
