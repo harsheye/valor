@@ -89,10 +89,6 @@ interface VideoPlayerProps {
   radialMenuConfig?: any;
   uiHideTimeout?: number;
   onReassociate?: (videoId: string) => void;
-  onOpenFile?: (file: File) => void;
-  onOpenUrl?: (url: string) => void;
-  onAddToPlaylist?: (file: File) => void;
-  onPlayVideo?: (video: VideoItem) => void;
 }
 
 const OdometerDigit: React.FC<{ val: string }> = ({ val }) => {
@@ -131,7 +127,7 @@ const OdometerClock: React.FC<{ date: Date }> = ({ date }) => {
 
   return (
     <div className="odo-clock-container">
-      <span className="odo-hours-group" style={{ color: 'var(--accent)', display: 'inline-flex' }}>
+      <span className="odo-hours-group" style={{ color: 'var(--player-accent, #e50914)', display: 'inline-flex' }}>
         <OdometerDigit val={hh[0]} />
         <OdometerDigit val={hh[1]} />
       </span>
@@ -301,11 +297,7 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
   settingsOrder,
   radialMenuConfig,
   uiHideTimeout = 1.5,
-  onReassociate,
-  onOpenFile,
-  onOpenUrl,
-  onAddToPlaylist,
-  onPlayVideo
+  onReassociate
 }) => {
   const isFile = (obj: any): obj is File => obj instanceof File || (obj && typeof obj.size === 'number' && typeof obj.slice === 'function');
   const video = useMemo(() => ({
@@ -966,8 +958,8 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
       const seriesInfo = classifyVideoTitle(video.title);
       const isTV = seriesInfo.type === 'series';
       const resolvedTmdbId = video.tmdbId || tmdbIdRef.current;
-      if (!resolvedTmdbId && !video.id) {
-        logger.player('[Bookmark Sync] Skipping sync: neither tmdbId nor videoId is available.');
+      if (!resolvedTmdbId) {
+        logger.player('[Bookmark Sync] Skipping sync: tmdbId is not resolved yet.');
         return;
       }
 
@@ -977,7 +969,7 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
       });
 
       const mutation = `
-        mutation SaveBookmarks($userId: String!, $videoId: String!, $tmdbId: Int, $season: Int, $episode: Int, $bookmarks: [BookmarkInput!]!) {
+        mutation SaveBookmarks($userId: String!, $videoId: String!, $tmdbId: Int!, $season: Int, $episode: Int, $bookmarks: [BookmarkInput!]!) {
           saveBookmarks(userId: $userId, videoId: $videoId, tmdbId: $tmdbId, season: $season, episode: $episode, bookmarks: $bookmarks) {
             success
             count
@@ -1013,7 +1005,7 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
           variables: { 
             userId: activeUserId, 
             videoId: video.id, 
-            tmdbId: resolvedTmdbId || null,
+            tmdbId: resolvedTmdbId,
             season: isTV ? (seriesInfo.season || 1) : null,
             episode: isTV ? (seriesInfo.episode || 1) : null,
             bookmarks: serializedBookmarks 
@@ -1432,8 +1424,8 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
         }
       }
 
-      if (!resolvedTmdbId && !video.id) {
-        logger.player('[Bookmarks Sync] Could not resolve TMDB ID or video ID, skipping global bookmarks fetch.');
+      if (!resolvedTmdbId) {
+        logger.player('[Bookmarks Sync] Could not resolve TMDB ID, skipping global bookmarks fetch.');
         return;
       }
 
@@ -1441,11 +1433,11 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
       let tidbBms: any[] = [];
       hadTidbDataRef.current = false;
 
-      // 1. Fetch from our server using tmdbId or videoId
+      // 1. Fetch from our SQLite server using tmdbId
       try {
         const queryStr = `
-          query GetVideoBookmarks($tmdbId: Int, $season: Int, $episode: Int, $videoId: String) {
-            videoBookmarks(tmdbId: $tmdbId, season: $season, episode: $episode, videoId: $videoId) {
+          query GetVideoBookmarks($tmdbId: Int!, $season: Int, $episode: Int) {
+            videoBookmarks(tmdbId: $tmdbId, season: $season, episode: $episode) {
               id
               time
               endTime
@@ -1478,10 +1470,9 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
           body: JSON.stringify({
             query: queryStr,
             variables: { 
-              tmdbId: resolvedTmdbId || null,
+              tmdbId: resolvedTmdbId,
               season: isTV ? season : null,
-              episode: isTV ? episode : null,
-              videoId: video.id || null
+              episode: isTV ? episode : null
             }
           })
         });
@@ -1693,79 +1684,7 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
     prevVlcVisibleRef.current = vlcContextMenuState.visible;
   }, [vlcContextMenuState.visible]);
   const [timelineOnlyMode, setTimelineOnlyMode] = useState(false);
-  const [aspectRatio, setAspectRatio] = useState<string>(() => {
-    try {
-      if (video.id) {
-        const savedById = localStorage.getItem(`valor_aspect_ratio_${video.id}`);
-        if (savedById) return savedById;
-      }
-      const mediaMapStr = localStorage.getItem('valor_media_aspect_ratios');
-      if (mediaMapStr) {
-        const mediaMap = JSON.parse(mediaMapStr);
-        if (video.id && mediaMap[video.id]) return mediaMap[video.id];
-        if (video.url && mediaMap[video.url]) return mediaMap[video.url];
-        if (video.title && mediaMap[video.title]) return mediaMap[video.title];
-      }
-      if (video.aspectRatio) {
-        return video.aspectRatio;
-      }
-      const globalSaved = localStorage.getItem('valor_aspect_ratio');
-      if (globalSaved) return globalSaved;
-    } catch {}
-    return 'default';
-  });
-
-  // Persist aspect ratio per media whenever it changes
-  useEffect(() => {
-    if (!aspectRatio) return;
-    try {
-      if (video.id) {
-        localStorage.setItem(`valor_aspect_ratio_${video.id}`, aspectRatio);
-      }
-      const mediaMapStr = localStorage.getItem('valor_media_aspect_ratios');
-      const mediaMap = mediaMapStr ? JSON.parse(mediaMapStr) : {};
-      if (video.id) mediaMap[video.id] = aspectRatio;
-      if (video.url) mediaMap[video.url] = aspectRatio;
-      if (video.title) mediaMap[video.title] = aspectRatio;
-      localStorage.setItem('valor_media_aspect_ratios', JSON.stringify(mediaMap));
-      localStorage.setItem('valor_aspect_ratio', aspectRatio);
-
-      if (onUpdateVideo && video.aspectRatio !== aspectRatio) {
-        onUpdateVideo((prev: VideoItem) => ({
-          ...prev,
-          aspectRatio
-        }));
-      }
-    } catch (e) {
-      console.warn('[LocalVideoPlayer] Failed saving aspect ratio to localStorage:', e);
-    }
-  }, [aspectRatio, video.id, video.url, video.title, onUpdateVideo]);
-
-  // Synchronize aspect ratio if video changes
-  useEffect(() => {
-    try {
-      let savedRatio = 'default';
-      if (video.id) {
-        const savedById = localStorage.getItem(`valor_aspect_ratio_${video.id}`);
-        if (savedById) savedRatio = savedById;
-      }
-      if (savedRatio === 'default') {
-        const mediaMapStr = localStorage.getItem('valor_media_aspect_ratios');
-        if (mediaMapStr) {
-          const mediaMap = JSON.parse(mediaMapStr);
-          if (video.id && mediaMap[video.id]) savedRatio = mediaMap[video.id];
-          else if (video.url && mediaMap[video.url]) savedRatio = mediaMap[video.url];
-          else if (video.title && mediaMap[video.title]) savedRatio = mediaMap[video.title];
-        }
-      }
-      if (savedRatio === 'default' && video.aspectRatio) {
-        savedRatio = video.aspectRatio;
-      }
-      if (savedRatio !== aspectRatio) {
-        setAspectRatio(savedRatio);
-      }
-    } catch {}
-  }, [video.id, video.url]);
+  const [aspectRatio, setAspectRatio] = useState<string>('default');
   const [hoverTime, setHoverTime] = useState<string | null>(null);
   const [hoverPercent, setHoverPercent] = useState(0);
   const [isScrubbing, setIsScrubbing] = useState(false);
@@ -1868,6 +1787,9 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
   const [showAudioSubMenu, setShowAudioSubMenu] = useState(false);
   const [showSpeedMenu, setShowSpeedMenu] = useState(false);
   const [isKeyInitiated, setIsKeyInitiated] = useState(false);
+  if (false as boolean) {
+    console.log(extractingStreamIndex, isKeyInitiated);
+  }
   const [activeAudioStartOffset, setActiveAudioStartOffset] = useState(0);
   const [activeSubtitleStartOffset, setActiveSubtitleStartOffset] = useState(0);
   const [activeAudioStreamIndex, setActiveAudioStreamIndex] = useState<number | null>(() => {
@@ -1994,118 +1916,11 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
   const [bufferedPercent, setBufferedPercent] = useState(0);
 
   const videoRef = useRef<HTMLVideoElement>(null);
-  const ambientCanvasRef = useRef<HTMLCanvasElement>(null);
-  const ambientVideoRef = useRef<HTMLVideoElement>(null);
-  const [ambientCanvasError, setAmbientCanvasError] = useState(false);
   const hasSeekedRef = useRef(false);
   const wasPausedByFocusLossRef = useRef(false);
   const previewVideoRef = useRef<HTMLVideoElement>(null);
   const [playPauseFeedback, setPlayPauseFeedback] = useState<{ action: 'play' | 'pause'; id: number } | null>(null);
   const playPauseFeedbackTimeoutRef = useRef<any>(null);
-
-  // Ambiance Lighting Controls & Persistence
-  const [isAmbianceEnabled, setIsAmbianceEnabled] = useState<boolean>(() => {
-    try {
-      const saved = localStorage.getItem('valor_ambiance_enabled');
-      if (saved !== null) return saved === 'true';
-    } catch {}
-    return true;
-  });
-
-  const [ambianceBlur, setAmbianceBlur] = useState<number>(() => {
-    try {
-      const saved = localStorage.getItem('valor_ambiance_blur');
-      if (saved) {
-        const val = parseInt(saved, 10);
-        if (!isNaN(val) && val >= 0) return val;
-      }
-    } catch {}
-    return 54;
-  });
-
-  const [ambianceOpacity, setAmbianceOpacity] = useState<number>(() => {
-    try {
-      const saved = localStorage.getItem('valor_ambiance_opacity');
-      if (saved) {
-        const val = parseFloat(saved);
-        if (!isNaN(val) && val >= 0 && val <= 1) return val;
-      }
-    } catch {}
-    return 0.7;
-  });
-
-  // Ambiance Lighting frame drawer (ambient mode behind video)
-  const drawAmbientFrame = useCallback(() => {
-    if (!isAmbianceEnabled) return;
-    const v = videoRef.current;
-    const c = ambientCanvasRef.current;
-    if (v && c && v.readyState >= 2) {
-      try {
-        const ctx = c.getContext('2d', { alpha: false });
-        if (ctx) {
-          ctx.drawImage(v, 0, 0, c.width, c.height);
-        }
-      } catch {
-        setAmbientCanvasError(true);
-      }
-    }
-  }, [isAmbianceEnabled]);
-
-  // Ambiance lighting render loop (runs at ~25-30fps during playback)
-  useEffect(() => {
-    if (!isAmbianceEnabled) return;
-    let animId: number;
-    let lastRender = 0;
-
-    const renderAmbiance = (now: number) => {
-      if (now - lastRender >= 33) {
-        lastRender = now;
-        const v = videoRef.current;
-        const c = ambientCanvasRef.current;
-        if (v && c && !v.paused && !v.ended && v.readyState >= 2) {
-          try {
-            const ctx = c.getContext('2d', { alpha: false });
-            if (ctx) {
-              ctx.drawImage(v, 0, 0, c.width, c.height);
-            }
-          } catch {
-            setAmbientCanvasError(true);
-          }
-        }
-      }
-      animId = requestAnimationFrame(renderAmbiance);
-    };
-
-    animId = requestAnimationFrame(renderAmbiance);
-    return () => cancelAnimationFrame(animId);
-  }, [isAmbianceEnabled]);
-
-  // Sync fallback ambient video element if canvas cannot read frames (CORS)
-  useEffect(() => {
-    if (!ambientCanvasError) return;
-    const v = videoRef.current;
-    const amb = ambientVideoRef.current;
-    if (!v || !amb) return;
-
-    const syncAmb = () => {
-      if (Math.abs(amb.currentTime - v.currentTime) > 0.3) {
-        amb.currentTime = v.currentTime;
-      }
-      if (v.paused && !amb.paused) amb.pause();
-      if (!v.paused && amb.paused) amb.play().catch(() => {});
-    };
-
-    v.addEventListener('timeupdate', syncAmb);
-    v.addEventListener('play', syncAmb);
-    v.addEventListener('pause', syncAmb);
-    v.addEventListener('seeked', syncAmb);
-    return () => {
-      v.removeEventListener('timeupdate', syncAmb);
-      v.removeEventListener('play', syncAmb);
-      v.removeEventListener('pause', syncAmb);
-      v.removeEventListener('seeked', syncAmb);
-    };
-  }, [ambientCanvasError]);
 
   const triggerPlayPauseFeedback = (action: 'play' | 'pause') => {
     if (playPauseFeedbackTimeoutRef.current) clearTimeout(playPauseFeedbackTimeoutRef.current);
@@ -2126,71 +1941,6 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
       setSwitchToast(prev => ({ ...prev, visible: false }));
     }, dur * 1000);
   };
-
-  const handleToggleAmbiance = useCallback(() => {
-    setIsAmbianceEnabled(prev => {
-      const next = !prev;
-      try { localStorage.setItem('valor_ambiance_enabled', String(next)); } catch {}
-      triggerSwitchToast(next ? 'Ambiance Lighting: Turned On' : 'Ambiance Lighting: Turned Off');
-      return next;
-    });
-  }, [triggerSwitchToast]);
-
-  const handleSetAmbianceBlur = useCallback((blurPx: number) => {
-    setAmbianceBlur(blurPx);
-    try { localStorage.setItem('valor_ambiance_blur', String(blurPx)); } catch {}
-    triggerSwitchToast(`Ambiance Blur: ${blurPx}px`);
-  }, [triggerSwitchToast]);
-
-  const handleSetAmbianceOpacity = useCallback((opacity: number) => {
-    setAmbianceOpacity(opacity);
-    try { localStorage.setItem('valor_ambiance_opacity', String(opacity)); } catch {}
-    triggerSwitchToast(`Ambiance Glow: ${Math.round(opacity * 100)}%`);
-  }, [triggerSwitchToast]);
-
-  const cycleAspectRatio = useCallback(() => {
-    const ratios = [
-      { id: 'default', label: 'Default (Fit)' },
-      { id: 'stretch', label: 'Stretch to Screen (0% Detail Lost)' },
-      { id: '14:9', label: 'Smart Crop (14:9 - Minimal Loss)' },
-      { id: '16:10', label: '16:10 Minimal Crop' },
-      { id: '16:9', label: '16:9 Widescreen' },
-      { id: '1.85:1', label: '1.85:1 Cinema' },
-      { id: '21:9', label: '21:9 Ultrawide Cinema' },
-      { id: 'cover', label: 'Fill / Crop Screen (Full Zoom)' },
-      { id: '4:3', label: '4:3 Standard' }
-    ];
-    setAspectRatio(prev => {
-      const idx = ratios.findIndex(r => r.id === prev);
-      const nextItem = ratios[(idx + 1) % ratios.length];
-      triggerSwitchToast(`Aspect Ratio: ${nextItem.label}`);
-      return nextItem.id;
-    });
-  }, [triggerSwitchToast]);
-
-  const getVideoTransformStyle = useCallback((): React.CSSProperties => {
-    switch (aspectRatio) {
-      case 'stretch':
-        return { objectFit: 'fill', width: '100%', height: '100%', transform: 'none' };
-      case '14:9':
-        return { objectFit: 'contain', width: '100%', height: '100%', transform: 'scale(1.15)', transformOrigin: 'center center' };
-      case '16:10':
-        return { objectFit: 'contain', width: '100%', height: '100%', transform: 'scale(1.22)', transformOrigin: 'center center' };
-      case '16:9':
-        return { objectFit: 'cover', aspectRatio: '16/9', width: '100%', height: '100%', transform: 'none' };
-      case '1.85:1':
-        return { objectFit: 'cover', aspectRatio: '1.85/1', width: '100%', height: '100%', transform: 'none' };
-      case '21:9':
-        return { objectFit: 'cover', aspectRatio: '21/9', width: '100%', height: '100%', transform: 'none' };
-      case 'cover':
-        return { objectFit: 'cover', width: '100%', height: '100%', transform: 'none' };
-      case '4:3':
-        return { objectFit: 'contain', aspectRatio: '4/3', width: '100%', height: '100%', transform: 'none' };
-      case 'default':
-      default:
-        return { objectFit: 'contain', width: '100%', height: '100%', transform: 'none' };
-    }
-  }, [aspectRatio]);
 
   const [trackNotification, setTrackNotification] = useState<{ id: number; text: string } | null>(null);
   const trackNotificationCounterRef = useRef<number>(0);
@@ -2260,62 +2010,6 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
   const bookmarksTimeoutRef = useRef<any>(null);
   const customAudioInputRef = useRef<HTMLInputElement>(null);
   const customSubInputRef = useRef<HTMLInputElement>(null);
-  const openMediaFileInputRef = useRef<HTMLInputElement>(null);
-  const addToPlaylistFileInputRef = useRef<HTMLInputElement>(null);
-  const [showNetworkStreamModal, setShowNetworkStreamModal] = useState(false);
-  const [networkStreamUrl, setNetworkStreamUrl] = useState('');
-
-  const handleOpenMediaFile = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    if (onOpenFile) {
-      onOpenFile(file);
-    } else {
-      const blobUrl = URL.createObjectURL(file);
-      if (videoRef.current) {
-        videoRef.current.src = blobUrl;
-        videoRef.current.currentTime = 0;
-        videoRef.current.play().catch(console.warn);
-      }
-    }
-    triggerSwitchToast(`Opened: ${file.name}`);
-    e.target.value = '';
-  };
-
-  const handleAddToPlaylistFile = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = e.target.files;
-    if (!files || files.length === 0) return;
-    for (let i = 0; i < files.length; i++) {
-      const f = files[i];
-      if (onAddToPlaylist) {
-        onAddToPlaylist(f);
-      }
-    }
-    triggerSwitchToast(files.length === 1 ? `Added to Playlist: ${files[0].name}` : `Added ${files.length} files to Playlist`);
-    e.target.value = '';
-  };
-
-  const handlePlayNetworkStream = (asPlaylistAdd: boolean = false) => {
-    const trimmed = networkStreamUrl.trim();
-    if (!trimmed) return;
-    setShowNetworkStreamModal(false);
-    setNetworkStreamUrl('');
-    if (asPlaylistAdd) {
-      if (onOpenUrl) {
-        onOpenUrl(trimmed);
-      }
-      triggerSwitchToast('Network stream added to Playlist');
-    } else {
-      if (onOpenUrl) {
-        onOpenUrl(trimmed);
-      } else if (videoRef.current) {
-        videoRef.current.src = trimmed;
-        videoRef.current.currentTime = 0;
-        videoRef.current.play().catch(console.warn);
-      }
-      triggerSwitchToast(`Opening Stream: ${trimmed.slice(0, 32)}...`);
-    }
-  };
 
   const cachedSourceRef = useRef<CachedByteSource | null>(null);
   const audioAbortControllerRef = useRef<AbortController | null>(null);
@@ -2447,6 +2141,9 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
 
   // Auto probing states
   const [isAutoProbing, setIsAutoProbing] = useState(false);
+  if (false as boolean) {
+    console.log(isAutoProbing);
+  }
   const probingVideoIdRef = useRef<string | null>(null);
 
   // Safeguarded arrays
@@ -2514,7 +2211,7 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
       if (bookmarksTimeoutRef.current) clearTimeout(bookmarksTimeoutRef.current);
       logger.player('VideoPlayer resetting FFmpeg worker and lock queue due to unmount or video change');
       ffmpegService.reset();
-      if (logger.isDebug) console.clear();
+      console.clear();
     };
   }, [video.id]);
 
@@ -2705,7 +2402,7 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
         showPauseMetadataOverlayRef.current = true;
         setShowPauseMetadataOverlay(true);
         setShowControls(false);
-      }, 30000);
+      }, 10000);
     }
   }, [isPlaying]);
 
@@ -2717,7 +2414,7 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
         showPauseMetadataOverlayRef.current = true;
         setShowPauseMetadataOverlay(true);
         setShowControls(false);
-      }, 30000);
+      }, 10000);
     } else {
       if (pauseOverlayTimerRef.current) {
         clearTimeout(pauseOverlayTimerRef.current);
@@ -3120,7 +2817,6 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
 
   const handleVideoSeeked = async () => {
     setIsBuffering(false);
-    drawAmbientFrame();
     if (!videoRef.current) return;
     const newTime = videoRef.current.currentTime;
 
@@ -3246,7 +2942,7 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
       ...video,
       currentTime: latestTimeRef.current
     }, true);
-    if (logger.isDebug) console.clear();
+    console.clear();
     onBack();
   };
 
@@ -4025,19 +3721,6 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
       return;
     }
     
-    if ((e.ctrlKey || e.metaKey) && pressedKey === 'o') {
-      e.preventDefault();
-      e.stopPropagation();
-      openMediaFileInputRef.current?.click();
-      return;
-    }
-    if ((e.ctrlKey || e.metaKey) && pressedKey === 'n') {
-      e.preventDefault();
-      e.stopPropagation();
-      setShowNetworkStreamModal(true);
-      return;
-    }
-
     if (pressedKey === lockControlsKey) {
       e.preventDefault();
       e.stopPropagation();
@@ -4133,10 +3816,7 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
       }
     } else if (pressedKey === 'c') {
       e.preventDefault();
-      cycleAspectRatio();
-    } else if (pressedKey === 's') {
       if (activeSkipBookmarkRef.current) {
-        e.preventDefault();
         const bm = activeSkipBookmarkRef.current;
         const targetTime = (bm.isOutro || bm.category === 'Outro') 
           ? duration 
@@ -4196,9 +3876,6 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
         triggerSwitchToast(next ? 'Timeline Only (VLC Mode)' : 'Standard Controls');
         return next;
       });
-    } else if (pressedKey === 'a') {
-      e.preventDefault();
-      handleToggleAmbiance();
     } else if (pressedKey === 'arrowup') {
       e.preventDefault();
       if (showVolumeControlMode === 'disable') {
@@ -5128,11 +4805,7 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
         style={{ 
           position: 'absolute', 
           inset: 0, 
-          zIndex: 10,
-          overflow: 'hidden',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center'
+          zIndex: 10 
         }}
         onDoubleClick={handlePlayerDoubleClick}
         onClick={(e) => {
@@ -5180,69 +4853,6 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
           setVlcContextMenuState(prev => prev.visible ? { visible: false, x: 0, y: 0 } : { visible: true, x: e.clientX, y: e.clientY });
         }}
       >
-        {/* Ambiance Lighting Layer */}
-        {isAmbianceEnabled && (
-          <div
-            className="video-ambiance-layer"
-            aria-hidden="true"
-            style={{
-              position: 'absolute',
-              inset: 0,
-              width: '100%',
-              height: '100%',
-              overflow: 'hidden',
-              pointerEvents: 'none',
-              zIndex: 1,
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              backgroundColor: '#000000',
-              transition: 'opacity 0.25s ease'
-            }}
-          >
-            <canvas
-              ref={ambientCanvasRef}
-              width={160}
-              height={90}
-              style={{
-                position: 'absolute',
-                inset: 0,
-                width: '100%',
-                height: '100%',
-                objectFit: 'cover',
-                filter: `blur(${ambianceBlur}px) saturate(1.4) brightness(0.92)`,
-                opacity: ambianceOpacity,
-                transform: 'scale(1.22)',
-                transformOrigin: 'center center',
-                display: ambientCanvasError ? 'none' : 'block',
-                transition: 'filter 0.25s ease, opacity 0.25s ease'
-              }}
-            />
-            {ambientCanvasError && (
-              <video
-                ref={ambientVideoRef}
-                src={video.url}
-                muted
-                playsInline
-                aria-hidden="true"
-                style={{
-                  position: 'absolute',
-                  inset: 0,
-                  width: '100%',
-                  height: '100%',
-                  objectFit: 'cover',
-                  filter: `blur(${ambianceBlur}px) saturate(1.4) brightness(0.92)`,
-                  opacity: ambianceOpacity,
-                  transform: 'scale(1.22)',
-                  transformOrigin: 'center center',
-                  display: 'block',
-                  transition: 'filter 0.25s ease, opacity 0.25s ease'
-                }}
-              />
-            )}
-          </div>
-        )}
-
         <video
           ref={videoRef}
           onContextMenu={(e) => e.preventDefault()}
@@ -5251,13 +4861,8 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
           crossOrigin={video.playbackMode === 'advanced' ? 'anonymous' : undefined}
           className="main-video-element"
           style={{
-            ...getVideoTransformStyle(),
-            position: 'relative',
-            zIndex: 2,
-            transition: 'transform 0.25s cubic-bezier(0.16, 1, 0.3, 1), object-fit 0.25s ease'
-          }}
-          onLoadedData={() => {
-            drawAmbientFrame();
+            objectFit: aspectRatio === 'cover' ? 'cover' : (aspectRatio === '16:9' || aspectRatio === '4:3' ? 'fill' : 'contain'),
+            aspectRatio: aspectRatio === '16:9' ? '16/9' : (aspectRatio === '4:3' ? '4/3' : undefined)
           }}
           onLoadedMetadata={() => {
             if (videoRef.current) {
@@ -5312,7 +4917,7 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
             // If focus loss auto-pause is disabled and this pause was triggered by browser 
             // background tab throttling, ignore it — don't update UI state.
             if (!pauseOnFocusChangeRef.current && document.visibilityState === 'hidden') {
-              logger.player('[LocalVideoPlayer] Ignoring browser background throttle onPause event');
+              console.log('[LocalVideoPlayer] Ignoring browser background throttle onPause event');
               return;
             }
             setIsPlaying(false);
@@ -6617,8 +6222,8 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
             position: 'absolute',
             bottom: controlsVisible ? '120px' : '45px',
             right: '1.5rem',
-            background: 'var(--accent)',
-            color: 'var(--player-accent-text, #ffffff)',
+            background: 'var(--player-accent, #e50914)',
+            color: 'var(--text-primary, #ffffff)',
             border: 'none',
             borderRadius: '24px',
             padding: '10px 20px',
@@ -6661,161 +6266,6 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
         accept=".srt,.vtt" 
         onChange={handleCustomSubUpload}
       />
-      <input 
-        type="file" 
-        ref={openMediaFileInputRef} 
-        style={{ display: 'none' }} 
-        accept="video/*" 
-        onChange={handleOpenMediaFile}
-      />
-      <input 
-        type="file" 
-        ref={addToPlaylistFileInputRef} 
-        style={{ display: 'none' }} 
-        accept="video/*" 
-        multiple
-        onChange={handleAddToPlaylistFile}
-      />
-
-      {/* VLC-Style Open Network Stream Modal */}
-      {showNetworkStreamModal && (
-        <div 
-          className="network-stream-modal-backdrop"
-          onClick={() => setShowNetworkStreamModal(false)}
-          style={{
-            position: 'absolute',
-            inset: 0,
-            zIndex: 99999,
-            background: 'rgba(0, 0, 0, 0.75)',
-            backdropFilter: 'blur(8px)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            padding: '16px'
-          }}
-        >
-          <div 
-            className="network-stream-modal-dialog animate-fade-in"
-            onClick={(e) => e.stopPropagation()}
-            style={{
-              background: 'var(--card-bg, #14141c)',
-              border: '1px solid var(--border-color, rgba(255, 255, 255, 0.15))',
-              borderRadius: '12px',
-              padding: '24px',
-              width: '100%',
-              maxWidth: '480px',
-              boxShadow: '0 20px 40px rgba(0,0,0,0.8)',
-              display: 'flex',
-              flexDirection: 'column',
-              gap: '16px',
-              color: '#ffffff'
-            }}
-          >
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                <span style={{ fontSize: '20px' }}>🌐</span>
-                <h3 style={{ margin: 0, fontSize: '1.1rem', fontWeight: 700 }}>Open Network Stream</h3>
-              </div>
-              <button 
-                type="button"
-                onClick={() => setShowNetworkStreamModal(false)}
-                style={{
-                  background: 'none',
-                  border: 'none',
-                  color: 'rgba(255, 255, 255, 0.5)',
-                  fontSize: '18px',
-                  cursor: 'pointer',
-                  padding: '4px'
-                }}
-              >
-                ✕
-              </button>
-            </div>
-
-            <p style={{ margin: 0, fontSize: '0.82rem', color: 'rgba(255, 255, 255, 0.7)', lineHeight: '1.4' }}>
-              Please enter a network URL (HTTP, HTTPS, or HLS <code>.m3u8</code>) to stream media directly:
-            </p>
-
-            <input 
-              type="url"
-              autoFocus
-              placeholder="https://example.com/live/stream.m3u8"
-              value={networkStreamUrl}
-              onChange={(e) => setNetworkStreamUrl(e.target.value)}
-              onKeyDown={(e) => {
-                e.stopPropagation();
-                if (e.key === 'Enter') handlePlayNetworkStream(false);
-                if (e.key === 'Escape') setShowNetworkStreamModal(false);
-              }}
-              style={{
-                width: '100%',
-                background: 'rgba(0, 0, 0, 0.5)',
-                border: '1px solid rgba(255, 255, 255, 0.2)',
-                borderRadius: '8px',
-                padding: '10px 14px',
-                color: '#ffffff',
-                fontSize: '0.9rem',
-                outline: 'none',
-                boxSizing: 'border-box'
-              }}
-            />
-
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: '10px', marginTop: '6px' }}>
-              <button 
-                type="button"
-                onClick={() => setShowNetworkStreamModal(false)}
-                style={{
-                  background: 'rgba(255, 255, 255, 0.08)',
-                  border: '1px solid rgba(255, 255, 255, 0.15)',
-                  borderRadius: '6px',
-                  padding: '8px 16px',
-                  color: '#ffffff',
-                  fontSize: '0.82rem',
-                  fontWeight: 600,
-                  cursor: 'pointer'
-                }}
-              >
-                Cancel
-              </button>
-              <button 
-                type="button"
-                disabled={!networkStreamUrl.trim()}
-                onClick={() => handlePlayNetworkStream(true)}
-                style={{
-                  background: 'rgba(255, 255, 255, 0.12)',
-                  border: '1px solid rgba(255, 255, 255, 0.25)',
-                  borderRadius: '6px',
-                  padding: '8px 16px',
-                  color: networkStreamUrl.trim() ? '#ffffff' : 'rgba(255,255,255,0.4)',
-                  fontSize: '0.82rem',
-                  fontWeight: 600,
-                  cursor: networkStreamUrl.trim() ? 'pointer' : 'not-allowed'
-                }}
-              >
-                Add to Playlist
-              </button>
-              <button 
-                type="button"
-                disabled={!networkStreamUrl.trim()}
-                onClick={() => handlePlayNetworkStream(false)}
-                style={{
-                  background: networkStreamUrl.trim() ? 'var(--accent)' : 'rgba(229, 9, 20, 0.4)',
-                  border: 'none',
-                  borderRadius: '6px',
-                  padding: '8px 20px',
-                  color: 'var(--player-accent-text, #ffffff)',
-                  fontSize: '0.82rem',
-                  fontWeight: 700,
-                  cursor: networkStreamUrl.trim() ? 'pointer' : 'not-allowed',
-                  boxShadow: networkStreamUrl.trim() ? '0 2px 10px var(--accent-soft)' : 'none'
-                }}
-              >
-                Play
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* Side Skip HUD (Left for rewind, Right for forward) */}
       {consecutiveSkipInfo && (
@@ -7014,7 +6464,7 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
           bottom: 0;
           left: 0;
           height: 3px;
-          background: var(--accent);
+          background: var(--player-accent, #e50914);
           animation: skipProgressPremium 7s linear forwards;
         }
 
@@ -7056,7 +6506,7 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
           left: 0;
           right: 0;
           z-index: 20;
-          transition: opacity 0.5s cubic-bezier(0.16, 1, 0.3, 1), transform 0.5s cubic-bezier(0.16, 1, 0.3, 1);
+          transition: opacity 0.25s ease, transform 0.25s ease;
           pointer-events: auto;
         }
         .top-overlay-clean {
@@ -7101,7 +6551,7 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
           z-index: 30;
         }
         .timeline-bookmark-dot:not(.intro-dot):not(.outro-dot):hover {
-          background-color: var(--accent) !important;
+          background-color: var(--player-accent, #e50914) !important;
         }
         .timeline-bookmark-dot.intro-dot {
           background-color: #3b82f6;
@@ -7258,13 +6708,13 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
           transform: translateX(18px);
         }
         .drawer-add-btn {
-          background: var(--accent);
+          background: var(--player-accent, #e50914);
           border: none;
-          color: var(--player-accent-text, #ffffff) !important;
+          color: #ffffff;
           padding: 4px 10px;
           border-radius: 4px;
           font-size: 0.75rem;
-          font-weight: 700;
+          font-weight: 600;
           cursor: pointer;
           transition: background-color 0.15s ease;
         }
@@ -7672,12 +7122,10 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
         .player-overlay.visible {
           opacity: 1;
           transform: translateY(0);
-          transition: opacity 0.2s ease-out, transform 0.2s ease-out;
         }
         .player-overlay.hidden {
           opacity: 0;
           pointer-events: none;
-          transition: opacity 0.6s ease-out, transform 0.6s ease-out;
         }
         .player-overlay.hidden.top-overlay-clean {
           transform: translateY(-12px);
@@ -7696,19 +7144,17 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
           justify-content: center;
           gap: clamp(4rem, 15vw, 12rem);
           pointer-events: none;
-          transition: opacity 0.5s ease-out;
+          transition: opacity 0.25s ease;
         }
         .center-controls-hud.hidden {
           opacity: 0;
           pointer-events: none !important;
-          transition: opacity 0.6s ease-out;
         }
         .center-controls-hud.hidden * {
           pointer-events: none !important;
         }
         .center-controls-hud.visible {
           opacity: 1;
-          transition: opacity 0.2s ease-out;
         }
         .hud-btn-clean {
           background: none;
@@ -7770,8 +7216,7 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
           left: 0;
           right: 0;
           height: calc(4px * var(--player-ui-scale, 1));
-          background: var(--player-scrub-bg, rgba(255, 255, 255, 0.22));
-          box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(0, 0, 0, 0.25);
+          background: rgba(255, 255, 255, 0.2);
           border-radius: calc(2px * var(--player-ui-scale, 1));
           z-index: 1;
         }
@@ -7779,7 +7224,7 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
           position: absolute;
           left: 0;
           height: calc(4px * var(--player-ui-scale, 1));
-          background: var(--player-scrub-buffered, rgba(255, 255, 255, 0.42));
+          background: rgba(255, 255, 255, 0.35);
           border-radius: calc(2px * var(--player-ui-scale, 1));
           z-index: 2;
           transition: width 0.15s ease;
@@ -7788,8 +7233,7 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
           position: absolute;
           left: 0;
           height: calc(4px * var(--player-ui-scale, 1));
-          background: var(--accent);
-          box-shadow: 0 0 8px var(--player-accent, rgba(229, 9, 20, 0.6));
+          background: var(--player-accent, #e50914);
           border-radius: calc(2px * var(--player-ui-scale, 1)) 0 0 calc(2px * var(--player-ui-scale, 1));
           z-index: 3;
         }
@@ -7811,13 +7255,12 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
           width: calc(22px * var(--player-ui-scale, 1));
           height: calc(22px * var(--player-ui-scale, 1));
           border-radius: 50%;
-          background: var(--accent);
-          border: 2px solid rgba(0, 0, 0, 0.85);
+          background: var(--player-accent, #e50914);
           cursor: pointer;
           transform: scale(0);
           opacity: 0;
           transition: transform 0.15s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.15s ease;
-          box-shadow: 0 0 10px rgba(0, 0, 0, 0.8), 0 0 6px var(--player-accent, rgba(229, 9, 20, 0.8));
+          box-shadow: 0 0 10px rgba(229, 9, 20, 0.8);
           z-index: 10;
         }
         .scrub-container-premium:hover .scrub-bar-premium::-webkit-slider-thumb,
@@ -7828,16 +7271,12 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
         .scrub-bar-premium::-moz-range-thumb {
           width: calc(22px * var(--player-ui-scale, 1));
           height: calc(22px * var(--player-ui-scale, 1));
-          border: 2px solid rgba(0, 0, 0, 0.85);
+          border: none;
           border-radius: 50%;
-          background: var(--accent);
+          background: var(--player-accent, #e50914);
           cursor: pointer;
           transform: scale(0);
           opacity: 0;
-          transition: transform 0.15s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.15s ease;
-          box-shadow: 0 0 10px rgba(0, 0, 0, 0.8), 0 0 6px var(--player-accent, rgba(229, 9, 20, 0.8));
-          z-index: 10;
-        }
           transition: transform 0.15s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.15s ease;
           box-shadow: 0 0 10px rgba(229, 9, 20, 0.8);
           z-index: 10;
@@ -8101,242 +7540,189 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
           display: none !important;
         }
         .popover-transcript-col {
-          border-left: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.08));
+          border-left: 1px solid var(--border-subtle);
           padding-left: 0.85rem;
           display: flex;
           flex-direction: column;
           height: 100%;
           min-height: 0;
-          min-width: 200px;
           overflow: hidden;
-          box-sizing: border-box;
         }
         .popover-style-col {
-          border-left: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.08));
+          border-left: 1px solid var(--border-subtle);
           padding-left: 0.85rem;
           display: flex;
           flex-direction: column;
           height: 100%;
           min-height: 0;
-          min-width: 215px;
           overflow: hidden;
-          box-sizing: border-box;
         }
-        .popover-col-header {
-          height: 32px;
-          min-height: 32px;
-          max-height: 32px;
+        .style-header-row {
           display: flex;
           align-items: center;
           justify-content: space-between;
-          border-bottom: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.08));
-          padding-bottom: 6px;
-          margin-bottom: 10px;
-          flex-shrink: 0;
-          box-sizing: border-box;
+          border-bottom: 1px solid var(--border-subtle);
+          padding-bottom: 0.35rem;
+          margin-bottom: 0.25rem;
         }
-        .popover-col-title {
-          margin: 0;
-          padding: 0;
-          font-size: 0.82rem;
-          font-weight: 700;
-          color: #ffffff;
-          letter-spacing: 0.02em;
-          line-height: 1;
+        .style-header-row h4 {
+          margin: 0 !important;
+          border-bottom: none !important;
+          padding-bottom: 0 !important;
+          color: var(--text-primary) !important;
         }
-        .popover-header-btn-group {
-          display: flex;
-          align-items: center;
-          gap: 5px;
-        }
-        .popover-header-toggle-btn {
-          background: var(--surface-hover, rgba(255, 255, 255, 0.08));
-          color: var(--text-secondary, rgba(255, 255, 255, 0.75));
-          border: 1px solid var(--border-color, rgba(255, 255, 255, 0.12));
-          border-radius: 6px;
-          padding: 2px 7px;
-          font-size: 0.65rem;
-          font-weight: 700;
-          letter-spacing: 0.04em;
-          cursor: pointer;
-          transition: all 0.15s ease;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          height: 22px;
-          line-height: 1;
-        }
-        .popover-header-toggle-btn:hover {
-          background: var(--surface-hover, rgba(255, 255, 255, 0.15));
-          color: var(--text-primary, #ffffff);
-          border-color: var(--border-focus, rgba(255, 255, 255, 0.22));
-        }
-        .popover-header-toggle-btn.active {
-          background: var(--accent) !important;
-          border-color: var(--accent) !important;
-          color: var(--player-accent-text, #ffffff) !important;
-          font-weight: 800;
-          box-shadow: 0 2px 8px var(--accent-soft);
-        }
-        .popover-header-action-btn {
-          background: var(--surface-hover, rgba(255, 255, 255, 0.08));
-          border: 1px solid var(--border-color, rgba(255, 255, 255, 0.12));
-          border-radius: 6px;
-          color: var(--text-secondary, rgba(255, 255, 255, 0.75));
-          font-size: 0.65rem;
-          font-weight: 700;
-          padding: 2px 7px;
+        .style-reset-btn-header {
+          background: var(--surface);
+          border: 1px solid var(--border-color);
+          border-radius: 4px;
+          color: var(--text-muted);
+          font-size: 0.72rem;
+          font-weight: 600;
+          padding: 0.2rem 0.5rem;
           cursor: pointer;
           transition: all 0.15s ease;
           text-transform: uppercase;
-          letter-spacing: 0.04em;
-          height: 22px;
-          line-height: 1;
-          display: flex;
-          align-items: center;
-          justify-content: center;
+          letter-spacing: 0.03em;
         }
-        .popover-header-action-btn:hover {
-          background: var(--surface-hover, rgba(255, 255, 255, 0.15));
-          color: var(--text-primary, #ffffff);
-          border-color: var(--border-focus, rgba(255, 255, 255, 0.22));
+        .style-reset-btn-header:hover {
+          background: var(--card-hover-bg);
+          color: var(--text-primary);
+          border-color: var(--border-focus);
         }
-        .style-customizer-clean {
+        .style-customizer {
           flex: 1 1 auto;
           min-height: 0;
           display: flex;
           flex-direction: column;
-          gap: 12px;
+          gap: 0.85rem;
+          margin-top: 0.5rem;
           overflow-y: auto;
           overflow-x: hidden;
-          padding-right: 2px;
+          padding-right: 4px;
           scrollbar-width: thin;
           scrollbar-color: rgba(255, 255, 255, 0.2) transparent;
         }
-        .style-customizer-clean::-webkit-scrollbar {
+        .style-customizer::-webkit-scrollbar {
           width: 4px;
         }
-        .style-customizer-clean::-webkit-scrollbar-thumb {
+        .style-customizer::-webkit-scrollbar-thumb {
           background: rgba(255, 255, 255, 0.2);
           border-radius: 2px;
         }
-        .style-block {
+        .style-font-size-row {
+          display: grid;
+          grid-template-columns: 1.2fr 1fr;
+          gap: 0.85rem;
+        }
+        .style-row {
           display: flex;
           flex-direction: column;
-          gap: 5px;
-          width: 100%;
+          gap: 0.35rem;
         }
-        .style-block-label {
-          font-size: 0.72rem;
-          font-weight: 700;
-          letter-spacing: 0.04em;
-          color: var(--text-secondary, rgba(255, 255, 255, 0.75));
+        .style-label {
+          font-size: 0.7rem;
+          color: var(--text-muted, rgba(255, 255, 255, 0.45));
+          text-transform: uppercase;
+          letter-spacing: 0.05em;
+          font-weight: 600;
         }
-        .size-control-group {
+        
+        /* Font Size Control - Premium Button Group */
+        .size-btn-group {
           display: flex;
           align-items: center;
-          justify-content: space-between;
-          background: var(--input-bg, rgba(0, 0, 0, 0.35));
-          border: 1px solid var(--border-color, rgba(255, 255, 255, 0.12));
-          border-radius: 8px;
-          padding: 3px;
-          width: 100%;
-          box-sizing: border-box;
+          background: var(--input-bg, rgba(0, 0, 0, 0.25));
+          border: 1px solid var(--border-color, rgba(255, 255, 255, 0.15));
+          border-radius: 6px;
+          overflow: hidden;
+          padding: 2px;
+          align-self: flex-start;
         }
-        .size-step-btn {
+        .size-action-btn {
           background: transparent;
           border: none;
           color: var(--text-primary, #ffffff);
-          width: 32px;
-          height: 28px;
-          font-size: 1.1rem;
-          font-weight: 600;
+          width: 28px;
+          height: 24px;
+          font-size: 0.95rem;
+          font-weight: 500;
           cursor: pointer;
-          border-radius: 6px;
+          transition: background 0.15s ease, color 0.15s;
           display: flex;
           align-items: center;
           justify-content: center;
-          transition: all 0.15s ease;
+          border-radius: 4px;
         }
-        .size-step-btn:hover {
-          background: var(--surface-hover, rgba(255, 255, 255, 0.12));
+        .size-action-btn:hover {
+          background: var(--surface-hover, rgba(255, 255, 255, 0.08));
         }
-        .size-step-btn:active {
-          background: var(--surface-hover, rgba(255, 255, 255, 0.2));
+        .size-action-btn:active {
+          background: var(--border-subtle, rgba(255, 255, 255, 0.15));
         }
-        .size-step-value {
-          font-size: 0.85rem;
-          font-weight: 700;
+        .size-value-display {
+          font-size: 0.8rem;
+          font-weight: 600;
           color: var(--text-primary, #ffffff);
+          padding: 0 0.6rem;
+          min-width: 38px;
           text-align: center;
         }
-        .style-colors-grid {
-          display: grid;
-          grid-template-columns: 1fr 1.2fr;
-          gap: 10px;
-          align-items: flex-start;
-          width: 100%;
+        
+        /* Font Family Select Premium override for popover style col */
+        .popover-style-col .custom-select-trigger {
+          font-size: 0.8rem;
+          padding: 0.35rem 0.65rem;
+          background: var(--dropdown-bg, rgba(0, 0, 0, 0.35));
+          border-radius: 6px;
         }
-        .style-color-col {
+        .style-row .custom-select-container {
+          width: 100% !important;
+        }
+        
+        /* Subtitle Color Selector - 1 line Text & Background */
+        .style-colors-row {
+          display: grid;
+          grid-template-columns: 1.2fr 2fr;
+          gap: 0.75rem;
+        }
+        .color-picker-item {
           display: flex;
           flex-direction: column;
-          gap: 5px;
+          gap: 0.25rem;
         }
-        .color-swatch-wrapper {
+        .picker-wrapper {
           display: flex;
           align-items: center;
-          min-height: 32px;
+          gap: 0.4rem;
         }
-        .style-color-circle {
+        .color-picker-input-premium {
           -webkit-appearance: none;
           appearance: none;
-          border: 2px solid rgba(255, 255, 255, 0.3);
-          width: 30px;
-          height: 30px;
+          border: 1px solid rgba(255, 255, 255, 0.2);
+          width: 24px;
+          height: 24px;
           border-radius: 50%;
           cursor: pointer;
           background: none;
           padding: 0;
-          transition: transform 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
-          box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
-          box-sizing: border-box;
+          transition: transform 0.2s cubic-bezier(0.175, 0.885, 0.32, 1.275), border-color 0.2s, box-shadow 0.2s;
+          box-shadow: 0 4px 12px rgba(0,0,0,0.5);
         }
-        .style-color-circle:hover {
-          transform: scale(1.1);
-          border-color: #ffffff;
-          box-shadow: 0 0 10px rgba(255, 255, 255, 0.4);
+        .color-picker-input-premium:hover {
+          transform: scale(1.15);
+          border-color: var(--text-muted, rgba(255, 255, 255, 0.45));
+          box-shadow: 0 0 12px rgba(59, 130, 246, 0.5), 0 4px 15px rgba(0,0,0,0.6);
         }
-        .style-color-circle:disabled {
-          opacity: 0.25;
+        .color-picker-input-premium:disabled {
+          opacity: 0.3;
           cursor: not-allowed;
           transform: none;
+          box-shadow: none;
         }
-        .style-none-circle-btn {
-          width: 30px;
-          height: 30px;
-          border-radius: 50%;
-          border: 1.5px solid rgba(255, 255, 255, 0.25);
-          background: rgba(255, 255, 255, 0.06);
-          cursor: pointer;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          padding: 0;
-          transition: all 0.15s ease;
-          flex-shrink: 0;
-        }
-        .style-none-circle-btn:hover {
-          transform: scale(1.1);
-          border-color: rgba(255, 255, 255, 0.5);
-        }
-        .style-none-circle-btn.active {
-          border-color: #ef4444;
-          background: rgba(239, 68, 68, 0.2);
-        }
-        .style-color-circle::-webkit-color-swatch-wrapper {
+        .color-picker-input-premium::-webkit-color-swatch-wrapper {
           padding: 0;
         }
-        .style-color-circle::-webkit-color-swatch {
+        .color-picker-input-premium::-webkit-color-swatch {
           border: none;
           border-radius: 50%;
         }
@@ -8425,7 +7811,7 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
           box-sizing: border-box;
         }
         .transcript-search-input:focus {
-          border-color: var(--accent);
+          border-color: var(--player-accent, #e50914);
         }
         .transcript-cues-list {
           flex: 1 1 auto;
@@ -8464,12 +7850,12 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
         }
         .transcript-cue-item.active {
           background: rgba(229, 9, 20, 0.12);
-          border-left: 2px solid var(--accent);
+          border-left: 2px solid var(--player-accent, #e50914);
           color: white;
           font-weight: 500;
         }
         .cue-time {
-          color: var(--accent);
+          color: var(--player-accent, #e50914);
           font-size: 0.75rem;
           font-family: monospace;
           font-weight: 600;
@@ -8488,6 +7874,15 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
           min-height: 0;
           overflow: hidden;
           box-sizing: border-box;
+        }
+        .popover-col h4 {
+          margin: 0 0 0.4rem 0;
+          font-size: 0.82rem;
+          border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+          padding-bottom: 0.25rem;
+          color: #ffffff;
+          font-weight: 600;
+          flex-shrink: 0;
         }
         .popover-options {
           flex: 1 1 auto;
@@ -8512,47 +7907,43 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
           display: flex;
           align-items: center;
           justify-content: space-between;
-          padding: 0.38rem 0.6rem;
-          border-radius: 8px;
+          padding: 0.35rem 0.55rem;
+          border-radius: 5px;
           cursor: pointer;
-          font-size: 0.78rem;
-          color: var(--text-secondary, rgba(255, 255, 255, 0.75));
+          font-size: 0.8rem;
+          color: var(--text-secondary, rgba(255, 255, 255, 0.7));
           transition: all 0.15s ease;
           border: 1px solid transparent;
         }
         .popover-option:hover {
-          background: var(--surface-hover, rgba(255, 255, 255, 0.08));
-          color: var(--text-primary, #ffffff);
-          border-color: var(--border-color, rgba(255, 255, 255, 0.12));
+          background: rgba(255, 255, 255, 0.06);
+          color: #ffffff;
         }
         .popover-option.active {
-          background: var(--accent-soft);
-          border-color: var(--accent);
-          color: var(--text-primary, #ffffff);
-          font-weight: 600;
-          box-shadow: 0 2px 8px var(--accent-soft);
+          background: rgba(229, 9, 20, 0.08);
+          border-color: rgba(229, 9, 20, 0.2);
+          color: #ffffff;
+          font-weight: 500;
         }
         .popover-option input {
           display: none;
         }
         .check-icon {
-          color: var(--accent);
+          color: var(--player-accent, #e50914);
         }
         .add-custom-btn {
-          color: var(--accent) !important;
+          color: var(--player-accent, #e50914) !important;
           font-weight: 600 !important;
-          border: 1px dashed var(--border-focus, rgba(229, 9, 20, 0.35)) !important;
-          background: var(--accent-soft) !important;
+          border-top: 1px solid rgba(255, 255, 255, 0.08);
           margin-top: 0.35rem;
-          padding: 0.42rem 0.6rem !important;
-          border-radius: 8px !important;
+          padding-top: 0.6rem !important;
+          border-radius: 0 !important;
           justify-content: center !important;
-          transition: all 0.15s ease !important;
         }
         .add-custom-btn:hover {
-          background: var(--accent-soft) !important;
-          border-color: var(--accent) !important;
-          color: var(--text-primary, #ffffff) !important;
+          background: transparent !important;
+          color: #ffffff !important;
+          text-decoration: underline;
         }
 
         /* Animations */
@@ -8676,7 +8067,7 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
           box-shadow: 0 4px 15px rgba(0,0,0,0.5);
         }
         .fly-loader-spin {
-          color: var(--accent);
+          color: var(--player-accent, #e50914);
           animation: spin 1s linear infinite;
         }
         
@@ -8872,11 +8263,11 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
           }
         }
 
-        /* Track Change Notification Overlay (Positioned below top-bar icons) */
+        /* Track Change Notification Overlay (Image 3 Style) */
         .track-change-notification-overlay {
           position: absolute;
-          top: 76px;
-          right: 36px;
+          top: 36px;
+          right: 48px;
           z-index: 650;
           pointer-events: none;
           display: flex;
@@ -9299,7 +8690,7 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
           box-shadow: 0 10px 30px rgba(0, 0, 0, 0.8);
         }
         .playback-error-box .error-icon {
-          color: var(--accent);
+          color: var(--player-accent, #e50914);
         }
         .playback-error-box h3 {
           margin: 0;
@@ -9392,17 +8783,6 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
           x={vlcContextMenuState.x}
           y={vlcContextMenuState.y}
           onClose={() => setVlcContextMenuState({ visible: false, x: 0, y: 0 })}
-          onOpenFile={() => openMediaFileInputRef.current?.click()}
-          onOpenNetworkStream={() => setShowNetworkStreamModal(true)}
-          onAddToPlaylist={() => addToPlaylistFileInputRef.current?.click()}
-          playlist={videos}
-          onSelectPlaylistItem={(item) => {
-            if (onPlayVideo) {
-              onPlayVideo(item);
-            } else if (onReassociate) {
-              onReassociate(item.id);
-            }
-          }}
           isPlaying={isPlaying}
           onPlayPause={togglePlay}
           onStop={() => {
@@ -9476,25 +8856,8 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
           aspectRatio={aspectRatio}
           onSetAspectRatio={(ratio) => {
             setAspectRatio(ratio);
-            const labels: Record<string, string> = {
-              'default': 'Default (Fit)',
-              'stretch': 'Stretch to Screen (0% Detail Lost)',
-              '14:9': 'Smart Crop (14:9 - Minimal Loss)',
-              '16:10': '16:10 Minimal Crop',
-              '16:9': '16:9 Widescreen',
-              '1.85:1': '1.85:1 Cinema',
-              '21:9': '21:9 Ultrawide Cinema',
-              'cover': 'Fill / Crop Screen (Full Zoom)',
-              '4:3': '4:3 Standard'
-            };
-            triggerSwitchToast(`Aspect Ratio: ${labels[ratio] || ratio}`);
+            triggerSwitchToast(`Aspect Ratio: ${ratio === 'default' ? 'Default Fit' : ratio.toUpperCase()}`);
           }}
-          isAmbianceEnabled={isAmbianceEnabled}
-          onToggleAmbiance={handleToggleAmbiance}
-          ambianceBlur={ambianceBlur}
-          onSetAmbianceBlur={handleSetAmbianceBlur}
-          ambianceOpacity={ambianceOpacity}
-          onSetAmbianceOpacity={handleSetAmbianceOpacity}
           onOpenSettings={() => setShowSettingsPanel(true)}
           onOpenAudioSubMenu={() => setShowAudioSubMenu(true)}
           bookmarks={bookmarks}

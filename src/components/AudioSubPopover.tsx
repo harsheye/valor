@@ -177,12 +177,12 @@ export const AudioSubPopover: React.FC<AudioSubPopoverProps> = ({
   }
 
   if (showViewColumn) {
-    baseCols.push('minmax(200px, 1.1fr)');
-    baseWidth += 210;
+    baseCols.push('minmax(190px, 1.1fr)');
+    baseWidth += 200;
   }
   if (showStyleColumn) {
-    baseCols.push('minmax(215px, 1.15fr)');
-    baseWidth += 225;
+    baseCols.push('minmax(200px, 1.1fr)');
+    baseWidth += 210;
   }
 
   const popoverWidth = Math.max(baseWidth + 24, 260);
@@ -230,9 +230,7 @@ export const AudioSubPopover: React.FC<AudioSubPopoverProps> = ({
         {/* Audio Column */}
         {effectiveAudioVisible && (
           <div className="popover-col">
-            <div className="popover-col-header">
-              <span className="popover-col-title">Audio</span>
-            </div>
+            <h4 style={{ flexShrink: 0 }}>Audio</h4>
             <div className="popover-options">
               {/* Original / Native Stream Audio (always available) */}
               <label 
@@ -284,12 +282,11 @@ export const AudioSubPopover: React.FC<AudioSubPopoverProps> = ({
         {/* Subtitles Column */}
         {effectiveSubVisible && (
         <div className="popover-col">
-          <div className="popover-col-header">
-            <span className="popover-col-title">Sub</span>
-            <div className="popover-header-btn-group">
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid var(--border-subtle, rgba(255, 255, 255, 0.08))', paddingBottom: '0.35rem', marginBottom: '0.6rem', flexShrink: 0 }}>
+            <h4 style={{ margin: 0, borderBottom: 'none', paddingBottom: 0 }}>Sub</h4>
+            <div style={{ display: 'flex', gap: '6px' }}>
               <button 
                 type="button"
-                className={`popover-header-toggle-btn ${showViewColumn ? 'active' : ''}`}
                 onClick={(e) => { 
                   e.stopPropagation(); 
                   if (!showViewColumn && !selectedSubTrack) {
@@ -301,18 +298,39 @@ export const AudioSubPopover: React.FC<AudioSubPopoverProps> = ({
                   }
                   onUpdateSubSettings({ ...subSettings, showViewColumn: !showViewColumn }); 
                 }}
-                title="Toggle Subtitle Transcript view"
+                style={{
+                  background: showViewColumn ? 'var(--accent-glow, rgba(59, 130, 246, 0.15))' : 'var(--border-subtle, rgba(255, 255, 255, 0.08))',
+                  border: `1px solid ${showViewColumn ? 'var(--accent-color, rgba(59, 130, 246, 0.3))' : 'var(--border-color, rgba(255, 255, 255, 0.12))'}`,
+                  color: showViewColumn ? 'var(--accent-color, #3b82f6)' : 'var(--text-secondary, rgba(255, 255, 255, 0.7))',
+                  borderRadius: '4px',
+                  padding: '0.15rem 0.4rem',
+                  fontSize: '0.7rem',
+                  cursor: 'pointer',
+                  fontWeight: 600,
+                  transition: 'all 0.15s ease'
+                }}
+                title="Toggle subtitle transcript viewer"
               >
                 VIEW
               </button>
               <button 
                 type="button"
-                className={`popover-header-toggle-btn ${showStyleColumn ? 'active' : ''}`}
                 onClick={(e) => { 
                   e.stopPropagation(); 
                   onUpdateSubSettings({ ...subSettings, showStyleColumn: !showStyleColumn }); 
                 }}
-                title="Toggle Subtitle Style settings"
+                style={{
+                  background: showStyleColumn ? 'var(--accent-glow, rgba(59, 130, 246, 0.15))' : 'var(--border-subtle, rgba(255, 255, 255, 0.08))',
+                  border: `1px solid ${showStyleColumn ? 'var(--accent-color, rgba(59, 130, 246, 0.3))' : 'var(--border-color, rgba(255, 255, 255, 0.12))'}`,
+                  color: showStyleColumn ? 'var(--accent-color, #3b82f6)' : 'var(--text-secondary, rgba(255, 255, 255, 0.7))',
+                  borderRadius: '4px',
+                  padding: '0.15rem 0.4rem',
+                  fontSize: '0.7rem',
+                  cursor: 'pointer',
+                  fontWeight: 600,
+                  transition: 'all 0.15s ease'
+                }}
+                title="Toggle subtitle styling options"
               >
                 STYLE
               </button>
@@ -740,9 +758,7 @@ export const AudioSubPopover: React.FC<AudioSubPopoverProps> = ({
         {/* Subtitle Cue Transcript Column */}
         {showViewColumn && (
           <div className="popover-col popover-transcript-col">
-            <div className="popover-col-header">
-              <span className="popover-col-title">Subtitle View</span>
-            </div>
+            <h4 style={{ flexShrink: 0 }}>Subtitle View</h4>
             {selectedSubTrack ? (
               <>
                 <div className="transcript-search-box" style={{ flexShrink: 0 }}>
@@ -799,11 +815,10 @@ export const AudioSubPopover: React.FC<AudioSubPopoverProps> = ({
         {/* Subtitle Style Customization Column */}
         {showStyleColumn && (
           <div className="popover-col popover-style-col">
-            <div className="popover-col-header">
-              <span className="popover-col-title">Subtitle Style</span>
+            <div className="style-header-row" style={{ flexShrink: 0 }}>
+              <h4>Subtitle Style</h4>
               <button 
-                type="button"
-                className="popover-header-action-btn"
+                className="style-reset-btn-header"
                 onClick={(e) => {
                   e.stopPropagation();
                   onUpdateSubSettings({
@@ -823,10 +838,12 @@ export const AudioSubPopover: React.FC<AudioSubPopoverProps> = ({
               </button>
             </div>
             
-            <div className="style-customizer-clean">
-              {/* 1. Font Family */}
-              <div className="style-block">
-                <span className="style-block-label">Font</span>
+            <div className="style-customizer" style={{ display: 'flex', flexDirection: 'column', gap: '0.85rem' }}>
+              {/* Font Family */}
+              <div className="style-row" style={{ minWidth: 0, width: '100%', overflow: 'visible' }}>
+                <span className="style-label" style={{ display: 'block', fontSize: '0.64rem', letterSpacing: '0.05em', textTransform: 'uppercase', color: 'var(--text-muted, rgba(255, 255, 255, 0.45))', fontWeight: 600, marginBottom: '5px' }}>
+                  Font Family
+                </span>
                 <CustomSelect 
                   value={subSettings.fontFamily}
                   onChange={(val) => onUpdateSubSettings({ fontFamily: val })}
@@ -834,87 +851,109 @@ export const AudioSubPopover: React.FC<AudioSubPopoverProps> = ({
                 />
               </div>
 
-              {/* 2. Size Control */}
-              <div className="style-block">
-                <span className="style-block-label">Size</span>
-                <div className="size-control-group">
-                  <button 
-                    type="button"
-                    className="size-step-btn"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      const currentSize = subSettings.customSize || 100;
-                      onUpdateSubSettings({ customSize: Math.max(50, currentSize - 10) });
-                    }}
-                    title="Decrease size"
-                  >
-                    -
-                  </button>
-                  <span className="size-step-value">{subSettings.customSize || 100}%</span>
-                  <button 
-                    type="button"
-                    className="size-step-btn"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      const currentSize = subSettings.customSize || 100;
-                      onUpdateSubSettings({ customSize: Math.min(300, currentSize + 10) });
-                    }}
-                    title="Increase size"
-                  >
-                    +
-                  </button>
-                </div>
-              </div>
-
-              {/* 3. Color & BG side-by-side */}
-              <div className="style-colors-grid">
-                {/* Text Color */}
-                <div className="style-color-col">
-                  <span className="style-block-label">Color</span>
-                  <div className="color-swatch-wrapper">
+              {/* Colors Row: Text Color & Background in 1 Line */}
+              <div className="style-row" style={{ minWidth: 0, width: '100%', overflow: 'visible' }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', gap: '8px' }}>
+                  {/* Text Color */}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <span className="style-label" style={{ fontSize: '0.64rem', letterSpacing: '0.05em', textTransform: 'uppercase', color: 'var(--text-muted, rgba(255, 255, 255, 0.45))', fontWeight: 600 }}>
+                      Text
+                    </span>
                     <input 
                       type="color" 
                       value={subSettings.customTextColor || '#ffffff'}
                       onChange={(e) => onUpdateSubSettings({ customTextColor: e.target.value })}
-                      className="style-color-circle"
+                      className="color-picker-input-premium"
                       onClick={(e) => e.stopPropagation()}
                       title="Choose text color"
+                      style={{ width: '26px', height: '26px' }}
                     />
                   </div>
-                </div>
 
-                {/* Background Color */}
-                <div className="style-color-col">
-                  <span className="style-block-label">BG</span>
-                  <div className="color-swatch-wrapper" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                    <input 
-                      type="color" 
-                      value={subSettings.customBgColor && !subSettings.customBgColor.startsWith('rgba') && subSettings.customBgColor !== 'transparent' ? subSettings.customBgColor : '#000000'}
-                      onChange={(e) => onUpdateSubSettings({ customBgColor: e.target.value })}
-                      className="style-color-circle"
-                      disabled={subSettings.customBgColor === 'transparent'}
-                      onClick={(e) => e.stopPropagation()}
-                      title="Choose background color"
-                    />
+                  {/* Background Color & None Button */}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <span className="style-label" style={{ fontSize: '0.64rem', letterSpacing: '0.05em', textTransform: 'uppercase', color: 'var(--text-muted, rgba(255, 255, 255, 0.45))', fontWeight: 600 }}>
+                      Bg
+                    </span>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
+                      <input 
+                        type="color" 
+                        value={subSettings.customBgColor && !subSettings.customBgColor.startsWith('rgba') && subSettings.customBgColor !== 'transparent' ? subSettings.customBgColor : '#000000'}
+                        onChange={(e) => onUpdateSubSettings({ customBgColor: e.target.value })}
+                        className="color-picker-input-premium"
+                        disabled={subSettings.customBgColor === 'transparent'}
+                        onClick={(e) => e.stopPropagation()}
+                        title="Choose background color"
+                        style={{ width: '26px', height: '26px' }}
+                      />
+                      <button 
+                        className={`bg-clear-circle-btn ${subSettings.customBgColor === 'transparent' ? 'active' : ''}`}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onUpdateSubSettings({ 
+                            customBgColor: subSettings.customBgColor === 'transparent' ? '#000000' : 'transparent' 
+                          });
+                        }}
+                        title={subSettings.customBgColor === 'transparent' ? "Background is None (transparent) - Click to restore" : "Set background to None (transparent)"}
+                        style={{
+                          width: '24px',
+                          height: '24px',
+                          borderRadius: '50%',
+                          border: `1.5px solid ${subSettings.customBgColor === 'transparent' ? '#ef4444' : 'rgba(255, 255, 255, 0.28)'}`,
+                          background: subSettings.customBgColor === 'transparent' ? 'rgba(239, 68, 68, 0.2)' : 'rgba(255, 255, 255, 0.06)',
+                          cursor: 'pointer',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          padding: 0,
+                          transition: 'all 0.2s ease',
+                          flexShrink: 0
+                        }}
+                      >
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke={subSettings.customBgColor === 'transparent' ? '#ef4444' : 'rgba(255, 255, 255, 0.7)'} strokeWidth="2.5" strokeLinecap="round">
+                          <circle cx="12" cy="12" r="9" strokeWidth="2" />
+                          <line x1="6" y1="6" x2="18" y2="18" />
+                        </svg>
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Font Size Row (Placed below text and background colors) */}
+              <div className="style-row" style={{ minWidth: 0, width: '100%', overflow: 'visible' }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%' }}>
+                  <span className="style-label" style={{ fontSize: '0.64rem', letterSpacing: '0.05em', textTransform: 'uppercase', color: 'var(--text-muted, rgba(255, 255, 255, 0.45))', fontWeight: 600 }}>
+                    Size
+                  </span>
+                  <div className="size-btn-group" style={{ margin: 0, alignSelf: 'center' }}>
                     <button 
-                      type="button"
-                      className={`style-none-circle-btn ${subSettings.customBgColor === 'transparent' ? 'active' : ''}`}
+                      className="size-action-btn"
                       onClick={(e) => {
                         e.stopPropagation();
-                        onUpdateSubSettings({ 
-                          customBgColor: subSettings.customBgColor === 'transparent' ? '#000000' : 'transparent' 
-                        });
+                        const currentSize = subSettings.customSize || 100;
+                        onUpdateSubSettings({ customSize: Math.max(50, currentSize - 10) });
                       }}
-                      title={subSettings.customBgColor === 'transparent' ? "Background is None (transparent) - Click to restore" : "Set background to None (transparent)"}
+                      title="Decrease size"
                     >
-                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke={subSettings.customBgColor === 'transparent' ? '#ef4444' : 'rgba(255, 255, 255, 0.7)'} strokeWidth="2.5" strokeLinecap="round">
-                        <circle cx="12" cy="12" r="9" strokeWidth="2" />
-                        <line x1="6" y1="6" x2="18" y2="18" />
-                      </svg>
+                      -
+                    </button>
+                    <span className="size-value-display">{subSettings.customSize || 100}%</span>
+                    <button 
+                      className="size-action-btn"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        const currentSize = subSettings.customSize || 100;
+                        onUpdateSubSettings({ customSize: Math.min(300, currentSize + 10) });
+                      }}
+                      title="Increase size"
+                    >
+                      +
                     </button>
                   </div>
                 </div>
               </div>
+
             </div>
           </div>
         )}

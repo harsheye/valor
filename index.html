@@ -1,54 +1,8 @@
 <!doctype html>
 <html lang="en">
   <head>
-    <!-- Immediate Theme & Comfort Initialization (Prevents FOUC) -->
-    <script>
-      (function() {
-        try {
-          var urlParams = new URLSearchParams(window.location.search);
-          var queryTheme = urlParams.get('theme');
-          var activeUserId = localStorage.getItem('valor_active_user_id') || 'local';
-          var settingsKey = activeUserId === 'local' ? 'valor_settings' : ('valor_settings_' + activeUserId);
-          var raw = localStorage.getItem(settingsKey);
-          var settings = raw ? JSON.parse(raw) : {};
-          var theme = queryTheme || settings.theme || 'black-ops';
-
-          if (theme === 'dark' || theme === 'dim' || theme === 'cyberpunk' || theme === 'abyss' || theme === 'aqua' || theme === 'teal') {
-            theme = 'midnight-slate';
-          } else if (theme === 'light' || theme === 'garden' || theme === 'valentine') {
-            theme = 'soft-paper';
-          } else if (theme === 'black' || theme === 'black-and-white' || theme === 'oled') {
-            theme = 'black-ops';
-          } else if (theme === 'auto') {
-            var prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
-            theme = prefersDark ? 'midnight-slate' : 'soft-paper';
-          }
-
-          document.documentElement.setAttribute('data-theme', theme);
-          var metaTheme = document.querySelector('meta[name="theme-color"]');
-          if (metaTheme) {
-            metaTheme.setAttribute('content', (theme === 'black-ops' || theme === 'oled') ? '#000000' : (theme === 'soft-paper' ? '#ECE7DD' : '#0F1217'));
-          }
-
-          if (settings.uiDimmer && settings.uiDimmer < 100) {
-            document.documentElement.style.setProperty('--ui-dimmer', (settings.uiDimmer / 100).toString());
-          }
-          if (settings.textSize && settings.textSize !== 100) {
-            document.documentElement.style.setProperty('--text-scale', (settings.textSize / 100).toString());
-          }
-          if (settings.reduceMotion === 'on') {
-            document.documentElement.setAttribute('data-reduce-motion', 'true');
-          }
-        } catch(e) {
-          document.documentElement.setAttribute('data-theme', 'midnight-slate');
-        }
-      })();
-    </script>
-
     <meta charset="UTF-8" />
-    <meta name="theme-color" content="#0F1217" />
-    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-    <link rel="alternate icon" href="/logo.ico" />
+    <link rel="icon" type="image/svg+xml" href="/logo.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
     <title>Valor</title>
     <!-- Device Identity & Telemetry Middleware Initialization -->

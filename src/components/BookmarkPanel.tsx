@@ -84,15 +84,15 @@ export const BookmarkPanel: React.FC<BookmarkPanelProps> = ({ bookmarks, onJump,
       <div style={{ position: 'absolute', bottom: '-25px', left: 0, right: 0, height: '25px', background: 'transparent', pointerEvents: 'auto' }} />
       <div style={{ padding: '14px 16px 12px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid var(--border-subtle, rgba(255,255,255,0.08))' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-          <BookmarkIcon size={18} color="var(--accent)" />
+          <BookmarkIcon size={18} color="var(--accent-color, #e50914)" />
           <h2 style={{ margin: 0, fontSize: '1rem', fontWeight: 600 }}>Bookmarks</h2>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
           <button 
             onClick={onAdd}
-            style={{ background: 'var(--accent-soft)', color: 'var(--accent)', border: '1px solid var(--border-color, rgba(255, 255, 255, 0.12))', padding: '4px 10px', borderRadius: '16px', fontSize: '12px', fontWeight: 700, cursor: 'pointer', transition: 'all 0.2s' }}
-            onMouseEnter={e => e.currentTarget.style.background = 'var(--accent-soft)'}
-            onMouseLeave={e => e.currentTarget.style.background = 'var(--accent-soft)'}
+            style={{ background: 'var(--accent-glow, rgba(229, 9, 20, 0.15))', color: 'var(--accent-color, #e50914)', border: 'none', padding: '4px 10px', borderRadius: '16px', fontSize: '12px', fontWeight: 600, cursor: 'pointer', transition: 'all 0.2s' }}
+            onMouseEnter={e => e.currentTarget.style.background = 'var(--accent-glow)'}
+            onMouseLeave={e => e.currentTarget.style.background = 'var(--accent-glow)'}
           >
             + New
           </button>
@@ -118,9 +118,9 @@ export const BookmarkPanel: React.FC<BookmarkPanelProps> = ({ bookmarks, onJump,
             </div>
             <button 
               onClick={onAdd}
-              style={{ marginTop: '16px', background: 'var(--accent)', color: 'var(--player-accent-text, #ffffff)', border: 'none', padding: '10px 20px', borderRadius: '12px', fontSize: '14px', fontWeight: 700, cursor: 'pointer', transition: 'background 0.2s', boxShadow: '0 4px 12px var(--accent-soft)' }}
+              style={{ marginTop: '16px', background: 'var(--accent-color, #e50914)', color: 'var(--btn-text-color, white)', border: 'none', padding: '10px 20px', borderRadius: '12px', fontSize: '14px', fontWeight: 600, cursor: 'pointer', transition: 'background 0.2s', boxShadow: '0 4px 12px rgba(229, 9, 20, 0.3)' }}
               onMouseEnter={e => e.currentTarget.style.background = 'var(--accent-hover, #f40b17)'}
-              onMouseLeave={e => e.currentTarget.style.background = 'var(--accent)'}
+              onMouseLeave={e => e.currentTarget.style.background = 'var(--accent-color, #e50914)'}
             >
               Create First Bookmark
             </button>
@@ -164,7 +164,7 @@ export const BookmarkPanel: React.FC<BookmarkPanelProps> = ({ bookmarks, onJump,
                       {bm.category === 'Gore' && '🩸 '}
                       {bm.title || bm.label || 'Untitled Bookmark'}
                     </span>
-                    {bm.favorite && <Heart size={14} fill="var(--accent)" color="var(--accent)" style={{ flexShrink: 0 }} />}
+                    {bm.favorite && <Heart size={14} fill="var(--accent-color, #e50914)" color="var(--accent-color, #e50914)" style={{ flexShrink: 0 }} />}
                     {(() => {
                       const createdBy = bm.createdBy;
                       let label = 'Manual';
@@ -204,7 +204,7 @@ export const BookmarkPanel: React.FC<BookmarkPanelProps> = ({ bookmarks, onJump,
                       );
                     })()}
                   </div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px', color: 'var(--accent)', fontSize: '13px', fontWeight: 600 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px', color: 'var(--accent-color, #e50914)', fontSize: '13px', fontWeight: 600 }}>
                     <Clock size={12} />
                     {formatTime(bm.time)}
                     {bm.endTime ? ` → ${formatTime(bm.endTime)}` : ''}

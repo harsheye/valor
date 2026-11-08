@@ -1,0 +1,379 @@
+/* Dynamic Island Notification Styles */
+
+.player-island-wrapper {
+  position: absolute;
+  top: calc(10px + env(safe-area-inset-top, 0px));
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 1500;
+  pointer-events: none;
+  user-select: none;
+  font-family: var(--font-sans, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif);
+}
+
+.player-island {
+  position: relative;
+  background: #000000;
+  color: #ffffff;
+  border: 1px solid rgba(255, 255, 255, 0.11);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.6);
+  border-radius: 20px;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  box-sizing: border-box;
+  pointer-events: auto;
+  cursor: default;
+  transition:
+    width 0.5s cubic-bezier(0.3, 1.25, 0.4, 1),
+    height 0.5s cubic-bezier(0.3, 1.25, 0.4, 1),
+    border-radius 0.4s ease,
+    transform 0.45s cubic-bezier(0.34, 1.56, 0.5, 1),
+    opacity 0.22s ease;
+  will-change: width, height, transform, opacity;
+}
+
+.player-island.is-expanded {
+  border-radius: 26px;
+  cursor: auto;
+}
+
+.player-island:focus-visible {
+  outline: 2px solid var(--accent, #ff5a68);
+  outline-offset: 2px;
+}
+
+/* Stage: Pop-in initial circle (40x40) */
+.player-island.stage-pop-in {
+  width: 40px;
+  height: 40px;
+  border-radius: 20px;
+  transform: scale(0.35) translateY(-6px);
+  opacity: 0;
+}
+
+.player-island.stage-circle {
+  width: 40px;
+  height: 40px;
+  border-radius: 20px;
+  transform: scale(1) translateY(0);
+  opacity: 1;
+}
+
+/* Stage: Closing scale down */
+.player-island.stage-contract {
+  width: 40px;
+  height: 40px;
+  border-radius: 20px;
+  transform: scale(1) translateY(0);
+  opacity: 1;
+}
+
+.player-island.stage-pop-out {
+  width: 40px;
+  height: 40px;
+  border-radius: 20px;
+  transform: scale(0.35) translateY(-6px);
+  opacity: 0;
+  transition:
+    transform 0.45s cubic-bezier(0.34, 1.56, 0.5, 1),
+    opacity 0.22s ease;
+}
+
+/* Content wrapper inside island */
+.player-island-inner {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  height: 100%;
+  padding: 0 10px;
+  box-sizing: border-box;
+  gap: 10px;
+}
+
+.player-island.is-expanded .player-island-inner {
+  flex-direction: column;
+  align-items: stretch;
+  padding: 12px 14px;
+  gap: 12px;
+}
+
+/* 28px Icon Disc */
+.player-island-icon-disc {
+  width: 28px;
+  height: 28px;
+  min-width: 28px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255, 255, 255, 0.08);
+  color: #ffffff;
+  flex-shrink: 0;
+  box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.15);
+}
+
+.player-island-icon-disc.audio-disc {
+  background: linear-gradient(135deg, #ff5a68 0%, #8d1020 100%);
+  color: #ffffff;
+}
+
+.player-island-icon-disc.accent-disc {
+  background: var(--accent, #ff5a68);
+  color: #ffffff;
+}
+
+.player-island-icon-disc.gold-disc {
+  background: linear-gradient(135deg, #f59e0b 0%, #b45309 100%);
+  color: #ffffff;
+}
+
+/* Details container */
+.player-island-details {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  white-space: nowrap;
+  opacity: 0;
+  transform: translateX(-8px);
+  transition:
+    opacity 0.26s ease 0.16s,
+    transform 0.35s ease 0.12s,
+    filter 0.11s ease;
+}
+
+.player-island.stage-open .player-island-details,
+.player-island.stage-expanded .player-island-details {
+  opacity: 1;
+  transform: translateX(0);
+}
+
+.player-island.stage-closing-details .player-island-details {
+  opacity: 0;
+  transform: translateX(-8px);
+  transition:
+    opacity 0.16s ease,
+    transform 0.16s ease;
+}
+
+/* Crossfade blur transition when swapping notification */
+.player-island-details.is-crossfading {
+  opacity: 0 !important;
+  filter: blur(6px) !important;
+  transition: opacity 0.11s ease, filter 0.11s ease !important;
+}
+
+/* Text elements */
+.player-island-text-group {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  min-width: 0;
+}
+
+.player-island-label {
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.25;
+  color: #ffffff;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.player-island-sub {
+  font-size: 11px;
+  font-weight: 400;
+  color: #9a9ca8;
+  line-height: 1.2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Volume Bar */
+.player-island-volume-group {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.player-island-volume-bar-bg {
+  width: 120px;
+  height: 6px;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.18);
+  overflow: hidden;
+  position: relative;
+}
+
+.player-island-volume-bar-fill {
+  height: 100%;
+  background: #ffffff;
+  border-radius: 3px;
+  transition: width 0.12s ease;
+}
+
+.player-island-volume-val {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 12px;
+  font-weight: 600;
+  min-width: 38px;
+  color: #ffffff;
+}
+
+/* Seek Progress Bar */
+.player-island-seek-group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.player-island-seek-progress-bg {
+  width: 130px;
+  height: 3px;
+  border-radius: 1.5px;
+  background: rgba(255, 255, 255, 0.18);
+  overflow: hidden;
+}
+
+.player-island-seek-progress-fill {
+  height: 100%;
+  background: var(--accent, #ff5a68);
+  border-radius: 1.5px;
+}
+
+/* Cast interactive pill */
+.player-island-cast-action {
+  font-size: 10px;
+  text-transform: uppercase;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  background: rgba(239, 68, 68, 0.2);
+  color: #ef4444;
+  border: 1px solid rgba(239, 68, 68, 0.3);
+  border-radius: 9999px;
+  padding: 3px 8px;
+  cursor: pointer;
+  margin-left: 4px;
+  transition: background 0.15s ease;
+}
+
+.player-island-cast-action:hover {
+  background: rgba(239, 68, 68, 0.35);
+}
+
+/* Expanded Panel (Audio & Subtitle Track Chips) */
+.player-island-expanded-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  padding-bottom: 6px;
+}
+
+.player-island-expanded-title {
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #9a9ca8;
+}
+
+.player-island-chips-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  max-height: 180px;
+  overflow-y: auto;
+  padding-right: 2px;
+}
+
+.player-island-chips-grid::-webkit-scrollbar {
+  width: 4px;
+}
+
+.player-island-chips-grid::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.2);
+  border-radius: 2px;
+}
+
+.player-island-chip-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: rgba(255, 255, 255, 0.07);
+  color: #ffffff;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  padding: 6px 12px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+  min-height: 32px;
+  transition: all 0.15s ease;
+}
+
+.player-island-chip-btn:hover {
+  background: rgba(255, 255, 255, 0.14);
+}
+
+.player-island-chip-btn.active {
+  background: var(--accent, #ff5a68);
+  color: #ffffff;
+  border-color: var(--accent, #ff5a68);
+  font-weight: 600;
+  box-shadow: 0 2px 8px rgba(255, 90, 104, 0.35);
+}
+
+.player-island-chip-btn:focus-visible {
+  outline: 2px solid var(--accent, #ff5a68);
+  outline-offset: 2px;
+}
+
+/* Hidden measurement container */
+.player-island-measure {
+  position: absolute;
+  visibility: hidden;
+  pointer-events: none;
+  top: -9999px;
+  left: -9999px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  white-space: nowrap;
+  box-sizing: border-box;
+}
+
+/* Prefers Reduced Motion */
+@media (prefers-reduced-motion: reduce) {
+  .player-island,
+  .player-island.stage-pop-in,
+  .player-island.stage-circle,
+  .player-island.stage-contract,
+  .player-island.stage-pop-out,
+  .player-island-details {
+    transition: opacity 0.2s ease !important;
+    transform: none !important;
+  }
+}
+
+/* Mobile Responsiveness */
+@media (max-width: 768px) {
+  .player-island {
+    max-width: calc(100vw - 32px);
+  }
+
+  .player-island-label {
+    max-width: 160px;
+  }
+
+  .player-island-chip-btn {
+    min-height: 40px;
+    padding: 8px 14px;
+    font-size: 13px;
+  }
+}

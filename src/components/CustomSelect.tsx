@@ -159,7 +159,6 @@ export const CustomSelect: React.FC<CustomSelectProps> = ({
         <span className="trigger-label">
           {activeOption ? activeOption.label : placeholder}
         </span>
-        <ChevronsUpDown size={14} className="trigger-chevron" />
       </button>
       
       {dropdownContent}
@@ -178,78 +177,70 @@ export const CustomSelect: React.FC<CustomSelectProps> = ({
         .custom-select-trigger {
           display: flex;
           align-items: center;
-          justify-content: space-between;
-          gap: 8px;
-          min-height: 36px;
-          background: var(--surface-1);
-          border: 1px solid var(--control-border);
-          border-radius: var(--radius-sm);
-          color: var(--text-1);
+          justify-content: center;
+          background: var(--dropdown-bg);
+          border: 1px solid var(--dropdown-border);
+          border-radius: 8px;
+          color: var(--dropdown-text);
           padding: 0.45rem 0.85rem;
           font-size: 0.85rem;
-          font-weight: 500;
+          font-weight: 600;
           cursor: pointer;
-          transition: all 0.15s ease-out;
+          transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
           width: 100%;
           outline: none;
           white-space: nowrap;
-          box-sizing: border-box;
         }
         .custom-select-trigger:hover {
-          background: var(--surface-2);
-          border-color: var(--accent);
-          box-shadow: none;
-        }
-        .custom-select-trigger:focus-visible {
-          border-color: var(--focus-ring);
-          outline: 2px solid var(--focus-ring);
-          outline-offset: 1px;
+          border-color: var(--accent-glow);
+          background: var(--dropdown-hover-bg);
+          box-shadow: 0 0 10px var(--accent-glow);
         }
         .trigger-label {
           white-space: nowrap;
           overflow: hidden;
           text-overflow: ellipsis;
-          text-align: left;
-          flex: 1;
+          margin-right: 0;
+          text-align: center;
         }
         .trigger-chevron {
-          width: 14px;
-          height: 14px;
-          color: var(--text-2);
+          width: 16px;
+          height: 16px;
+          opacity: 0.6;
           flex-shrink: 0;
         }
         .custom-select-dropdown {
           width: max-content;
-          max-width: 240px;
-          background: var(--surface-2);
-          border: 1px solid var(--border);
-          border-radius: var(--radius-sm);
-          box-shadow: 0 8px 24px rgba(0,0,0,0.35);
+          max-width: 220px;
+          background: var(--dropdown-bg, rgba(18, 18, 18, 0.98));
+          border: 1px solid var(--dropdown-border, rgba(255, 255, 255, 0.15));
+          border-radius: 6px;
+          box-shadow: var(--shadow-xl, 0 10px 40px rgba(0,0,0,0.6));
           overflow: hidden;
-          animation: dropdown-fade-in 0.15s ease-out;
+          animation: dropdown-fade-in 0.15s cubic-bezier(0.16, 1, 0.3, 1);
         }
         @keyframes dropdown-fade-in {
           from { opacity: 0; transform: translateY(-4px); }
           to { opacity: 1; transform: translateY(0); }
         }
         .custom-select-search-wrapper {
-          padding: 6px 8px;
-          border-bottom: 1px solid var(--border);
+          padding: 4px 6px;
+          border-bottom: 1px solid var(--dropdown-border);
         }
         .custom-select-search-input {
           width: 100%;
-          background: var(--surface-1);
-          border: 1px solid var(--control-border);
-          border-radius: var(--radius-sm);
-          color: var(--text-1);
-          padding: 0.35rem 0.5rem;
-          font-size: 0.8rem;
+          background: var(--bg-secondary, rgba(0, 0, 0, 0.2));
+          border: 1px solid var(--dropdown-border);
+          border-radius: 4px;
+          color: var(--dropdown-text);
+          padding: 0.25rem 0.5rem;
+          font-size: 0.75rem;
           outline: none;
           box-sizing: border-box;
           transition: border-color 0.15s;
         }
         .custom-select-search-input:focus {
-          border-color: var(--accent);
+          border-color: var(--accent-color);
         }
         .custom-select-options-list {
           max-height: 180px;
@@ -258,28 +249,26 @@ export const CustomSelect: React.FC<CustomSelectProps> = ({
         }
         .custom-select-empty {
           padding: 0.5rem;
-          color: var(--text-3);
+          color: var(--text-muted);
           font-size: 0.75rem;
           text-align: center;
         }
         .custom-select-option {
           display: flex;
           align-items: center;
-          gap: 6px;
-          padding: 0.45rem 0.75rem;
-          font-size: 0.82rem;
-          color: var(--text-2);
+          padding: 0.35rem 0.65rem;
+          font-size: 0.78rem;
+          color: var(--dropdown-text, rgba(255, 255, 255, 0.9));
           cursor: pointer;
-          transition: all 0.12s ease-out;
+          transition: all 0.15s ease;
           white-space: nowrap;
         }
         .custom-select-option:hover {
-          background: var(--surface-3);
-          color: var(--text-1);
+          background: var(--dropdown-hover-bg);
         }
         .custom-select-option.selected {
-          background: var(--accent-soft);
-          color: var(--text-1);
+          background: var(--accent-color);
+          color: var(--btn-text-color, #ffffff);
           font-weight: 600;
         }
         .option-check-icon {
@@ -288,7 +277,6 @@ export const CustomSelect: React.FC<CustomSelectProps> = ({
           margin-right: 0.4rem;
           opacity: 0;
           flex-shrink: 0;
-          color: var(--accent);
           transition: opacity 0.1s;
         }
         .option-check-icon.visible {

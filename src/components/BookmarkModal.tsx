@@ -164,7 +164,7 @@ export const BookmarkModal: React.FC<BookmarkModalProps> = ({
           color: var(--text-primary);
         }
         .preset-btn.active {
-          background: var(--accent-soft);
+          background: var(--accent-glow);
           border-color: var(--accent-color);
           color: var(--accent-color);
           box-shadow: var(--shadow-sm);
@@ -260,7 +260,7 @@ export const BookmarkModal: React.FC<BookmarkModalProps> = ({
             margin: '0 auto',
             border: '1px solid var(--border-subtle, rgba(255, 255, 255, 0.08))'
           }}>
-            <span style={{ width: '7px', height: '7px', borderRadius: '50%', background: 'var(--accent)', boxShadow: '0 0 6px var(--accent)' }} />
+            <span style={{ width: '7px', height: '7px', borderRadius: '50%', background: 'var(--accent-color, #e50914)', boxShadow: '0 0 6px var(--accent-color, #e50914)' }} />
             <span>{startTimeStr} {bookmarkType !== 'outro' ? ` - ${endTimeStr}` : ''}</span>
           </div>
 
@@ -296,7 +296,7 @@ export const BookmarkModal: React.FC<BookmarkModalProps> = ({
                 boxSizing: 'border-box',
                 fontFamily: 'inherit'
               }}
-              onFocus={(e) => e.currentTarget.style.borderColor = 'var(--accent)'}
+              onFocus={(e) => e.currentTarget.style.borderColor = 'var(--accent-color, #e50914)'}
               onBlur={(e) => e.currentTarget.style.borderColor = 'var(--input-border, rgba(255, 255, 255, 0.15))'}
               value={newBookmarkLabel} 
               onChange={(e) => setNewBookmarkLabel(e.target.value)}
@@ -403,7 +403,7 @@ export const BookmarkModal: React.FC<BookmarkModalProps> = ({
             <button 
               onClick={handleSaveBookmark}
               style={{
-                background: 'var(--accent)',
+                background: 'var(--accent-color, #e50914)',
                 border: 'none',
                 borderRadius: '8px',
                 color: 'var(--btn-text-color, #ffffff)',
@@ -416,7 +416,7 @@ export const BookmarkModal: React.FC<BookmarkModalProps> = ({
                 fontFamily: 'inherit'
               }}
               onMouseEnter={(e) => e.currentTarget.style.background = 'var(--accent-hover, #f40b17)'}
-              onMouseLeave={(e) => e.currentTarget.style.background = 'var(--accent)'}
+              onMouseLeave={(e) => e.currentTarget.style.background = 'var(--accent-color, #e50914)'}
               onMouseDown={(e) => e.currentTarget.style.transform = 'scale(0.96)'}
               onMouseUp={(e) => e.currentTarget.style.transform = 'scale(1)'}
             >

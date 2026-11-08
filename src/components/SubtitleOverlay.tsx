@@ -120,7 +120,7 @@ export const SubtitleOverlay: React.FC<SubtitleOverlayProps> = ({
       <style>{`
         .subtitle-overlay-container {
           position: absolute;
-          bottom: calc(96px * var(--player-ui-scale, 1));
+          bottom: calc(max(36px, 6%) * var(--player-ui-scale, 1));
           left: 8%;
           right: 8%;
           display: flex;
@@ -130,11 +130,10 @@ export const SubtitleOverlay: React.FC<SubtitleOverlayProps> = ({
           z-index: 25;
           text-align: center;
           user-select: none;
-          transition: bottom 0.6s cubic-bezier(0.16, 1, 0.3, 1);
+          transition: bottom 0.25s cubic-bezier(0.25, 1, 0.5, 1);
         }
         .subtitle-overlay-container.controls-showing {
-          bottom: calc(105px * var(--player-ui-scale, 1));
-          transition: bottom 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+          bottom: calc(max(110px, 16%) * var(--player-ui-scale, 1));
         }
         .subtitle-overlay-container.menu-showing {
           bottom: 75% !important;
@@ -160,12 +159,6 @@ export const SubtitleOverlay: React.FC<SubtitleOverlayProps> = ({
         }
         
         @media (max-width: 768px) {
-          .subtitle-overlay-container {
-            bottom: calc(68px * var(--player-ui-scale, 1));
-          }
-          .subtitle-overlay-container.controls-showing {
-            bottom: calc(75px * var(--player-ui-scale, 1));
-          }
           .font-small { font-size: 0.9rem; }
           .font-medium { font-size: 1.15rem; }
           .font-large { font-size: 1.45rem; }
@@ -174,7 +167,7 @@ export const SubtitleOverlay: React.FC<SubtitleOverlayProps> = ({
 
         /* Colors */
         .color-white {
-          color: #F2EEE6;
+          color: #ffffff;
         }
         .color-yellow {
           color: #f1c40f;
@@ -189,11 +182,11 @@ export const SubtitleOverlay: React.FC<SubtitleOverlayProps> = ({
         /* Backdrops */
         .backdrop-shadow {
           text-shadow: 
-            -1px -1px 0 rgba(0, 0, 0, 0.85),  
-             1px -1px 0 rgba(0, 0, 0, 0.85),
-            -1px  1px 0 rgba(0, 0, 0, 0.85),
-             1px  1px 0 rgba(0, 0, 0, 0.85),
-             0px 2px 4px rgba(0, 0, 0, 0.6);
+            -1.5px -1.5px 0 #000,  
+             1.5px -1.5px 0 #000,
+            -1.5px  1.5px 0 #000,
+             1.5px  1.5px 0 #000,
+             0px 2px 5px rgba(0,0,0,0.9);
         }
         .backdrop-opaque {
           background-color: rgba(0, 0, 0, 0.75);
