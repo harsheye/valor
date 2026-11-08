@@ -5788,9 +5788,6 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
                       {isMuted || volume === 0 ? <VolumeX size={20} /> : volume < 0.5 ? <Volume1 size={20} /> : <Volume2 size={20} />}
                     </button>
                     <div className="volume-slider-vertical-popover" onClick={(e) => e.stopPropagation()}>
-                      <span className="volume-vertical-percent-text" style={{ color: audioBoost > 100 ? '#ff7a00' : '#ffffff' }}>
-                        {isMuted ? '0%' : audioBoost > 100 ? `${audioBoost}%` : `${Math.round(volume * 100)}%`}
-                      </span>
                       <div className="volume-vertical-track-wrapper">
                         <input 
                           type="range"
@@ -5805,8 +5802,9 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
                           }}
                           className="volume-slider-vertical"
                           style={{
-                            background: `linear-gradient(to top, ${audioBoost > 100 ? '#ff7a00' : '#ffffff'} 0%, ${audioBoost > 100 ? '#ff7a00' : '#ffffff'} ${(isMuted ? 0 : volume) * 100}%, rgba(255, 255, 255, 0.18) ${(isMuted ? 0 : volume) * 100}%, rgba(255, 255, 255, 0.18) 100%)`
-                          }}
+                            '--volume-thumb-color': isMuted ? '#666666' : (audioBoost > 100 ? '#ff7a00' : '#e50914'),
+                            background: `linear-gradient(to top, ${isMuted ? '#555555' : (audioBoost > 100 ? '#ff7a00' : '#e50914')} 0%, ${isMuted ? '#555555' : (audioBoost > 100 ? '#ff7a00' : '#e50914')} ${(isMuted ? 0 : volume) * 100}%, #111111 ${(isMuted ? 0 : volume) * 100}%, #111111 100%)`
+                          } as React.CSSProperties}
                         />
                       </div>
                     </div>
@@ -8338,23 +8336,19 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
           position: absolute;
           bottom: 44px;
           left: 50%;
-          transform: translateX(-50%) translateY(8px);
-          width: 36px;
-          height: 136px;
-          background: rgba(18, 18, 18, 0.92);
-          backdrop-filter: blur(16px);
-          -webkit-backdrop-filter: blur(16px);
-          border: 1px solid rgba(255, 255, 255, 0.15);
-          border-radius: 20px;
-          padding: 10px 0;
+          transform: translateX(-50%) translateY(6px);
+          width: 24px;
+          height: 104px;
+          background: #282828;
+          border-radius: 4px;
+          padding: 8px 0;
           display: flex;
-          flex-direction: column;
           align-items: center;
-          justify-content: space-between;
-          box-shadow: 0 10px 30px rgba(0, 0, 0, 0.7);
+          justify-content: center;
+          box-shadow: 0 4px 16px rgba(0, 0, 0, 0.6);
           opacity: 0;
           pointer-events: none;
-          transition: opacity 0.2s cubic-bezier(0.16, 1, 0.3, 1), transform 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+          transition: opacity 0.18s ease, transform 0.18s ease;
           z-index: 500;
           box-sizing: border-box;
         }
@@ -8362,8 +8356,8 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
           content: '';
           position: absolute;
           bottom: -16px;
-          left: -8px;
-          right: -8px;
+          left: -10px;
+          right: -10px;
           height: 20px;
           background: transparent;
         }
@@ -8373,31 +8367,22 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
           pointer-events: auto;
           transform: translateX(-50%) translateY(0);
         }
-        .volume-vertical-percent-text {
-          font-family: 'Outfit', sans-serif;
-          font-size: 11px;
-          font-weight: 700;
-          color: #ffffff;
-          user-select: none;
-          text-align: center;
-          min-height: 14px;
-        }
         .volume-vertical-track-wrapper {
           flex: 1;
           display: flex;
           align-items: center;
           justify-content: center;
           width: 100%;
-          padding: 6px 0;
+          height: 100%;
         }
         .volume-slider-vertical {
           -webkit-appearance: none;
+          appearance: none;
           writing-mode: vertical-lr;
           direction: rtl;
-          width: 4px;
-          height: 86px;
-          border-radius: 2px;
-          background: rgba(255, 255, 255, 0.2);
+          width: 6px;
+          height: 88px;
+          border-radius: 3px;
           outline: none;
           cursor: pointer;
           padding: 0;
@@ -8405,29 +8390,31 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
         }
         .volume-slider-vertical::-webkit-slider-thumb {
           -webkit-appearance: none;
-          width: 12px;
-          height: 12px;
+          appearance: none;
+          width: 14px;
+          height: 14px;
           border-radius: 50%;
-          background: #ffffff;
-          box-shadow: 0 1px 4px rgba(0, 0, 0, 0.6);
+          background: var(--volume-thumb-color, #e50914);
+          box-shadow: 0 1px 3px rgba(0, 0, 0, 0.5);
           cursor: pointer;
-          transition: transform 0.15s ease;
+          border: none;
+          transition: transform 0.12s ease;
         }
         .volume-slider-vertical:hover::-webkit-slider-thumb {
-          transform: scale(1.25);
+          transform: scale(1.15);
         }
         .volume-slider-vertical::-moz-range-thumb {
-          width: 12px;
-          height: 12px;
+          width: 14px;
+          height: 14px;
           border-radius: 50%;
-          background: #ffffff;
+          background: var(--volume-thumb-color, #e50914);
           border: none;
-          box-shadow: 0 1px 4px rgba(0, 0, 0, 0.6);
+          box-shadow: 0 1px 3px rgba(0, 0, 0, 0.5);
           cursor: pointer;
-          transition: transform 0.15s ease;
+          transition: transform 0.12s ease;
         }
         .volume-slider-vertical:hover::-moz-range-thumb {
-          transform: scale(1.25);
+          transform: scale(1.15);
         }
         .bookmarks-popover-list::-webkit-scrollbar {
           display: none !important;
