@@ -638,7 +638,7 @@ export const PlayerIsland: React.FC<PlayerIslandProps> = ({
                 onClick={(e) => {
                   e.stopPropagation();
                   if (onSelectSubtitle) onSelectSubtitle(st.index);
-                  playerIslandStore.notify({ type: 'subtitle', language: st.language, title: st.label });
+                  playerIslandStore.notify({ type: 'subtitle', language: st.language ?? null, title: st.label });
                   scheduleAutoDismiss(6000);
                 }}
               >

@@ -1,5 +1,6 @@
 import React from 'react';
 import { Check } from 'lucide-react';
+import { playerIslandStore } from './player/usePlayerIsland';
 
 interface SpeedPopoverProps {
   playbackRate: number;
@@ -50,6 +51,7 @@ export const SpeedPopover: React.FC<SpeedPopoverProps> = ({ playbackRate, setPla
               videoRef.current.playbackRate = speed;
             }
             setPlaybackRate(speed);
+            playerIslandStore.notify({ type: 'speed', value: speed });
             onClose();
           }}
           style={{

@@ -44,7 +44,8 @@ const getAudioBoostMultiplier = (boostPercent: number): number => {
 };
 import { classifyVideoTitle, getRegexedTitleWithYear } from '../utils/libraryClassifier';
 import { syncTraktHistory, syncTraktRating, resolveTraktMetadata } from '../services/traktAuth';
-import { LoadingSpinner, BufferingOverlay } from './LoadingSpinner';
+import { PlayerLoader } from '../player/PlayerLoader';
+import { PlayerIsland, usePlayerIsland } from '../player';
 import { RadialMenu } from './RadialMenu';
 import { ConsoleOverlay } from './ConsoleOverlay';
 import { SpeedPopover } from './SpeedPopover';
@@ -1623,12 +1624,14 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
   const [volumeToast, setVolumeToast] = useState<{ volume: number; boost: number; visible: boolean; isMuted: boolean }>({ volume: 1, boost: 100, visible: false, isMuted: false });
   const volumeToastTimeoutRef = useRef<any>(null);
 
+  const island = usePlayerIsland();
   const triggerVolumeToast = (vol: number, muted: boolean, boost: number = audioBoost) => {
-    if (volumeToastTimeoutRef.current) clearTimeout(volumeToastTimeoutRef.current);
-    setVolumeToast({ volume: vol, boost, visible: true, isMuted: muted });
-    volumeToastTimeoutRef.current = setTimeout(() => {
-      setVolumeToast(prev => ({ ...prev, visible: false }));
-    }, 1500);
+    island.notify({
+      type: 'volume',
+      value: vol,
+      muted: muted || vol === 0,
+      boost
+    });
   };
   const [showControls, setShowControls] = useState(true);
   const [showConsoleOverlay, setShowConsoleOverlay] = useState(false);
@@ -4961,6 +4964,7 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
         }
       }}
     >
+      <PlayerIsland />
       <svg width="0" height="0" style={{ position: 'absolute', pointerEvents: 'none' }}>
         <defs>
           <clipPath id="left-clip" clipPathUnits="objectBoundingBox">
@@ -5538,11 +5542,12 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
       )}
 
       {/* Buffering ring loader */}
-      <BufferingOverlay 
-        isBuffering={isBuffering} 
-        customLoaderUrl={customLoaderUrl} 
-        customLoaderType={customLoaderType} 
-        preset={(spinnerPreset || 'fire-circle') as any} 
+      <PlayerLoader 
+        visible={isBuffering && isPlaying}
+        variant="buffering" 
+ 
+ 
+ 
       />
 
       {/* Top Header Overlay */}
@@ -6657,40 +6662,7 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
         </div>
       )}
 
-      {/* Track Selection Switch Toast Overlay */}
-      {switchToast.visible && (
-        <div 
-          className="switch-toast-overlay animate-switch-toast"
-          style={{ animationDuration: `${toastDuration}s` }}
-        >
-          <div className="switch-toast-content">
-            {switchToast.text}
-          </div>
-        </div>
-      )}
 
-      {/* Volume Toast Overlay */}
-      <div className={`volume-toast-overlay ${volumeToast.visible ? 'visible' : ''}`}>
-        <div className="volume-toast-content-vertical">
-          <div className="volume-toast-bar-vertical">
-            {volumeToast.boost > 100 ? (
-              <div 
-                className="volume-toast-bar-fill-vertical" 
-                style={{ height: `${volumeToast.boost - 100}%`, background: '#ff7a00', backgroundColor: '#ff7a00' }}
-              >
-                <div className="volume-toast-bar-cap-vertical" style={{ background: '#ffffff', backgroundColor: '#ffffff' }} />
-              </div>
-            ) : (
-              <div className="volume-toast-bar-fill-vertical" style={{ height: `${volumeToast.volume * 100}%` }}>
-                {volumeToast.volume > 0 && <div className="volume-toast-bar-cap-vertical" />}
-              </div>
-            )}
-          </div>
-          <span className="volume-toast-text-vertical">
-            {volumeToast.isMuted ? 'MUTE' : (volumeToast.boost > 100 ? volumeToast.boost : Math.round(volumeToast.volume * 100))}
-          </span>
-        </div>
-      </div>
 
       {/* Show UI Overlays Workaround Button */}
       {hideUIOverlays && (

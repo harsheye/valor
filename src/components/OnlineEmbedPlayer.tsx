@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { X, Server, Bookmark, List, Play } from 'lucide-react';
+import { PlayerIsland } from './player';
 import type { VideoItem } from '../types/media';
 
 interface OnlineEmbedPlayerProps {
@@ -207,6 +208,7 @@ export const OnlineEmbedPlayer: React.FC<OnlineEmbedPlayerProps> = ({
 
   return (
     <div className="online-player-overlay">
+      <PlayerIsland />
       {/* Top Header Bar Overlay - ONLY X Close Button */}
       <header className="online-player-header" style={{ background: 'transparent', justifyContent: 'flex-end', padding: '16px 20px', zIndex: 100 }}>
         <div className="header-right" style={{ display: 'flex', alignItems: 'center', gap: '10px', marginLeft: 'auto' }}>

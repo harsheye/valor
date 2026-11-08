@@ -95,7 +95,8 @@ export const extractTitleFromUrl = (url?: string): string => {
   } catch {}
   return '';
 };
-import { LoadingSpinner, BufferingOverlay } from './LoadingSpinner';
+import { PlayerLoader } from './player/PlayerLoader';
+import { PlayerIsland, usePlayerIsland, type IslandAudioTrack, type IslandSubtitleTrack } from './player';
 import { RadialMenu } from './RadialMenu';
 import { ConsoleOverlay } from './ConsoleOverlay';
 import { SpeedPopover } from './SpeedPopover';
@@ -147,6 +148,9 @@ interface VideoPlayerProps {
   isCinema?: boolean;
 }
 
+import { remoteProbeCache, inFlightRemoteProbes } from '../utils/remoteProbeCache';
+export { remoteProbeCache, inFlightRemoteProbes };
+
 export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({ 
   video: rawVideo, 
   videos,
@@ -191,11 +195,18 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
   onSwitchMode,
   isCinema
 }) => {
+  const island = usePlayerIsland();
   const isFile = (obj: any): obj is File => obj instanceof File || (obj && typeof obj.size === 'number' && typeof obj.slice === 'function');
   const video = useMemo(() => ({
     ...rawVideo,
     file: isFile(rawVideo.file) ? rawVideo.file : undefined
   }), [rawVideo]);
+
+  const currentVideoItemRef = useRef(video);
+  currentVideoItemRef.current = video;
+  const onUpdateVideoRef = useRef(onUpdateVideo);
+  onUpdateVideoRef.current = onUpdateVideo;
+  const probedUrlRef = useRef<string | null>(null);
 
   // In RemoteServerPlayer (Movies & TV), always enable Audio & Sub popover and Bookmarks tab
   const isUndetectedLocalMedia = false;
@@ -1020,6 +1031,11 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
     }
     
     setBookmarks(updatedBookmarks);
+    island.notify({
+      type: 'bookmark',
+      time: Math.floor(newBookmark.time),
+      count: updatedBookmarks.length
+    });
 
     onUpdateVideo((prev: any) => ({
       ...prev,
@@ -1065,6 +1081,8 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
 
 
   const [duration, setDuration] = useState(0);
+  const durationRef = useRef(duration);
+  durationRef.current = duration;
   const [resumePromptTime, setResumePromptTime] = useState<number | null>(null);
 
   const totalTimeWatchedRef = useRef<number>((video as any).totalTimeWatched || 0);
@@ -1611,9 +1629,6 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
     }
   });
 
-  const [volumeToast, setVolumeToast] = useState<{ volume: number; boost: number; visible: boolean; isMuted: boolean }>({ volume: 1, boost: 100, visible: false, isMuted: false });
-  const volumeToastTimeoutRef = useRef<any>(null);
-
   const [uiScale, setUiScale] = useState<number>(() => {
     try {
       const saved = localStorage.getItem('valor_player_ui_scale');
@@ -1622,23 +1637,16 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
       return 1.0;
     }
   });
-  const [uiScaleToast, setUiScaleToast] = useState<{ scale: number; visible: boolean }>({ scale: 1, visible: false });
-  const uiScaleToastTimeoutRef = useRef<any>(null);
 
-  const triggerUiScaleToast = useCallback((scale: number) => {
-    if (uiScaleToastTimeoutRef.current) clearTimeout(uiScaleToastTimeoutRef.current);
-    setUiScaleToast({ scale, visible: true });
-    uiScaleToastTimeoutRef.current = setTimeout(() => {
-      setUiScaleToast(prev => ({ ...prev, visible: false }));
-    }, 1400);
-  }, []);
+  const triggerUiScaleToast = useCallback((scale: number) => {}, []);
 
   const triggerVolumeToast = (vol: number, muted: boolean, boost: number = audioBoost) => {
-    if (volumeToastTimeoutRef.current) clearTimeout(volumeToastTimeoutRef.current);
-    setVolumeToast({ volume: vol, boost, visible: true, isMuted: muted });
-    volumeToastTimeoutRef.current = setTimeout(() => {
-      setVolumeToast(prev => ({ ...prev, visible: false }));
-    }, 1500);
+    island.notify({
+      type: 'volume',
+      value: vol,
+      muted: muted || vol === 0,
+      boost
+    });
   };
   const [showControls, setShowControls] = useState(true);
   const [showConsoleOverlay, setShowConsoleOverlay] = useState(false);
@@ -1801,85 +1809,135 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
 
   const runRemoteProbe = useCallback(async (targetUrl: string, authOverride?: { username: string; password?: string }): Promise<boolean> => {
     if (!targetUrl) return false;
-    try {
-      const apiBase = sidecarService.getRemoteApiBase();
-      const creds = authOverride || (video as any).auth || getSavedCredentials(targetUrl);
-      const res = await fetch(`${apiBase}/api/remote/probe`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          url: targetUrl,
-          auth: creds ? { username: creds.username, password: creds.password } : undefined
-        })
-      });
 
-      if (res.status === 401 || res.status === 403) {
-        setAuthModalState({
-          isOpen: true,
-          initialUsername: creds?.username || '',
-          errorMessage: res.status === 403
-            ? 'Access forbidden (403). Authentication credentials required to access this media.'
-            : 'Authentication required. Please enter username and password.',
-          isLoading: false
-        });
-        return false;
-      }
-
-      if (res.ok) {
-        const probeData = await res.json();
-        const allStreams: any[] = [];
-        if (probeData.videoStreams) probeData.videoStreams.forEach((v: any) => allStreams.push({ ...v, type: 'video' }));
-        if (probeData.audioStreams) probeData.audioStreams.forEach((a: any) => allStreams.push({ ...a, type: 'audio' }));
-        if (probeData.subtitleStreams) probeData.subtitleStreams.forEach((s: any) => allStreams.push({ ...s, type: 'subtitle' }));
-
-        if (probeData.duration && !duration) {
-          setDuration(probeData.duration);
-        }
-
-        // Auto-select preferred audio stream for server packet rendering & forwarding
-        const prefs = getSavedMediaPreferences();
-        const preferredAudioStream = probeData.audioStreams?.length
-          ? (findPreferredStream(probeData.audioStreams, prefs.defaultAudio, 'audio') || probeData.audioStreams[0])
-          : undefined;
-        if (preferredAudioStream !== undefined && (activeAudioStreamIndex === null || activeAudioStreamIndex === undefined || activeAudioStreamIndex === 0)) {
-          setActiveAudioStreamIndex(preferredAudioStream.index);
-          if (playbackControllerRef.current) {
-            playbackControllerRef.current.switchAudioTrack(preferredAudioStream.index);
-          }
-        }
-
-        onUpdateVideo({
-          ...video,
-          auth: creds ? { username: creds.username, password: creds.password } : (video as any).auth,
-          streams: allStreams,
-          duration: probeData.duration ? String(probeData.duration) : video.duration
-        });
-        return true;
-      }
-
-      const errJson = await res.json().catch(() => null);
-      setAuthModalState(prev => ({
-        ...prev,
-        isOpen: true,
-        isLoading: false,
-        errorMessage: errJson?.error || `Remote server responded with error (${res.status}).`
-      }));
-      return false;
-    } catch (err: any) {
-      console.warn('[RemoteServerPlayer] Probe error:', err);
-      setAuthModalState(prev => ({
-        ...prev,
-        isOpen: true,
-        isLoading: false,
-        errorMessage: err?.message || 'Connection to remote server failed.'
-      }));
-      return false;
+    // 1. If this exact probe is currently in flight, return the existing in-flight promise
+    if (inFlightRemoteProbes.has(targetUrl)) {
+      return inFlightRemoteProbes.get(targetUrl)!;
     }
-  }, [video, duration, onUpdateVideo]);
+
+    // 2. If already probed and cached in-memory, reuse cached streams & duration without network request
+    const cached = remoteProbeCache.get(targetUrl);
+    if (cached) {
+      const allStreams = cached.allStreams || [];
+      if (cached.duration && !durationRef.current) {
+        setDuration(cached.duration);
+      }
+      const currentVideo = currentVideoItemRef.current;
+      const currentStreams = (currentVideo as any)?.streams;
+      if (!currentStreams || currentStreams.length !== allStreams.length) {
+        onUpdateVideoRef.current?.({
+          ...currentVideo,
+          streams: allStreams,
+          duration: cached.duration ? String(cached.duration) : currentVideo.duration
+        });
+      }
+      return true;
+    }
+
+    // 3. Dispatch network probe with in-flight deduping
+    const probePromise = (async () => {
+      try {
+        const apiBase = sidecarService.getRemoteApiBase();
+        const currentVideo = currentVideoItemRef.current;
+        const creds = authOverride || (currentVideo as any).auth || getSavedCredentials(targetUrl);
+        const res = await fetch(`${apiBase}/api/remote/probe`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            url: targetUrl,
+            auth: creds ? { username: creds.username, password: creds.password } : undefined
+          })
+        });
+
+        if (res.status === 401 || res.status === 403) {
+          setAuthModalState({
+            isOpen: true,
+            initialUsername: creds?.username || '',
+            errorMessage: res.status === 403
+              ? 'Access forbidden (403). Authentication credentials required to access this media.'
+              : 'Authentication required. Please enter username and password.',
+            isLoading: false
+          });
+          return false;
+        }
+
+        if (res.ok) {
+          const probeData = await res.json();
+          const allStreams: any[] = [];
+          if (probeData.videoStreams) probeData.videoStreams.forEach((v: any) => allStreams.push({ ...v, type: 'video' }));
+          if (probeData.audioStreams) probeData.audioStreams.forEach((a: any) => allStreams.push({ ...a, type: 'audio' }));
+          if (probeData.subtitleStreams) probeData.subtitleStreams.forEach((s: any) => allStreams.push({ ...s, type: 'subtitle' }));
+
+          // Save to module-level cache
+          remoteProbeCache.set(targetUrl, {
+            ...probeData,
+            allStreams
+          });
+
+          if (probeData.duration && !durationRef.current) {
+            setDuration(probeData.duration);
+          }
+
+          // Auto-select preferred audio stream for server packet rendering & forwarding
+          const prefs = getSavedMediaPreferences();
+          const preferredAudioStream = probeData.audioStreams?.length
+            ? (findPreferredStream(probeData.audioStreams, prefs.defaultAudio, 'audio') || probeData.audioStreams[0])
+            : undefined;
+          if (preferredAudioStream !== undefined && (activeAudioStreamIndex === null || activeAudioStreamIndex === undefined || activeAudioStreamIndex === 0)) {
+            setActiveAudioStreamIndex(preferredAudioStream.index);
+            if (playbackControllerRef.current) {
+              playbackControllerRef.current.switchAudioTrack(preferredAudioStream.index);
+            }
+          }
+
+          const v = currentVideoItemRef.current;
+          const currentStreams = (v as any)?.streams;
+          const streamsChanged = !currentStreams || currentStreams.length !== allStreams.length;
+          const durationChanged = probeData.duration && String(probeData.duration) !== String(v.duration);
+
+          if (streamsChanged || durationChanged) {
+            onUpdateVideoRef.current?.({
+              ...v,
+              auth: creds ? { username: creds.username, password: creds.password } : (v as any).auth,
+              streams: allStreams,
+              duration: probeData.duration ? String(probeData.duration) : v.duration
+            });
+          }
+          return true;
+        }
+
+        const errJson = await res.json().catch(() => null);
+        setAuthModalState(prev => ({
+          ...prev,
+          isOpen: true,
+          isLoading: false,
+          errorMessage: errJson?.error || `Remote server responded with error (${res.status}).`
+        }));
+        return false;
+      } catch (err: any) {
+        console.warn('[RemoteServerPlayer] Probe error:', err);
+        setAuthModalState(prev => ({
+          ...prev,
+          isOpen: true,
+          isLoading: false,
+          errorMessage: err?.message || 'Connection to remote server failed.'
+        }));
+        return false;
+      } finally {
+        inFlightRemoteProbes.delete(targetUrl);
+      }
+    })();
+
+    inFlightRemoteProbes.set(targetUrl, probePromise);
+    return probePromise;
+  }, []);
 
   useEffect(() => {
+    if (!video.url) return;
+    if (probedUrlRef.current === video.url) return;
+    probedUrlRef.current = video.url;
     runRemoteProbe(video.url);
-  }, [video.url]);
+  }, [video.url, runRemoteProbe]);
 
 
   const [audioBoost, setAudioBoost] = useState<number>(100);
@@ -2114,16 +2172,7 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
     setActiveSubtitleStartOffset(startFromTime);
   }, [video.id]);
 
-  const onUpdateVideoRef = useRef(onUpdateVideo);
-  const durationRef = useRef(duration);
 
-  useEffect(() => {
-    onUpdateVideoRef.current = onUpdateVideo;
-  }, [onUpdateVideo]);
-
-  useEffect(() => {
-    durationRef.current = duration;
-  }, [duration]);
 
   useEffect(() => {
     if (video.isRemote) {
@@ -3160,6 +3209,13 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
       streamIndex,
       codec
     });
+    island.notify({
+      type: 'audio',
+      language,
+      codec,
+      index: streamIndex,
+      title
+    });
     syncAudioRef(null, streamIndex);
     if (!skipLoad) {
       await loadAudioChunk(currentTime, streamIndex, codec, false);
@@ -3189,6 +3245,11 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
       isExtracted: true,
       streamIndex,
       format: /ass|ssa/i.test(codec) ? 'ass' : (/webvtt/i.test(codec) ? 'vtt' : 'srt')
+    });
+    island.notify({
+      type: 'subtitle',
+      language: language || null,
+      title: label
     });
     syncSubRef(null, streamIndex);
     if (!skipLoad) {
@@ -3231,11 +3292,13 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
     if (audioCtxRef.current && audioCtxRef.current.state === 'suspended') {
       audioCtxRef.current.resume().catch(() => {});
     }
-    if (isPlaying) {
+
+    if (isPlaying || (videoRef.current && !videoRef.current.paused)) {
+      if (videoRef.current) {
+        videoRef.current.pause();
+      }
       if (playbackControllerRef.current) {
         playbackControllerRef.current.pause();
-      } else {
-        videoRef.current.pause();
       }
       setIsPlaying(false);
       isPlayingRef.current = false;
@@ -3245,39 +3308,19 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
     } else {
       isPlayingRef.current = true;
       setIsPlaying(true);
+      isWaitingForSyncRef.current = false;
+      setIsBuffering(false);
       triggerPlayPauseFeedback('play');
 
-      const currentPlayhead = videoRef.current ? videoRef.current.currentTime : 0;
-      let currentBufferEnd = 0;
-      if (videoRef.current && videoRef.current.buffered.length > 0) {
-        const buffered = videoRef.current.buffered;
-        for (let i = 0; i < buffered.length; i++) {
-          if (buffered.start(i) <= currentPlayhead + 0.15 && buffered.end(i) >= currentPlayhead) {
-            currentBufferEnd = buffered.end(i);
-            break;
-          }
-        }
-      }
-      const bufferedAhead = Math.max(0, currentBufferEnd - currentPlayhead);
-      const effectiveDuration = durationRef.current || duration || 0;
-      const isNearEnd = effectiveDuration > 0 && (effectiveDuration - currentPlayhead < 2.5);
-      const videoReady = isNearEnd || bufferedAhead >= 2.5;
-      const audioReady = isNearEnd || !playbackControllerRef.current || playbackControllerRef.current.hasAudioCoverage(currentPlayhead, currentPlayhead + 2.0);
+      // Directly play the video element without blocking on buffer threshold
+      videoRef.current.play().catch((err) => {
+        console.warn('[RemoteServerPlayer] Play error:', err);
+        setIsPlaying(false);
+        isPlayingRef.current = false;
+      });
 
-      if (!videoReady || !audioReady) {
-        isWaitingForSyncRef.current = true;
-        setIsBuffering(true);
-        if (playbackControllerRef.current) {
-          playbackControllerRef.current.play().catch(console.error);
-        }
-      } else {
-        isWaitingForSyncRef.current = false;
-        setIsBuffering(false);
-        if (playbackControllerRef.current) {
-          playbackControllerRef.current.play().catch(console.error);
-        } else {
-          videoRef.current.play().catch(console.error);
-        }
+      if (playbackControllerRef.current && video.type === 'local') {
+        playbackControllerRef.current.play().catch(console.error);
       }
     }
     resetControlsTimeout();
@@ -3299,6 +3342,12 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
     acc.lastTime = now;
 
     const targetTime = Math.max(0, videoRef.current.currentTime - seconds);
+    island.notify({
+      type: 'seek',
+      delta: -seconds,
+      time: targetTime,
+      duration
+    });
     if (playbackControllerRef.current) {
       playbackControllerRef.current.seek(targetTime);
     } else {
@@ -3336,6 +3385,12 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
     acc.lastTime = now;
 
     const targetTime = Math.min(duration, videoRef.current.currentTime + seconds);
+    island.notify({
+      type: 'seek',
+      delta: seconds,
+      time: targetTime,
+      duration
+    });
     if (playbackControllerRef.current) {
       playbackControllerRef.current.seek(targetTime);
     } else {
@@ -3641,6 +3696,12 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
     const targetIdx = track === null ? -1 : (track.streamIndex !== undefined ? track.streamIndex : -1);
     setActiveAudioStreamIndex(targetIdx === -1 ? null : targetIdx);
     
+    if (track === null) {
+      island.notify({ type: 'audio', language: 'und', index: 0, title: 'Default Audio' });
+    } else {
+      island.notify({ type: 'audio', language: track.language, index: track.streamIndex, title: track.name });
+    }
+    
     if (targetIdx !== -1) {
       playbackControllerRef.current?.switchAudioTrack(targetIdx);
     }
@@ -3666,9 +3727,11 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
     }
     setSelectedSubTrack(track);
     if (track === null) {
+      island.notify({ type: 'subtitle', language: null });
       setActiveSubStreamIndex(null);
       syncSubRef(null, null);
     } else if (track.streamIndex !== undefined) {
+      island.notify({ type: 'subtitle', language: track.language ?? null, title: track.name });
       setActiveSubStreamIndex(track.streamIndex);
       syncSubRef(null, track.streamIndex);
     } else {
@@ -4170,12 +4233,36 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
 
   // PlaybackController lifecycle hook
   useEffect(() => {
+    // Remote streams are transcoded and proxied by backend; play directly without WASM FFmpeg overhead
+    if (video.isRemote || video.type === 'url') {
+      if (videoRef.current) {
+        videoRef.current.play()
+          .then(() => {
+            setIsPlaying(true);
+            setIsBuffering(false);
+          })
+          .catch(err => {
+            // Autoplay blocked by browser policy without user gesture; keep paused and clear buffering
+            setIsBuffering(false);
+            setIsPlaying(false);
+          });
+      }
+      return;
+    }
+
     if (!isWasmSupported()) {
       logger.player('WebAssembly is not supported in this browser. Running in pure Native Browser Playback mode.');
       if (videoRef.current) {
         videoRef.current.play()
-          .then(() => setIsPlaying(true))
-          .catch(err => logger.player('Autoplay blocked:', err));
+          .then(() => {
+            setIsPlaying(true);
+            setIsBuffering(false);
+          })
+          .catch(err => {
+            logger.player('Autoplay blocked:', err);
+            setIsBuffering(false);
+            setIsPlaying(false);
+          });
       }
       return;
     }
@@ -4872,6 +4959,34 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
         }
       }}
     >
+      <PlayerIsland
+        audioTracks={audioStreams.map(s => ({
+          index: s.index,
+          label: s.title || getLangLabel(s.language, `Track #${s.index}`),
+          language: s.language,
+          channels: (s as any).channels ? String((s as any).channels) : undefined,
+          codec: s.codec
+        }))}
+        subtitleTracks={subtitleStreams.map(s => ({
+          index: s.index,
+          label: s.title || getLangLabel(s.language, `Track #${s.index}`),
+          language: s.language
+        }))}
+        selectedAudioIndex={activeAudioStreamIndex ?? undefined}
+        selectedSubtitleIndex={activeSubStreamIndex ?? -1}
+        onSelectAudio={(index) => {
+          const st = audioStreams.find(s => s.index === index);
+          if (st) handleSelectEmbeddedAudio(st.index, st.codec, st.language, false, st.title);
+        }}
+        onSelectSubtitle={(index) => {
+          if (index === -1) {
+            handleSelectSubTrack(null);
+          } else {
+            const st = subtitleStreams.find(s => s.index === index);
+            if (st) handleSelectEmbeddedSubtitle(st.index, st.codec, st.language);
+          }
+        }}
+      />
 
 
 
@@ -5058,13 +5173,11 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
               }
             }
           }}
-          onPlay={() => setIsPlaying(true)}
+          onPlay={() => {
+            setIsPlaying(true);
+            isPlayingRef.current = true;
+          }}
           onPause={() => {
-            if (isWaitingForSyncRef.current || playbackControllerRef.current?.state.isBuffering) {
-              isWaitingForSyncRef.current = true;
-              setIsBuffering(true);
-              return;
-            }
             // If focus loss auto-pause is disabled and this pause was triggered by browser 
             // background tab throttling, ignore it — don't update UI state.
             if (!pauseOnFocusChangeRef.current && document.visibilityState === 'hidden') {
@@ -5079,28 +5192,38 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
             }
             const timeToSave = latestTimeRef.current;
             saveMediaTimestamp(video, timeToSave, durationRef.current || videoRef.current?.duration, video.title);
-            onUpdateVideoRef.current((prev: any) => ({
+            onUpdateVideoRef.current?.((prev: any) => ({
               ...prev,
               currentTime: timeToSave,
               totalTimeWatched: Math.round(totalTimeWatchedRef.current)
             }), false, video.id);
           }}
           onWaiting={() => {
-            isWaitingForSyncRef.current = true;
-            setIsBuffering(true);
+            if (isPlayingRef.current) {
+              isWaitingForSyncRef.current = true;
+              setIsBuffering(true);
+            }
             playbackControllerRef.current?.pauseForBuffering();
           }}
           onPlaying={() => {
             isWaitingForSyncRef.current = false;
             setIsBuffering(false);
+            setIsPlaying(true);
+            isPlayingRef.current = true;
           }}
           onCanPlay={() => {
-            if (videoRef.current && !videoRef.current.paused) {
-              setIsBuffering(false);
+            setIsBuffering(false);
+            if (isPlayingRef.current && videoRef.current && videoRef.current.paused) {
+              videoRef.current.play().catch(() => {});
             }
           }}
           onSeeked={handleVideoSeeked}
-          onSeeking={() => { isWaitingForSyncRef.current = true; setIsBuffering(true); }}
+          onSeeking={() => {
+            if (isPlayingRef.current) {
+              isWaitingForSyncRef.current = true;
+              setIsBuffering(true);
+            }
+          }}
           onError={handleVideoError}
           onEnded={() => {
             saveMediaTimestamp(video, 0, durationRef.current || duration, video.title, true);
@@ -5235,13 +5358,10 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
         </div>
       )}
 
-      {/* Buffering ring loader */}
-      <BufferingOverlay 
-        isBuffering={isBuffering}
-        customLoaderUrl={customLoaderUrl} 
-        customLoaderType={customLoaderType} 
-        preset={(spinnerPreset || 'netflix') as any} 
-        isRemote={true}
+      {/* Shared PlayerLoader (Logo loader: active only when playing and buffering, never when paused) */}
+      <PlayerLoader 
+        visible={isBuffering && isPlaying}
+        variant="buffering"
       />
 
       {/* Top Header Overlay */}
@@ -6219,24 +6339,6 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
         onChange={handleCustomSubUpload}
       />
 
-      {/* Side Skip HUD (Left for rewind, Right for forward) */}
-      {consecutiveSkipInfo && (
-        <div className={`skip-side-hud-overlay ${consecutiveSkipInfo.direction === 'rewind' ? 'skip-left' : 'skip-right'}`}>
-          <div key={`${consecutiveSkipInfo.direction}-${consecutiveSkipInfo.count}-${consecutiveSkipInfo.totalSeconds}`} className="skip-hud-circle-compact animate-skip-pop">
-            <div className="skip-hud-icon-wrapper-compact">
-              {consecutiveSkipInfo.direction === 'rewind' ? (
-                <RotateCcw size={42} strokeWidth={1.8} className="skip-rotate-icon-compact" />
-              ) : (
-                <RotateCw size={42} strokeWidth={1.8} className="skip-rotate-icon-compact" />
-              )}
-              <span className="skip-hud-number-compact">
-                {consecutiveSkipInfo.totalSeconds}
-              </span>
-            </div>
-          </div>
-        </div>
-      )}
-
       {/* Play / Resume & Pause Center Feedback Animation */}
       {playPauseFeedback && (
         <div className="play-pause-feedback-overlay">
@@ -6249,49 +6351,6 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
           </div>
         </div>
       )}
-
-      {/* Track Selection Switch Toast Overlay */}
-      {switchToast.visible && (
-        <div 
-          className="switch-toast-overlay animate-switch-toast"
-          style={{ animationDuration: `${toastDuration}s` }}
-        >
-          <div className="switch-toast-content">
-            {switchToast.text}
-          </div>
-        </div>
-      )}
-
-      {/* Volume Toast Overlay */}
-      <div className={`volume-toast-overlay ${volumeToast.visible ? 'visible' : ''}`}>
-        <div className="volume-toast-content-vertical">
-          <div className="volume-toast-bar-vertical">
-            {volumeToast.boost > 100 ? (
-              <div 
-                className="volume-toast-bar-fill-vertical" 
-                style={{ height: `${volumeToast.boost - 100}%`, background: '#ff7a00', backgroundColor: '#ff7a00' }}
-              >
-                <div className="volume-toast-bar-cap-vertical" style={{ background: '#ffffff', backgroundColor: '#ffffff' }} />
-              </div>
-            ) : (
-              <div className="volume-toast-bar-fill-vertical" style={{ height: `${volumeToast.volume * 100}%` }}>
-                {volumeToast.volume > 0 && <div className="volume-toast-bar-cap-vertical" />}
-              </div>
-            )}
-          </div>
-          <span className="volume-toast-text-vertical">
-            {volumeToast.isMuted ? 'MUTE' : (volumeToast.boost > 100 ? volumeToast.boost : Math.round(volumeToast.volume * 100))}
-          </span>
-        </div>
-      </div>
-
-      {/* UI Scale Toast Overlay */}
-      <div className={`ui-scale-toast-overlay ${uiScaleToast.visible ? 'visible' : ''}`}>
-        <div className="ui-scale-toast-content">
-          <Sliders size={18} />
-          <span>UI Scale: {Math.round(uiScaleToast.scale * 100)}%</span>
-        </div>
-      </div>
 
       {/* Show UI Overlays Workaround Button */}
       {hideUIOverlays && (
@@ -8090,70 +8149,6 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
         }
 
         /* Side Skip HUD (Left for rewind, Right for forward) */
-        .skip-side-hud-overlay {
-          position: absolute;
-          top: 50%;
-          transform: translateY(-50%);
-          z-index: 550;
-          pointer-events: none;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-        }
-        .skip-side-hud-overlay.skip-left {
-          left: clamp(2.5rem, 15vw, 8rem);
-        }
-        .skip-side-hud-overlay.skip-right {
-          right: clamp(2.5rem, 15vw, 8rem);
-        }
-        .skip-hud-circle-compact {
-          width: 58px;
-          height: 58px;
-          border-radius: 50%;
-          background: rgba(0, 0, 0, 0.72);
-          backdrop-filter: blur(14px);
-          -webkit-backdrop-filter: blur(14px);
-          border: 1.5px solid rgba(255, 255, 255, 0.25);
-          box-shadow: 0 10px 25px rgba(0, 0, 0, 0.6);
-          display: flex;
-          align-items: center;
-          justify-content: center;
-        }
-        .skip-hud-icon-wrapper-compact {
-          position: relative;
-          width: 44px;
-          height: 44px;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          color: #ffffff;
-        }
-        .skip-rotate-icon-compact {
-          color: #ffffff;
-          filter: drop-shadow(0 2px 6px rgba(0, 0, 0, 0.8));
-        }
-        .skip-hud-number-compact {
-          position: absolute;
-          top: 52%;
-          left: 50%;
-          transform: translate(-50%, -50%);
-          color: #ffffff;
-          font-size: 11px;
-          font-weight: 800;
-          font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-          letter-spacing: -0.5px;
-          text-shadow: 0 1px 4px rgba(0, 0, 0, 0.9);
-          user-select: none;
-          line-height: 1;
-        }
-        .animate-skip-pop {
-          animation: skipPopAnim 0.32s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards;
-        }
-        @keyframes skipPopAnim {
-          0% {
-            transform: scale(0.65);
-            opacity: 0.3;
-          }
           40% {
             transform: scale(1.08);
             opacity: 1;
@@ -8269,72 +8264,6 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
             font-size: 1.05rem !important;
             max-width: 70%;
           }
-          .volume-toast-overlay {
-            top: 25px !important;
-            left: 25px !important;
-            bottom: auto !important;
-          }
-        }
-
-        /* Volume Toast HUD (Vertical Metro Style) */
-        .volume-toast-overlay {
-          position: absolute;
-          top: 40px;
-          left: 40px;
-          z-index: 600;
-          opacity: 0;
-          pointer-events: none;
-          transition: opacity 0.2s ease, transform 0.2s ease;
-          transform: translateY(-10px);
-        }
-        .volume-toast-overlay.visible {
-          opacity: 1;
-          transform: translateY(0);
-        }
-        .volume-toast-content-vertical {
-          background: #141414;
-          width: 50px;
-          height: 180px;
-          border-radius: 2px;
-          box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
-          display: flex;
-          flex-direction: column;
-          align-items: center;
-          justify-content: space-between;
-          padding: 18px 0 12px 0;
-          box-sizing: border-box;
-        }
-        .volume-toast-bar-vertical {
-          width: 12px;
-          height: 120px;
-          background: rgba(255, 255, 255, 0.15);
-          position: relative;
-          margin: 0 auto;
-        }
-        .volume-toast-bar-fill-vertical {
-          width: 100%;
-          background: #0078d4; /* Metro Blue */
-          position: absolute;
-          bottom: 0;
-          left: 0;
-          right: 0;
-          transition: height 0.1s ease;
-        }
-        .volume-toast-bar-cap-vertical {
-          position: absolute;
-          top: 0;
-          left: 0;
-          right: 0;
-          height: 6px;
-          background: #ffffff; /* White handle cap */
-        }
-        .volume-toast-text-vertical {
-          font-family: inherit;
-          font-size: 0.85rem;
-          font-weight: 700;
-          text-align: center;
-          color: rgba(255, 255, 255, 0.95);
-        }
         .control-btn-volume:hover {
           color: white !important;
         }
@@ -8515,10 +8444,6 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
         .no-animations .animate-flash-hud {
           animation: none !important;
           opacity: 1 !important;
-          transform: none !important;
-        }
-        .no-animations .volume-toast-overlay {
-          transition: none !important;
           transform: none !important;
         }
         .no-animations .control-btn-volume:hover {

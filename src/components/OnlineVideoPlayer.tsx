@@ -8,6 +8,7 @@ import type { VideoItem, Bookmark } from '../types/media';
 import { CustomSelect } from './CustomSelect';
 import { logger } from '../utils/logger';
 import { classifyVideoTitle } from '../utils/libraryClassifier';
+import { PlayerIsland, usePlayerIsland } from './player';
 
 interface OnlineVideoPlayerProps {
   video: VideoItem;
@@ -67,6 +68,7 @@ export const OnlineVideoPlayer: React.FC<OnlineVideoPlayerProps> = ({
   customLoaderType = 'default',
   spinnerPreset = 'fire-circle'
 }) => {
+  const island = usePlayerIsland();
   const [isPlaying, setIsPlaying] = useState(true);
   const [currentTime, setCurrentTime] = useState(video.currentTime || 0);
   const [duration, setDuration] = useState(0);
@@ -731,7 +733,7 @@ export const OnlineVideoPlayer: React.FC<OnlineVideoPlayerProps> = ({
     const target = Math.max(0, Math.min(duration, currentTime + secs));
     sendIframeCommand('seek', target);
     setCurrentTime(target);
-    addToast(secs > 0 ? `+${secs}s` : `${secs}s`);
+    island.notify({ type: 'seek', delta: secs, time: target, duration });
   };
 
   const handleSliderChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -750,14 +752,14 @@ export const OnlineVideoPlayer: React.FC<OnlineVideoPlayerProps> = ({
     
     // Note: Cross-origin iframe limitations might prevent volume modification 
     // inside the iframe directly, but we show visual status inside our custom control
-    addToast(`Volume: ${Math.round(val * 100)}%`);
+    island.notify({ type: 'volume', value: val, muted: val === 0 });
   };
 
   const toggleMute = () => {
     if (isLocked) return;
     setIsMuted(prev => {
       const next = !prev;
-      addToast(next ? "Muted" : `Volume: ${Math.round(volume * 100)}%`);
+      island.notify({ type: 'volume', value: volume, muted: next });
       return next;
     });
   };
@@ -831,7 +833,7 @@ export const OnlineVideoPlayer: React.FC<OnlineVideoPlayerProps> = ({
         createdBy: 'manual'
       };
       nextBookmarks.push(newBm);
-      addToast("Bookmark Saved");
+      island.notify({ type: 'bookmark', time: Math.floor(newBm.time), count: nextBookmarks.length });
     }
     setBookmarks(nextBookmarks);
     saveBookmarksToServer(nextBookmarks);
@@ -867,6 +869,7 @@ export const OnlineVideoPlayer: React.FC<OnlineVideoPlayerProps> = ({
       onMouseLeave={() => !interactWithNative && setShowControls(false)}
       style={{ background: 'black', fontFamily: 'Outfit, sans-serif' }}
     >
+      <PlayerIsland />
       {/* Standalone Lock Button (Top-Left) — Always accessible to lock & unlock */}
       <button
         onClick={() => {
@@ -1308,21 +1311,6 @@ export const OnlineVideoPlayer: React.FC<OnlineVideoPlayerProps> = ({
         .popover-wrapper {
           position: relative;
         }
-        .player-toast-notification {
-          position: absolute;
-          bottom: 120px;
-          left: 50%;
-          transform: translateX(-50%);
-          background: rgba(139, 92, 246, 0.95);
-          border: 1px solid #a78bfa;
-          color: white;
-          padding: 8px 20px;
-          border-radius: 20px;
-          font-size: 13px;
-          font-weight: 600;
-          z-index: 1000;
-          box-shadow: 0 4px 15px rgba(0,0,0,0.3);
-        }
       `}</style>
 
       {/* Direct Interactive Streaming HUD */}
@@ -1347,12 +1335,7 @@ export const OnlineVideoPlayer: React.FC<OnlineVideoPlayerProps> = ({
         />
       </div>
 
-      {/* Toast notifications */}
-      {toastMessage && (
-        <div className="player-toast-notification" style={{ pointerEvents: 'auto', zIndex: 3000 }}>
-          {toastMessage}
-        </div>
-      )}
+
     </div>
   );
 };

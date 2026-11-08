@@ -9,12 +9,16 @@ import { MediaAuthModal } from './MediaAuthModal';
 import { MediaIdentifyModal } from './MediaIdentifyModal';
 import { RadialMenu } from './RadialMenu';
 import { ConsoleOverlay } from './ConsoleOverlay';
-import { LoadingSpinner, BufferingOverlay } from './LoadingSpinner';
+import { PlayerLoader } from './player/PlayerLoader';
+import { ReloadingOverlay } from './player/ReloadingOverlay';
 import {
   PlayerTopBar,
   PlayerBottomBar,
   PauseDetailsOverlay,
-  SkipIntroButton
+  SkipIntroButton,
+  MobilePlayerOverlay,
+  PlayerIsland,
+  usePlayerIsland
 } from './player';
 import type { MediaDetails } from './player/PauseDetailsOverlay';
 import { getSavedCredentials, saveCredentials, clearCredentials } from '../services/remote/mediaAuthStore';
@@ -22,10 +26,13 @@ import { saveMediaTimestamp } from '../utils/mediaTimestampStorage';
 import { parseSubtitles, cleanSubtitleText } from '../utils/subtitleParser';
 import { trimSubtitleName } from '../utils/embedSubtitleStorage';
 import { classifyVideoTitle } from '../utils/libraryClassifier';
+import { resolveRemoteMediaName } from '../utils/corsCheck';
 import { Play, Pause } from 'lucide-react';
 import { sidecarService } from '../services/remote/sidecarService';
 import { featureFlagService } from '../services/featureFlags';
 import { LocalServicePage } from '../pages/LocalServicePage';
+import { isGenericTitle } from './RemoteServerPlayer';
+import Hls from 'hls.js';
 
 export interface SimpleRemotePlayerProps {
   video: VideoItem;
@@ -41,30 +48,61 @@ export interface SimpleRemotePlayerProps {
   customLoaderType?: 'default' | 'image' | 'video' | 'gif';
   spinnerPreset?: string;
   onSwitchMode?: (mode: 'simple' | 'server') => void;
+  isEmbed?: boolean;
+  showSubtitleControl?: boolean;
+  showBookmarksControl?: boolean;
+  showAudioControl?: boolean;
+  audioOnly?: boolean;
+  subFileOnly?: boolean;
+  allowSubUpload?: boolean;
+  showCloseButton?: boolean;
 }
 
 export const SimpleRemotePlayer: React.FC<SimpleRemotePlayerProps> = ({
   video,
+  videos = [],
   onBack,
   onUpdateVideo,
   subSettings: propSubSettings,
   onUpdateSubSettings: propOnUpdateSubSettings,
   saveVolume = true,
   historySaveInterval = 5,
-  uiHideTimeout = 2.5,
+  uiHideTimeout: propUiHideTimeout,
   customLoaderUrl,
   customLoaderType = 'default',
   spinnerPreset = 'netflix',
-  onSwitchMode
+  onSwitchMode,
+  isEmbed = false,
+  showSubtitleControl = true,
+  showBookmarksControl = true,
+  showAudioControl = true,
+  audioOnly = false,
+  subFileOnly = false,
+  allowSubUpload = true,
+  showCloseButton = false
 }) => {
+  const island = usePlayerIsland();
   const containerRef = useRef<HTMLDivElement | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
+  const hlsInstanceRef = useRef<Hls | null>(null);
+  const [isHlsActive, setIsHlsActive] = useState(false);
+  const remoteSessionIdRef = useRef<string | null>(null);
   const customSubInputRef = useRef<HTMLInputElement | null>(null);
   const customAudioInputRef = useRef<HTMLInputElement | null>(null);
+  const uiHideTimeout = propUiHideTimeout ?? (isEmbed ? 5 : 2.5);
+
+  const [isMobile, setIsMobile] = useState(() => typeof window !== 'undefined' ? window.innerWidth <= 768 : false);
+  useEffect(() => {
+    const handleResize = () => setIsMobile(window.innerWidth <= 768);
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
 
   // Playback & Timing State
   const [isPlaying, setIsPlaying] = useState(false);
   const [isBuffering, setIsBuffering] = useState(true);
+  const [isReloadingStream, setIsReloadingStream] = useState(false);
+  const [hasStartedPlayback, setHasStartedPlayback] = useState(false);
   const [currentTime, setCurrentTime] = useState<number>(() => video.currentTime || 0);
   const [duration, setDuration] = useState<number>(() => {
     if (typeof video.duration === 'number') return video.duration;
@@ -198,15 +236,36 @@ export const SimpleRemotePlayer: React.FC<SimpleRemotePlayerProps> = ({
   }, []);
 
   const sessionIdRef = useRef<string>(Math.random().toString(36).substring(2, 10));
-  const [isSidecarActive, setIsSidecarActive] = useState<boolean>(() => sidecarService.isEnabled());
+  const [isSidecarActive, setIsSidecarActive] = useState<boolean>(() => !isEmbed && sidecarService.isEnabled());
   const [showCompanionModal, setShowCompanionModal] = useState<boolean>(false);
 
   useEffect(() => {
+    if (isEmbed) return;
     const unsub = sidecarService.subscribe((status) => {
       setIsSidecarActive(status.isAvailable);
     });
     return () => unsub();
-  }, []);
+  }, [isEmbed]);
+
+
+
+  // Resolve media name from Content-Disposition header
+  useEffect(() => {
+    if (!video?.url) return;
+    resolveRemoteMediaName(video.url).then((resolved) => {
+      if (resolved && resolved.fileName) {
+        const rawTitle = video.title || '';
+        const shouldUpdate = video.fileName !== resolved.fileName || !rawTitle || isGenericTitle(rawTitle) || rawTitle.length > 50;
+        if (shouldUpdate) {
+          onUpdateVideo({
+            ...video,
+            fileName: resolved.fileName,
+            title: !rawTitle ? (resolved.title || resolved.fileName) : rawTitle
+          });
+        }
+      }
+    });
+  }, [video?.url]);
 
   // Proxied Video URL (bypasses CORS & provides sliding cache)
   const getProxiedUrl = useCallback((rawUrl: string): string => {
@@ -230,12 +289,22 @@ export const SimpleRemotePlayer: React.FC<SimpleRemotePlayerProps> = ({
   const resetControlsTimeout = useCallback(() => {
     setControlsVisible(true);
     if (controlsTimeoutRef.current) clearTimeout(controlsTimeoutRef.current);
+    if (isBuffering) return;
     if (isPlaying && !isLocked && !showAudioSubMenu && !showBookmarksPopover && !showBookmarkModal) {
       controlsTimeoutRef.current = setTimeout(() => {
         setControlsVisible(false);
       }, uiHideTimeout * 1000);
     }
-  }, [isPlaying, isLocked, showAudioSubMenu, showBookmarksPopover, showBookmarkModal, uiHideTimeout]);
+  }, [isPlaying, isLocked, showAudioSubMenu, showBookmarksPopover, showBookmarkModal, uiHideTimeout, isBuffering]);
+
+  useEffect(() => {
+    if (isBuffering) {
+      setControlsVisible(true);
+      if (controlsTimeoutRef.current) clearTimeout(controlsTimeoutRef.current);
+    } else {
+      resetControlsTimeout();
+    }
+  }, [isBuffering, resetControlsTimeout]);
 
   // Handle Pause Screen Timer (Show after 30s of continuous pause / inactivity)
   useEffect(() => {
@@ -282,10 +351,166 @@ export const SimpleRemotePlayer: React.FC<SimpleRemotePlayerProps> = ({
   const handleSeek = useCallback((targetTime: number) => {
     if (!videoRef.current) return;
     const clamped = Math.max(0, Math.min(duration || 0, targetTime));
+    const delta = Math.round(clamped - videoRef.current.currentTime);
     videoRef.current.currentTime = clamped;
     setCurrentTime(clamped);
+    if (delta !== 0) {
+      island.notify({
+        type: 'seek',
+        delta,
+        time: clamped,
+        duration: duration || 0
+      });
+    }
     resetControlsTimeout();
-  }, [duration, resetControlsTimeout]);
+  }, [duration, resetControlsTimeout, island]);
+
+  const isMkvStream = useCallback((url: string, format?: string, containerType?: string) => {
+    if (!url) return false;
+    const clean = url.split('?')[0].toLowerCase();
+    return clean.endsWith('.mkv') || clean.endsWith('.avi') || clean.endsWith('.ts') || clean.endsWith('.m2ts') ||
+      (format || '').toLowerCase().includes('mkv') || (format || '').toLowerCase().includes('matroska') ||
+      (containerType || '').toLowerCase().includes('mkv') || (containerType || '').toLowerCase().includes('matroska');
+  }, []);
+
+  const isDirectHls = useCallback((url: string, containerType?: string) => {
+    if (!url) return false;
+    const clean = url.split('?')[0].toLowerCase();
+    return clean.endsWith('.m3u8') || containerType === 'hls';
+  }, []);
+
+  const loadHlsSource = useCallback((manifestUrl: string) => {
+    if (!videoRef.current) return;
+    if (hlsInstanceRef.current) {
+      hlsInstanceRef.current.destroy();
+      hlsInstanceRef.current = null;
+    }
+
+    if (Hls.isSupported()) {
+      const hls = new Hls({
+        enableWorker: true,
+        lowLatencyMode: false,
+        backBufferLength: 60,
+      });
+      hlsInstanceRef.current = hls;
+      setIsHlsActive(true);
+      hls.loadSource(manifestUrl);
+      hls.attachMedia(videoRef.current);
+
+      hls.on(Hls.Events.MANIFEST_PARSED, () => {
+        setIsBuffering(false);
+        if (videoRef.current && videoRef.current.paused) {
+          videoRef.current.play().catch(() => {});
+        }
+      });
+
+      hls.on(Hls.Events.ERROR, (_event, data) => {
+        if (data.fatal) {
+          switch (data.type) {
+            case Hls.ErrorTypes.NETWORK_ERROR:
+              console.warn('[HLS Simple] Network error encountered, attempting reload...', data);
+              hls.startLoad();
+              break;
+            case Hls.ErrorTypes.MEDIA_ERROR:
+              console.warn('[HLS Simple] Media error encountered, attempting recovery...', data);
+              hls.recoverMediaError();
+              break;
+            default:
+              console.error('[HLS Simple] Fatal error, destroying hls instance:', data);
+              hls.destroy();
+              setIsHlsActive(false);
+              break;
+          }
+        }
+      });
+    } else if (videoRef.current.canPlayType('application/vnd.apple.mpegurl')) {
+      setIsHlsActive(true);
+      videoRef.current.src = manifestUrl;
+      videoRef.current.play().catch(() => {});
+    }
+  }, []);
+
+  const startHlsSession = useCallback(async (targetUrl: string): Promise<boolean> => {
+    try {
+      setIsBuffering(true);
+      const creds = (video as any).auth || getSavedCredentials(targetUrl);
+      const res = await fetch('/api/remote/session', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          url: targetUrl,
+          auth: creds ? { username: creds.username, password: creds.password } : undefined
+        })
+      });
+
+      if (!res.ok) {
+        throw new Error(`Session creation failed with status ${res.status}`);
+      }
+
+      const sessionData = await res.json();
+      if (sessionData.sessionId && sessionData.manifestUrl) {
+        remoteSessionIdRef.current = sessionData.sessionId;
+        if (sessionData.duration && !duration) {
+          setDuration(sessionData.duration);
+        }
+        const allStreams: any[] = [];
+        if (sessionData.videoStreams) sessionData.videoStreams.forEach((v: any) => allStreams.push({ ...v, type: 'video' }));
+        if (sessionData.audioStreams) sessionData.audioStreams.forEach((a: any) => allStreams.push({ ...a, type: 'audio' }));
+        if (sessionData.subtitleStreams) sessionData.subtitleStreams.forEach((s: any) => allStreams.push({ ...s, type: 'subtitle' }));
+
+        onUpdateVideo({
+          ...video,
+          streams: allStreams,
+          duration: sessionData.duration ? String(sessionData.duration) : video.duration
+        });
+
+        loadHlsSource(sessionData.manifestUrl);
+        return true;
+      }
+      return false;
+    } catch (err) {
+      console.error('[SimpleRemotePlayer] HLS session initialization failed:', err);
+      setIsHlsActive(false);
+      setIsBuffering(false);
+      return false;
+    }
+  }, [video, duration, onUpdateVideo, loadHlsSource]);
+
+  useEffect(() => {
+    if (!video?.url) return;
+
+    if (hlsInstanceRef.current) {
+      hlsInstanceRef.current.destroy();
+      hlsInstanceRef.current = null;
+    }
+    if (remoteSessionIdRef.current) {
+      const sId = remoteSessionIdRef.current;
+      remoteSessionIdRef.current = null;
+      fetch(`/api/remote/session/${sId}`, { method: 'DELETE' }).catch(() => {});
+    }
+
+    const isHls = isDirectHls(video.url, video.containerType);
+
+    if (isHls) {
+      setIsHlsActive(true);
+      const hlsUrl = getProxiedUrl(video.url);
+      loadHlsSource(hlsUrl);
+    } else {
+      setIsHlsActive(false);
+    }
+
+    return () => {
+      if (hlsInstanceRef.current) {
+        hlsInstanceRef.current.destroy();
+        hlsInstanceRef.current = null;
+      }
+      if (remoteSessionIdRef.current) {
+        const sId = remoteSessionIdRef.current;
+        remoteSessionIdRef.current = null;
+        fetch(`/api/remote/session/${sId}`, { method: 'DELETE' }).catch(() => {});
+      }
+    };
+  }, [video?.url, video?.id, isDirectHls, loadHlsSource, getProxiedUrl]);
 
   // Volume
   const updateVolume = useCallback((newVol: number, muteState?: boolean) => {
@@ -307,7 +532,12 @@ export const SimpleRemotePlayer: React.FC<SimpleRemotePlayerProps> = ({
       if (saveVolume) localStorage.setItem('valor_muted', 'false');
     }
     if (saveVolume) localStorage.setItem('valor_volume', String(clamped));
-  }, [saveVolume]);
+    island.notify({
+      type: 'volume',
+      value: clamped,
+      muted: muteState !== undefined ? muteState : (clamped === 0 || isMuted)
+    });
+  }, [saveVolume, isMuted, island]);
 
   const toggleMute = useCallback(() => {
     updateVolume(volume, !isMuted);
@@ -318,8 +548,8 @@ export const SimpleRemotePlayer: React.FC<SimpleRemotePlayerProps> = ({
     if (!videoRef.current) return;
     videoRef.current.playbackRate = speed;
     setPlaybackRate(speed);
-    triggerToast(`Speed: ${speed}x`);
-  }, [triggerToast]);
+    island.notify({ type: 'speed', value: speed });
+  }, [island]);
 
   // Fullscreen
   const toggleFullscreen = useCallback(async () => {
@@ -603,7 +833,7 @@ export const SimpleRemotePlayer: React.FC<SimpleRemotePlayerProps> = ({
       {/* Main HTML5 Video Element */}
       <video
         ref={videoRef}
-        src={getProxiedUrl(video.url)}
+        src={isHlsActive ? undefined : getProxiedUrl(video.url)}
         crossOrigin={video.playbackMode === 'advanced' ? 'anonymous' : undefined}
         playsInline
         autoPlay
@@ -624,13 +854,52 @@ export const SimpleRemotePlayer: React.FC<SimpleRemotePlayerProps> = ({
             setDuration(videoRef.current.duration);
           }
         }}
-        onPlay={() => setIsPlaying(true)}
-        onPause={() => { setIsPlaying(false); setIsBuffering(false); }}
-        onWaiting={() => setIsBuffering(true)}
-        onPlaying={() => setIsBuffering(false)}
-        onCanPlay={() => setIsBuffering(false)}
+        onPlay={() => {
+          setIsPlaying(true);
+          setHasStartedPlayback(true);
+        }}
+        onPause={() => {
+          setIsPlaying(false);
+          setIsBuffering(false);
+        }}
+        onWaiting={() => {
+          if (videoRef.current?.paused || !isPlaying) return;
+          setIsBuffering(true);
+        }}
+        onStalled={() => {
+          if (videoRef.current?.paused || !isPlaying) return;
+          setIsBuffering(true);
+        }}
+        onLoadStart={() => {
+          if (hasStartedPlayback && (videoRef.current?.paused || !isPlaying)) return;
+          setIsBuffering(true);
+        }}
+        onSeeking={() => {
+          if (videoRef.current?.paused || !isPlaying) {
+            setIsBuffering(false);
+            return;
+          }
+          setIsBuffering(true);
+        }}
+        onSeeked={() => setIsBuffering(false)}
+        onPlaying={() => {
+          setIsBuffering(false);
+          setHasStartedPlayback(true);
+        }}
+        onCanPlay={() => {
+          setIsBuffering(false);
+          setHasStartedPlayback(true);
+          if (videoRef.current && videoRef.current.paused && isPlaying) {
+            videoRef.current.play().catch(() => {});
+          }
+        }}
         onError={() => {
           setIsBuffering(false);
+          if (!isHlsActive && video.isRemote && video.url) {
+            console.warn('[SimpleRemotePlayer] Direct playback failed, falling back to backend HLS session');
+            startHlsSession(video.url);
+            return;
+          }
           // Check for 401 auth required, 404 not found, or 403 forbidden
           fetch(getProxiedUrl(video.url), { method: 'HEAD' }).then(res => {
             if (res.status === 401) {
@@ -651,6 +920,31 @@ export const SimpleRemotePlayer: React.FC<SimpleRemotePlayerProps> = ({
         }}
       />
 
+      <PlayerIsland
+        audioTracks={audioTracks.map((a, i) => ({
+          index: i,
+          label: a.name,
+          language: a.language
+        }))}
+        subtitleTracks={subtitleTracks.map((s, i) => ({
+          index: i,
+          label: s.name,
+          language: s.language
+        }))}
+        selectedAudioIndex={selectedAudioTrack ? audioTracks.indexOf(selectedAudioTrack) : 0}
+        selectedSubtitleIndex={selectedSubTrack ? subtitleTracks.indexOf(selectedSubTrack) : -1}
+        onSelectAudio={(idx) => {
+          if (audioTracks[idx]) setSelectedAudioTrack(audioTracks[idx]);
+        }}
+        onSelectSubtitle={(idx) => {
+          if (idx === -1) {
+            setSelectedSubTrack(null);
+          } else if (subtitleTracks[idx]) {
+            setSelectedSubTrack(subtitleTracks[idx]);
+          }
+        }}
+      />
+
       {/* Subtitles Overlay */}
       {selectedSubTrack && selectedSubTrack.cues && (
         <SubtitleOverlay
@@ -662,13 +956,10 @@ export const SimpleRemotePlayer: React.FC<SimpleRemotePlayerProps> = ({
         />
       )}
 
-      {/* Buffering Indicator */}
-      <BufferingOverlay
-        isBuffering={isBuffering}
-        customLoaderUrl={customLoaderUrl}
-        customLoaderType={customLoaderType}
-        preset={(spinnerPreset || 'netflix') as any}
-        isRemote={true}
+      {/* Shared PlayerLoader (Logo loader: active only when loading/buffering, never when paused) */}
+      <PlayerLoader
+        visible={isReloadingStream || (!hasStartedPlayback ? isBuffering : (!videoRef.current?.paused && isPlaying && isBuffering))}
+        variant="buffering"
       />
 
       {/* Center Play/Pause Ripple Feedback */}
@@ -709,8 +1000,100 @@ export const SimpleRemotePlayer: React.FC<SimpleRemotePlayerProps> = ({
         onSkip={handleSeek}
       />
 
-      {/* Top Header Overlay Bar */}
-      {!isLocked && (
+      {/* Mobile Player Overlay (<= 768px) */}
+      {isMobile && !isLocked && (
+        <>
+          <MobilePlayerOverlay
+            title={video.title || 'Simple Player'}
+            currentTime={currentTime}
+            duration={duration}
+            isPlaying={isPlaying}
+            isMuted={isMuted}
+            playbackRate={playbackRate}
+            isFullscreen={isFullscreen}
+            bookmarks={bookmarks}
+            upNextVideos={videos}
+            metadata={{
+              resolution: '1080p',
+              codec: isHlsActive ? 'HLS (m3u8)' : 'MP4'
+            }}
+            onBack={onBack}
+            onTogglePlay={togglePlay}
+            onRewind10={() => handleSeek(currentTime - 10)}
+            onForward10={() => handleSeek(currentTime + 10)}
+            onToggleMute={toggleMute}
+            onAddBookmark={(time) => {
+              const newBm: Bookmark = {
+                id: `bm-${Date.now()}`,
+                time: Math.round(time),
+                label: 'Bookmark',
+                title: `Bookmark at ${formatTime(time)}`,
+                createdAt: new Date().toISOString()
+              };
+              setBookmarks(prev => [...prev, newBm]);
+              onUpdateVideo({ ...video, bookmarks: [...bookmarks, newBm] }, false);
+            }}
+            onDeleteBookmark={(id) => {
+              const filtered = bookmarks.filter(b => b.id !== id);
+              setBookmarks(filtered);
+              onUpdateVideo({ ...video, bookmarks: filtered }, false);
+            }}
+            onSeekToBookmark={handleSeek}
+            onOpenAudioSubMenu={() => setShowAudioSubMenu(true)}
+            onChangeSpeed={handleSpeedChange}
+            onToggleFullscreen={toggleFullscreen}
+            onSeek={handleSeek}
+            onSelectVideo={(v) => onUpdateVideo(v)}
+            formatTime={formatTime}
+          />
+
+          {showAudioSubMenu && (
+            <AudioSubPopover
+              audioStreams={[]}
+              audioTracks={audioTracks}
+              selectedAudioTrack={selectedAudioTrack}
+              setSelectedAudioTrack={setSelectedAudioTrack}
+              setActiveAudioStreamIndex={() => {}}
+              handleSelectEmbeddedAudio={async () => {}}
+              customAudioInputRef={customAudioInputRef}
+              subtitleStreams={[]}
+              subtitleTracks={subtitleTracks}
+              selectedSubTrack={selectedSubTrack}
+              setSelectedSubTrack={setSelectedSubTrack}
+              setActiveSubStreamIndex={() => {}}
+              handleSelectEmbeddedSubtitle={async () => {}}
+              customSubInputRef={customSubInputRef}
+              currentTime={currentTime}
+              videoRef={videoRef}
+              setCurrentTime={handleSeek}
+              setShowAudioSubMenu={setShowAudioSubMenu}
+              audioSubTimeoutRef={{ current: null }}
+              getLangLabel={(l) => l || 'Default'}
+              formatTime={formatTime}
+              cleanSubtitleText={cleanSubtitleText}
+              subSettings={subSettings}
+              onUpdateSubSettings={(s) => {
+                setSubSettings(prev => ({ ...prev, ...s }));
+                propOnUpdateSubSettings?.(s);
+              }}
+              audioBoost={audioBoost}
+              setAudioBoost={setAudioBoost}
+              openSubtitles={openSubtitles}
+              isOpenSubLoading={isOpenSubLoading}
+              onDownloadOpenSubtitle={downloadOpenSubtitle}
+              hasFetchedOpenSubtitles={hasFetchedOpenSubtitles}
+              onFetchOpenSubtitles={fetchOpenSubtitles}
+              showAudioControl={showAudioControl !== false}
+              showSubtitleControl={showSubtitleControl !== false}
+              subFileOnly={subFileOnly === true}
+              allowSubUpload={allowSubUpload !== false}
+            />
+          )}
+        </>
+      )}
+
+      {/* Desktop Top Header Overlay Bar (> 768px) */}
+      {!isMobile && !isLocked && (
         <div
           style={{
             position: 'absolute',
@@ -736,12 +1119,14 @@ export const SimpleRemotePlayer: React.FC<SimpleRemotePlayerProps> = ({
             onToggleConsole={() => setShowConsoleOverlay(!showConsoleOverlay)}
             onClose={onBack}
             onOpenCompanion={() => setShowCompanionModal(true)}
+            isEmbed={isEmbed}
+            showCloseButton={showCloseButton}
           />
         </div>
       )}
 
-      {/* Bottom Controls Bar */}
-      {!isLocked && (
+      {/* Desktop Bottom Controls Bar (> 768px) */}
+      {!isMobile && !isLocked && (
         <div
           style={{
             position: 'absolute',
@@ -777,6 +1162,9 @@ export const SimpleRemotePlayer: React.FC<SimpleRemotePlayerProps> = ({
             onTogglePiP={togglePiP}
             showAudioSubMenu={showAudioSubMenu}
             setShowAudioSubMenu={setShowAudioSubMenu}
+            showSubtitleControl={showSubtitleControl}
+            showAudioControl={showAudioControl}
+            showBookmarksControl={showBookmarksControl}
             audioSubPopoverContent={
               <AudioSubPopover
                 audioStreams={[]}
@@ -813,6 +1201,10 @@ export const SimpleRemotePlayer: React.FC<SimpleRemotePlayerProps> = ({
                 onDownloadOpenSubtitle={downloadOpenSubtitle}
                 hasFetchedOpenSubtitles={hasFetchedOpenSubtitles}
                 onFetchOpenSubtitles={fetchOpenSubtitles}
+                showAudioControl={showAudioControl !== false}
+                showSubtitleControl={showSubtitleControl !== false}
+                subFileOnly={subFileOnly === true}
+                allowSubUpload={allowSubUpload !== false}
               />
             }
             showBookmarksPopover={showBookmarksPopover}
@@ -988,28 +1380,6 @@ export const SimpleRemotePlayer: React.FC<SimpleRemotePlayerProps> = ({
         />
       )}
 
-      {/* Toast Notification Notification Pill */}
-      {toastMsg && (
-        <div style={{
-          position: 'absolute',
-          top: '32px',
-          left: '50%',
-          transform: 'translateX(-50%)',
-          background: 'var(--card-bg, rgba(18, 18, 28, 0.95))',
-          color: 'var(--text-primary, #ffffff)',
-          padding: '8px 20px',
-          borderRadius: '30px',
-          border: '1px solid var(--border-color, rgba(255, 255, 255, 0.18))',
-          boxShadow: 'var(--shadow-lg, 0 8px 24px rgba(0, 0, 0, 0.6))',
-          fontSize: '13px',
-          fontWeight: 600,
-          zIndex: 4000,
-          pointerEvents: 'none',
-          animation: 'fadeIn 0.2s ease-out'
-        }}>
-          {toastMsg}
-        </div>
-      )}
       {/* Companion Engine Setup & Diagnostics Modal */}
       {showCompanionModal && featureFlagService.isFeatureEnabled('localEngine') && (
         <div 

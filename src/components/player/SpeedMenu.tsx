@@ -1,5 +1,6 @@
 import React from 'react';
 import { Check } from 'lucide-react';
+import { playerIslandStore } from './usePlayerIsland';
 
 export interface SpeedMenuProps {
   currentSpeed: number;
@@ -51,6 +52,7 @@ export const SpeedMenu: React.FC<SpeedMenuProps> = ({ currentSpeed, onSelectSpee
             key={s}
             onClick={() => {
               onSelectSpeed(s);
+              playerIslandStore.notify({ type: 'speed', value: s });
               onClose();
             }}
             style={{

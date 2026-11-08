@@ -16,6 +16,7 @@ import { AudioSyncEngine } from '../services/remote/audioSync';
 import { parseSubtitles, cleanSubtitleText } from '../utils/subtitleParser';
 import { parseMkv, parseMp4, extractMkvSubtitles } from '../utils/containerParser';
 import { ffmpegService } from '../services/ffmpeg';
+import { sidecarService } from '../services/remote/sidecarService';
 import { HttpByteSource, CachedByteSource } from '../services/remote/remoteByteSource';
 import { FileByteSource } from '../services/local/localByteSource';
 import { extractLocalAudioSegment, extractLocalSubtitleSegment } from '../services/local/ffmpegLocal';
@@ -26,6 +27,7 @@ import { PlaybackController } from '../services/playback/PlaybackController';
 import { logger } from '../utils/logger';
 import { saveMediaTimestamp, getMediaTimestamp } from '../utils/mediaTimestampStorage';
 import { isWasmSupported } from '../utils/wasmCheck';
+import { remoteProbeCache, inFlightRemoteProbes } from '../utils/remoteProbeCache';
 import { findPreferredStream, getSavedMediaPreferences, getPreferredAudioStreamIndex, getLanguageDisplayLabel } from '../utils/languageMatcher';
 
 const getAudioBoostMultiplier = (boostPercent: number): number => {
@@ -40,7 +42,9 @@ const getAudioBoostMultiplier = (boostPercent: number): number => {
 };
 import { classifyVideoTitle, getRegexedTitleWithYear } from '../utils/libraryClassifier';
 import { syncTraktHistory, syncTraktRating, resolveTraktMetadata } from '../services/traktAuth';
-import { LoadingSpinner, BufferingOverlay } from './LoadingSpinner';
+import { PlayerLoader } from './player/PlayerLoader';
+import { MobilePlayerOverlay } from './player/MobilePlayerOverlay';
+import { PlayerIsland, usePlayerIsland, type IslandAudioTrack, type IslandSubtitleTrack } from './player';
 import { RadialMenu } from './RadialMenu';
 import { VlcContextMenu } from './player/VlcContextMenu';
 import { ConsoleOverlay } from './ConsoleOverlay';
@@ -299,6 +303,7 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
   uiHideTimeout = 1.5,
   onReassociate
 }) => {
+  const island = usePlayerIsland();
   const isFile = (obj: any): obj is File => obj instanceof File || (obj && typeof obj.size === 'number' && typeof obj.slice === 'function');
   const video = useMemo(() => ({
     ...rawVideo,
@@ -334,6 +339,13 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
     return () => {
       document.body.style.overflow = origOverflow;
     };
+  }, []);
+
+  const [isMobile, setIsMobile] = useState(() => typeof window !== 'undefined' ? window.innerWidth <= 768 : false);
+  useEffect(() => {
+    const handleResize = () => setIsMobile(window.innerWidth <= 768);
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
   }, []);
 
 
@@ -1142,6 +1154,11 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
     }
     
     setBookmarks(updatedBookmarks);
+    island.notify({
+      type: 'bookmark',
+      time: Math.floor(newBookmark.time),
+      count: updatedBookmarks.length
+    });
 
     onUpdateVideo((prev: any) => ({
       ...prev,
@@ -1638,9 +1655,6 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
     }
   });
 
-  const [volumeToast, setVolumeToast] = useState<{ volume: number; boost: number; visible: boolean; isMuted: boolean }>({ volume: 1, boost: 100, visible: false, isMuted: false });
-  const volumeToastTimeoutRef = useRef<any>(null);
-
   const [uiScale, setUiScale] = useState<number>(() => {
     try {
       const saved = localStorage.getItem('valor_player_ui_scale');
@@ -1649,23 +1663,16 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
       return 1.0;
     }
   });
-  const [uiScaleToast, setUiScaleToast] = useState<{ scale: number; visible: boolean }>({ scale: 1, visible: false });
-  const uiScaleToastTimeoutRef = useRef<any>(null);
 
-  const triggerUiScaleToast = useCallback((scale: number) => {
-    if (uiScaleToastTimeoutRef.current) clearTimeout(uiScaleToastTimeoutRef.current);
-    setUiScaleToast({ scale, visible: true });
-    uiScaleToastTimeoutRef.current = setTimeout(() => {
-      setUiScaleToast(prev => ({ ...prev, visible: false }));
-    }, 1400);
-  }, []);
+  const triggerUiScaleToast = useCallback((scale: number) => {}, []);
 
   const triggerVolumeToast = (vol: number, muted: boolean, boost: number = audioBoost) => {
-    if (volumeToastTimeoutRef.current) clearTimeout(volumeToastTimeoutRef.current);
-    setVolumeToast({ volume: vol, boost, visible: true, isMuted: muted });
-    volumeToastTimeoutRef.current = setTimeout(() => {
-      setVolumeToast(prev => ({ ...prev, visible: false }));
-    }, 1500);
+    island.notify({
+      type: 'volume',
+      value: vol,
+      muted: muted || vol === 0,
+      boost
+    });
   };
   const [showControls, setShowControls] = useState(true);
   const [showConsoleOverlay, setShowConsoleOverlay] = useState(false);
@@ -1942,18 +1949,22 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
     }, dur * 1000);
   };
 
-  const [trackNotification, setTrackNotification] = useState<{ id: number; text: string } | null>(null);
-  const trackNotificationCounterRef = useRef<number>(0);
-  const trackNotificationTimeoutRef = useRef<any>(null);
-
   const triggerTrackNotification = (text: string) => {
-    if (trackNotificationTimeoutRef.current) clearTimeout(trackNotificationTimeoutRef.current);
-    trackNotificationCounterRef.current += 1;
-    const currentId = trackNotificationCounterRef.current;
-    setTrackNotification({ id: currentId, text });
-    trackNotificationTimeoutRef.current = setTimeout(() => {
-      setTrackNotification(prev => (prev?.id === currentId ? null : prev));
-    }, 2600);
+    if (text.startsWith('Audio track:')) {
+      const rest = text.replace('Audio track:', '').trim();
+      if (rest.includes('Default Audio') || rest.includes('Original')) {
+        island.notify({ type: 'audio', language: 'und', index: 0, title: 'Default Audio' });
+      } else {
+        island.notify({ type: 'audio', title: rest });
+      }
+    } else if (text.startsWith('Subtitle track:')) {
+      const rest = text.replace('Subtitle track:', '').trim();
+      if (rest === 'Off') {
+        island.notify({ type: 'subtitle', language: null });
+      } else {
+        island.notify({ type: 'subtitle', language: rest, title: rest });
+      }
+    }
   };
   const audioRef = useRef<HTMLAudioElement>(null);
   const playbackControllerRef = useRef<PlaybackController | null>(null);
@@ -2268,66 +2279,127 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
   // Auto-probe local file streams on startup if not already scanned
   useEffect(() => {
     const autoProbe = async () => {
-      if (video.type === 'local' && video.file && !video.streams && probingVideoIdRef.current !== video.id) {
-        if (!isWasmSupported()) {
-          logger.player('WebAssembly is not supported in this browser. Skipping FFmpeg probe and using native stream.');
-          return;
-        }
-        probingVideoIdRef.current = video.id;
-
-        // Verify that the file is actually readable
-        try {
-          await video.file.slice(0, 1).arrayBuffer();
-        } catch (readErr) {
-          logger.error('Local file is not readable on auto-probe:', readErr);
-          probingVideoIdRef.current = null;
-          return;
-        }
-
-        setIsAutoProbing(true);
-        try {
-          if (!ffmpegService.isReady()) {
-            await ffmpegService.load(video.id);
+      if (video.type === 'local' && !video.streams && probingVideoIdRef.current !== video.id) {
+        if (video.file) {
+          if (!isWasmSupported()) {
+            logger.player('WebAssembly is not supported in this browser. Skipping FFmpeg probe and using native stream.');
+            return;
           }
-          const result = await ffmpegService.probeFile(video.file, video.id);
+          probingVideoIdRef.current = video.id;
 
-          let seekMap: any[] = [];
-          let timecodeScale: number | undefined = undefined;
+          // Verify that the file is actually readable
           try {
-            const fileSource = new FileByteSource(video.file);
-            const cachedFileSource = new CachedByteSource(fileSource);
-            const containerType = (result.format || '').toLowerCase();
-            if (containerType.includes('mkv') || containerType.includes('matroska')) {
-              const mkvInfo = await parseMkv(cachedFileSource);
-              seekMap = mkvInfo.seekMap || [];
-              timecodeScale = mkvInfo.timecodeScale;
-            } else if (containerType.includes('mp4')) {
-              const mp4Info = await parseMp4(cachedFileSource);
-              seekMap = mp4Info.tracks[0]?.seekMap?.timeToOffset || [];
-            }
-          } catch (parseErr) {
-            logger.warn('Failed parsing local container for seekMap:', parseErr);
+            await video.file.slice(0, 1).arrayBuffer();
+          } catch (readErr) {
+            logger.error('Local file is not readable on auto-probe:', readErr);
+            probingVideoIdRef.current = null;
+            return;
           }
 
-          const updatedVideo = {
-            ...video,
-            duration: result.duration,
-            format: result.format,
-            streams: result.streams,
-            seekMap: seekMap.length > 0 ? seekMap : undefined,
-            timecodeScale
-          };
-          onUpdateVideoRef.current(updatedVideo);
-        } catch (err) {
-          logger.error('Auto probe streams failed:', err);
-          probingVideoIdRef.current = null; // allow retry
-        } finally {
-          setIsAutoProbing(false);
+          setIsAutoProbing(true);
+          try {
+            if (!ffmpegService.isReady()) {
+              await ffmpegService.load(video.id);
+            }
+            const result = await ffmpegService.probeFile(video.file, video.id);
+
+            let seekMap: any[] = [];
+            let timecodeScale: number | undefined = undefined;
+            try {
+              const fileSource = new FileByteSource(video.file);
+              const cachedFileSource = new CachedByteSource(fileSource);
+              const containerType = (result.format || '').toLowerCase();
+              if (containerType.includes('mkv') || containerType.includes('matroska')) {
+                const mkvInfo = await parseMkv(cachedFileSource);
+                seekMap = mkvInfo.seekMap || [];
+                timecodeScale = mkvInfo.timecodeScale;
+              } else if (containerType.includes('mp4')) {
+                const mp4Info = await parseMp4(cachedFileSource);
+                seekMap = mp4Info.tracks[0]?.seekMap?.timeToOffset || [];
+              }
+            } catch (parseErr) {
+              logger.warn('Failed parsing local container for seekMap:', parseErr);
+            }
+
+            const updatedVideo = {
+              ...video,
+              duration: result.duration,
+              format: result.format,
+              streams: result.streams,
+              seekMap: seekMap.length > 0 ? seekMap : undefined,
+              timecodeScale
+            };
+            onUpdateVideoRef.current(updatedVideo);
+          } catch (err) {
+            logger.error('Auto probe streams failed:', err);
+            probingVideoIdRef.current = null; // allow retry
+          } finally {
+            setIsAutoProbing(false);
+          }
+        } else if (video.url || (video as any).localFilePath) {
+          const targetUrl = (video as any).localFilePath || video.url;
+          if ((video as any).streams && (video as any).streams.length > 0) return;
+          if (probingVideoIdRef.current === video.id) return;
+          probingVideoIdRef.current = video.id;
+
+          const cached = remoteProbeCache.get(targetUrl);
+          if (cached) {
+            onUpdateVideoRef.current({
+              ...video,
+              duration: cached.duration ? String(cached.duration) : video.duration,
+              streams: cached.allStreams || []
+            });
+            return;
+          }
+
+          if (inFlightRemoteProbes.has(targetUrl)) {
+            await inFlightRemoteProbes.get(targetUrl);
+            const resolvedCached = remoteProbeCache.get(targetUrl);
+            if (resolvedCached) {
+              onUpdateVideoRef.current({
+                ...video,
+                duration: resolvedCached.duration ? String(resolvedCached.duration) : video.duration,
+                streams: resolvedCached.allStreams || []
+              });
+            }
+            return;
+          }
+
+          setIsAutoProbing(true);
+          try {
+            const apiBase = sidecarService.getRemoteApiBase();
+            const res = await fetch(`${apiBase}/api/remote/probe`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ url: targetUrl })
+            });
+            if (res.ok) {
+              const probeData = await res.json();
+              const allStreams: any[] = [];
+              if (probeData.videoStreams) probeData.videoStreams.forEach((v: any) => allStreams.push({ ...v, type: 'video' }));
+              if (probeData.audioStreams) probeData.audioStreams.forEach((a: any) => allStreams.push({ ...a, type: 'audio' }));
+              if (probeData.subtitleStreams) probeData.subtitleStreams.forEach((s: any) => allStreams.push({ ...s, type: 'subtitle' }));
+              remoteProbeCache.set(targetUrl, {
+                ...probeData,
+                allStreams
+              });
+              onUpdateVideoRef.current({
+                ...video,
+                duration: probeData.duration ? String(probeData.duration) : video.duration,
+                streams: allStreams
+              });
+            }
+          } catch (probeErr) {
+            logger.error('Remote probe fallback for local stream failed:', probeErr);
+            probingVideoIdRef.current = null;
+          } finally {
+            setIsAutoProbing(false);
+          }
         }
       }
     };
     autoProbe();
-  }, [video.id, video.type, video.file]);
+  }, [video.id, video.type, video.file, video.url]);
 
   // Synchronize Audio Volume / Muted State to video element and PlaybackController
   useEffect(() => {
@@ -3009,6 +3081,14 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
     seekTargetRef.current = targetTime;
     setCurrentTime(targetTime);
 
+    const maxDuration = duration || (videoRef.current?.duration) || 0;
+    island.notify({
+      type: 'seek',
+      delta: -seconds,
+      time: targetTime,
+      duration: maxDuration
+    });
+
     if (playbackControllerRef.current) {
       playbackControllerRef.current.seek(targetTime).catch(console.error);
     } else if (videoRef.current) {
@@ -3056,6 +3136,13 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
     const targetTime = maxDuration > 0 ? Math.min(maxDuration, baseTime + seconds) : baseTime + seconds;
     seekTargetRef.current = targetTime;
     setCurrentTime(targetTime);
+
+    island.notify({
+      type: 'seek',
+      delta: seconds,
+      time: targetTime,
+      duration: maxDuration
+    });
 
     if (playbackControllerRef.current) {
       playbackControllerRef.current.seek(targetTime).catch(console.error);
@@ -4700,6 +4787,34 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
         }
       }}
     >
+      <PlayerIsland
+        audioTracks={audioStreams.map(s => ({
+          index: s.index,
+          label: s.title || getLangLabel(s.language, `Track #${s.index}`),
+          language: s.language,
+          channels: (s as any).channels ? String((s as any).channels) : undefined,
+          codec: s.codec
+        }))}
+        subtitleTracks={subtitleStreams.map(s => ({
+          index: s.index,
+          label: s.title || getLangLabel(s.language, `Track #${s.index}`),
+          language: s.language
+        }))}
+        selectedAudioIndex={activeAudioStreamIndex ?? undefined}
+        selectedSubtitleIndex={activeSubStreamIndex ?? -1}
+        onSelectAudio={(index) => {
+          const st = audioStreams.find(s => s.index === index);
+          if (st) handleSelectEmbeddedAudio(st.index, st.codec, st.language, false, st.title);
+        }}
+        onSelectSubtitle={(index) => {
+          if (index === -1) {
+            handleSelectSubTrack(null);
+          } else {
+            const st = subtitleStreams.find(s => s.index === index);
+            if (st) handleSelectEmbeddedSubtitle(st.index, st.codec, st.language);
+          }
+        }}
+      />
 
 
 
@@ -5285,13 +5400,77 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
         </div>
       )}
 
-      {/* Buffering ring loader */}
-      <BufferingOverlay 
-        isBuffering={isBuffering}
-        customLoaderUrl={customLoaderUrl} 
-        customLoaderType={customLoaderType} 
-        preset={(spinnerPreset || 'fire-circle') as any} 
+      {/* Shared PlayerLoader (Logo loader: active only when playing and buffering, never when paused) */}
+      <PlayerLoader 
+        visible={isBuffering && isPlaying}
+        variant="buffering"
+        onRetry={() => {
+          if (videoRef.current) {
+            videoRef.current.load();
+            videoRef.current.play().catch(() => {});
+          }
+        }}
       />
+
+      {/* Mobile Player Overlay (<= 768px) */}
+      {isMobile && !isLocked && (
+        <MobilePlayerOverlay
+          title={video.title || 'Valor Player'}
+          currentTime={currentTime}
+          duration={duration || effectiveDuration || 0}
+          isPlaying={isPlaying}
+          isMuted={isMuted}
+          playbackRate={playbackRate}
+          isFullscreen={isFullscreen || isPseudoFullscreen}
+          bookmarks={bookmarks}
+          upNextVideos={videos}
+          metadata={{
+            resolution: (video as any).resolution || '1080p',
+            codec: (video as any).codec || 'H.264',
+            audioChannels: 'Stereo 2.0'
+          }}
+          onBack={handleExit}
+          onTogglePlay={togglePlay}
+          onRewind10={() => handleRewind(10)}
+          onForward10={() => handleForward(10)}
+          onToggleMute={() => {
+            setIsMuted(prev => !prev);
+          }}
+          onAddBookmark={(time) => {
+            const newBm: Bookmark = {
+              id: `bm-${Date.now()}`,
+              time: Math.round(time),
+              label: 'Bookmark',
+              title: `Bookmark at ${formatTime(time)}`,
+              createdAt: new Date().toISOString()
+            };
+            setBookmarks(prev => [...prev, newBm]);
+            onUpdateVideo((prev: any) => ({ ...prev, bookmarks: [...(prev.bookmarks || []), newBm] }), false);
+          }}
+          onDeleteBookmark={(id) => {
+            setBookmarks(prev => prev.filter(b => b.id !== id));
+            onUpdateVideo((prev: any) => ({ ...prev, bookmarks: (prev.bookmarks || []).filter((b: any) => b.id !== id) }), false);
+          }}
+          onSeekToBookmark={(t) => {
+            if (videoRef.current) videoRef.current.currentTime = t;
+            setCurrentTime(t);
+          }}
+          onOpenAudioSubMenu={() => setShowAudioSubMenu(true)}
+          onChangeSpeed={(s) => setPlaybackRate(s)}
+          onToggleFullscreen={toggleFullscreen}
+          onSeek={(t) => {
+            if (videoRef.current) videoRef.current.currentTime = t;
+            setCurrentTime(t);
+          }}
+          onSelectVideo={(v) => {
+            if (videoRef.current && typeof videoRef.current.currentTime === 'number') {
+              saveMediaTimestamp(video, videoRef.current.currentTime, duration || effectiveDuration || 0, video.title);
+            }
+            onUpdateVideo(v);
+          }}
+          formatTime={formatTime}
+        />
+      )}
 
       {/* Top Header Overlay */}
       {!isLocked && (!hideUIOverlays || hoveredSetting === 'showUIOverlays') && !timelineOnlyMode && (
@@ -6267,24 +6446,6 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
         onChange={handleCustomSubUpload}
       />
 
-      {/* Side Skip HUD (Left for rewind, Right for forward) */}
-      {consecutiveSkipInfo && (
-        <div className={`skip-side-hud-overlay ${consecutiveSkipInfo.direction === 'rewind' ? 'skip-left' : 'skip-right'}`}>
-          <div key={`${consecutiveSkipInfo.direction}-${consecutiveSkipInfo.count}-${consecutiveSkipInfo.totalSeconds}`} className="skip-hud-circle-compact animate-skip-pop">
-            <div className="skip-hud-icon-wrapper-compact">
-              {consecutiveSkipInfo.direction === 'rewind' ? (
-                <RotateCcw size={42} strokeWidth={1.8} className="skip-rotate-icon-compact" />
-              ) : (
-                <RotateCw size={42} strokeWidth={1.8} className="skip-rotate-icon-compact" />
-              )}
-              <span className="skip-hud-number-compact">
-                {consecutiveSkipInfo.totalSeconds}
-              </span>
-            </div>
-          </div>
-        </div>
-      )}
-
       {/* Play / Resume & Pause Center Feedback Animation */}
       {playPauseFeedback && (
         <div className="play-pause-feedback-overlay">
@@ -6297,62 +6458,6 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
           </div>
         </div>
       )}
-
-      {/* Track Selection Switch Toast Overlay */}
-      {switchToast.visible && (
-        <div 
-          className="switch-toast-overlay animate-switch-toast"
-          style={{ animationDuration: `${switchToast.duration || toastDuration}s` }}
-        >
-          <div className="switch-toast-content">
-            {switchToast.text}
-          </div>
-        </div>
-      )}
-
-      {/* Big Track Change Notification at Top Right Corner (Image 3 Style) */}
-      {trackNotification && (
-        <div key={trackNotification.id} className="track-change-notification-overlay animate-track-notification">
-          <span className="track-change-notification-text">
-            {trackNotification.text}
-          </span>
-        </div>
-      )}
-
-      {/* Volume Toast Overlay (Horizontal Layout) */}
-      <div className={`volume-toast-overlay ${volumeToast.visible ? 'visible' : ''}`}>
-        <div className="volume-toast-content-horizontal">
-          <div className="volume-toast-icon">
-            {volumeToast.isMuted || volumeToast.volume === 0 ? (
-              <VolumeX size={18} color="#ef4444" />
-            ) : volumeToast.volume < 0.5 ? (
-              <Volume1 size={18} color="#ffffff" />
-            ) : (
-              <Volume2 size={18} color="#ffffff" />
-            )}
-          </div>
-          <div className="volume-toast-bar-horizontal">
-            <div 
-              className="volume-toast-bar-fill-horizontal" 
-              style={{ 
-                width: volumeToast.boost > 100 ? `${Math.min(100, volumeToast.boost - 100)}%` : `${volumeToast.volume * 100}%`,
-                background: volumeToast.boost > 100 ? '#ff7a00' : '#007aff' 
-              }}
-            />
-          </div>
-          <span className="volume-toast-text-horizontal">
-            {volumeToast.isMuted ? 'MUTE' : (volumeToast.boost > 100 ? `${volumeToast.boost}%` : `${Math.round(volumeToast.volume * 100)}%`)}
-          </span>
-        </div>
-      </div>
-
-      {/* UI Scale Toast Overlay */}
-      <div className={`ui-scale-toast-overlay ${uiScaleToast.visible ? 'visible' : ''}`}>
-        <div className="ui-scale-toast-content">
-          <Sliders size={18} />
-          <span>UI Scale: {Math.round(uiScaleToast.scale * 100)}%</span>
-        </div>
-      </div>
 
       {/* Show UI Overlays Workaround Button */}
       {hideUIOverlays && (
@@ -7526,7 +7631,7 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
           height: 100%;
           min-height: 0;
           align-items: stretch;
-          overflow: hidden;
+          overflow: visible;
           box-sizing: border-box;
           transition: grid-template-columns 0.3s ease;
         }
@@ -8021,33 +8126,7 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
           to { transform: translateX(0); opacity: 1; }
         }
 
-        .dragon-fire-spinner {
-          display: block;
-          filter: drop-shadow(0 0 10px rgba(255, 69, 0, 0.75));
-        }
-        .dragon-group {
-          animation: spinDragon 1.5s linear infinite;
-        }
-        .flare-group {
-          animation: pulseFlare 0.5s ease-in-out infinite alternate;
-        }
-        @keyframes spinDragon {
-          from { transform: rotate(0deg); }
-          to { transform: rotate(360deg); }
-        }
-        @keyframes pulseFlare {
-          0% { transform: scale(0.85); opacity: 0.85; }
-          100% { transform: scale(1.15); opacity: 1; }
-        }
-        .buffering-spinner-overlay {
-          position: absolute;
-          inset: 0;
-          z-index: 18;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          background: rgba(0, 0, 0, 0.25);
-        }
+
 
         /* Non-blocking Toast notification */
         .non-blocking-toast {
@@ -8143,70 +8222,6 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
         }
 
         /* Side Skip HUD (Left for rewind, Right for forward) */
-        .skip-side-hud-overlay {
-          position: absolute;
-          top: 50%;
-          transform: translateY(-50%);
-          z-index: 550;
-          pointer-events: none;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-        }
-        .skip-side-hud-overlay.skip-left {
-          left: clamp(2.5rem, 15vw, 8rem);
-        }
-        .skip-side-hud-overlay.skip-right {
-          right: clamp(2.5rem, 15vw, 8rem);
-        }
-        .skip-hud-circle-compact {
-          width: 58px;
-          height: 58px;
-          border-radius: 50%;
-          background: rgba(0, 0, 0, 0.72);
-          backdrop-filter: blur(14px);
-          -webkit-backdrop-filter: blur(14px);
-          border: 1.5px solid rgba(255, 255, 255, 0.25);
-          box-shadow: 0 10px 25px rgba(0, 0, 0, 0.6);
-          display: flex;
-          align-items: center;
-          justify-content: center;
-        }
-        .skip-hud-icon-wrapper-compact {
-          position: relative;
-          width: 44px;
-          height: 44px;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          color: #ffffff;
-        }
-        .skip-rotate-icon-compact {
-          color: #ffffff;
-          filter: drop-shadow(0 2px 6px rgba(0, 0, 0, 0.8));
-        }
-        .skip-hud-number-compact {
-          position: absolute;
-          top: 52%;
-          left: 50%;
-          transform: translate(-50%, -50%);
-          color: #ffffff;
-          font-size: 11px;
-          font-weight: 800;
-          font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-          letter-spacing: -0.5px;
-          text-shadow: 0 1px 4px rgba(0, 0, 0, 0.9);
-          user-select: none;
-          line-height: 1;
-        }
-        .animate-skip-pop {
-          animation: skipPopAnim 0.32s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards;
-        }
-        @keyframes skipPopAnim {
-          0% {
-            transform: scale(0.65);
-            opacity: 0.3;
-          }
           40% {
             transform: scale(1.08);
             opacity: 1;
@@ -8218,102 +8233,9 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
         }
 
         /* Switch Toast CSS Styles */
-        .switch-toast-overlay {
-          position: absolute;
-          top: 50%;
-          left: 50%;
-          transform: translate(-50%, -50%);
-          z-index: 600;
-          pointer-events: none;
-        }
-        .switch-toast-content {
-          background: rgba(0, 0, 0, 0.85);
-          backdrop-filter: blur(12px);
-          -webkit-backdrop-filter: blur(12px);
-          border: 1px solid rgba(255, 255, 255, 0.15);
-          color: white;
-          padding: 0.75rem 2rem;
-          border-radius: 28px;
-          font-size: 1.15rem;
-          font-weight: 700;
-          letter-spacing: 0.5px;
-          box-shadow: 0 10px 30px rgba(0, 0, 0, 0.7);
-          text-align: center;
-          white-space: nowrap;
-        }
-        .animate-switch-toast {
-          animation: switchToastAnim 0.5s cubic-bezier(0.16, 1, 0.3, 1) forwards;
-        }
-        @keyframes switchToastAnim {
-          0% {
-            opacity: 0;
-            transform: translate(-50%, -50%) scale(0.9);
-          }
-          15% {
-            opacity: 1;
-            transform: translate(-50%, -50%) scale(1);
-          }
-          85% {
-            opacity: 1;
-            transform: translate(-50%, -50%) scale(1);
-          }
-          100% {
-            opacity: 0;
-            transform: translate(-50%, -50%) scale(0.9);
-          }
-        }
-
-        /* Track Change Notification Overlay (Image 3 Style) */
-        .track-change-notification-overlay {
-          position: absolute;
-          top: 36px;
-          right: 48px;
-          z-index: 650;
-          pointer-events: none;
-          display: flex;
-          align-items: center;
-          justify-content: flex-end;
-        }
-        .track-change-notification-text {
-          color: #ffffff;
-          font-size: clamp(1.35rem, 2.2vw, 1.85rem);
-          font-weight: 700;
-          font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-          letter-spacing: 0.5px;
-          text-shadow: 
-            -1.5px -1.5px 0 #000, 
-             1.5px -1.5px 0 #000, 
-            -1.5px  1.5px 0 #000, 
-             1.5px  1.5px 0 #000,
-             0 2px 10px rgba(0, 0, 0, 0.95);
-          white-space: nowrap;
-          user-select: none;
-        }
-        .animate-track-notification {
-          animation: trackNotificationAnim 2.6s cubic-bezier(0.16, 1, 0.3, 1) forwards;
-        }
-        @keyframes trackNotificationAnim {
-          0% {
-            opacity: 0;
-            transform: translateY(-8px);
-          }
-          10% {
-            opacity: 1;
-            transform: translateY(0);
-          }
-          85% {
-            opacity: 1;
-            transform: translateY(0);
-          }
-          100% {
-            opacity: 0;
-            transform: translateY(-8px);
-          }
-        }
-
         @media (max-width: 768px) {
-          .top-overlay-clean, .bottom-overlay {
-            padding: 1.2rem 1.8rem;
+          .top-overlay-clean, .bottom-overlay, .bottom-controls-bar {
+            display: none !important;
           }
           .audio-sub-popover-center {
             right: 8px !important;
@@ -8389,67 +8311,6 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
             font-size: 1.05rem !important;
             max-width: 70%;
           }
-          .volume-toast-overlay {
-            top: 25px !important;
-            left: 50% !important;
-            transform: translateX(-50%) !important;
-          }
-        }
-
-        /* Volume Toast HUD (Horizontal Centered Style) */
-        .volume-toast-overlay {
-          position: absolute;
-          top: 36px;
-          left: 50%;
-          transform: translateX(-50%) translateY(-10px);
-          z-index: 600;
-          opacity: 0;
-          pointer-events: none;
-          transition: opacity 0.2s ease, transform 0.2s cubic-bezier(0.16, 1, 0.3, 1);
-        }
-        .volume-toast-overlay.visible {
-          opacity: 1;
-          transform: translateX(-50%) translateY(0);
-        }
-        .volume-toast-content-horizontal {
-          background: rgba(18, 18, 18, 0.92);
-          backdrop-filter: blur(16px);
-          -webkit-backdrop-filter: blur(16px);
-          border: 1px solid rgba(255, 255, 255, 0.15);
-          border-radius: 30px;
-          padding: 8px 18px;
-          display: flex;
-          align-items: center;
-          gap: 12px;
-          min-width: 220px;
-          box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
-        }
-        .volume-toast-icon {
-          display: flex;
-          align-items: center;
-          justify-content: center;
-        }
-        .volume-toast-bar-horizontal {
-          flex: 1;
-          height: 6px;
-          background: rgba(255, 255, 255, 0.2);
-          border-radius: 3px;
-          overflow: hidden;
-          position: relative;
-        }
-        .volume-toast-bar-fill-horizontal {
-          height: 100%;
-          border-radius: 3px;
-          transition: width 0.08s ease-out;
-        }
-        .volume-toast-text-horizontal {
-          font-family: inherit;
-          font-size: 0.85rem;
-          font-weight: 700;
-          color: #ffffff;
-          min-width: 44px;
-          text-align: right;
-        }
         .player-container.has-file-access-blocked,
         .player-container.has-file-access-blocked * {
           cursor: default !important;
@@ -8588,62 +8449,6 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
           background-color: #ffffff !important;
         }
 
-        .ui-scale-toast-overlay {
-          position: absolute;
-          top: 4.5rem;
-          left: 50%;
-          transform: translateX(-50%) translateY(-10px);
-          background: rgba(18, 18, 18, 0.9);
-          backdrop-filter: blur(16px);
-          -webkit-backdrop-filter: blur(16px);
-          border: 1px solid rgba(255, 255, 255, 0.18);
-          border-radius: 9999px;
-          padding: 8px 20px;
-          color: #ffffff;
-          font-size: 0.95rem;
-          font-weight: 600;
-          z-index: 100;
-          opacity: 0;
-          pointer-events: none;
-          transition: opacity 0.2s cubic-bezier(0.16, 1, 0.3, 1), transform 0.2s cubic-bezier(0.16, 1, 0.3, 1);
-          box-shadow: 0 10px 30px rgba(0, 0, 0, 0.6);
-        }
-        .ui-scale-toast-overlay.visible {
-          opacity: 1;
-          transform: translateX(-50%) translateY(0);
-        }
-        .ui-scale-toast-content {
-          display: flex;
-          align-items: center;
-          gap: 10px;
-          white-space: nowrap;
-        }
-        .volume-percent-text-premium {
-          color: #ffffff;
-          font-size: 0.85rem;
-          font-weight: 500;
-          width: 0;
-          min-width: 0;
-          overflow: hidden;
-          opacity: 0;
-          text-align: right;
-          font-family: 'Outfit', sans-serif;
-          user-select: none;
-          transition: width 0.25s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.25s ease;
-          flex-shrink: 0;
-        }
-        .volume-control-group-premium:hover .volume-percent-text-premium {
-          width: 24px;
-          opacity: 1;
-        }
-        .bookmarks-popover-list::-webkit-scrollbar {
-          display: none !important;
-        }
-        .bookmarks-popover-list {
-          scrollbar-width: none !important;
-          -ms-overflow-style: none !important;
-        }
-
         /* Disable animations overrides */
         .no-animations * {
           transition: none !important;
@@ -8652,10 +8457,6 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
         .no-animations .animate-flash-hud {
           animation: none !important;
           opacity: 1 !important;
-          transform: none !important;
-        }
-        .no-animations .volume-toast-overlay {
-          transition: none !important;
           transform: none !important;
         }
         .no-animations .control-btn-volume:hover {
