@@ -44,6 +44,8 @@ export interface VlcContextMenuProps {
   onTakeSnapshot: () => void;
   aspectRatio?: string;
   onSetAspectRatio?: (ratio: string) => void;
+  toneMappingMode?: string;
+  onSetToneMappingMode?: (mode: string) => void;
   // Ambiance Lighting
   isAmbianceEnabled?: boolean;
   onToggleAmbiance?: () => void;
@@ -62,7 +64,7 @@ export interface VlcContextMenuProps {
   onOpenSubtitleTranscript?: () => void;
   // View & Tools
   isTimelineOnly?: boolean;
-  onToggleTimelineOnly: () => void;
+  onToggleTimelineOnly?: () => void;
   onOpenSettings: () => void;
   onOpenAudioSubMenu: () => void;
   bookmarks?: any[];
@@ -183,6 +185,8 @@ export const VlcContextMenu: React.FC<VlcContextMenuProps> = ({
   onTakeSnapshot,
   aspectRatio = 'default',
   onSetAspectRatio,
+  toneMappingMode = 'off',
+  onSetToneMappingMode,
   isAmbianceEnabled = true,
   onToggleAmbiance,
   ambianceBlur = 54,
@@ -708,6 +712,53 @@ export const VlcContextMenu: React.FC<VlcContextMenuProps> = ({
         },
         { id: 'vid-div-1', isDivider: true, label: '' },
         {
+          id: 'hdr-tonemapping',
+          label: <span><u>H</u>DR Tone Mapping</span>,
+          icon: <Sparkles size={12} color="#000" />,
+          children: [
+            {
+              id: 'hdr-off',
+              label: 'Off',
+              isRadio: true,
+              checked: !toneMappingMode || toneMappingMode === 'off',
+              onClick: () => {
+                onSetToneMappingMode?.('off');
+                onClose();
+              }
+            },
+            {
+              id: 'hdr-aces',
+              label: 'ACES Filmic (High Contrast)',
+              isRadio: true,
+              checked: toneMappingMode === 'aces',
+              onClick: () => {
+                onSetToneMappingMode?.('aces');
+                onClose();
+              }
+            },
+            {
+              id: 'hdr-vibrant',
+              label: 'Vibrant (Rich Colors)',
+              isRadio: true,
+              checked: toneMappingMode === 'vibrant',
+              onClick: () => {
+                onSetToneMappingMode?.('vibrant');
+                onClose();
+              }
+            },
+            {
+              id: 'hdr-reinhard',
+              label: 'Reinhard (Natural Roll-off)',
+              isRadio: true,
+              checked: toneMappingMode === 'reinhard',
+              onClick: () => {
+                onSetToneMappingMode?.('reinhard');
+                onClose();
+              }
+            }
+          ]
+        },
+        {
           id: 'snapshot',
           label: <span>Take <u>S</u>napshot</span>,
           shortcut: 'Shift+S',
@@ -843,7 +894,7 @@ export const VlcContextMenu: React.FC<VlcContextMenuProps> = ({
           shortcut: 'G',
           checked: isTimelineOnly,
           onClick: () => {
-            onToggleTimelineOnly();
+            onToggleTimelineOnly?.();
             onClose();
           }
         },

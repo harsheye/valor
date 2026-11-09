@@ -1,5 +1,6 @@
 import type { ByteSource } from '../local/localByteSource';
 import { getSavedCredentials } from './mediaAuthStore';
+import { recordCorsStatus, recordRemoteMediaName, parseContentDisposition } from '../../utils/corsCheck';
 
 type DownloadPriority = 'current' | 'prefetch';
 
@@ -179,6 +180,16 @@ export class HttpByteSource implements ByteSource {
     throw lastError || new Error('Could not determine remote file size');
   }
 
+  private async parseResponseBody(response: Response, start: number, end: number): Promise<Uint8Array> {
+    const arrayBuffer = await response.arrayBuffer();
+    const bytes = new Uint8Array(arrayBuffer);
+    if (response.status === 200) {
+      // Server returned entire body starting from 0 instead of requested slice
+      return bytes.subarray(start, Math.min(end + 1, bytes.byteLength));
+    }
+    return bytes;
+  }
+
   async read(start: number, end: number, signal?: AbortSignal): Promise<Uint8Array> {
     if (this.proxyMode === 'extension') {
       const proxyRes = await proxyFetch(this.url, { headers: { Range: `bytes=${start}-${end}` } }, true);
@@ -199,8 +210,7 @@ export class HttpByteSource implements ByteSource {
       if (response.status !== 206 && response.status !== 200) {
         throw new Error(`Failed to fetch range ${start}-${end} via backend proxy, status: ${response.status}`);
       }
-      const arrayBuffer = await response.arrayBuffer();
-      return new Uint8Array(arrayBuffer);
+      return this.parseResponseBody(response, start, end);
     }
 
     try {
@@ -209,8 +219,7 @@ export class HttpByteSource implements ByteSource {
         signal
       });
       if (response.status === 206 || response.status === 200) {
-        const arrayBuffer = await response.arrayBuffer();
-        return new Uint8Array(arrayBuffer);
+        return this.parseResponseBody(response, start, end);
       }
     } catch (directErr) {
       // Fallback to backend proxy
@@ -222,8 +231,7 @@ export class HttpByteSource implements ByteSource {
         });
         if (response.status === 206 || response.status === 200) {
           this.proxyMode = 'backend';
-          const arrayBuffer = await response.arrayBuffer();
-          return new Uint8Array(arrayBuffer);
+          return this.parseResponseBody(response, start, end);
         }
       } catch (e) {}
       throw directErr;

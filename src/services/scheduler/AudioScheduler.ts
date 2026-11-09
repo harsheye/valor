@@ -56,13 +56,15 @@ export class AudioScheduler {
 
     const delay = (packet.startTime - currentTime) / playbackRate;
 
-    // If we have a preceding chunk and it's consecutive (e.g. within 15s), chain perfectly to its end time
-    if (prevNode && (packet.startTime - prevNode.startTime) <= 15) {
+    // If we have a preceding chunk, it's consecutive, and its end time is still in the future, chain seamlessly
+    if (prevNode && (packet.startTime - prevNode.startTime) <= 15 && prevNode.audioEndTime > this.audioCtx.currentTime) {
       audioStartTime = prevNode.audioEndTime;
     } else {
       // Natural projection for the first chunk in a new sequence
       audioStartTime = this.audioCtx.currentTime + Math.max(0, delay);
     }
+    // Prevent scheduling in the past which causes clicks and discontinuity
+    audioStartTime = Math.max(this.audioCtx.currentTime, audioStartTime);
 
     const durationPlayed = (packet.buffer.duration - playOffset) / playbackRate;
     const audioEndTime = audioStartTime + durationPlayed;

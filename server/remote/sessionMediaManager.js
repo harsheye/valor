@@ -33,6 +33,7 @@ export class SessionMediaWorker {
     this.totalSize = 0;
     this.totalBlocks = 0;
     this.contentType = 'video/mp4';
+    this.contentDisposition = null;
     this.bitrateBytesPerSec = DEFAULT_BITRATE_BYTES_PER_SEC;
 
     this.currentPlayheadByte = 0;

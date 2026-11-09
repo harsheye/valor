@@ -7,6 +7,7 @@ import type { ProbeResult, MediaStreamInfo } from '../pipeline/MediaPipeline';
 export class DemuxManager {
   private mountedPath: string | null = null;
   private uniqueId = Math.random().toString(36).substring(2, 9);
+  private probedDuration = 0;
 
   constructor(
     private ffmpegMgr: FFmpegManager,
@@ -79,7 +80,9 @@ export class DemuxManager {
     } catch {}
 
     const logs = this.ffmpegMgr.getLogs().join('\n');
-    return this.parseProbeLogs(logs);
+    const result = this.parseProbeLogs(logs);
+    if (result.duration > 0) this.probedDuration = result.duration;
+    return result;
   }
 
   private parseProbeLogs(logText: string): ProbeResult {
@@ -185,11 +188,12 @@ export class DemuxManager {
         }, matchedStart);
         endOffset = matchedEnd ? matchedEnd.offset + 8 * 1024 * 1024 : startOffset + 24 * 1024 * 1024;
       } else {
-        // Linear fallback
+        // Linear fallback: use probed duration or safe upper bound instead of arbitrary 3600s
         const size = await this.getSizeFallback(source);
-        startOffset = Math.floor((startTime / 3600) * size);
+        const estDuration = Math.max(startTime + duration + 60, this.probedDuration || 7200);
+        startOffset = Math.floor((startTime / estDuration) * size);
         endOffset = Math.min(startOffset + 24 * 1024 * 1024, size);
-        offsetTime = startTime;
+        offsetTime = (startOffset / size) * estDuration;
       }
 
       endOffset = Math.min(endOffset, fileSize - 1);

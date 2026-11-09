@@ -283,18 +283,19 @@ export const HomePage: React.FC<HomePageProps> = ({
           ========================================================================= */}
       {primaryContinue && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', width: '100%' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', paddingBottom: '0.5rem', borderBottom: '1px solid var(--border)' }}>
-            <Play size={20} color="var(--accent)" />
-            <h2 style={{ fontSize: '1.2rem', fontWeight: 800, margin: 0, color: 'var(--text-1)' }}>Continue Watching</h2>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', paddingBottom: '0.5rem', borderBottom: '1px solid var(--border)' }}>
+            <Play size={18} color="var(--accent)" fill="var(--accent)" />
+            <h2 style={{ fontSize: '18px', fontWeight: 700, margin: 0, color: 'var(--text-1)', fontFamily: 'var(--font-display, inherit)' }}>Continue Watching</h2>
           </div>
 
           <div 
+            className="continue-watching-card"
             onClick={() => handlePlayVideo(primaryContinue)}
             style={{ 
               width: '100%', 
               background: 'linear-gradient(135deg, var(--surface-1) 0%, var(--accent-soft) 100%), var(--surface-1)',
               borderRadius: 'var(--radius-md)',
-              padding: '1.5rem 1.75rem',
+              padding: '1.25rem 1.5rem',
               display: 'flex',
               justifyContent: 'space-between',
               alignItems: 'center',
@@ -305,10 +306,10 @@ export const HomePage: React.FC<HomePageProps> = ({
               boxSizing: 'border-box'
             }}
           >
-            <div style={{ flex: 1, minWidth: '0', paddingRight: '1.5rem' }}>
+            <div style={{ flex: 1, minWidth: '0', paddingRight: '1rem' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '0.4rem' }}>
-                <span style={{ fontSize: '0.7rem', fontWeight: 800, letterSpacing: '1px', background: 'var(--surface-2)', color: 'var(--text-2)', padding: '2px 8px', borderRadius: 'var(--radius-sm)' }}>
-                  Resume playback
+                <span style={{ fontSize: '0.7rem', fontWeight: 800, letterSpacing: '0.08em', background: 'var(--surface-2)', color: 'var(--text-2)', padding: '2px 8px', borderRadius: 'var(--radius-sm)', textTransform: 'uppercase' }}>
+                  RESUME PLAYBACK
                 </span>
                 {primaryContinue.duration && (
                   <span style={{ fontSize: '0.75rem', color: 'var(--text-2)', fontWeight: 500 }}>
@@ -320,11 +321,11 @@ export const HomePage: React.FC<HomePageProps> = ({
                 )}
               </div>
               
-              <h3 style={{ margin: 0, fontSize: '1.35rem', fontWeight: 600, color: 'var(--text-1)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              <h3 style={{ margin: 0, fontSize: '17px', fontWeight: 700, color: 'var(--text-1)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                 {classifyVideoTitle(primaryContinue.title).displayTitle}
               </h3>
               
-              <p style={{ margin: '6px 0 0 0', fontSize: '0.9rem', color: 'var(--text-2)' }}>
+              <p style={{ margin: '6px 0 0 0', fontSize: '0.85rem', color: 'var(--text-2)' }}>
                 Position: <b style={{ fontVariantNumeric: 'tabular-nums', color: 'var(--text-1)' }}>{formatTime(primaryContinue.currentTime || 0)}</b>
               </p>
 
@@ -341,6 +342,7 @@ export const HomePage: React.FC<HomePageProps> = ({
             </div>
             
             <button 
+              className="resume-btn"
               style={{ 
                 background: 'var(--accent-fill)',
                 color: 'var(--on-accent)',
@@ -376,17 +378,23 @@ export const HomePage: React.FC<HomePageProps> = ({
       {/* =========================================================================
           MEDIA SELECTION WORKSPACE & DROP ZONE
           ========================================================================= */}
-      <div style={{
-        background: 'var(--surface-1)',
-        borderRadius: 'var(--radius-md)',
-        padding: '1.75rem',
-        border: '1px solid var(--border)',
-        boxShadow: 'none',
-        display: 'flex',
-        flexDirection: 'column',
-        gap: '1.5rem'
-      }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: '1px solid var(--border)', paddingBottom: '0.75rem' }}>
+      <div 
+        className="select-media-card"
+        style={{
+          background: 'var(--surface-1)',
+          borderRadius: 'var(--radius-md)',
+          padding: '1.75rem',
+          border: '1px solid var(--border)',
+          boxShadow: 'none',
+          display: 'flex',
+          flexDirection: 'column',
+          gap: '1.5rem'
+        }}
+      >
+        <div 
+          className="select-media-header"
+          style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: '1px solid var(--border)', paddingBottom: '0.75rem' }}
+        >
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
             <UploadCloud size={22} color="var(--accent)" />
             <h2 style={{ fontSize: '1.25rem', fontWeight: 800, margin: 0, color: 'var(--text-1)' }}>Select Media</h2>
@@ -434,34 +442,40 @@ export const HomePage: React.FC<HomePageProps> = ({
           
           {/* File Upload Section */}
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', textAlign: 'center', gap: '0.75rem' }}>
-            <div style={{
-              width: '64px',
-              height: '64px',
-              borderRadius: '50%',
-              background: 'var(--accent-soft)',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              color: 'var(--accent)',
-              border: '1px solid color-mix(in srgb, var(--accent) 30%, transparent)'
-            }}>
-              <UploadCloud size={32} />
+            <div 
+              className="drop-icon-circle"
+              style={{
+                width: '56px',
+                height: '56px',
+                borderRadius: '50%',
+                background: 'var(--accent-soft)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                color: 'var(--accent)',
+                border: '1px solid color-mix(in srgb, var(--accent) 30%, transparent)'
+              }}
+            >
+              <UploadCloud size={28} />
             </div>
             <div>
               <h3 style={{ margin: 0, fontSize: '1.2rem', fontWeight: 700, color: 'var(--text-1)' }}>
                 Open Local Video File
               </h3>
-              <p style={{ margin: '4px 0 0 0', fontSize: '0.85rem', color: 'var(--text-2)' }}>
+              <p className="desktop-drop-text" style={{ margin: '4px 0 0 0', fontSize: '0.85rem', color: 'var(--text-2)' }}>
                 Drag & drop or click anywhere in this area to browse video files
+              </p>
+              <p className="mobile-tap-text" style={{ margin: '4px 0 0 0', fontSize: '0.85rem', color: 'var(--text-2)' }}>
+                Tap to browse video files
               </p>
             </div>
             <button 
-              className="btn btn-secondary btn-sm" 
+              className="btn btn-secondary btn-sm browse-files-btn" 
               onClick={(e) => { e.stopPropagation(); handleSelectLocalFile(); }}
               style={{
                 marginTop: '6px',
                 padding: '8px 20px',
-                background: 'var(--surface-3)',
+                background: 'transparent',
                 border: '1px solid var(--control-border)',
                 borderRadius: 'var(--radius-sm)',
                 color: 'var(--text-1)',
@@ -484,13 +498,14 @@ export const HomePage: React.FC<HomePageProps> = ({
           {/* Inline URL Input Form */}
           <form 
             onSubmit={handleUrlSubmit} 
+            className="url-input-form-mobile"
             style={{ width: '100%', maxWidth: '650px' }}
             onClick={(e) => e.stopPropagation()}
           >
-            <div style={{ display: 'flex', gap: '10px' }}>
+            <div className="url-form-row" style={{ display: 'flex', gap: '10px' }}>
               <input 
                 type="text" 
-                placeholder="Enter Stream URL (HLS / m3u8 / MP4) or file path..." 
+                placeholder="Enter Stream URL (HLS / m3u8 / MP4)…" 
                 value={videoUrl}
                 onChange={(e) => setVideoUrl(e.target.value)}
                 disabled={isProcessing}
@@ -508,18 +523,20 @@ export const HomePage: React.FC<HomePageProps> = ({
               />
               <button 
                 type="submit" 
+                className="url-stream-submit-btn"
                 disabled={isProcessing}
                 style={{
                   padding: '12px 24px',
-                  background: 'var(--surface-3)',
-                  color: 'var(--text-1)',
-                  border: '1px solid var(--control-border)',
+                  background: 'var(--accent-fill)',
+                  color: 'var(--on-accent)',
+                  border: 'none',
                   borderRadius: 'var(--radius-sm)',
-                  fontWeight: 600,
+                  fontWeight: 700,
                   fontSize: '0.9rem',
                   cursor: isProcessing ? 'not-allowed' : 'pointer',
                   display: 'flex',
                   alignItems: 'center',
+                  justifyContent: 'center',
                   gap: '8px',
                   boxShadow: 'none',
                   opacity: isProcessing ? 0.8 : 1,
@@ -548,12 +565,13 @@ export const HomePage: React.FC<HomePageProps> = ({
             </span>
             <button
               type="button"
+              className="sample-stream-chip"
               onClick={() => handleLoadDemo('https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8')}
               style={{
                 background: 'var(--surface-3)',
                 border: '1px solid var(--control-border)',
-                borderRadius: 'var(--radius-sm)',
-                padding: '4px 10px',
+                borderRadius: '16px',
+                padding: '6px 12px',
                 color: 'var(--text-2)',
                 fontSize: '0.75rem',
                 cursor: 'pointer'
@@ -563,12 +581,13 @@ export const HomePage: React.FC<HomePageProps> = ({
             </button>
             <button
               type="button"
+              className="sample-stream-chip"
               onClick={() => handleLoadDemo('https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/TearsOfSteel.mp4')}
               style={{
                 background: 'var(--surface-3)',
                 border: '1px solid var(--control-border)',
-                borderRadius: 'var(--radius-sm)',
-                padding: '4px 10px',
+                borderRadius: '16px',
+                padding: '6px 12px',
                 color: 'var(--text-2)',
                 fontSize: '0.75rem',
                 cursor: 'pointer'

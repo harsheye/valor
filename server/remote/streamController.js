@@ -5,6 +5,38 @@ import ffmpegInstaller from '@ffmpeg-installer/ffmpeg';
 import { MediaProbeService } from './mediaProbeService.js';
 import { validateRemoteUrl } from './ssrfGuard.js';
 import { RemoteAudioCacheService } from './remoteAudioCacheService.js';
+import { RemoteDownloadManager } from './remoteDownloadManager.js';
+
+function parseContentDisposition(header) {
+  if (!header || typeof header !== 'string') return null;
+  const fnStarMatch = header.match(/filename\*\s*=\s*([^;]+)/i);
+  if (fnStarMatch) {
+    let val = fnStarMatch[1].trim();
+    if (val.startsWith('"') && val.endsWith('"')) val = val.slice(1, -1);
+    const qIdx = val.indexOf("''");
+    let encoded = qIdx !== -1 ? val.slice(qIdx + 2) : val;
+    try {
+      const decoded = decodeURIComponent(encoded.trim());
+      if (decoded) {
+        const clean = decoded.split(/[\/\\]/).pop();
+        if (clean && clean.trim()) return clean.trim();
+      }
+    } catch {}
+  }
+  const fnMatch = header.match(/filename\s*=\s*(?:"([^"]+)"|([^;\s]+))/i);
+  if (fnMatch) {
+    let raw = fnMatch[1] || fnMatch[2] || '';
+    raw = raw.trim();
+    try {
+      if (raw.includes('%')) raw = decodeURIComponent(raw);
+    } catch {}
+    if (raw) {
+      const clean = raw.split(/[\/\\]/).pop();
+      if (clean && clean.trim()) return clean.trim();
+    }
+  }
+  return null;
+}
 
 const audioCacheService = new RemoteAudioCacheService();
 
@@ -23,7 +55,7 @@ export async function handleStreamRoute(req, res, parsedUrl, sessionManager) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, Range, X-Requested-With');
-  res.setHeader('Access-Control-Expose-Headers', 'Content-Length, Content-Range, Accept-Ranges');
+  res.setHeader('Access-Control-Expose-Headers', 'Content-Length, Content-Range, Accept-Ranges, Content-Disposition');
 
   if (req.method === 'OPTIONS') {
     res.statusCode = 204;
@@ -91,6 +123,103 @@ export async function handleStreamRoute(req, res, parsedUrl, sessionManager) {
       res.statusCode = statusCode;
       res.setHeader('Content-Type', 'application/json');
       res.end(JSON.stringify({ error: err.message || 'Probe failed', statusCode }));
+      return true;
+    }
+  }
+
+  // 1.2. GET or POST /api/remote/media-headers - Fast lightweight header inspection to extract Content-Disposition & filename
+  if (pathname === '/api/remote/media-headers' && (req.method === 'GET' || req.method === 'POST')) {
+    let rawUrl = '';
+    let auth = null;
+    let customHeaders = {};
+
+    if (req.method === 'POST') {
+      let body = '';
+      for await (const chunk of req) {
+        body += chunk;
+      }
+      try {
+        const data = body ? JSON.parse(body) : {};
+        rawUrl = data.url;
+        auth = data.auth;
+        customHeaders = data.headers || {};
+      } catch {
+        res.statusCode = 400;
+        res.setHeader('Content-Type', 'application/json');
+        res.end(JSON.stringify({ error: 'Invalid JSON payload' }));
+        return true;
+      }
+    } else {
+      rawUrl = parsedUrl.searchParams.get('url');
+      const user = parsedUrl.searchParams.get('user');
+      const pass = parsedUrl.searchParams.get('pass');
+      if (user) {
+        auth = { username: user, password: pass || '' };
+      }
+    }
+
+    if (!rawUrl) {
+      res.statusCode = 400;
+      res.setHeader('Content-Type', 'application/json');
+      res.end(JSON.stringify({ error: 'Missing url parameter' }));
+      return true;
+    }
+
+    try {
+      const headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        ...customHeaders
+      };
+      if (auth && auth.username) {
+        const creds = Buffer.from(auth.username + ':' + (auth.password || '')).toString('base64');
+        headers['Authorization'] = 'Basic ' + creds;
+      }
+
+      let headRes = null;
+      try {
+        headRes = await RemoteDownloadManager.request(rawUrl, {
+          method: 'HEAD',
+          headers,
+          timeout: 4000
+        });
+      } catch (headErr) {
+        headRes = await RemoteDownloadManager.request(rawUrl, {
+          method: 'GET',
+          headers: { ...headers, Range: 'bytes=0-0' },
+          timeout: 4000
+        });
+      }
+
+      if (headRes && headRes.stream) {
+        headRes.stream.resume();
+      }
+
+      const cd = headRes?.headers ? (headRes.headers['content-disposition'] || headRes.headers['Content-Disposition'] || '') : '';
+      const ct = headRes?.headers ? (headRes.headers['content-type'] || '') : '';
+      const cl = headRes?.headers ? (headRes.headers['content-length'] || '') : '';
+      const fileName = parseContentDisposition(cd);
+      const title = fileName ? fileName.replace(/\.[^/.]+$/, '').trim() : '';
+
+      res.statusCode = 200;
+      res.setHeader('Content-Type', 'application/json');
+      res.setHeader('Access-Control-Expose-Headers', 'Content-Disposition, Content-Type, Content-Length');
+      res.end(JSON.stringify({
+        contentDisposition: cd,
+        fileName,
+        title,
+        contentType: ct,
+        contentLength: cl ? parseInt(cl, 10) : undefined
+      }));
+      return true;
+    } catch (err) {
+      res.statusCode = 200;
+      res.setHeader('Content-Type', 'application/json');
+      res.end(JSON.stringify({
+        contentDisposition: '',
+        fileName: null,
+        title: '',
+        error: err.message
+      }));
       return true;
     }
   }

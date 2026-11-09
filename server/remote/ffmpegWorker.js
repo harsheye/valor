@@ -152,7 +152,7 @@ export class FFmpegWorker {
       const timer = setTimeout(() => {
         child.kill('SIGKILL');
         reject(new Error('Subtitle extraction timed out'));
-      }, 30000);
+      }, 60000);
 
       child.on('close', code => {
         clearTimeout(timer);

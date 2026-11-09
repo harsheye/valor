@@ -355,7 +355,7 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
         const hideNativeTracks = () => {
           if (videoRef.current && videoRef.current.textTracks) {
             for (let i = 0; i < videoRef.current.textTracks.length; i++) {
-              if (videoRef.current.textTracks[i].mode === 'showing') {
+              if (videoRef.current.textTracks[i].mode !== 'hidden') {
                 videoRef.current.textTracks[i].mode = 'hidden';
               }
             }

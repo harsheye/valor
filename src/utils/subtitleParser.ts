@@ -40,6 +40,10 @@ export function cleanSubtitleText(text: string): string {
     .replace(/\{[^}]+\}/g, '')
     // Remove HTML tags
     .replace(/<\/?[^>]+(>|$)/g, '')
+    // Replace ASS hard linebreaks (\N, \n) and non-breaking spaces (\h)
+    .replace(/\\N/gi, '\n')
+    .replace(/\\n/gi, '\n')
+    .replace(/\\h/g, ' ')
     .trim();
 }
 
@@ -180,11 +184,37 @@ export function parseASS(content: string): SubtitleCue[] {
       continue;
     }
 
-    if (!trimmed.startsWith('Dialogue:')) continue;
+    let fieldsStr = '';
+    let isBlockPayload = false;
 
-    const dialogPrefix = 'Dialogue:';
-    const fieldsStr = trimmed.substring(dialogPrefix.length).trim();
-    
+    if (trimmed.startsWith('Dialogue:')) {
+      fieldsStr = trimmed.substring('Dialogue:'.length).trim();
+    } else if (/^\d+,\d+,/.test(trimmed)) {
+      // Raw MKV block payload: ReadOrder,Layer,Style,Name,MarginL,MarginR,MarginV,Effect,Text
+      fieldsStr = trimmed;
+      isBlockPayload = true;
+    } else {
+      continue;
+    }
+
+    if (isBlockPayload) {
+      // In MKV SSA/ASS blocks: 8 commas precede the text payload
+      const parts = splitLimit(fieldsStr, ',', 9);
+      if (parts.length >= 9) {
+        const textRaw = parts[8];
+        const text = cleanSubtitleText(textRaw);
+        if (text) {
+          cues.push({
+            id: `ass-block-${cueCount++}`,
+            startTime: 0,
+            endTime: 4,
+            text
+          });
+        }
+      }
+      continue;
+    }
+
     // Split by comma limiting to totalFields so that commas inside the Text field are preserved
     const parts = splitLimit(fieldsStr, ',', totalFields);
     if (parts.length < totalFields) continue;

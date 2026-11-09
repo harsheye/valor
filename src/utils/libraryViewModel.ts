@@ -1,6 +1,7 @@
 import type { VideoItem } from '../types/media';
 import { classifyVideoTitle } from './libraryClassifier';
 import { formatRuntime, formatTimecode, formatFullTimecode, parseDurationToSeconds } from './timeFormat';
+import { getSeriesCachedCounts } from './seriesCache';
 
 export type MediaStatus = 'new' | 'in-progress' | 'watched';
 
@@ -394,8 +395,9 @@ export function buildSeriesViewModel(
   });
 
   const uniqueSeasons = Array.from(new Set(sortedEpisodes.map(e => e.season))).sort((a, b) => a - b);
-  const seasonsCount = uniqueSeasons.length;
-  const episodesCount = sortedEpisodes.length;
+  const cachedCounts = getSeriesCachedCounts(seriesTitle);
+  const seasonsCount = cachedCounts ? Math.max(uniqueSeasons.length, cachedCounts.totalSeasons) : uniqueSeasons.length;
+  const episodesCount = cachedCounts ? Math.max(sortedEpisodes.length, cachedCounts.totalEpisodes) : sortedEpisodes.length;
 
   const watchedEpisodes = sortedEpisodes.filter(e => e.status === 'watched');
   const watchedCount = watchedEpisodes.length;

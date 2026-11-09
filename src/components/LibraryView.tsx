@@ -20,6 +20,7 @@ import { MediaPosterCard } from './library/MediaPosterCard';
 import { MediaListRow } from './library/MediaListRow';
 import { SeriesDetailPage } from './library/SeriesDetailPage';
 import { LibraryRenameModal } from './library/LibraryRenameModal';
+import '../styles/library.css';
 
 interface LibraryViewProps {
   videos: VideoItem[];
@@ -29,6 +30,8 @@ interface LibraryViewProps {
   onRemoveVideo?: (id: string, e: React.MouseEvent) => void;
   addToast?: (text: string, type?: 'success' | 'error' | 'warning', action?: any) => void;
   setVideos?: React.Dispatch<React.SetStateAction<VideoItem[]>>;
+  onSelectMedia?: (media: any) => void;
+  tmdbApiKey?: string;
 }
 
 const PREFS_STORAGE_KEY = 'valor_library_prefs';
@@ -49,7 +52,9 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
   onNavigateToSelectMedia,
   onRemoveVideo,
   addToast,
-  setVideos
+  setVideos,
+  onSelectMedia,
+  tmdbApiKey
 }) => {
   // 1. Persistent Library Preferences
   const [prefs, setPrefs] = useState<LibraryPreferences>(() => {
@@ -90,6 +95,20 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
   // Rename modal state
   const [renameTarget, setRenameTarget] = useState<{ id: string; currentTitle: string } | null>(null);
   const [renamesVersion, setRenamesVersion] = useState(0);
+  const [cacheVersion, setCacheVersion] = useState(0);
+
+  // Listen to series cache and dropped updates to refresh series counts in real time
+  useEffect(() => {
+    const handleUpdate = () => {
+      setCacheVersion(v => v + 1);
+    };
+    window.addEventListener('valor_series_cache_updated', handleUpdate);
+    window.addEventListener('valor_dropped_series_changed', handleUpdate);
+    return () => {
+      window.removeEventListener('valor_series_cache_updated', handleUpdate);
+      window.removeEventListener('valor_dropped_series_changed', handleUpdate);
+    };
+  }, []);
 
   // Element refs for keyboard navigation and focus restoration
   const cardRefs = useRef<Record<string, HTMLElement | null>>({});
@@ -163,7 +182,7 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
       movieViewModels: moviesList,
       seriesViewModels: seriesList
     };
-  }, [videos, customRenames]);
+  }, [videos, customRenames, cacheVersion]);
 
   // Filter & Sort Movies
   const filteredMovies = useMemo(() => {
@@ -182,6 +201,21 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
     if (!selectedSeriesId) return null;
     return seriesViewModels.find(s => s.id === selectedSeriesId) || null;
   }, [selectedSeriesId, seriesViewModels]);
+
+  // Play series helper: correctly resumes local or online episodes
+  const handlePlaySeries = (series: SeriesViewModel) => {
+    const ep = series.primaryEpisode;
+    if (!ep) return;
+    if (ep.file || ep.url || (ep as any).localFilePath) {
+      onPlayVideo(ep);
+      return;
+    }
+    if ((ep.type === 'online_tv' || ep.type === 'online_movie' || !ep.url) && onSelectMedia) {
+      onSelectMedia(ep);
+      return;
+    }
+    onPlayVideo(ep);
+  };
 
   // Open series handler
   const handleOpenSeries = (series: SeriesViewModel) => {
@@ -314,18 +348,7 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
   };
 
   return (
-    <div style={{
-      width: '100%',
-      height: '100%',
-      minHeight: '100%',
-      display: 'flex',
-      flexDirection: 'column',
-      backgroundColor: 'var(--bg)',
-      color: 'var(--text-1)',
-      overflowY: 'auto',
-      padding: 'var(--space-6) var(--page-padding-x, var(--space-7)) var(--space-8) var(--page-padding-x, var(--space-7))',
-      boxSizing: 'border-box'
-    }}>
+    <div className="library-page-wrapper">
       {/* Visually Hidden h1 */}
       <h1 className="visually-hidden" style={{
         position: 'absolute',
@@ -346,10 +369,12 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
           series={currentSelectedSeries}
           onBack={handleBackFromSeries}
           onPlayEpisode={(epVideo) => onPlayVideo(epVideo)}
+          onSelectMedia={onSelectMedia}
+          tmdbApiKey={tmdbApiKey}
         />
       ) : (
         /* Normal Library Browser */
-        <div style={{ width: '100%', maxWidth: 'var(--page-max-width, 1400px)', margin: '0 auto', display: 'flex', flexDirection: 'column' }}>
+        <div className="library-content-container">
           {/* Sticky Toolbar */}
           <LibraryToolbar
             activeTab={activeTab}
@@ -393,7 +418,7 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
                     No movies yet
                   </h3>
                   <p style={{ margin: '6px 0 0 0', fontSize: '0.9rem', color: 'var(--text-2)' }}>
-                    Files you play show up here.
+                    Add some from Select Media.
                   </p>
                 </div>
                 {onNavigateToSelectMedia && (
@@ -402,17 +427,17 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
                     onClick={onNavigateToSelectMedia}
                     style={{
                       marginTop: '0.5rem',
-                      background: 'var(--surface-3)',
-                      color: 'var(--text-1)',
-                      border: '1px solid var(--control-border)',
-                      borderRadius: 'var(--radius-sm)',
-                      padding: '8px 18px',
+                      background: 'var(--ac, var(--accent))',
+                      color: 'var(--on, #fff)',
+                      border: 'none',
+                      borderRadius: '12px',
+                      padding: '10px 20px',
                       fontSize: '0.9rem',
                       fontWeight: 600,
                       cursor: 'pointer'
                     }}
                   >
-                    Select media
+                    Add some from Select Media
                   </button>
                 )}
               </div>
@@ -459,6 +484,7 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
               /* Movies Grid */
               <div
                 ref={gridContainerRef}
+                className="library-grid-container"
                 style={{
                   display: 'grid',
                   gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))',
@@ -565,6 +591,7 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
               /* Series Grid */
               <div
                 ref={gridContainerRef}
+                className="library-grid-container"
                 style={{
                   display: 'grid',
                   gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))',
@@ -579,9 +606,7 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
                     item={series}
                     tabIndex={focusedIndex === idx ? 0 : -1}
                     onKeyDown={(e) => handleGridKeyDown(e, idx)}
-                    onPlay={() => {
-                      if (series.primaryEpisode) onPlayVideo(series.primaryEpisode);
-                    }}
+                    onPlay={() => handlePlaySeries(series)}
                     onOpenSeries={() => handleOpenSeries(series)}
                     onToggleWatched={() => {}}
                     onRename={() => setRenameTarget({ id: series.id, currentTitle: series.displayTitle })}
@@ -603,9 +628,7 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
                     item={series}
                     tabIndex={focusedIndex === idx ? 0 : -1}
                     onKeyDown={(e) => handleGridKeyDown(e, idx)}
-                    onPlay={() => {
-                      if (series.primaryEpisode) onPlayVideo(series.primaryEpisode);
-                    }}
+                    onPlay={() => handlePlaySeries(series)}
                     onOpenSeries={() => handleOpenSeries(series)}
                     onToggleWatched={() => {}}
                     onRename={() => setRenameTarget({ id: series.id, currentTitle: series.displayTitle })}

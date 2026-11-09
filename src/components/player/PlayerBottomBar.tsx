@@ -50,6 +50,9 @@ export interface PlayerBottomBarProps {
 
   // System Time for Clock
   systemTime: Date;
+  showSubtitleControl?: boolean;
+  showAudioControl?: boolean;
+  showBookmarksControl?: boolean;
 }
 
 export const PlayerBottomBar: React.FC<PlayerBottomBarProps> = ({
@@ -79,6 +82,9 @@ export const PlayerBottomBar: React.FC<PlayerBottomBarProps> = ({
   setShowBookmarksPopover,
   bookmarkPanelContent,
   systemTime,
+  showSubtitleControl = true,
+  showAudioControl = true,
+  showBookmarksControl = true,
 }) => {
   const [showSpeedMenu, setShowSpeedMenu] = useState(false);
   const audioSubTimeoutRef = useRef<any>(null);
@@ -238,6 +244,7 @@ export const PlayerBottomBar: React.FC<PlayerBottomBarProps> = ({
         {/* Center Group: Audio & Subtitles + Bookmarks */}
         <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
           {/* Audio & Subtitles Popover Trigger */}
+          {(showSubtitleControl !== false || showAudioControl !== false) && (
           <div
             className="popover-wrapper"
             style={{ position: 'relative' }}
@@ -276,8 +283,10 @@ export const PlayerBottomBar: React.FC<PlayerBottomBarProps> = ({
 
             {showAudioSubMenu && audioSubPopoverContent}
           </div>
+          )}
 
           {/* Bookmarks Popover Trigger */}
+          {showBookmarksControl !== false && (
           <div
             className="popover-wrapper"
             style={{ position: 'relative' }}
@@ -316,6 +325,7 @@ export const PlayerBottomBar: React.FC<PlayerBottomBarProps> = ({
 
             {showBookmarksPopover && bookmarkPanelContent}
           </div>
+          )}
         </div>
 
         {/* Right Group: Speed, PiP, Fullscreen */}

@@ -1,0 +1,26 @@
+/* Toast.css - Bottom 90px floating status toast */
+.valor-toast {
+  position: fixed;
+  bottom: 90px;
+  left: 50%;
+  transform: translateX(-50%) translateY(12px);
+  background: rgba(20, 26, 37, 0.94);
+  color: var(--tx, #f1f3f8);
+  border: 1px solid var(--ln, #232b3a);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  padding: 8px 18px;
+  border-radius: 20px;
+  font-size: 13px;
+  font-weight: 600;
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.45);
+  z-index: 3000;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.18s ease-out, transform 0.18s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.valor-toast-in {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+}

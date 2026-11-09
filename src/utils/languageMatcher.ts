@@ -119,7 +119,7 @@ export function getPreferredAudioStreamIndex(
   targetLang: string = 'ENG'
 ): number | null {
   const audioStreams = streams.filter(s => s.type === 'audio');
-  if (audioStreams.length === 0) return null;
+  if (audioStreams.length < 2) return null;
 
   if (targetLang !== 'Original') {
     const matched = findPreferredStream(audioStreams, targetLang, 'audio');

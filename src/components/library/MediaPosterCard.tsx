@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Play, Check, MoreVertical, Star, Edit3, Trash2, CheckCircle2, Circle } from 'lucide-react';
 import type { BaseMediaViewModel, SeriesViewModel } from '../../utils/libraryViewModel';
+import { isSeriesDropped } from '../../utils/seriesDropState';
 
 interface MediaPosterCardProps {
   item: BaseMediaViewModel | SeriesViewModel;
@@ -189,6 +190,27 @@ export const MediaPosterCard: React.FC<MediaPosterCardProps> = ({
             </div>
           )}
 
+          {/* Dropped Badge */}
+          {isSeries && seriesItem && (isSeriesDropped(seriesItem.seriesTitle) || isSeriesDropped(item.displayTitle)) && (
+            <div
+              style={{
+                position: 'absolute',
+                top: '8px',
+                right: '8px',
+                background: '#f59e0b',
+                color: '#000',
+                fontSize: '10px',
+                fontWeight: 800,
+                padding: '2px 6px',
+                borderRadius: '4px',
+                letterSpacing: '0.5px',
+                zIndex: 3
+              }}
+            >
+              DROPPED
+            </div>
+          )}
+
           {/* Top-Right: Watched Circle Check Badge */}
           {item.status === 'watched' && (
             <div
@@ -324,11 +346,15 @@ export const MediaPosterCard: React.FC<MediaPosterCardProps> = ({
             }}
           >
             {isSeries && seriesItem ? (
-              seriesItem.stateLine && (
+              (isSeriesDropped(seriesItem.seriesTitle) || isSeriesDropped(item.displayTitle)) ? (
+                <span style={{ color: '#f59e0b', fontWeight: 600 }}>
+                  Dropped
+                </span>
+              ) : seriesItem.stateLine ? (
                 <span style={{ color: seriesItem.status === 'in-progress' ? 'var(--accent)' : 'var(--text-2)' }}>
                   {seriesItem.stateLine}
                 </span>
-              )
+              ) : null
             ) : item.status === 'in-progress' ? (
               <span style={{ color: 'var(--accent)', fontWeight: 500 }}>
                 {item.resumeLabel}

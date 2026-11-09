@@ -1,11 +1,12 @@
 import React from 'react';
-import { Home, History, Play, Settings } from 'lucide-react';
+import { Home, History, Film, Play } from 'lucide-react';
+import './MobileBottomNav.css';
 
 interface MobileBottomNavProps {
   activeTab: string;
   setActiveTab: (tab: 'home' | 'history' | 'calendar' | 'library' | 'settings' | 'online' | 'vlr' | 'companion') => void;
-  setSelectedActor: (actor: any) => void;
-  setSelectedDetailsMedia: (media: any) => void;
+  setSelectedActor?: (actor: any) => void;
+  setSelectedDetailsMedia?: (media: any) => void;
 }
 
 export const MobileBottomNav: React.FC<MobileBottomNavProps> = ({
@@ -15,48 +16,37 @@ export const MobileBottomNav: React.FC<MobileBottomNavProps> = ({
   setSelectedDetailsMedia,
 }) => {
   const navigateTo = (tab: 'home' | 'history' | 'calendar' | 'library' | 'settings' | 'online' | 'vlr' | 'companion') => {
-    setSelectedActor(null);
-    setSelectedDetailsMedia(null);
+    if (setSelectedActor) setSelectedActor(null);
+    if (setSelectedDetailsMedia) setSelectedDetailsMedia(null);
     setActiveTab(tab);
   };
 
+  const navItems = [
+    { id: 'home' as const, label: 'Select Media', icon: <Home size={22} /> },
+    { id: 'history' as const, label: 'History', icon: <History size={22} /> },
+    { id: 'library' as const, label: 'Library', icon: <Film size={22} /> },
+    { id: 'online' as const, label: 'Stream', icon: <Play size={22} /> },
+  ];
+
   return (
-    <div className="mobile-bottom-nav">
-      <button 
-        className={`mobile-bottom-nav-item ${activeTab === 'home' ? 'active' : ''}`}
-        onClick={() => navigateTo('home')}
-      >
-        <Home size={20} />
-        <span>Home</span>
-      </button>
-      <button 
-        className={`mobile-bottom-nav-item ${activeTab === 'history' ? 'active' : ''}`}
-        onClick={() => navigateTo('history')}
-      >
-        <History size={20} />
-        <span>History</span>
-      </button>
-      <button 
-        className={`mobile-bottom-nav-item ${activeTab === 'online' ? 'active' : ''}`}
-        onClick={() => navigateTo('online')}
-      >
-        <Play size={20} />
-        <span>Online</span>
-      </button>
-      <button 
-        className={`mobile-bottom-nav-item ${activeTab === 'library' ? 'active' : ''}`}
-        onClick={() => navigateTo('library')}
-      >
-        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ display: 'block', margin: '0 auto 2px auto' }}><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>
-        <span>Library</span>
-      </button>
-      <button 
-        className={`mobile-bottom-nav-item ${activeTab === 'settings' ? 'active' : ''}`}
-        onClick={() => navigateTo('settings')}
-      >
-        <Settings size={20} />
-        <span>Settings</span>
-      </button>
-    </div>
+    <nav className="mobile-bottom-nav" aria-label="Mobile Navigation">
+      {navItems.map((item) => {
+        const isActive = activeTab === item.id;
+        return (
+          <button
+            key={item.id}
+            type="button"
+            className={`mbn-item ${isActive ? 'active' : ''}`}
+            onClick={() => navigateTo(item.id)}
+            aria-current={isActive ? 'page' : undefined}
+          >
+            <div className="mbn-icon">{item.icon}</div>
+            <span className="mbn-label">{item.label}</span>
+          </button>
+        );
+      })}
+    </nav>
   );
 };
+
+export default MobileBottomNav;

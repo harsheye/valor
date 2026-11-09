@@ -25,13 +25,14 @@ import { HttpByteSource, CachedByteSource } from '../services/remote/remoteByteS
 import { FileByteSource } from '../services/local/localByteSource';
 import { extractLocalAudioSegment, extractLocalSubtitleSegment } from '../services/local/ffmpegLocal';
 import { extractRemoteAudioSegment, extractRemoteSubtitleSegment, extractHlsAudioSegment } from '../services/remote/ffmpegRemote';
-import { FFmpegManager } from '../services/ffmpeg/FFmpegManager';
+import { FFmpegManager, preloadFFmpegCore } from '../services/ffmpeg/FFmpegManager';
 import { DemuxManager } from '../services/ffmpeg/DemuxManager';
 import { PlaybackController } from '../services/playback/PlaybackController';
 import { logger } from '../utils/logger';
 import { saveMediaTimestamp, getMediaTimestamp } from '../utils/mediaTimestampStorage';
 import { isWasmSupported } from '../utils/wasmCheck';
 import { sidecarService } from '../services/remote/sidecarService';
+import { createRemoteSession } from '../services/remote/remoteSessionClient';
 import { LocalServicePage } from '../pages/LocalServicePage';
 import { findPreferredStream, getSavedMediaPreferences, getPreferredAudioStreamIndex, getLanguageDisplayLabel } from '../utils/languageMatcher';
 
@@ -95,7 +96,9 @@ export const extractTitleFromUrl = (url?: string): string => {
   } catch {}
   return '';
 };
-import { PlayerLoader } from './player/PlayerLoader';
+import { LoadingSpinner, BufferingOverlay } from './LoadingSpinner';
+import { VlcContextMenu } from './player/VlcContextMenu';
+import { MobilePlayerOverlay } from './player/MobilePlayerOverlay';
 import { PlayerIsland, usePlayerIsland, type IslandAudioTrack, type IslandSubtitleTrack } from './player';
 import { RadialMenu } from './RadialMenu';
 import { ConsoleOverlay } from './ConsoleOverlay';
@@ -103,7 +106,7 @@ import { SpeedPopover } from './SpeedPopover';
 import { EsportsLiveOverlay } from './EsportsLiveOverlay';
 import { trimSubtitleName, saveEmbedSubtitles, getEmbedSubtitlesSync, getEmbedSubtitlesAsync } from '../utils/embedSubtitleStorage';
 
-interface VideoPlayerProps {
+export interface VideoPlayerProps {
   video: VideoItem;
   customLoaderUrl?: string;
   customLoaderType?: 'default' | 'image' | 'video' | 'gif';
@@ -146,6 +149,14 @@ interface VideoPlayerProps {
   onReassociate?: (videoId: string) => void;
   onSwitchMode?: (mode: 'simple' | 'server') => void;
   isCinema?: boolean;
+  isEmbed?: boolean;
+  showCloseButton?: boolean;
+  showSubtitleControl?: boolean;
+  showBookmarksControl?: boolean;
+  showAudioControl?: boolean;
+  audioOnly?: boolean;
+  subFileOnly?: boolean;
+  allowSubUpload?: boolean;
 }
 
 import { remoteProbeCache, inFlightRemoteProbes } from '../utils/remoteProbeCache';
@@ -158,7 +169,7 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
   onUpdateVideo, 
   customLoaderUrl,
   customLoaderType = 'default',
-  spinnerPreset = 'netflix',
+  spinnerPreset = 'fire-circle',
   userId = 'local',
   profileName = 'Local Profile',
   hideUIOverlays: propHideUIOverlays = false,
@@ -206,6 +217,19 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
   currentVideoItemRef.current = video;
   const onUpdateVideoRef = useRef(onUpdateVideo);
   onUpdateVideoRef.current = onUpdateVideo;
+
+  const [switchToast, setSwitchToast] = useState<{ text: string; visible: boolean }>({ text: '', visible: false });
+  const switchToastTimeoutRef = useRef<any>(null);
+
+  const triggerSwitchToast = useCallback((text: string) => {
+    if (switchToastTimeoutRef.current) clearTimeout(switchToastTimeoutRef.current);
+    setSwitchToast({ text, visible: true });
+    switchToastTimeoutRef.current = setTimeout(() => {
+      setSwitchToast(prev => ({ ...prev, visible: false }));
+    }, toastDuration * 1000);
+  }, [toastDuration]);
+
+
   const probedUrlRef = useRef<string | null>(null);
 
   // In RemoteServerPlayer (Movies & TV), always enable Audio & Sub popover and Bookmarks tab
@@ -1652,6 +1676,27 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
   const [showControls, setShowControls] = useState(true);
   const [showConsoleOverlay, setShowConsoleOverlay] = useState(false);
   const [isLocked, setIsLocked] = useState(false);
+  const [isMobile, setIsMobile] = useState(() => typeof window !== 'undefined' ? window.innerWidth <= 768 : false);
+  useEffect(() => {
+    const handleResize = () => setIsMobile(window.innerWidth <= 768);
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
+  const [aspectRatio, setAspectRatio] = useState<string>('default');
+  const [timelineOnlyMode, setTimelineOnlyMode] = useState(false);
+
+  const [vlcContextMenuState, setVlcContextMenuState] = useState<{ visible: boolean; x: number; y: number }>({ visible: false, x: 0, y: 0 });
+  const vlcContextMenuClosedTimestampRef = useRef<number>(0);
+  const prevVlcVisibleRef = useRef<boolean>(false);
+  useEffect(() => {
+    if (prevVlcVisibleRef.current && !vlcContextMenuState.visible) {
+      vlcContextMenuClosedTimestampRef.current = Date.now();
+    }
+    prevVlcVisibleRef.current = vlcContextMenuState.visible;
+  }, [vlcContextMenuState.visible]);
+
+
   const [playbackRate, setPlaybackRate] = useState(1.0);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [isPseudoFullscreen, setIsPseudoFullscreen] = useState(false);
@@ -1708,6 +1753,8 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
       }
       const targetTime = scrubTimeRef.current;
       if (targetTime !== null && targetTime !== undefined && videoRef.current) {
+        setIsSeeking(true);
+        setIsBuffering(true);
         debouncedSeekTimeoutRef.current = setTimeout(() => {
           if (videoRef.current) {
             videoRef.current.currentTime = targetTime;
@@ -1760,10 +1807,11 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
   const [activeAudioStreamIndex, setActiveAudioStreamIndex] = useState<number | null>(() => {
     const prefs = getSavedMediaPreferences();
     const streams = video.streams || [];
+    const audioStreams = streams.filter((s: any) => s.type === 'audio');
+    if (audioStreams.length < 2) return null;
     const preferredIdx = getPreferredAudioStreamIndex(streams, prefs.defaultAudio);
     if (preferredIdx !== null) return preferredIdx;
-    const existingAudio = streams.find((s: any) => s.type === 'audio');
-    return existingAudio !== undefined ? existingAudio.index : 0;
+    return audioStreams[0].index;
   });
   const [activeSubStreamIndex, setActiveSubStreamIndex] = useState<number | null>(null);
   const [playbackError, setPlaybackError] = useState<string | null>(null);
@@ -1820,6 +1868,19 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
     const cached = remoteProbeCache.get(targetUrl);
     if (cached) {
       const allStreams = cached.allStreams || [];
+      const cachedAudioStreams = allStreams.filter((s: any) => s.type === 'audio');
+      if (cachedAudioStreams.length < 2) {
+        setActiveAudioStreamIndex(null);
+        setSelectedAudioTrack(null);
+        if (playbackControllerRef.current) {
+          playbackControllerRef.current.switchAudioTrack(null);
+        }
+        if (videoRef.current) {
+          videoRef.current.muted = isMuted;
+          videoRef.current.volume = volume;
+        }
+        logger.player(`Cached probe found ${cachedAudioStreams.length} audio track(s) (< 2). Audio parser suspended; using native HTML5 audio.`);
+      }
       if (cached.duration && !durationRef.current) {
         setDuration(cached.duration);
       }
@@ -1879,16 +1940,29 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
             setDuration(probeData.duration);
           }
 
-          // Auto-select preferred audio stream for server packet rendering & forwarding
-          const prefs = getSavedMediaPreferences();
-          const preferredAudioStream = probeData.audioStreams?.length
-            ? (findPreferredStream(probeData.audioStreams, prefs.defaultAudio, 'audio') || probeData.audioStreams[0])
-            : undefined;
-          if (preferredAudioStream !== undefined && (activeAudioStreamIndex === null || activeAudioStreamIndex === undefined || activeAudioStreamIndex === 0)) {
-            setActiveAudioStreamIndex(preferredAudioStream.index);
-            if (playbackControllerRef.current) {
-              playbackControllerRef.current.switchAudioTrack(preferredAudioStream.index);
+          // Auto-select preferred audio stream ONLY if media has 2 or more audio tracks.
+          // If fewer than 2 audio tracks (0 or 1), suspend/halt audio parser and use HTML5 audio natively.
+          const audioTracksCount = probeData.audioStreams?.length || 0;
+          if (audioTracksCount >= 2) {
+            const prefs = getSavedMediaPreferences();
+            const preferredAudioStream = findPreferredStream(probeData.audioStreams, prefs.defaultAudio, 'audio') || probeData.audioStreams[0];
+            if (preferredAudioStream !== undefined && (activeAudioStreamIndex === null || activeAudioStreamIndex === undefined || activeAudioStreamIndex === 0)) {
+              setActiveAudioStreamIndex(preferredAudioStream.index);
+              if (playbackControllerRef.current) {
+                playbackControllerRef.current.switchAudioTrack(preferredAudioStream.index);
+              }
             }
+          } else {
+            setActiveAudioStreamIndex(null);
+            setSelectedAudioTrack(null);
+            if (playbackControllerRef.current) {
+              playbackControllerRef.current.switchAudioTrack(null);
+            }
+            if (videoRef.current) {
+              videoRef.current.muted = isMuted;
+              videoRef.current.volume = volume;
+            }
+            logger.player(`Remote probe found ${audioTracksCount} audio track(s) (< 2). Audio parser suspended; using native HTML5 audio.`);
           }
 
           const v = currentVideoItemRef.current;
@@ -2054,10 +2128,38 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
 
   // Buffering States
   const [isBuffering, setIsBuffering] = useState(true);
+  const [isSeeking, setIsSeeking] = useState(false);
   const [bufferedPercent, setBufferedPercent] = useState(0);
 
   const videoRef = useRef<HTMLVideoElement>(null);
+
+  const handleTakeSnapshot = useCallback(() => {
+    if (videoRef.current) {
+      try {
+        const v = videoRef.current;
+        const canvas = document.createElement('canvas');
+        canvas.width = v.videoWidth || v.clientWidth;
+        canvas.height = v.videoHeight || v.clientHeight;
+        const ctx = canvas.getContext('2d');
+        if (ctx) {
+          ctx.drawImage(v, 0, 0, canvas.width, canvas.height);
+          const dataUrl = canvas.toDataURL('image/png');
+          const link = document.createElement('a');
+          const videoTitle = video.title || 'video';
+          const sanitizedTitle = videoTitle.replace(/[^a-z0-9]/gi, '_').toLowerCase();
+          link.download = `${sanitizedTitle}_snapshot_${Math.floor(v.currentTime)}s.png`;
+          link.href = dataUrl;
+          link.click();
+          triggerSwitchToast('Snapshot Captured');
+        }
+      } catch (e) {
+        console.error('Snapshot failed:', e);
+      }
+    }
+  }, [video.title, triggerSwitchToast]);
+
   const hasSeekedRef = useRef(false);
+  const hasFallbackToSessionRef = useRef(false);
   const wasPausedByFocusLossRef = useRef(false);
   const previewVideoRef = useRef<HTMLVideoElement>(null);
   const [playPauseFeedback, setPlayPauseFeedback] = useState<{ action: 'play' | 'pause'; id: number } | null>(null);
@@ -2084,16 +2186,6 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
     lastTime: number;
   }>({ direction: 'forward', totalSeconds: 0, count: 0, lastTime: 0 });
 
-  const [switchToast, setSwitchToast] = useState<{ text: string; visible: boolean }>({ text: '', visible: false });
-  const switchToastTimeoutRef = useRef<any>(null);
-
-  const triggerSwitchToast = (text: string) => {
-    if (switchToastTimeoutRef.current) clearTimeout(switchToastTimeoutRef.current);
-    setSwitchToast({ text, visible: true });
-    switchToastTimeoutRef.current = setTimeout(() => {
-      setSwitchToast(prev => ({ ...prev, visible: false }));
-    }, toastDuration * 1000);
-  };
   const audioRef = useRef<HTMLAudioElement>(null);
   const playbackControllerRef = useRef<PlaybackController | null>(null);
   const prevDestroyPromiseRef = useRef<Promise<void>>(Promise.resolve());
@@ -3045,6 +3137,33 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
       }
     }
 
+    // Fallback: If browser natively cannot play the video codec/container (error code 4),
+    // request an on-the-fly HLS remux/transcode session from the backend
+    if (err?.code === 4 && video.isRemote && !video.url.includes('/api/remote/session') && !hasFallbackToSessionRef.current) {
+      hasFallbackToSessionRef.current = true;
+      logger.player('[RemoteServerPlayer] Video error 4 (unsupported format/codec). Attempting backend HLS remux session fallback...');
+      triggerSwitchToast('Remuxing for browser compatibility...');
+      createRemoteSession(video.url).then(session => {
+        if (session && session.manifestUrl) {
+          logger.success('[RemoteServerPlayer] HLS fallback session created:', session.manifestUrl);
+          onUpdateVideoRef.current((prev: any) => ({
+            ...prev,
+            url: session.manifestUrl,
+            containerType: 'hls',
+            format: 'hls',
+            isHls: true
+          }));
+          setPlaybackError(null);
+        } else {
+          triggerError();
+        }
+      }).catch(fallbackErr => {
+        logger.warn('[RemoteServerPlayer] Backend session fallback failed:', fallbackErr);
+        triggerError();
+      });
+      return;
+    }
+
     const triggerError = (msg?: string) => {
       let message = msg || 'An unknown playback error occurred.';
       if (!msg) {
@@ -3350,6 +3469,8 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
     acc.lastTime = now;
 
     const targetTime = Math.max(0, videoRef.current.currentTime - seconds);
+    setIsSeeking(true);
+    setIsBuffering(true);
     island.notify({
       type: 'seek',
       delta: -seconds,
@@ -3393,6 +3514,8 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
     acc.lastTime = now;
 
     const targetTime = Math.min(duration, videoRef.current.currentTime + seconds);
+    setIsSeeking(true);
+    setIsBuffering(true);
     island.notify({
       type: 'seek',
       delta: seconds,
@@ -3447,6 +3570,8 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
     if (uiConfig.blockSeekingCompletely) return;
     resetPauseOverlayTimer();
     const seekTime = parseFloat(e.target.value);
+    setIsSeeking(true);
+    setIsBuffering(true);
     if (isScrubbingRef.current) {
       setScrubTime(seekTime);
       if (previewVideoRef.current) {
@@ -4258,6 +4383,27 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
 
   // PlaybackController lifecycle hook
   useEffect(() => {
+    if (typeof window === 'undefined') return;
+    let cancelled = false;
+    const preload = () => {
+      if (cancelled) return;
+      preloadFFmpegCore().catch((err) => {
+        logger.warn('[RemoteServerPlayer] Idle FFmpeg core preload failed:', err);
+      });
+    };
+    const idleId = typeof window.requestIdleCallback === 'function'
+      ? window.requestIdleCallback(preload, { timeout: 2500 })
+      : window.setTimeout(preload, 1200);
+    return () => {
+      cancelled = true;
+      if (typeof idleId === 'number') {
+        if (typeof window.cancelIdleCallback === 'function') window.cancelIdleCallback(idleId);
+        window.clearTimeout(idleId);
+      }
+    };
+  }, []);
+
+  useEffect(() => {
     // Remote streams are transcoded and proxied by backend; play directly without WASM FFmpeg overhead
     if (video.isRemote || video.type === 'url') {
       if (videoRef.current) {
@@ -4335,7 +4481,9 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
         });
 
         try {
-          await controller.initialize(videoRef.current, activeAudioStreamIndex);
+          const audioTracksCount = (video.streams || []).filter((s: any) => s.type === 'audio').length;
+          const targetAudioIndex = audioTracksCount >= 2 ? activeAudioStreamIndex : null;
+          await controller.initialize(videoRef.current, targetAudioIndex);
         } catch (err) {
           console.warn(`[LocalVideoPlayer] PlaybackController init failed:`, err);
           return;
@@ -4602,22 +4750,36 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
         const targetAudio = settings.defaultAudio || 'ENG';
         const targetSub = settings.defaultSub || 'ENG';
 
-        let audioSelected = false;
-        // Auto-select audio stream (for both local and remote)
-        if (targetAudio !== 'Original' && !selectedAudioTrack) {
-          const stream = findPreferredStream(audioStreams, targetAudio, 'audio');
-          if (stream) {
-            audioSelected = true;
-            logger.player(`Auto-selecting audio track: ${stream.language || stream.title}`);
-            handleSelectEmbeddedAudio(stream.index, stream.codec, stream.language, false, stream.title);
+        // Auto-select audio stream ONLY if media has 2 or more audio tracks
+        if (audioStreams.length >= 2) {
+          let audioSelected = false;
+          if (targetAudio !== 'Original' && !selectedAudioTrack) {
+            const stream = findPreferredStream(audioStreams, targetAudio, 'audio');
+            if (stream) {
+              audioSelected = true;
+              logger.player(`Auto-selecting audio track: ${stream.language || stream.title}`);
+              handleSelectEmbeddedAudio(stream.index, stream.codec, stream.language, false, stream.title);
+            }
           }
-        }
 
-        // Always auto-select the first audio track when available (for both local and remote) if no preferred track matched
-        if (!audioSelected && !selectedAudioTrack && audioStreams.length > 0) {
-          const firstAudio = audioStreams[0];
-          logger.player(`Auto-selecting first audio track: ${firstAudio.language || firstAudio.title || 'unknown'} (${firstAudio.codec})`);
-          handleSelectEmbeddedAudio(firstAudio.index, firstAudio.codec, firstAudio.language, false, firstAudio.title);
+          // Always auto-select the first audio track when available if no preferred track matched
+          if (!audioSelected && !selectedAudioTrack && audioStreams.length > 0) {
+            const firstAudio = audioStreams[0];
+            logger.player(`Auto-selecting first audio track: ${firstAudio.language || firstAudio.title || 'unknown'} (${firstAudio.codec})`);
+            handleSelectEmbeddedAudio(firstAudio.index, firstAudio.codec, firstAudio.language, false, firstAudio.title);
+          }
+        } else {
+          // Fewer than 2 audio tracks (< 2): halt/suspend audio parser, use HTML5 audio natively
+          setActiveAudioStreamIndex(null);
+          setSelectedAudioTrack(null);
+          if (playbackControllerRef.current) {
+            playbackControllerRef.current.switchAudioTrack(null);
+          }
+          if (videoRef.current) {
+            videoRef.current.muted = isMuted;
+            videoRef.current.volume = volume;
+          }
+          logger.player(`Media has ${audioStreams.length} audio track(s) (< 2). Audio parser suspended; using native HTML5 audio.`);
         }
 
         // Auto-select subtitle stream
@@ -4964,6 +5126,13 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
         if (!isScrubbing) setShowControls(false);
       }}
       onClick={() => {
+        if (vlcContextMenuState.visible || (Date.now() - vlcContextMenuClosedTimestampRef.current < 350)) {
+          if (vlcContextMenuState.visible) {
+            setVlcContextMenuState({ visible: false, x: 0, y: 0 });
+          }
+          return;
+        }
+
         if (showPauseMetadataOverlayRef.current) {
           showPauseMetadataOverlayRef.current = false;
           setShowPauseMetadataOverlay(false);
@@ -4976,11 +5145,7 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
       onContextMenu={(e) => {
         e.preventDefault();
         if (!hideUIOverlays) {
-          if (radialMenuState.visible) {
-            setRadialMenuState({ visible: false, x: 0, y: 0 });
-          } else {
-            setRadialMenuState({ visible: true, x: e.clientX, y: e.clientY });
-          }
+          setVlcContextMenuState(prev => prev.visible ? { visible: false, x: 0, y: 0 } : { visible: true, x: e.clientX, y: e.clientY });
         }
       }}
     >
@@ -5149,7 +5314,11 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
           controls={false}
           crossOrigin={video.playbackMode === 'advanced' ? 'anonymous' : undefined}
           className="main-video-element"
-          style={toneMappingMode !== 'off' ? { filter: getToneMappingCssFilter(toneMappingMode) } : undefined}
+          style={{
+            ...(toneMappingMode !== 'off' ? { filter: getToneMappingCssFilter(toneMappingMode) } : {}),
+            objectFit: aspectRatio === 'cover' ? 'cover' : (aspectRatio === '16:9' || aspectRatio === '4:3' ? 'fill' : 'contain'),
+            aspectRatio: aspectRatio === '16:9' ? '16/9' : (aspectRatio === '4:3' ? '4/3' : undefined)
+          }}
            onLoadedMetadata={() => {
             if (videoRef.current) {
               const videoDuration = videoRef.current.duration;
@@ -5203,8 +5372,10 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
             isPlayingRef.current = true;
           }}
           onPause={() => {
-            // If focus loss auto-pause is disabled and this pause was triggered by browser 
-            // background tab throttling, ignore it — don't update UI state.
+            // If the video is actively seeking to a sudden timestamp, keep the buffering animation active
+            if (videoRef.current?.seeking) {
+              return;
+            }
             if (!pauseOnFocusChangeRef.current && document.visibilityState === 'hidden') {
               return;
             }
@@ -5212,6 +5383,7 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
             isPlayingRef.current = false;
             isWaitingForSyncRef.current = false;
             setIsBuffering(false);
+            setIsSeeking(false);
             if (playbackControllerRef.current) {
               playbackControllerRef.current.pause();
             }
@@ -5224,30 +5396,35 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
             }), false, video.id);
           }}
           onWaiting={() => {
-            if (isPlayingRef.current) {
-              isWaitingForSyncRef.current = true;
-              setIsBuffering(true);
-            }
+            isWaitingForSyncRef.current = true;
+            setIsBuffering(true);
             playbackControllerRef.current?.pauseForBuffering();
           }}
           onPlaying={() => {
             isWaitingForSyncRef.current = false;
+            setIsSeeking(false);
             setIsBuffering(false);
             setIsPlaying(true);
             isPlayingRef.current = true;
           }}
           onCanPlay={() => {
+            setIsSeeking(false);
             setIsBuffering(false);
             if (isPlayingRef.current && videoRef.current && videoRef.current.paused) {
               videoRef.current.play().catch(() => {});
             }
           }}
-          onSeeked={handleVideoSeeked}
-          onSeeking={() => {
-            if (isPlayingRef.current) {
-              isWaitingForSyncRef.current = true;
-              setIsBuffering(true);
+          onSeeked={async () => {
+            await handleVideoSeeked();
+            if (videoRef.current && videoRef.current.readyState >= 2) {
+              setIsSeeking(false);
+              setIsBuffering(false);
             }
+          }}
+          onSeeking={() => {
+            setIsSeeking(true);
+            setIsBuffering(true);
+            isWaitingForSyncRef.current = true;
           }}
           onError={handleVideoError}
           onEnded={() => {
@@ -5383,11 +5560,73 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
         </div>
       )}
 
-      {/* Shared PlayerLoader (Logo loader: active only when playing and buffering, never when paused) */}
-      <PlayerLoader 
-        visible={isBuffering && isPlaying}
-        variant="buffering"
+      {/* Buffering fire ring loader */}
+      <BufferingOverlay 
+        isBuffering={isBuffering || isSeeking}
+        customLoaderUrl={customLoaderUrl} 
+        customLoaderType={customLoaderType} 
+        preset={(spinnerPreset || 'fire-circle') as any} 
       />
+
+      {/* Mobile Player Overlay (<= 768px) */}
+      {isMobile && !isLocked && (
+        <MobilePlayerOverlay
+          title={video.title || video.fileName || 'Valor Player'}
+          currentTime={currentTime}
+          duration={duration || effectiveDuration || 0}
+          isPlaying={isPlaying}
+          isMuted={isMuted}
+          playbackRate={playbackRate}
+          isFullscreen={isFullscreen || isPseudoFullscreen}
+          bookmarks={bookmarks}
+          upNextVideos={videos}
+          metadata={{
+            resolution: (video as any).resolution || '1080p',
+            codec: (video as any).codec || 'H.264',
+            audioChannels: 'Stereo 2.0'
+          }}
+          onBack={handleExit}
+          onTogglePlay={togglePlay}
+          onRewind10={() => handleRewind(10)}
+          onForward10={() => handleForward(10)}
+          onToggleMute={() => {
+            setIsMuted(prev => !prev);
+          }}
+          onAddBookmark={(time) => {
+            const newBm: Bookmark = {
+              id: `bm-${Date.now()}`,
+              time: Math.round(time),
+              label: 'Bookmark',
+              title: `Bookmark at ${formatTime(time)}`,
+              createdAt: new Date().toISOString()
+            };
+            setBookmarks(prev => [...prev, newBm]);
+            onUpdateVideo((prev: any) => ({ ...prev, bookmarks: [...(prev.bookmarks || []), newBm] }), false);
+          }}
+          onDeleteBookmark={(id) => {
+            setBookmarks(prev => prev.filter(b => b.id !== id));
+            onUpdateVideo((prev: any) => ({ ...prev, bookmarks: (prev.bookmarks || []).filter((b: any) => b.id !== id) }), false);
+          }}
+          onSeekToBookmark={(t) => {
+            if (videoRef.current) videoRef.current.currentTime = t;
+            setCurrentTime(t);
+          }}
+          onOpenAudioSubMenu={() => setShowAudioSubMenu(true)}
+          onChangeSpeed={(s) => setPlaybackRate(s)}
+          onToggleFullscreen={toggleFullscreen}
+          onSeek={(t) => {
+            if (videoRef.current) videoRef.current.currentTime = t;
+            setCurrentTime(t);
+          }}
+          onSelectVideo={(v) => {
+            if (videoRef.current && typeof videoRef.current.currentTime === 'number') {
+              saveMediaTimestamp(video, videoRef.current.currentTime, duration || effectiveDuration || 0, video.title);
+            }
+            onUpdateVideo(v);
+          }}
+          formatTime={formatTime}
+        />
+      )}
 
       {/* Top Header Overlay */}
       {!isLocked && (!hideUIOverlays || hoveredSetting === 'showUIOverlays') && (
@@ -8081,7 +8320,8 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
           display: flex;
           align-items: center;
           justify-content: center;
-          background: #000000;
+          background: transparent !important;
+          pointer-events: none !important;
         }
 
         /* Non-blocking Toast notification */
@@ -8740,6 +8980,110 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
             <LocalServicePage onClose={() => setShowCompanionModal(false)} />
           </div>
         </div>
+      )}
+      {vlcContextMenuState.visible && (
+        <VlcContextMenu
+          x={vlcContextMenuState.x}
+          y={vlcContextMenuState.y}
+          onClose={() => setVlcContextMenuState({ visible: false, x: 0, y: 0 })}
+          isPlaying={isPlaying}
+          onPlayPause={togglePlay}
+          onStop={() => {
+            if (videoRef.current) {
+              videoRef.current.pause();
+              videoRef.current.currentTime = 0;
+              setCurrentTime(0);
+            }
+          }}
+          onPrevious={handleRewind}
+          onNext={handleForward}
+          onJumpForward={handleForward}
+          onJumpBackward={handleRewind}
+          playbackRate={playbackRate}
+          onSetPlaybackRate={setPlaybackRate}
+          audioStreams={audioStreams}
+          audioTracks={audioTracks}
+          selectedAudioTrack={selectedAudioTrack}
+          onSelectAudioStream={handleSelectEmbeddedAudio}
+          onSelectAudioTrack={setSelectedAudioTrack}
+          volume={volume}
+          isMuted={isMuted}
+          onIncreaseVolume={() => {
+            setIsMuted(false);
+            setVolume(prev => {
+              const nextVol = Math.min(1.0, prev + 0.05);
+              triggerVolumeToast(nextVol, false, 100);
+              return nextVol;
+            });
+          }}
+          onDecreaseVolume={() => {
+            setIsMuted(false);
+            setVolume(prev => {
+              const nextVol = Math.max(0.0, prev - 0.05);
+              triggerVolumeToast(nextVol, false, 100);
+              return nextVol;
+            });
+          }}
+          onToggleMute={() => {
+            setIsMuted(prev => {
+              const nextMuted = !prev;
+              triggerVolumeToast(volume, nextMuted);
+              return nextMuted;
+            });
+          }}
+          isFullscreen={isFullscreen || isPseudoFullscreen}
+          onToggleFullscreen={toggleFullscreen}
+          onTakeSnapshot={handleTakeSnapshot}
+          subtitleStreams={subtitleStreams}
+          subtitleTracks={subtitleTracks}
+          selectedSubTrack={selectedSubTrack}
+          onSelectSubStream={handleSelectEmbeddedSubtitle}
+          onSelectSubTrack={setSelectedSubTrack}
+          onAddSubtitleFile={() => customSubInputRef.current?.click()}
+          onOpenSubtitleSettings={() => {
+            onUpdateSubSettings({ ...subSettings, showStyleColumn: true });
+            setShowAudioSubMenu(true);
+          }}
+          onOpenSubtitleTranscript={() => {
+            onUpdateSubSettings({ ...subSettings, showViewColumn: true });
+            setShowAudioSubMenu(true);
+          }}
+          isTimelineOnly={timelineOnlyMode}
+          onToggleTimelineOnly={() => {
+            setTimelineOnlyMode(prev => {
+              const next = !prev;
+              triggerSwitchToast(next ? 'Timeline Only (VLC Mode)' : 'Standard Controls');
+              return next;
+            });
+          }}
+          aspectRatio={aspectRatio}
+          onSetAspectRatio={(ratio) => {
+            setAspectRatio(ratio);
+            triggerSwitchToast(`Aspect Ratio: ${ratio === 'default' ? 'Default Fit' : ratio.toUpperCase()}`);
+          }}
+          onOpenSettings={() => setShowSettingsPanel(true)}
+          onOpenAudioSubMenu={() => setShowAudioSubMenu(true)}
+          bookmarks={bookmarks}
+          onSeekToBookmark={(t) => {
+            if (videoRef.current) videoRef.current.currentTime = t;
+            setCurrentTime(t);
+          }}
+          onAddBookmark={() => {
+            if (videoRef.current) {
+              setEditingBookmark({
+                id: '',
+                time: Math.round(videoRef.current.currentTime),
+                title: '',
+                label: '',
+                category: 'Default',
+                description: '',
+                createdAt: '',
+                updatedAt: ''
+              });
+              setShowAddDialog(true);
+            }
+          }}
+        />
       )}
     </div>
   );

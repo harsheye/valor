@@ -6,12 +6,12 @@ export type ContainerType = 'mp4' | 'mkv' | 'ts' | 'hls' | 'unknown';
 
 export async function probeContainer(source: ByteSource): Promise<ContainerType> {
   try {
-    const bytes = await source.read(0, 15);
+    const bytes = await source.read(0, Math.min(256, (await source.getSize().catch(() => 256)) - 1));
     if (bytes.length < 4) return 'unknown';
 
-    // HLS check: begins with "#EXTM3U"
-    const text = new TextDecoder('utf-8').decode(bytes.subarray(0, 7));
-    if (text.startsWith('#EXTM3U')) {
+    // HLS check: begins with "#EXTM3U" (accounting for optional UTF-8 BOM or whitespace)
+    const text = new TextDecoder('utf-8').decode(bytes.subarray(0, Math.min(bytes.length, 32)));
+    if (text.trim().startsWith('#EXTM3U') || text.includes('#EXT-X-')) {
       return 'hls';
     }
 
@@ -20,19 +20,22 @@ export async function probeContainer(source: ByteSource): Promise<ContainerType>
       return 'mkv';
     }
 
-    // MP4 check: ftyp box at byte 4-7
-    const type = new TextDecoder('utf-8').decode(bytes.subarray(4, 8));
-    if (type === 'ftyp') {
-      return 'mp4';
+    // MP4 check: standard box at byte 4-7 (ftyp, moov, mdat, free, wide)
+    if (bytes.length >= 8) {
+      const type = new TextDecoder('utf-8').decode(bytes.subarray(4, 8)).toLowerCase();
+      if (['ftyp', 'moov', 'mdat', 'free', 'wide', 'styp'].includes(type)) {
+        return 'mp4';
+      }
     }
 
-    // TS check: sync byte 0x47
+    // MPEG-TS check: 0x47 sync byte at index 0 and 188
     if (bytes[0] === 0x47) {
-      return 'ts';
+      if (bytes.length < 189 || bytes[188] === 0x47) {
+        return 'ts';
+      }
     }
   } catch (e) {
     console.error('Failed to probe magic bytes:', e);
-    throw e;
   }
   return 'unknown';
 }
@@ -94,7 +97,7 @@ export async function parseMp4(source: ByteSource): Promise<{ duration: number; 
   let duration = 0;
 
   while (offset < size) {
-    const headerBytes = await source.read(offset, offset + 7);
+    const headerBytes = await source.read(offset, Math.min(offset + 7, size - 1));
     if (headerBytes.length < 8) break;
 
     const reader = new DataViewReader(headerBytes);
@@ -103,7 +106,7 @@ export async function parseMp4(source: ByteSource): Promise<{ duration: number; 
     let headerSize = 8;
 
     if (boxSize === 1) {
-      const sizeBytes = await source.read(offset + 8, offset + 15);
+      const sizeBytes = await source.read(offset + 8, Math.min(offset + 15, size - 1));
       const sizeReader = new DataViewReader(sizeBytes);
       boxSize = sizeReader.readUint64();
       headerSize = 16;
@@ -118,10 +121,47 @@ export async function parseMp4(source: ByteSource): Promise<{ duration: number; 
     }
 
     if (boxSize === 0) {
+      // Box extends to EOF (typical of non-faststart mdat)
       break;
     }
 
+    if (boxSize <= 0) break;
     offset += boxSize;
+  }
+
+  // Non-faststart MP4 fallback: If moov was not found near the beginning, search the tail of the file
+  if (tracks.length === 0 && size > 16) {
+    try {
+      const tailLen = Math.min(size, 4 * 1024 * 1024);
+      const tailStart = size - tailLen;
+      const tailBytes = await source.read(tailStart, size - 1);
+      for (let i = 0; i <= tailBytes.length - 8; i++) {
+        if (tailBytes[i + 4] === 0x6d && tailBytes[i + 5] === 0x6f && tailBytes[i + 6] === 0x6f && tailBytes[i + 7] === 0x76) {
+          const view = new DataView(tailBytes.buffer, tailBytes.byteOffset + i, 8);
+          let boxSize = view.getUint32(0, false);
+          let headerSize = 8;
+          if (boxSize === 1 && i + 16 <= tailBytes.length) {
+            const high = view.getUint32(8, false);
+            const low = view.getUint32(12, false);
+            boxSize = high * 0x100000000 + low;
+            headerSize = 16;
+          }
+          if (boxSize > headerSize) {
+            const moovPayloadStart = tailStart + i + headerSize;
+            const moovPayloadEnd = Math.min(size - 1, tailStart + i + boxSize - 1);
+            const moovData = await source.read(moovPayloadStart, moovPayloadEnd);
+            const moovResult = parseMoov(moovData);
+            if (moovResult.tracks.length > 0) {
+              duration = moovResult.duration;
+              tracks = moovResult.tracks;
+              break;
+            }
+          }
+        }
+      }
+    } catch (e) {
+      console.warn('[parseMp4] Fallback tail probe for moov atom failed:', e);
+    }
   }
 
   return { duration, tracks };
@@ -515,14 +555,14 @@ export async function parseMkv(source: ByteSource): Promise<{ duration: number; 
     
     const headerSize = r.offset;
 
-    // Break early if we hit a Cluster (media body) or if we already have the track metadata & duration.
-    // This avoids scanning the entire file's cluster headers sequentially, which is extremely slow.
+    // If we hit a Cluster (media body), record firstClusterOffset
     if (id === 0x1F43B675) { // Cluster
-      firstClusterOffset = offset;
-      break;
-    }
-    if (tracks.length > 0 && duration > 0) {
-      break;
+      if (firstClusterOffset === 0) {
+        firstClusterOffset = offset;
+      }
+      if (tracks.length > 0 && duration > 0) {
+        break;
+      }
     }
 
     if (id === 0x18538067) { // Segment
@@ -625,7 +665,28 @@ export async function parseMkv(source: ByteSource): Promise<{ duration: number; 
       }
     }
 
-    offset += headerSize + elementSize;
+    if (elementSize < 0) {
+      offset += headerSize;
+    } else {
+      offset += headerSize + elementSize;
+    }
+  }
+
+  // If cuesOffset wasn't found in SeekHead, probe the tail of the MKV file for Cues (0x1C53BB6B)
+  if (cuesOffset === 0 && size > 16) {
+    try {
+      const tailLen = Math.min(size, 2 * 1024 * 1024);
+      const tailStart = size - tailLen;
+      const tailBytes = await source.read(tailStart, size - 1);
+      for (let i = 0; i <= tailBytes.length - 4; i++) {
+        if (tailBytes[i] === 0x1C && tailBytes[i + 1] === 0x53 && tailBytes[i + 2] === 0xBB && tailBytes[i + 3] === 0x6B) {
+          cuesOffset = tailStart + i;
+          break;
+        }
+      }
+    } catch (tailErr) {
+      console.warn('[parseMkv] Tail probe for Cues failed:', tailErr);
+    }
   }
 
   if (cuesOffset > 0) {

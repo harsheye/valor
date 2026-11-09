@@ -19,6 +19,7 @@ import { alertEngine } from './server/realtime/alertEngine.js';
 import { outboundWebhookManager } from './server/realtime/outboundWebhooks.js';
 import { auditLogger } from './server/realtime/auditLogger.js';
 import { analyticsAndAdminManager } from './server/realtime/playbackQuality.js';
+import { AutoUpdater } from './server/updater/autoUpdater.js';
 
 try {
   dns.setDefaultResultOrder('ipv4first');
@@ -102,6 +103,16 @@ const db = new DatabaseSync(dbPath);
 // Initialize Enterprise DataStore (PostgreSQL + Redis Lazy Loading Cache)
 const dataStore = new DataStore({ sqliteDb: db });
 dataStore.initialize().catch(err => console.error('[DataStore Init Error]', err));
+
+// Initialize System Auto-Updater (Watches GitHub for latest patches on branch production)
+const autoUpdater = new AutoUpdater({
+  appDir,
+  dataDir,
+  dataStore,
+  globalEventBus,
+  isProd
+});
+autoUpdater.init().catch(err => console.error('[AutoUpdater Init Error]', err));
 
 // Create SQLite tables
 db.exec(`
@@ -332,7 +343,7 @@ function sanitizeServerLog(msg) {
 function setCorsHeaders(req, res) {
   const origin = req.headers.origin;
   const host = req.headers.host || '127.0.0.1';
-  let allowedOrigin = `http://${host}`;
+  let allowedOrigin = origin || `http://${host}`;
 
   if (origin) {
     try {
@@ -351,7 +362,8 @@ function setCorsHeaders(req, res) {
   res.setHeader('Access-Control-Allow-Credentials', 'true');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, Range, X-Requested-With, X-Device-Id, X-Embed-Referrer');
-  res.setHeader('Access-Control-Expose-Headers', 'Content-Range, Content-Length, Accept-Ranges, Content-Type');
+  res.setHeader('Access-Control-Expose-Headers', 'Content-Range, Content-Length, Accept-Ranges, Content-Type, Content-Disposition');
+  res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
 }
 
 function setSecurityHeaders(res) {
@@ -609,6 +621,53 @@ function handleProxyRequest(targetUrl, req, res, redirectCount = 0, parsedUrl = 
         proxyReq.destroy();
         return handleProxyRequest(nextUrl, req, res, redirectCount + 1, parsedUrl);
       }
+      if (proxyRes.statusCode === 200 && req.headers.range) {
+        const rangeMatch = req.headers.range.match(/bytes=(\d+)-(\d*)/);
+        if (rangeMatch) {
+          const rStart = parseInt(rangeMatch[1], 10);
+          const rawTotal = proxyRes.headers['content-length'] ? parseInt(proxyRes.headers['content-length'], 10) : null;
+          const rEnd = rangeMatch[2] ? parseInt(rangeMatch[2], 10) : (rawTotal ? rawTotal - 1 : rStart + 4 * 1024 * 1024 - 1);
+          const chunkLen = Math.max(0, rEnd - rStart + 1);
+
+          res.statusCode = 206;
+          res.setHeader('Content-Range', `bytes ${rStart}-${rEnd}/${rawTotal || '*'}`);
+          res.setHeader('Content-Length', String(chunkLen));
+          res.setHeader('Accept-Ranges', 'bytes');
+          if (proxyRes.headers['content-type']) res.setHeader('content-type', proxyRes.headers['content-type']);
+
+          let bytesRead = 0;
+          let bytesSent = 0;
+
+          const onData = (chunk) => {
+            const chunkStart = bytesRead;
+            const chunkEnd = bytesRead + chunk.length - 1;
+            bytesRead += chunk.length;
+
+            if (chunkEnd < rStart) {
+              return;
+            }
+
+            const sliceStart = Math.max(0, rStart - chunkStart);
+            const sliceEnd = Math.min(chunk.length, rEnd - chunkStart + 1);
+            if (sliceStart < sliceEnd) {
+              const part = chunk.slice(sliceStart, sliceEnd);
+              res.write(part);
+              bytesSent += part.length;
+            }
+
+            if (bytesRead > rEnd || bytesSent >= chunkLen) {
+              proxyRes.removeListener('data', onData);
+              proxyReq.destroy();
+              res.end();
+            }
+          };
+
+          proxyRes.on('data', onData);
+          proxyRes.on('end', () => { if (!res.writableEnded) res.end(); });
+          return;
+        }
+      }
+
       res.statusCode = proxyRes.statusCode;
       const forwardHeaders = ['content-type', 'content-length', 'content-range', 'accept-ranges', 'last-modified', 'etag'];
       for (const h of forwardHeaders) {
@@ -1342,6 +1401,57 @@ const backendServer = http.createServer(async (req, res) => {
       res.statusCode = 500;
       res.setHeader('Content-Type', 'application/json');
       res.end(JSON.stringify({ error: err.message }));
+    });
+    return;
+  }
+
+  // System Auto-Updater API Endpoints
+  if (pathname === '/api/system/update/status' && req.method === 'GET') {
+    res.statusCode = 200;
+    res.setHeader('Content-Type', 'application/json');
+    res.end(JSON.stringify(autoUpdater.getStatus()));
+    return;
+  }
+
+  if (pathname === '/api/system/update/check' && req.method === 'POST') {
+    autoUpdater.checkForUpdates(false).then(status => {
+      res.statusCode = 200;
+      res.setHeader('Content-Type', 'application/json');
+      res.end(JSON.stringify(status));
+    }).catch(err => {
+      res.statusCode = 500;
+      res.setHeader('Content-Type', 'application/json');
+      res.end(JSON.stringify({ error: err.message }));
+    });
+    return;
+  }
+
+  if (pathname === '/api/system/update/apply' && req.method === 'POST') {
+    autoUpdater.applyUpdate().then(status => {
+      res.statusCode = 200;
+      res.setHeader('Content-Type', 'application/json');
+      res.end(JSON.stringify(status));
+    }).catch(err => {
+      res.statusCode = 500;
+      res.setHeader('Content-Type', 'application/json');
+      res.end(JSON.stringify({ error: err.message }));
+    });
+    return;
+  }
+
+  // GitHub Webhook for real-time push event auto-updates
+  if ((pathname === '/api/system/update/webhook' || pathname === '/api/webhooks/github') && req.method === 'POST') {
+    getJsonBody(req).then(async (body) => {
+      try {
+        const result = await autoUpdater.handleGitHubWebhook(req.headers, body);
+        res.statusCode = result.success ? 200 : 202;
+        res.setHeader('Content-Type', 'application/json');
+        res.end(JSON.stringify(result));
+      } catch (err) {
+        res.statusCode = 500;
+        res.setHeader('Content-Type', 'application/json');
+        res.end(JSON.stringify({ error: err.message }));
+      }
     });
     return;
   }
@@ -3219,11 +3329,13 @@ async function start() {
       }
 
       startShutdownChecker(viteServer);
+      autoUpdater.start();
     });
   }
 }
 
 const gracefulShutdown = () => {
+  try { autoUpdater?.stop(); } catch {}
   try { remoteSessionManager?.destroyAll(); } catch {}
   try { sessionMediaManager?.destroyAll(); } catch {}
   try { if (db && typeof db.close === 'function') db.close(); } catch {}

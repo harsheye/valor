@@ -9,8 +9,8 @@ import { MediaAuthModal } from './MediaAuthModal';
 import { MediaIdentifyModal } from './MediaIdentifyModal';
 import { RadialMenu } from './RadialMenu';
 import { ConsoleOverlay } from './ConsoleOverlay';
-import { PlayerLoader } from './player/PlayerLoader';
-import { ReloadingOverlay } from './player/ReloadingOverlay';
+import { LoadingSpinner, BufferingOverlay } from './LoadingSpinner';
+
 import {
   PlayerTopBar,
   PlayerBottomBar,
@@ -956,10 +956,12 @@ export const SimpleRemotePlayer: React.FC<SimpleRemotePlayerProps> = ({
         />
       )}
 
-      {/* Shared PlayerLoader (Logo loader: active only when loading/buffering, never when paused) */}
-      <PlayerLoader
-        visible={isReloadingStream || (!hasStartedPlayback ? isBuffering : (!videoRef.current?.paused && isPlaying && isBuffering))}
-        variant="buffering"
+      {/* Buffering fire ring loader */}
+      <BufferingOverlay 
+        isBuffering={isReloadingStream || (!hasStartedPlayback ? isBuffering : (!videoRef.current?.paused && isPlaying && isBuffering))}
+        customLoaderUrl={customLoaderUrl} 
+        customLoaderType={customLoaderType} 
+        preset={(spinnerPreset || 'fire-circle') as any} 
       />
 
       {/* Center Play/Pause Ripple Feedback */}

@@ -66,3 +66,16 @@ export class FFmpegManager {
     }
   }
 }
+
+let idlePreloadPromise: Promise<FFmpeg> | null = null;
+
+/** Warm the WASM core during browser idle time and keep that instance for reuse. */
+export function preloadFFmpegCore(): Promise<FFmpeg> {
+  if (!idlePreloadPromise) {
+    idlePreloadPromise = new FFmpegManager('idle-core-preload').load().catch((error) => {
+      idlePreloadPromise = null;
+      throw error;
+    });
+  }
+  return idlePreloadPromise;
+}

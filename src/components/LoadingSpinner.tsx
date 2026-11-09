@@ -626,7 +626,8 @@ export const NetflixVLoader: React.FC<{ size?: number }> = ({ size = 160 }) => {
           100% { transform: rotate(360deg); }
         }
         .netflix-buffering-overlay {
-          background: #000000 !important;
+          background: transparent !important;
+          pointer-events: none !important;
           position: absolute !important;
           inset: 0 !important;
           z-index: 50 !important;
@@ -796,8 +797,8 @@ export const BufferingOverlay: React.FC<{
 
   if (!shouldRender) return null;
 
-  const resolvedPreset = preset || (isRemote ? 'netflix' : 'fire-circle');
-  const isNetflixTheme = resolvedPreset === 'netflix' || isRemote;
+  const resolvedPreset = preset || 'fire-circle';
+  const isNetflixTheme = resolvedPreset === 'netflix';
 
   return (
     <div 
@@ -806,9 +807,10 @@ export const BufferingOverlay: React.FC<{
       style={{
         opacity: visible ? 1 : 0,
         transition: 'opacity 0.35s ease-in-out',
-        pointerEvents: visible ? 'auto' : 'none',
+        pointerEvents: 'none',
         ...(isNetflixTheme ? {
-          background: '#000000',
+          background: 'transparent',
+          pointerEvents: 'none',
           position: 'absolute',
           inset: 0,
           zIndex: 50,

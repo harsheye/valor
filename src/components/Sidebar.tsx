@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Home, History, Film, PlayCircle, Zap, Settings, Play, X, Palette, Check } from 'lucide-react';
+import { ValorVIcon } from './ui/ValorVIcon';
 import type { VideoItem } from '../types/media';
 import { classifyVideoTitle } from '../utils/libraryClassifier';
 import { smartTitleCase } from '../utils/libraryViewModel';
@@ -147,16 +148,12 @@ export const Sidebar: React.FC<SidebarProps> = ({
             style={{
               background: 'transparent',
               border: 'none',
-              color: 'var(--accent)',
-              fontFamily: 'var(--font-display)',
-              fontWeight: 900,
-              fontSize: '1.45rem',
               cursor: 'pointer',
               padding: '4px',
               lineHeight: 1
             }}
           >
-            V
+            <ValorVIcon width={24} height={26} />
           </button>
         </div>
 
@@ -263,7 +260,24 @@ export const Sidebar: React.FC<SidebarProps> = ({
   return (
     <aside className="app-sidebar" aria-label="Main application navigation">
       <div className="sidebar-header">
-        <div className="sidebar-logo">Valor</div>
+        <button
+          type="button"
+          onClick={() => navigateTo('home')}
+          aria-label="Valor Home"
+          style={{
+            background: 'transparent',
+            border: 'none',
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: '2px',
+            cursor: 'pointer',
+            padding: 0,
+            textAlign: 'left'
+          }}
+        >
+          <ValorVIcon width={22} height={24} style={{ marginRight: '2px' }} />
+          <div className="sidebar-logo">alor</div>
+        </button>
       </div>
 
       <nav className="sidebar-menu">

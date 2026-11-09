@@ -39,6 +39,12 @@
   min-height: 40px;
 }
 
+.history-header-top-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+}
+
 .history-header-left {
   display: flex;
   align-items: center;
@@ -685,4 +691,112 @@
   flex-direction: column;
   gap: 16px;
   box-shadow: 0 20px 40px var(--scrim);
+}
+
+/* Mobile responsive layout matching Section 5 spec */
+@media (max-width: 768px) {
+  .history-heatmap-container {
+    padding: 8px 0 24px !important;
+  }
+
+  .history-heatmap-wrapper {
+    gap: 14px !important;
+  }
+
+  .history-header {
+    flex-direction: column !important;
+    align-items: stretch !important;
+    gap: 10px !important;
+  }
+
+  .history-header-top-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    width: 100%;
+  }
+
+  .history-header-right {
+    width: 100% !important;
+  }
+
+  .history-search-box {
+    width: 100% !important;
+    height: 40px !important;
+  }
+
+  .history-clear-btn {
+    color: #ef4444 !important;
+    border: 1px solid rgba(239, 68, 68, 0.25) !important;
+    height: 32px !important;
+    padding: 0 12px !important;
+    font-size: 12px !important;
+  }
+
+  /* Heatmap scrollable container */
+  .history-heatmap-card {
+    padding: 14px !important;
+    border-radius: 16px !important;
+  }
+
+  .history-heatmap-svg-wrap {
+    overflow-x: auto !important;
+    -webkit-overflow-scrolling: touch !important;
+    scrollbar-width: none;
+  }
+
+  .history-heatmap-svg-wrap::-webkit-scrollbar {
+    display: none;
+  }
+
+  .history-heatmap-svg {
+    min-width: 600px;
+  }
+
+  /* Resume card on mobile */
+  .history-resume-card {
+    padding: 12px 14px !important;
+    border-radius: 14px !important;
+  }
+
+  .history-avatar-tile {
+    width: 42px !important;
+    height: 42px !important;
+    min-width: 42px !important;
+    border-radius: 10px !important;
+    background: #8b2634 !important;
+    font-size: 1.15rem !important;
+  }
+
+  /* Horizontally scrollable filter chips */
+  .history-filter-pills {
+    overflow-x: auto !important;
+    flex-wrap: nowrap !important;
+    width: 100% !important;
+    padding-bottom: 4px !important;
+    scrollbar-width: none;
+  }
+
+  .history-filter-pills::-webkit-scrollbar {
+    display: none;
+  }
+
+  .history-filter-pill {
+    flex-shrink: 0;
+    padding: 6px 14px !important;
+    font-size: 12px !important;
+  }
+
+  .history-filter-pill.active {
+    background: var(--accent-soft) !important;
+    color: var(--accent) !important;
+    border-color: var(--accent) !important;
+  }
+
+  /* Log items on mobile */
+  .history-item-row {
+    padding: 10px 12px !important;
+    gap: 10px !important;
+    border-radius: 14px !important;
+  }
 }

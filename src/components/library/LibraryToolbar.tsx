@@ -1,7 +1,8 @@
-import React, { useRef, useEffect } from 'react';
-import { Search, LayoutGrid, List, X } from 'lucide-react';
+import React, { useRef, useEffect, useState } from 'react';
+import { Search, LayoutGrid, List, X, ChevronDown, Check } from 'lucide-react';
 import type { SortOption, FilterOption } from '../../utils/libraryViewModel';
 import { CustomSelect } from '../CustomSelect';
+import { BottomSheet } from '../ui/BottomSheet';
 
 interface LibraryToolbarProps {
   activeTab: 'movies' | 'series';
@@ -41,6 +42,8 @@ export const LibraryToolbar: React.FC<LibraryToolbarProps> = ({
   onFilterChange,
 }) => {
   const searchInputRef = useRef<HTMLInputElement>(null);
+  const [showSortSheet, setShowSortSheet] = useState(false);
+  const currentSortLabel = SORT_OPTIONS.find(o => o.value === sortBy)?.label || 'Recently added';
 
   // Global '/' keyboard shortcut to focus search, and 'Escape' to clear
   useEffect(() => {
@@ -62,27 +65,188 @@ export const LibraryToolbar: React.FC<LibraryToolbarProps> = ({
   }, [searchQuery, onSearchChange]);
 
   return (
-    <div style={{
-      position: 'sticky',
-      top: 0,
-      zIndex: 30,
-      backgroundColor: 'var(--bg)',
-      borderBottom: '1px solid var(--border)',
-      paddingBottom: '0.75rem',
-      marginBottom: '1rem',
-      display: 'flex',
-      flexDirection: 'column',
-      gap: '0.75rem',
-      width: '100%'
-    }}>
-      {/* Top Row: Tabs, Search, Sort, Grid/List Segmented Control */}
-      <div style={{
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        flexWrap: 'wrap',
-        gap: '0.75rem'
-      }}>
+    <div className="library-toolbar-root">
+      {/* Mobile Row 1: Segmented Movies/Series + Grid/List toggle */}
+      <div className="library-mobile-row1">
+        <div
+          role="tablist"
+          aria-label="Library media type"
+          style={{
+            display: 'inline-flex',
+            background: 'var(--s1, var(--surface-1))',
+            padding: '3px',
+            borderRadius: '12px',
+            border: '1px solid var(--ln, var(--border))'
+          }}
+        >
+          <button
+            role="tab"
+            aria-selected={activeTab === 'movies'}
+            onClick={() => onTabChange('movies')}
+            style={{
+              background: activeTab === 'movies' ? 'var(--ac, var(--accent))' : 'transparent',
+              color: activeTab === 'movies' ? 'var(--on, #fff)' : 'var(--tx, var(--text-2))',
+              border: 'none',
+              borderRadius: '9px',
+              padding: '6px 12px',
+              fontSize: '13px',
+              fontWeight: 600,
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px'
+            }}
+          >
+            <span>Movies</span>
+            <span style={{
+              fontSize: '11px',
+              padding: '1px 5px',
+              borderRadius: '6px',
+              background: activeTab === 'movies' ? 'rgba(0,0,0,0.2)' : 'var(--surface-3)',
+              color: 'inherit'
+            }}>
+              {moviesCount}
+            </span>
+          </button>
+          <button
+            role="tab"
+            aria-selected={activeTab === 'series'}
+            onClick={() => onTabChange('series')}
+            style={{
+              background: activeTab === 'series' ? 'var(--ac, var(--accent))' : 'transparent',
+              color: activeTab === 'series' ? 'var(--on, #fff)' : 'var(--tx, var(--text-2))',
+              border: 'none',
+              borderRadius: '9px',
+              padding: '6px 12px',
+              fontSize: '13px',
+              fontWeight: 600,
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px'
+            }}
+          >
+            <span>Series</span>
+            <span style={{
+              fontSize: '11px',
+              padding: '1px 5px',
+              borderRadius: '6px',
+              background: activeTab === 'series' ? 'rgba(0,0,0,0.2)' : 'var(--surface-3)',
+              color: 'inherit'
+            }}>
+              {seriesCount}
+            </span>
+          </button>
+        </div>
+
+        {/* View mode toggle */}
+        <div
+          style={{
+            display: 'flex',
+            background: 'var(--s1, var(--surface-1))',
+            border: '1px solid var(--ln, var(--border))',
+            borderRadius: '12px',
+            overflow: 'hidden',
+            height: '38px'
+          }}
+        >
+          <button
+            type="button"
+            aria-pressed={viewMode === 'grid'}
+            onClick={() => onViewModeChange('grid')}
+            title="Grid view"
+            style={{
+              background: viewMode === 'grid' ? 'var(--surface-3)' : 'transparent',
+              color: viewMode === 'grid' ? 'var(--ac, var(--accent))' : 'var(--mut, var(--text-3))',
+              border: 'none',
+              padding: '0 12px',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              cursor: 'pointer'
+            }}
+          >
+            <LayoutGrid size={16} />
+          </button>
+          <button
+            type="button"
+            aria-pressed={viewMode === 'list'}
+            onClick={() => onViewModeChange('list')}
+            title="List view"
+            style={{
+              background: viewMode === 'list' ? 'var(--surface-3)' : 'transparent',
+              color: viewMode === 'list' ? 'var(--ac, var(--accent))' : 'var(--mut, var(--text-3))',
+              border: 'none',
+              padding: '0 12px',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              cursor: 'pointer'
+            }}
+          >
+            <List size={16} />
+          </button>
+        </div>
+      </div>
+
+      {/* Mobile Row 2: Search Input + Sort Chip */}
+      <div className="library-mobile-row2">
+        <div className="library-mobile-search" style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
+          <Search size={15} style={{ position: 'absolute', left: '10px', color: 'var(--mut, var(--text-3))', pointerEvents: 'none' }} />
+          <input
+            type="text"
+            value={searchQuery}
+            onChange={(e) => onSearchChange(e.target.value)}
+            placeholder="Search library…"
+            aria-label="Search library"
+            style={{
+              width: '100%',
+              padding: '8px 28px 8px 32px',
+              background: 'var(--s1, var(--surface-1))',
+              border: '1px solid var(--ln, var(--border))',
+              borderRadius: '12px',
+              color: 'var(--tx, var(--text-1))',
+              fontSize: '13px',
+              outline: 'none',
+              height: '38px',
+              boxSizing: 'border-box'
+            }}
+          />
+          {searchQuery && (
+            <button
+              type="button"
+              onClick={() => onSearchChange('')}
+              aria-label="Clear search"
+              style={{
+                position: 'absolute',
+                right: '8px',
+                background: 'none',
+                border: 'none',
+                color: 'var(--mut, var(--text-3))',
+                cursor: 'pointer',
+                padding: '2px',
+                display: 'flex',
+                alignItems: 'center'
+              }}
+            >
+              <X size={14} />
+            </button>
+          )}
+        </div>
+
+        <button
+          type="button"
+          onClick={() => setShowSortSheet(true)}
+          className="library-sort-chip-btn"
+          aria-label="Sort options"
+        >
+          <span>{currentSortLabel}</span>
+          <ChevronDown size={14} />
+        </button>
+      </div>
+
+      {/* Desktop Toolbar Row: Tabs, Search, Sort, Grid/List Segmented Control */}
+      <div className="library-desktop-row">
         {/* Left: Movies / Series Tabs */}
         <div 
           role="tablist" 
@@ -324,6 +488,33 @@ export const LibraryToolbar: React.FC<LibraryToolbarProps> = ({
           );
         })}
       </div>
+
+      {/* Mobile Sort Bottom Sheet */}
+      <BottomSheet
+        isOpen={showSortSheet}
+        onClose={() => setShowSortSheet(false)}
+        title="Sort by"
+      >
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+          {SORT_OPTIONS.map(opt => {
+            const isSelected = opt.value === sortBy;
+            return (
+              <button
+                key={opt.value}
+                type="button"
+                className={`library-sort-sheet-item ${isSelected ? 'active' : ''}`}
+                onClick={() => {
+                  onSortChange(opt.value);
+                  setShowSortSheet(false);
+                }}
+              >
+                <span>{opt.label}</span>
+                {isSelected && <Check size={18} color="var(--ac, var(--accent))" />}
+              </button>
+            );
+          })}
+        </div>
+      </BottomSheet>
     </div>
   );
 };

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { ArrowLeft, Lock, Unlock, Terminal, X, Tv, Zap, Sun } from 'lucide-react';
+import { ArrowLeft, Lock, Unlock, Terminal, X, Sun, Zap } from 'lucide-react';
 import { sidecarService } from '../../services/remote/sidecarService';
 import { featureFlagService } from '../../services/featureFlags';
 import type { ToneMappingMode } from './ToneMappingFilters';
@@ -19,6 +19,8 @@ export interface PlayerTopBarProps {
   toneMappingMode?: ToneMappingMode;
   onCycleToneMapping?: () => void;
   isX265OrHdr?: boolean;
+  isEmbed?: boolean;
+  showCloseButton?: boolean;
 }
 
 export const PlayerTopBar: React.FC<PlayerTopBarProps> = ({
@@ -121,39 +123,6 @@ export const PlayerTopBar: React.FC<PlayerTopBarProps> = ({
 
       {/* Right: Actions */}
       <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-        {/* Switch Mode Pill */}
-        {onSwitchMode && (
-          <button
-            onClick={() => onSwitchMode(currentMode === 'simple' ? 'server' : 'simple')}
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: '6px',
-              background: 'var(--surface, rgba(18, 18, 28, 0.75))',
-              border: '1px solid var(--border-color, rgba(255, 255, 255, 0.15))',
-              borderRadius: '20px',
-              padding: '6px 14px',
-              color: 'var(--text-secondary, #d1d5db)',
-              fontSize: '12px',
-              fontWeight: 600,
-              cursor: 'pointer',
-              transition: 'all 0.15s ease'
-            }}
-            onMouseEnter={e => {
-              e.currentTarget.style.borderColor = 'var(--accent)';
-              e.currentTarget.style.color = '#ffffff';
-            }}
-            onMouseLeave={e => {
-              e.currentTarget.style.borderColor = 'var(--border-color, rgba(255, 255, 255, 0.15))';
-              e.currentTarget.style.color = 'var(--text-secondary, #d1d5db)';
-            }}
-            title={currentMode === 'simple' ? 'Switch to Server Player (AC3/DTS audio & advanced subs)' : 'Switch to Fast Simple HTML5'}
-          >
-            {currentMode === 'simple' ? <Tv size={14} color="var(--accent)" /> : <Zap size={14} color="#06b6d4" />}
-            <span>{currentMode === 'simple' ? 'Switch to Movies/TV Engine' : 'Simple Player'}</span>
-          </button>
-        )}
-
         {/* Lock UI Button */}
         {onToggleLock && (
           <button

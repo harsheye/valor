@@ -35,6 +35,14 @@ export const isWasmSupported = (): boolean => {
 };
 
 /**
+ * Returns true if the window context is cross-origin isolated (COOP + COEP active),
+ * which is strictly required by modern browsers to construct or share SharedArrayBuffer across Web Workers.
+ */
+export const isCrossOriginIsolated = (): boolean => {
+  return typeof window !== 'undefined' && Boolean(window.crossOriginIsolated);
+};
+
+/**
  * Returns true if WebAssembly threads (SharedArrayBuffer) are available.
  */
 export const isWasmThreadsSupported = (): boolean => {
@@ -43,7 +51,7 @@ export const isWasmThreadsSupported = (): boolean => {
   }
 
   try {
-    if (isWasmSupported() && typeof SharedArrayBuffer !== 'undefined') {
+    if (isWasmSupported() && typeof SharedArrayBuffer !== 'undefined' && isCrossOriginIsolated()) {
       _wasmThreadsSupported = true;
       return true;
     }

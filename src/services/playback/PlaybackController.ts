@@ -148,7 +148,7 @@ export class PlaybackController {
   async initialize(videoEl: HTMLVideoElement, streamIndex: number | null): Promise<void> {
     this.videoEl = videoEl;
     this.state.activeStreamIndex = typeof streamIndex === 'number' ? streamIndex : -1;
-    this.videoEl.muted = this.state.activeStreamIndex >= 0; // Only mute video element when separate audio track is played via AudioContext
+    this.videoEl.muted = false; // Preserve native audio until the first WASM chunk is ready.
     this.bufferManager.resetFailures();
 
     if (this.state.activeStreamIndex < 0) {
@@ -193,6 +193,11 @@ export class PlaybackController {
       this.videoEl.addEventListener('timeupdate', this.onTimeUpdate);
       this.videoEl.addEventListener('play', this.onPlayEvent);
       this.videoEl.addEventListener('pause', this.onPauseEvent);
+      this.videoEl.addEventListener('waiting', this.onWaitingEvent);
+      this.videoEl.addEventListener('playing', this.onPlayingEvent);
+      this.videoEl.addEventListener('seeking', this.onSeekingEvent);
+      this.videoEl.addEventListener('seeked', this.onSeekedEvent);
+      this.videoEl.addEventListener('ratechange', this.onRateChangeEvent);
       this.listenersBound = true;
       logger.playback(`controller=${this.instanceId} video listeners ready`);
 
@@ -293,6 +298,44 @@ export class PlaybackController {
       return;
     }
     this.pause();
+  };
+
+  private onWaitingEvent = () => {
+    logger.playback(`[PlaybackController-${this.instanceId}] Video waiting/stalled — pausing audio to keep sync.`);
+    this.pauseForBuffering();
+    void this.audioScheduler.suspend();
+  };
+
+  private onPlayingEvent = () => {
+    logger.playback(`[PlaybackController-${this.instanceId}] Video recovered from stall — resuming audio.`);
+    this.state.isBuffering = false;
+    this.onBufferingChange?.(false);
+    void this.audioScheduler.resume();
+    if (this.videoEl && this.state.isPlaying) {
+      const syncedTime = this.videoEl.currentTime;
+      this.playbackQueue.clear();
+      this.hydrateManifestFromCache();
+      this.playbackQueue.update(syncedTime, this.state.playbackRate);
+    }
+  };
+
+  private onSeekingEvent = () => {
+    logger.playback(`[PlaybackController-${this.instanceId}] Native seeking detected.`);
+    this.pauseAudioOnly();
+  };
+
+  private onSeekedEvent = () => {
+    if (!this.videoEl) return;
+    logger.playback(`[PlaybackController-${this.instanceId}] Native seeked detected at ${this.videoEl.currentTime.toFixed(3)}s`);
+    if (this.state.isPlaying && !this.isSeeking) {
+      void this.seek(this.videoEl.currentTime);
+    }
+  };
+
+  private onRateChangeEvent = () => {
+    if (this.videoEl && this.videoEl.playbackRate !== this.state.playbackRate) {
+      void this.setPlaybackRate(this.videoEl.playbackRate);
+    }
   };
 
   private heartbeatTickCount = 0;
@@ -470,8 +513,9 @@ export class PlaybackController {
     const signal = this.session.chunkAbortController.signal;
     const currentChunk = Math.floor(currentTime / 10) * 10;
 
-    // If scheduler says we don't need to buffer, skip
-    if (!this.scheduler.shouldBuffer(currentTime)) return;
+    // Always allow the playhead chunk through, even before the low water mark
+    // has accumulated. Apply the water mark only to look-ahead filling.
+    if (!currentChunkOnly && !this.scheduler.shouldBuffer(currentTime)) return;
 
     const missing = this.scheduler.getMissingTargets(currentTime);
     if (missing.length === 0) return;
@@ -506,6 +550,9 @@ export class PlaybackController {
       if (this.manifest.getState(target) === 'EMPTY') {
         this.manifest.transitionTo(target, 'RESERVED');
       }
+    }
+    for (const target of targets) {
+      logger.scheduler(`chunk ${target}s reserved; current=${currentTime.toFixed(2)}s session=${activeSession}`);
     }
     logger.scheduler(`${callerName}: reserved audio chunks [${targets.join(', ')}]`);
 
@@ -550,8 +597,10 @@ export class PlaybackController {
       try {
         const requestStart = target;
         const requestDuration = chunkSize;
-        logger.buffer(`chunk ${target}s -> ${requestStart.toFixed(3)}s + ${requestDuration.toFixed(3)}s`);
+        const requestStartedAt = performance.now();
+        logger.buffer(`chunk ${target}s requested: ${requestStart.toFixed(3)}s + ${requestDuration.toFixed(3)}s`);
         const worker = this.getDecodeWorker(target);
+        logger.scheduler(`chunk ${target}s decode started on worker ${this.decodeWorkers.indexOf(worker) + 1}`);
         const packet = await this.enqueueWorkerDecode(worker, () => this.bufferManager.getOrFetchPacket(
           worker.ff,
           this.state.activeStreamIndex,
@@ -574,15 +623,26 @@ export class PlaybackController {
         if (packet.duration <= 0.05) {
           throw new Error(`Chunk ${target}s is truncated/too short: duration=${packet.duration}s`);
         }
+        logger.scheduler(`chunk ${target}s decoded in ${Math.round(performance.now() - requestStartedAt)}ms (${packet.duration.toFixed(2)}s audio)`);
 
         this.manifest.transitionTo(target, 'DECODED');
         this.manifest.transitionTo(target, 'CACHED');
-
         // Immediately schedule newly fetched packet if playhead is still relevant and we are not in a seek/maintenance transaction
-        if (this.videoEl && !this.videoEl.paused && !this.session.maintenanceFrozen) {
+        if (this.videoEl && !this.session.maintenanceFrozen) {
           this.playbackQueue.update(this.videoEl.currentTime, this.state.playbackRate);
+          if (target === currentChunk && this.state.activeStreamIndex >= 0) {
+            if (this.videoEl.paused) {
+              logger.playback(`controller=${this.instanceId} first WASM audio chunk ready at ${target}s; native audio retained while paused`);
+            } else {
+              void this.audioScheduler.resume().catch(err => logger.warn('WASM audio resume failed:', err));
+              this.videoEl.muted = true;
+              logger.playback(`controller=${this.instanceId} first WASM audio chunk scheduled at ${target}s; switched from native audio`);
+            }
+          }
+          logger.scheduler(`chunk ${target}s scheduled`);
         }
       } catch (err: any) {
+        logger.error(`[PlaybackController-${this.instanceId}] Chunk ${target}s failed during fetch/decode/schedule:`, err);
         const errMsg = (err?.message || String(err)).toLowerCase();
         const isFileAccessError = errMsg.includes('filereadersync') || 
                                   errMsg.includes('could not be found') || 
@@ -627,7 +687,7 @@ export class PlaybackController {
       }
     });
 
-    await runWithLimit(tasks, FFMPEG_DECODE_CONCURRENCY);
+      await runWithLimit(tasks, FFMPEG_DECODE_CONCURRENCY);
   }
 
   async play(): Promise<void> {
@@ -645,33 +705,22 @@ export class PlaybackController {
         ? this.session.playbackGeneration
         : this.startNewPlaybackGeneration('play');
       this.initializedGeneration = null;
-      await this.audioScheduler.resume();
-      if (this.session.abortController.signal.aborted || generation !== this.session.playbackGeneration) return;
-
       this.bufferManager.resetFailures();
       this.scheduler.reset();
       this.playbackQueue.clear();
       this.manifest.clear();
       this.fetchingKeys.clear();
       
-      const currentTime = this.videoEl.currentTime;
-      
-      // Wait only for the chunk covering the playhead. The rest of the window
-      // is fetched after playback begins, so resume is not held hostage by all
-      // five warm-up chunks.
-      await this.fillBufferWindow(currentTime, 'play-first-chunk', generation, true, true);
-      if (this.session.abortController.signal.aborted || generation !== this.session.playbackGeneration) return;
-
-      // 2. Play the video element
+      // Start direct playback immediately; warm up the WASM audio path in background.
+      if (this.state.activeStreamIndex >= 0) this.videoEl.muted = false;
       await this.videoEl.play();
       if (this.session.abortController.signal.aborted || generation !== this.session.playbackGeneration) return;
-
-      // 3. Once video element is active, fetch the real playhead and schedule audio
+      // Decode only the playhead chunk first; follow-up chunks continue in the background.
       const syncedTime = this.videoEl.currentTime;
       this.playbackQueue.clear();
       this.hydrateManifestFromCache();
       this.playbackQueue.update(syncedTime, this.state.playbackRate);
-      void this.fillBufferWindow(syncedTime, 'play-background', generation);
+      void this.fillBufferWindow(syncedTime, 'play-first-chunk', generation, true, true);
       
       this.startHeartbeat();
     } finally {
@@ -695,24 +744,16 @@ export class PlaybackController {
       this.resetQueueAndTimeline();
       this.hydrateManifestFromCache();
 
-      // Resume as soon as the playhead chunk is decoded; continue prefetching
-      // the rest of the window in the background.
-      await this.fillBufferWindow(this.videoEl.currentTime, 'play-first-chunk', generation, true, true);
-      if (this.session.abortController.signal.aborted || generation !== this.session.playbackGeneration) return;
-
-      // 2. Resume context and play
-      await this.audioScheduler.resume();
-      if (this.session.abortController.signal.aborted || generation !== this.session.playbackGeneration) return;
-
+      // Keep native audio during warmup, then switch only after the first chunk.
+      this.videoEl.muted = false;
       await this.videoEl.play();
       if (this.session.abortController.signal.aborted || generation !== this.session.playbackGeneration) return;
-
-      // 3. Once video element is active, schedule matching audio playhead
+      // 3. Once video element is active, fetch and schedule the first WASM chunk.
       const syncedTime = this.videoEl.currentTime;
       this.playbackQueue.clear();
       this.hydrateManifestFromCache();
       this.playbackQueue.update(syncedTime, this.state.playbackRate);
-      void this.fillBufferWindow(syncedTime, 'play-background', generation);
+      void this.fillBufferWindow(syncedTime, 'play-first-chunk', generation, true, true);
       
       this.startHeartbeat();
     } finally {
@@ -856,7 +897,7 @@ export class PlaybackController {
     this.scheduler.reset();
 
     if (this.videoEl) {
-      this.videoEl.muted = this.state.activeStreamIndex >= 0;
+      this.videoEl.muted = false;
       this.applyVolumeAndBoost();
     }
 
@@ -869,6 +910,9 @@ export class PlaybackController {
       const isPlaying = !this.videoEl.paused;
       const currentTime = this.videoEl.currentTime;
       await this.fillBufferWindow(currentTime, 'switchAudioTrack');
+      if (this.bufferManager.getCache().hasChunk(Math.floor(currentTime / 10) * 10)) {
+        this.videoEl.muted = true;
+      }
       
       if (isPlaying && this.videoEl) {
         const syncedTime = this.videoEl.currentTime;
@@ -893,6 +937,11 @@ export class PlaybackController {
       this.videoEl.removeEventListener('timeupdate', this.onTimeUpdate);
       this.videoEl.removeEventListener('play', this.onPlayEvent);
       this.videoEl.removeEventListener('pause', this.onPauseEvent);
+      this.videoEl.removeEventListener('waiting', this.onWaitingEvent);
+      this.videoEl.removeEventListener('playing', this.onPlayingEvent);
+      this.videoEl.removeEventListener('seeking', this.onSeekingEvent);
+      this.videoEl.removeEventListener('seeked', this.onSeekedEvent);
+      this.videoEl.removeEventListener('ratechange', this.onRateChangeEvent);
       this.listenersBound = false;
       logger.playback(`[PlaybackController-${this.instanceId}] Event listeners removed from video element.`);
     }
@@ -907,9 +956,10 @@ export class PlaybackController {
     if (this.ff) {
       await Promise.all(this.decodeWorkers.map(async worker => {
         await worker.demux.cleanup(worker.ff).catch(() => {});
-        if (worker.manager !== this.ffmpegMgr) await worker.manager.destroy().catch(() => {});
+        await worker.manager.destroy().catch(() => {});
       }));
     }
+    await this.ffmpegMgr.destroy().catch(() => {});
     this.bufferManager.clear();
   }
 }

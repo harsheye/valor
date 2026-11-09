@@ -10,6 +10,8 @@ interface LibraryPageProps {
   onRemoveVideo?: (id: string, e: React.MouseEvent) => void;
   addToast?: (text: string, type?: 'success' | 'error' | 'warning', action?: any) => void;
   setVideos?: React.Dispatch<React.SetStateAction<VideoItem[]>>;
+  onSelectMedia?: (media: any) => void;
+  tmdbApiKey?: string;
 }
 
 export const LibraryPage: React.FC<LibraryPageProps> = ({
@@ -19,7 +21,9 @@ export const LibraryPage: React.FC<LibraryPageProps> = ({
   onNavigateToSelectMedia,
   onRemoveVideo,
   addToast,
-  setVideos
+  setVideos,
+  onSelectMedia,
+  tmdbApiKey
 }) => {
   return (
     <LibraryView 
@@ -30,6 +34,8 @@ export const LibraryPage: React.FC<LibraryPageProps> = ({
       onRemoveVideo={onRemoveVideo}
       addToast={addToast}
       setVideos={setVideos}
+      onSelectMedia={onSelectMedia}
+      tmdbApiKey={tmdbApiKey}
     />
   );
 };

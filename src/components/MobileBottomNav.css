@@ -1,0 +1,58 @@
+/* MobileBottomNav.css */
+.mobile-bottom-nav {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: space-around;
+  background: var(--bg, #0b0e14);
+  border-top: 1px solid var(--ln, #232b3a);
+  padding-top: 8px;
+  padding-bottom: max(10px, env(safe-area-inset-bottom, 10px));
+  box-sizing: border-box;
+}
+
+.mbn-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  flex: 1;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  padding: 4px 0;
+  min-height: 48px;
+  color: var(--mut, #8b93a5);
+  transition: color 0.15s, transform 0.1s;
+}
+
+.mbn-item:active {
+  transform: scale(0.96);
+}
+
+.mbn-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 22px;
+}
+
+.mbn-label {
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+}
+
+.mbn-item.active {
+  color: var(--ac, #9db3f6);
+}
+
+.mbn-item.active .mbn-label {
+  font-weight: 700;
+}

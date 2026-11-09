@@ -166,7 +166,8 @@ export const CustomSelect: React.FC<CustomSelectProps> = ({
       <style>{`
         .custom-select-container {
           position: relative;
-          min-width: 120px;
+          min-width: 0;
+          box-sizing: border-box;
           user-select: none;
           text-align: left;
           z-index: 50;
@@ -188,6 +189,7 @@ export const CustomSelect: React.FC<CustomSelectProps> = ({
           cursor: pointer;
           transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
           width: 100%;
+          box-sizing: border-box;
           outline: none;
           white-space: nowrap;
         }

@@ -412,7 +412,24 @@ export class FFmpegService {
       const fullLog = this.logCollector.join("\n");
       this.logCollector = null;
 
-      return this.parseProbeLogs(fullLog);
+      let result = this.parseProbeLogs(fullLog);
+      if (result.streams.length === 0 && size > 2 * 1024 * 1024) {
+        try {
+          const tailSize = Math.min(2 * 1024 * 1024, size - headerLimit);
+          const tailBytes = await source.read(size - tailSize, size - 1);
+          const combined = new Uint8Array(headerBytes.length + tailBytes.length);
+          combined.set(headerBytes, 0);
+          combined.set(tailBytes, headerBytes.length);
+          await ff.writeFile(tempInFile, combined);
+          this.logCollector = [];
+          await ff.exec(["-i", tempInFile, "-t", "0", "-c", "copy", "-f", "null", "-"]);
+          const retryLog = this.logCollector.join("\n");
+          this.logCollector = null;
+          try { await ff.deleteFile(tempInFile); } catch {}
+          result = this.parseProbeLogs(retryLog);
+        } catch {}
+      }
+      return result;
     });
   }
 

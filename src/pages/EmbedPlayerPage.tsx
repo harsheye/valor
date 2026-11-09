@@ -1,10 +1,14 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import { RemoteVideoPlayer } from '../components/RemoteVideoPlayer';
+import { BufferingOverlay } from '../components/LoadingSpinner';
 import type { VideoItem, CustomSubtitleTrack } from '../types/media';
 import type { SubtitleSettings } from '../components/SubtitleOverlay';
 import { DEFAULT_CONTROLS_CONFIG } from '../utils/embedProtocol';
 import type { EmbedCommand, EmbedMessageWrapper, ControlsConfig, ThemeConfig } from '../utils/embedProtocol';
 import { parseSubtitles } from '../utils/subtitleParser';
+import { resolveRemoteMediaName } from '../utils/corsCheck';
+
+
 
 import { 
   getEmbedSubtitlesSync, 
@@ -137,6 +141,13 @@ export const EmbedPlayerPage: React.FC = () => {
     });
   };
 
+  const [isReloading, setIsReloading] = useState<boolean>(false);
+  useEffect(() => {
+    if (isReloading) {
+      const timer = setTimeout(() => setIsReloading(false), 800);
+      return () => clearTimeout(timer);
+    }
+  }, [isReloading]);
   const [video, setVideo] = useState<VideoItem | null>(() => {
     const params = new URLSearchParams(window.location.search);
     const mediaUrl = params.get('url') || params.get('media') || params.get('src');
@@ -163,6 +174,7 @@ export const EmbedPlayerPage: React.FC = () => {
     }
     return null;
   });
+
 
   const [inputVal, setInputVal] = useState('');
 
@@ -211,6 +223,33 @@ export const EmbedPlayerPage: React.FC = () => {
       }).catch(() => {});
     } catch(e) {}
   }, []);
+
+  // Resolve media name from Content-Disposition header
+  useEffect(() => {
+    if (!video?.url) return;
+    const explicitParam = new URLSearchParams(window.location.search).get('title');
+    if (explicitParam && explicitParam.trim() && explicitParam !== 'Embedded Video' && explicitParam !== 'Embedded Media') {
+      return;
+    }
+    resolveRemoteMediaName(video.url).then((resolved) => {
+      if (resolved && resolved.fileName) {
+        setVideo((prev) => {
+          if (!prev) return prev;
+          if (prev.fileName === resolved.fileName && prev.title === (resolved.title || resolved.fileName)) {
+            return prev;
+          }
+          return {
+            ...prev,
+            fileName: resolved.fileName,
+            title: resolved.title || resolved.fileName
+          };
+        });
+        if (typeof document !== 'undefined') {
+          document.title = `${resolved.title || resolved.fileName} - Valor Player`;
+        }
+      }
+    });
+  }, [video?.url]);
 
   // Check browser memory / IndexedDB asynchronously for downloaded subtitles if empty
   useEffect(() => {
@@ -305,6 +344,9 @@ export const EmbedPlayerPage: React.FC = () => {
             });
           }
           break;
+        case 'RELOAD':
+          setIsReloading(true);
+          break;
         case 'UPDATE_CONFIG':
           if (cmd.payload.controls) setControls(prev => ({ ...prev, ...cmd.payload.controls }));
           if (cmd.payload.theme) setTheme(prev => ({ ...prev, ...cmd.payload.theme }));
@@ -367,6 +409,36 @@ export const EmbedPlayerPage: React.FC = () => {
       subtitleTracks: cachedSubs
     });
   };
+
+  const handleUpdateVideo = useCallback((updater: VideoItem | ((prev: VideoItem) => VideoItem)) => {
+    setVideo((prev) => {
+      if (!prev) return prev;
+      const newVideo = typeof updater === 'function' ? updater(prev) : updater;
+      if (newVideo?.url && newVideo.subtitleTracks && newVideo.subtitleTracks.length > 0) {
+        saveEmbedSubtitles(newVideo, newVideo.subtitleTracks);
+      }
+      if (newVideo?.url && typeof newVideo.currentTime === 'number') {
+        saveMediaTimestamp(newVideo.url, newVideo.currentTime, Number(newVideo.duration) || 0, newVideo.title);
+      }
+      if (
+        newVideo.currentTime === prev.currentTime &&
+        newVideo.duration === prev.duration &&
+        newVideo.title === prev.title &&
+        newVideo.fileName === prev.fileName &&
+        newVideo.streams === prev.streams &&
+        newVideo.subtitleTracks === prev.subtitleTracks &&
+        (newVideo as any).playbackMode === (prev as any).playbackMode
+      ) {
+        return prev;
+      }
+      if (newVideo.currentTime !== prev.currentTime) {
+        try {
+          window.parent.postMessage({ source: 'valor-embed-iframe', version: '1.0.0', payload: { type: 'TIME_UPDATE', payload: { currentTime: newVideo.currentTime, duration: newVideo.duration } } }, '*');
+        } catch (e) {}
+      }
+      return newVideo;
+    });
+  }, []);
 
   if (!video) {
     return (
@@ -462,6 +534,7 @@ export const EmbedPlayerPage: React.FC = () => {
       
       <RemoteVideoPlayer
         isEmbed={true}
+        uiHideTimeout={5}
         isCinema={(video as any)?.isCinema}
         video={video}
         onBack={() => {
@@ -470,28 +543,7 @@ export const EmbedPlayerPage: React.FC = () => {
             window.parent.postMessage({ source: 'valor-embed-iframe', version: '1.0.0', payload: { type: 'CLOSE' } }, '*');
           } catch (e) {}
         }}
-        onUpdateVideo={(updater) => {
-          let newVideo: VideoItem;
-          if (typeof updater === 'function') {
-            newVideo = updater(video);
-          } else {
-            newVideo = updater;
-          }
-          if (newVideo?.url && newVideo.subtitleTracks && newVideo.subtitleTracks.length > 0) {
-            saveEmbedSubtitles(newVideo, newVideo.subtitleTracks);
-          }
-          if (newVideo?.url && typeof newVideo.currentTime === 'number') {
-            saveMediaTimestamp(newVideo.url, newVideo.currentTime, Number(newVideo.duration) || 0, newVideo.title);
-          }
-          if (newVideo.currentTime !== video.currentTime) {
-            setVideo(newVideo);
-            try {
-              window.parent.postMessage({ source: 'valor-embed-iframe', version: '1.0.0', payload: { type: 'TIME_UPDATE', payload: { currentTime: newVideo.currentTime, duration: newVideo.duration } } }, '*');
-            } catch (e) {}
-          } else {
-            setVideo(newVideo);
-          }
-        }}
+        onUpdateVideo={handleUpdateVideo}
         showPlayButton={controls.play !== false}
         showTimeDisplay={controls.time !== false}
         showPlayBar={controls.play !== false}
@@ -508,6 +560,13 @@ export const EmbedPlayerPage: React.FC = () => {
         onUpdateSubSettings={handleUpdateSubSettings}
         openSubtitlesApiKey={embedSettings.openSubtitlesApiKey || ''}
       />
+      {/* Explicit Reloading Loader */}
+      {isReloading && (
+        <BufferingOverlay
+          isBuffering={isReloading}
+          preset="fire-circle"
+        />
+      )}
     </div>
   );
 };

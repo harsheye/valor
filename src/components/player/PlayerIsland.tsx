@@ -716,7 +716,7 @@ export const PlayerIsland: React.FC<PlayerIslandProps> = ({
               <span style={{ fontSize: '13px', color: '#9a9ca8' }}>Default Audio</span>
             ) : (
               audioTracks.map((tr) => {
-                const isSelected = selectedAudioIndex === tr.index;
+                const isSelected = selectedAudioIndex === tr.index || (selectedAudioIndex === undefined && audioTracks.length === 1);
                 const langLabel = resolveLanguage(tr.language, tr.label) || tr.label || `Track ${tr.index}`;
                 return (
                   <button

@@ -15,7 +15,8 @@ export type EmbedCommand =
   | { type: 'SET_FULLSCREEN'; payload: { fullscreen: boolean } }
   | { type: 'LOAD'; payload: { url: string; media?: string; title?: string; autoPlay?: boolean; currentTime?: number; duration?: number; hlsPlaylist?: any; playbackMode?: string; } }
   | { type: 'UPDATE_CONFIG'; payload: { controls?: Partial<ControlsConfig>; theme?: Partial<ThemeConfig> } }
-  | { type: 'DESTROY' };
+  | { type: 'DESTROY' }
+  | { type: 'RELOAD' };
 
 // Events sent FROM the Iframe TO the Host Window
 export type EmbedEvent =

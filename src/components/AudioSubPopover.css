@@ -1,0 +1,948 @@
+/* AudioSubPopover Theme-Aware & Foldable Two-Pane Layout */
+:root {
+  --asp-accent: var(--player-accent, var(--accent, var(--accent-color, #e11d2e)));
+  --asp-accent-glow: var(--accent-glow, var(--accent-soft, rgba(225, 29, 46, 0.25)));
+  --asp-accent-bg: var(--accent-soft, rgba(225, 29, 46, 0.12));
+  --asp-on-accent: var(--on-accent, #ffffff);
+  --asp-amber: var(--warning, #f5a524);
+  --asp-amber-bg: rgba(245, 165, 36, 0.12);
+  --asp-danger: var(--danger, #ef4444);
+  --asp-ln: var(--border, var(--border-color, var(--card-border, var(--ln, rgba(255, 255, 255, 0.12)))));
+  --asp-bg: var(--card-bg, var(--surface-1, var(--bg, rgba(18, 18, 22, 0.94))));
+  --asp-surface: var(--surface, var(--surface-1, rgba(255, 255, 255, 0.05)));
+  --asp-surface-hover: var(--surface-hover, var(--surface-2, rgba(255, 255, 255, 0.09)));
+  --asp-surface-active: var(--surface-3, rgba(255, 255, 255, 0.14));
+  --asp-input-bg: var(--input-bg, var(--surface-2, rgba(0, 0, 0, 0.35)));
+  --asp-text: var(--text-primary, var(--text-1, #ffffff));
+  --asp-text-muted: var(--text-muted, var(--text-3, rgba(255, 255, 255, 0.48)));
+  --asp-text-secondary: var(--text-secondary, var(--text-2, rgba(255, 255, 255, 0.72)));
+  --asp-focus: var(--focus-ring, var(--asp-accent));
+}
+
+.asp-pop {
+  position: absolute;
+  bottom: 52px;
+  right: 0;
+  width: min(640px, calc(100vw - 32px)) !important;
+  max-width: calc(100vw - 32px) !important;
+  height: min(440px, calc(100vh - 40px)) !important;
+  border-radius: 16px !important;
+  border: 1px solid var(--asp-ln) !important;
+  background: var(--asp-bg) !important;
+  backdrop-filter: blur(14px) !important;
+  -webkit-backdrop-filter: blur(14px) !important;
+  box-shadow: 0 20px 40px -10px rgba(0, 0, 0, 0.65), 0 0 1px 1px rgba(255, 255, 255, 0.05) !important;
+  overflow: hidden !important;
+  padding: 0 !important;
+  z-index: 100;
+  box-sizing: border-box !important;
+  color: var(--asp-text);
+  font-family: inherit;
+  user-select: none;
+  transition: width 0.25s cubic-bezier(0.16, 1, 0.3, 1), transform 0.2s ease, max-width 0.25s ease;
+}
+
+/* Folded State: Collapse right pane and shrink popover width */
+.asp-pop.is-folded {
+  width: min(340px, calc(100vw - 32px)) !important;
+}
+
+.asp-pop.is-folded .asp-grid {
+  grid-template-columns: minmax(0, 1fr) !important;
+}
+
+.asp-pop.is-folded .asp-left {
+  border-right: none !important;
+}
+
+.asp-pop.is-folded .asp-right {
+  display: none !important;
+}
+
+/* Two-pane grid */
+.asp-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr);
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  box-sizing: border-box;
+  transition: grid-template-columns 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* Left pane */
+.asp-left {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 16px;
+  border-right: 1px solid var(--asp-ln);
+  overflow-y: auto;
+  overflow-x: hidden;
+  min-width: 0;
+  height: 100%;
+  box-sizing: border-box;
+  scrollbar-width: thin;
+  scrollbar-color: var(--asp-ln) transparent;
+}
+
+.asp-left::-webkit-scrollbar,
+.asp-right::-webkit-scrollbar,
+.asp-cue-list::-webkit-scrollbar,
+.asp-style::-webkit-scrollbar {
+  width: 4px;
+}
+
+.asp-left::-webkit-scrollbar-thumb,
+.asp-right::-webkit-scrollbar-thumb,
+.asp-cue-list::-webkit-scrollbar-thumb,
+.asp-style::-webkit-scrollbar-thumb {
+  background: var(--asp-ln);
+  border-radius: 4px;
+}
+
+/* Section label */
+.asp-section-label {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
+  color: var(--asp-text-muted);
+  margin-bottom: 2px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+/* Fold toggle button in left pane header */
+.asp-fold-toggle-btn {
+  appearance: none;
+  background: var(--asp-surface);
+  border: 1px solid var(--asp-ln);
+  color: var(--asp-text-secondary);
+  border-radius: 6px;
+  padding: 2px 7px;
+  font-size: 10px;
+  font-weight: 600;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  text-transform: none;
+  letter-spacing: normal;
+  transition: all 0.15s ease;
+}
+.asp-fold-toggle-btn:hover {
+  background: var(--asp-surface-hover);
+  color: var(--asp-text);
+  border-color: var(--asp-accent);
+}
+.asp-fold-toggle-btn.active {
+  background: var(--asp-accent-bg);
+  border-color: var(--asp-accent);
+  color: var(--asp-accent);
+}
+
+/* Audio chips */
+.asp-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+}
+
+.asp-chip {
+  appearance: none;
+  border: 1px solid var(--asp-ln);
+  background: var(--asp-surface);
+  color: var(--asp-text-secondary);
+  border-radius: 8px;
+  padding: 6px 10px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 32px;
+  box-sizing: border-box;
+  transition: all 0.15s ease;
+  white-space: nowrap;
+  max-width: 100%;
+}
+
+.asp-chip:hover {
+  background: var(--asp-surface-hover);
+  color: var(--asp-text);
+  border-color: var(--asp-accent);
+}
+
+.asp-chip.selected {
+  border-color: var(--asp-accent);
+  background: var(--asp-accent-bg);
+  color: var(--asp-text);
+  font-weight: 600;
+  box-shadow: 0 0 10px var(--asp-accent-glow);
+}
+
+.asp-chip.dashed {
+  border: 1px dashed var(--asp-ln);
+  color: var(--asp-text-muted);
+}
+.asp-chip.dashed:hover {
+  border-color: var(--asp-accent);
+  color: var(--asp-text);
+}
+
+/* Subtitle list */
+.asp-sub-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.asp-row {
+  appearance: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 10px;
+  background: var(--asp-surface);
+  border: 1px solid transparent;
+  border-radius: 8px;
+  color: var(--asp-text-secondary);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  min-height: 32px;
+  box-sizing: border-box;
+  text-align: left;
+  transition: all 0.15s ease;
+  min-width: 0;
+}
+
+.asp-row:hover {
+  background: var(--asp-surface-hover);
+  color: var(--asp-text);
+}
+
+.asp-row.selected {
+  border-color: var(--asp-accent);
+  background: var(--asp-accent-bg);
+  color: var(--asp-text);
+  font-weight: 600;
+  box-shadow: 0 0 8px var(--asp-accent-glow);
+}
+
+.asp-row.dashed {
+  border: 1px dashed var(--asp-ln);
+  background: transparent;
+  color: var(--asp-text-muted);
+  justify-content: center;
+  font-size: 11px;
+}
+.asp-row.dashed:hover {
+  border-color: var(--asp-accent);
+  color: var(--asp-text);
+}
+
+.asp-lang-tag {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--asp-text-muted);
+  width: 30px;
+  flex-shrink: 0;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.asp-row.selected .asp-lang-tag {
+  color: var(--asp-accent);
+}
+
+.asp-row-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.asp-check {
+  flex-shrink: 0;
+  color: var(--asp-accent);
+}
+
+/* OpenSubtitles card */
+.asp-os {
+  margin-top: auto;
+  border: 1px solid rgba(245, 165, 36, 0.35);
+  border-radius: 10px;
+  background: linear-gradient(180deg, var(--asp-amber-bg) 0%, var(--asp-surface) 100%);
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+  box-sizing: border-box;
+}
+
+.asp-os-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-width: 0;
+}
+
+.asp-os-title-wrap {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.asp-os-label {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--asp-amber);
+}
+
+.asp-os-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.asp-os-dot.green {
+  background: #22c55e;
+  box-shadow: 0 0 6px #22c55e;
+}
+.asp-os-dot.amber {
+  background: var(--asp-amber);
+  box-shadow: 0 0 6px var(--asp-amber);
+}
+
+.asp-os-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.asp-os-btn {
+  appearance: none;
+  border: 1px solid var(--asp-ln);
+  background: var(--asp-input-bg);
+  color: var(--asp-text-secondary);
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.asp-os-btn:hover {
+  color: var(--asp-text);
+  border-color: var(--asp-amber);
+}
+
+.asp-os-search-btn {
+  appearance: none;
+  width: 100%;
+  border: 1px solid rgba(245, 165, 36, 0.4);
+  background: linear-gradient(135deg, rgba(245, 165, 36, 0.2) 0%, rgba(217, 119, 6, 0.25) 100%);
+  color: var(--asp-amber);
+  border-radius: 7px;
+  padding: 6px 10px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 30px;
+  transition: all 0.15s ease;
+}
+.asp-os-search-btn:hover:not(:disabled) {
+  background: linear-gradient(135deg, rgba(245, 165, 36, 0.3) 0%, rgba(217, 119, 6, 0.38) 100%);
+  color: #fef08a;
+  border-color: var(--asp-amber);
+}
+.asp-os-search-btn:disabled {
+  opacity: 0.7;
+  cursor: wait;
+}
+
+.asp-os-drawer {
+  background: var(--asp-input-bg);
+  border: 1px solid var(--asp-ln);
+  border-radius: 7px;
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  box-sizing: border-box;
+}
+
+.asp-os-results {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 110px;
+  overflow-y: auto;
+  min-width: 0;
+  scrollbar-width: thin;
+}
+
+.asp-os-result-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  padding: 4px 6px;
+  background: var(--asp-surface);
+  border-radius: 5px;
+  font-size: 11px;
+  min-width: 0;
+}
+.asp-os-result-row:hover {
+  background: var(--asp-surface-hover);
+}
+
+/* Right pane */
+.asp-right {
+  display: flex;
+  flex-direction: column;
+  padding: 16px;
+  overflow: hidden;
+  min-width: 0;
+  height: 100%;
+  box-sizing: border-box;
+  gap: 12px;
+}
+
+/* Segmented control wrap with Fold Button */
+.asp-seg-wrap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+  width: 100%;
+}
+
+.asp-seg {
+  display: flex;
+  background: var(--asp-input-bg);
+  border: 1px solid var(--asp-ln);
+  border-radius: 9px;
+  padding: 3px;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+}
+
+.asp-seg-btn {
+  appearance: none;
+  background: transparent;
+  border: none;
+  color: var(--asp-text-muted);
+  flex: 1;
+  padding: 6px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  border-radius: 7px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  text-align: center;
+  min-height: 28px;
+  white-space: nowrap;
+}
+
+.asp-seg-btn:hover {
+  color: var(--asp-text);
+}
+
+.asp-seg-btn.active {
+  background: var(--asp-surface-hover);
+  color: var(--asp-text);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+}
+
+/* Fold Button in Right Pane */
+.asp-fold-btn {
+  appearance: none;
+  background: var(--asp-surface);
+  border: 1px solid var(--asp-ln);
+  color: var(--asp-text-secondary);
+  border-radius: 8px;
+  padding: 5px 9px;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 32px;
+  flex-shrink: 0;
+  transition: all 0.15s ease;
+}
+.asp-fold-btn:hover {
+  background: var(--asp-surface-hover);
+  color: var(--asp-text);
+  border-color: var(--asp-accent);
+}
+
+.asp-back-btn {
+  appearance: none;
+  background: var(--asp-surface);
+  border: 1px solid var(--asp-ln);
+  color: var(--asp-text);
+  border-radius: 8px;
+  padding: 5px 9px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 32px;
+  flex-shrink: 0;
+}
+
+/* Transcript pane */
+.asp-transcript-search {
+  width: 100%;
+  background: var(--asp-input-bg);
+  border: 1px solid var(--asp-ln);
+  border-radius: 8px;
+  padding: 7px 10px;
+  color: var(--asp-text);
+  font-size: 12px;
+  outline: none;
+  box-sizing: border-box;
+  flex-shrink: 0;
+}
+.asp-transcript-search:focus {
+  border-color: var(--asp-accent);
+}
+
+.asp-cue-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-right: 2px;
+  min-width: 0;
+  box-sizing: border-box;
+}
+
+.asp-cue {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.12s ease;
+  font-size: 12px;
+  color: var(--asp-text-secondary);
+  text-align: left;
+  min-width: 0;
+}
+
+.asp-cue:hover {
+  background: var(--asp-surface-hover);
+  color: var(--asp-text);
+}
+
+.asp-cue.active {
+  background: var(--asp-accent-bg);
+  border-left: 2px solid var(--asp-accent);
+  color: var(--asp-text);
+  font-weight: 500;
+}
+
+.asp-cue-time {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 11px;
+  color: var(--asp-accent);
+  font-weight: 600;
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
+.asp-cue-text {
+  flex: 1;
+  min-width: 0;
+  line-height: 1.35;
+  word-break: break-word;
+}
+
+/* Style tab */
+.asp-style {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding-right: 2px;
+  min-width: 0;
+  box-sizing: border-box;
+}
+
+.asp-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  width: 100%;
+}
+
+.asp-field-label {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
+  color: var(--asp-text-muted);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+/* Swatches */
+.asp-swatches {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.asp-swatch {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  border: 1.5px solid var(--asp-ln);
+  cursor: pointer;
+  padding: 0;
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: transform 0.15s ease, border-color 0.15s;
+  flex-shrink: 0;
+  background: transparent;
+}
+
+.asp-swatch:hover {
+  transform: scale(1.12);
+  border-color: var(--asp-text-muted);
+}
+
+.asp-swatch.selected {
+  border-color: var(--asp-accent);
+  box-shadow: 0 0 0 2px var(--asp-accent);
+}
+
+.asp-swatch-none {
+  background: repeating-linear-gradient(
+    45deg,
+    rgba(239, 68, 68, 0.4),
+    rgba(239, 68, 68, 0.4) 2px,
+    transparent 2px,
+    transparent 6px
+  ) !important;
+}
+
+.asp-color-native {
+  appearance: none;
+  -webkit-appearance: none;
+  border: 1.5px solid var(--asp-ln);
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  cursor: pointer;
+  background: none;
+  padding: 0;
+  box-sizing: border-box;
+  flex-shrink: 0;
+}
+.asp-color-native::-webkit-color-swatch-wrapper {
+  padding: 0;
+}
+.asp-color-native::-webkit-color-swatch {
+  border: none;
+  border-radius: 50%;
+}
+
+/* Size Button Controls */
+.asp-size-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  width: 100%;
+}
+
+.asp-size-btn-group {
+  display: inline-flex;
+  align-items: center;
+  background: var(--asp-input-bg);
+  border: 1px solid var(--asp-ln);
+  border-radius: 8px;
+  overflow: hidden;
+  height: 32px;
+  box-sizing: border-box;
+}
+
+.asp-size-btn {
+  appearance: none;
+  background: transparent;
+  border: none;
+  color: var(--asp-text);
+  width: 32px;
+  height: 100%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  padding: 0;
+}
+
+.asp-size-btn:hover {
+  background: var(--asp-surface-hover);
+  color: var(--asp-text);
+}
+
+.asp-size-btn:active {
+  background: var(--asp-accent-bg);
+}
+
+.asp-size-display {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--asp-text);
+  padding: 0 8px;
+  min-width: 44px;
+  text-align: center;
+  user-select: none;
+}
+
+.asp-size-presets {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex-wrap: wrap;
+}
+
+.asp-size-preset-btn {
+  appearance: none;
+  background: var(--asp-surface);
+  border: 1px solid var(--asp-ln);
+  color: var(--asp-text-secondary);
+  border-radius: 6px;
+  padding: 5px 8px;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  height: 32px;
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.asp-size-preset-btn:hover {
+  background: var(--asp-surface-hover);
+  color: var(--asp-text);
+  border-color: var(--asp-ln);
+}
+
+.asp-size-preset-btn.active {
+  background: var(--asp-accent-bg);
+  border-color: var(--asp-accent);
+  color: var(--asp-text);
+  font-weight: 700;
+  box-shadow: 0 0 8px var(--asp-accent-glow);
+}
+
+.asp-reset-btn {
+  appearance: none;
+  background: var(--asp-surface);
+  border: 1px solid var(--asp-ln);
+  color: var(--asp-text-secondary);
+  border-radius: 7px;
+  padding: 6px 12px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  cursor: pointer;
+  align-self: flex-start;
+  transition: all 0.15s ease;
+  margin-top: 4px;
+}
+.asp-reset-btn:hover {
+  background: var(--asp-surface-hover);
+  color: var(--asp-text);
+  border-color: var(--asp-accent);
+}
+
+/* Responsive navigation button */
+.asp-nav-btn {
+  appearance: none;
+  width: 100%;
+  background: var(--asp-surface);
+  border: 1px solid var(--asp-ln);
+  color: var(--asp-text);
+  border-radius: 9px;
+  padding: 9px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: auto;
+  box-sizing: border-box;
+  transition: all 0.15s ease;
+}
+.asp-nav-btn:hover {
+  background: var(--asp-surface-hover);
+  border-color: var(--asp-accent);
+}
+
+/* Accessibility & Focus Rings */
+.asp-pop button:focus-visible,
+.asp-pop input:focus-visible {
+  outline: 2px solid var(--asp-focus) !important;
+  outline-offset: 1px;
+}
+
+/* Prefers reduced motion */
+@media (prefers-reduced-motion: reduce) {
+  .asp-pop,
+  .asp-chip,
+  .asp-row,
+  .asp-seg-btn,
+  .asp-cue,
+  .asp-swatch {
+    transition: none !important;
+    animation: none !important;
+  }
+}
+
+/* CustomSelect override for .asp-pop */
+.asp-pop .custom-select-container {
+  width: 100% !important;
+  min-width: 0 !important;
+}
+.asp-pop .custom-select-trigger {
+  width: 100% !important;
+  min-width: 0 !important;
+  font-size: 12px;
+  padding: 7px 10px;
+  border-radius: 8px;
+  background: var(--asp-input-bg);
+  border: 1px solid var(--asp-ln);
+  color: var(--asp-text);
+  box-sizing: border-box;
+}
+
+/* Mobile bottom sheet for Audio / Subtitles <= 680px */
+.asp-sheet-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.65);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  z-index: 2000;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  animation: asp-fade-in 0.2s ease-out;
+}
+
+.asp-sheet {
+  position: relative;
+  width: 100%;
+  max-height: 80vh;
+  border-radius: 20px 20px 0 0;
+  background: var(--asp-bg);
+  border-top: 1px solid var(--asp-ln);
+  box-shadow: 0 -10px 30px rgba(0, 0, 0, 0.5);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  box-sizing: border-box;
+  animation: asp-slide-up 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+  padding-bottom: max(16px, env(safe-area-inset-bottom, 16px));
+}
+
+.asp-sheet-handle {
+  width: 36px;
+  height: 4px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.25);
+  margin: 10px auto 6px;
+  flex-shrink: 0;
+}
+
+.asp-sheet-nav {
+  display: flex;
+  padding: 6px 14px 10px;
+  gap: 6px;
+  border-bottom: 1px solid var(--asp-ln);
+  flex-shrink: 0;
+}
+
+.asp-sheet-tab {
+  flex: 1;
+  padding: 8px 4px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--asp-text-muted);
+  background: transparent;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.asp-sheet-tab.active {
+  color: var(--asp-text);
+  background: var(--asp-surface-active);
+}
+
+.asp-sheet-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px;
+  box-sizing: border-box;
+  scrollbar-width: thin;
+}
+
+@keyframes asp-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes asp-slide-up {
+  from { transform: translateY(100%); }
+  to { transform: translateY(0); }
+}

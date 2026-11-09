@@ -20,8 +20,9 @@ import {
 } from '../components/settings';
 import { 
   User, Plus, RefreshCw, Copy, Check, RotateCcw, 
-  RotateCcw as RestoreIcon
+  RotateCcw as RestoreIcon, ChevronRight, ArrowLeft, Radio
 } from 'lucide-react';
+import { PlayerLoader } from '../components/player/PlayerLoader';
 import { sidecarService } from '../services/remote/sidecarService';
 import { featureFlagService } from '../services/featureFlags';
 import { 
@@ -152,6 +153,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
   };
 
   const [activeSection, setActiveSection] = useState<SettingsSectionId>(() => resolveSectionId(settingsTab));
+  const [mobileDetail, setMobileDetail] = useState<SettingsSectionId | null>(() => settingsTab ? resolveSectionId(settingsTab) : null);
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [showSavedToast, setShowSavedToast] = useState<boolean>(false);
   const [toastMessage, setToastMessage] = useState<string>('Saved');
@@ -165,14 +167,79 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
   // Trakt device code info
   const [deviceCodeInfo, setDeviceCodeInfo] = useState<{ user_code: string; verification_url: string } | null>(null);
 
+  // System Update state (watches branch production)
+  const [updateStatus, setUpdateStatus] = useState<any>(null);
+  const [checkingUpdate, setCheckingUpdate] = useState<boolean>(false);
+  const [applyingUpdate, setApplyingUpdate] = useState<boolean>(false);
+
+  const fetchUpdateStatus = useCallback(async () => {
+    try {
+      const res = await fetch('/api/system/update/status');
+      if (res.ok) {
+        const data = await res.json();
+        setUpdateStatus(data);
+      }
+    } catch {}
+  }, []);
+
+  useEffect(() => {
+    fetchUpdateStatus();
+    const interval = setInterval(fetchUpdateStatus, 15000);
+    return () => clearInterval(interval);
+  }, [fetchUpdateStatus]);
+
+  const handleCheckUpdate = async () => {
+    setCheckingUpdate(true);
+    try {
+      const res = await fetch('/api/system/update/check', { method: 'POST' });
+      if (res.ok) {
+        const data = await res.json();
+        setUpdateStatus(data);
+        if (data.updateAvailable) {
+          triggerAutosaveToast('New patch available on branch production!');
+        } else {
+          triggerAutosaveToast('System is up to date.');
+        }
+      } else {
+        triggerAutosaveToast('Failed to check for updates');
+      }
+    } catch {
+      triggerAutosaveToast('Update check failed');
+    } finally {
+      setCheckingUpdate(false);
+    }
+  };
+
+  const handleApplyUpdate = async () => {
+    setApplyingUpdate(true);
+    try {
+      triggerAutosaveToast('Applying patch and restarting...');
+      const res = await fetch('/api/system/update/apply', { method: 'POST' });
+      if (res.ok) {
+        const data = await res.json();
+        setUpdateStatus(data);
+        triggerAutosaveToast('Patch applied! Restarting instance...');
+      } else {
+        triggerAutosaveToast('Failed to apply update');
+      }
+    } catch {
+      triggerAutosaveToast('Error applying update');
+    } finally {
+      setApplyingUpdate(false);
+    }
+  };
+
   useEffect(() => {
     if (settingsTab) {
-      setActiveSection(resolveSectionId(settingsTab));
+      const resolved = resolveSectionId(settingsTab);
+      setActiveSection(resolved);
+      setMobileDetail(resolved);
     }
   }, [settingsTab]);
 
   const handleSelectSection = (sectionId: SettingsSectionId) => {
     setActiveSection(sectionId);
+    setMobileDetail(sectionId);
     setSearchQuery('');
     if (setSettingsTab) {
       setSettingsTab(sectionId as any);
@@ -349,7 +416,350 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
 
   return (
     <div className="settings-workspace" role="region" aria-label="Settings Area">
-      <div className="settings-container">
+      {/* Mobile Settings View (<= 768px) */}
+      <div className="mobile-settings-view">
+        {mobileDetail === null ? (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+            <h1 style={{ fontSize: '26px', fontWeight: 700, margin: '0 0 16px 0', color: 'var(--tx, var(--text-1))' }}>
+              Settings
+            </h1>
+
+            {/* GENERAL */}
+            <div className="mobile-settings-group">
+              <div className="mobile-settings-group-title">GENERAL</div>
+              <button
+                type="button"
+                className="mobile-settings-row-btn"
+                onClick={() => { setMobileDetail('general'); setActiveSection('general'); }}
+              >
+                <div className="mobile-settings-row-text">
+                  <span className="mobile-settings-row-title">General</span>
+                  <span className="mobile-settings-row-desc">Theme, language, display</span>
+                </div>
+                <ChevronRight size={18} className="mobile-settings-chevron" />
+              </button>
+            </div>
+
+            {/* PLAYER */}
+            <div className="mobile-settings-group">
+              <div className="mobile-settings-group-title">PLAYER</div>
+              <button
+                type="button"
+                className="mobile-settings-row-btn"
+                onClick={() => { setMobileDetail('subtitles'); setActiveSection('subtitles'); }}
+              >
+                <div className="mobile-settings-row-text">
+                  <span className="mobile-settings-row-title">Subtitles</span>
+                  <span className="mobile-settings-row-desc">Default tracks, style</span>
+                </div>
+                <ChevronRight size={18} className="mobile-settings-chevron" />
+              </button>
+              <button
+                type="button"
+                className="mobile-settings-row-btn"
+                onClick={() => { setMobileDetail('pause-overlay'); setActiveSection('pause-overlay'); }}
+              >
+                <div className="mobile-settings-row-text">
+                  <span className="mobile-settings-row-title">Pause overlay</span>
+                  <span className="mobile-settings-row-desc">Show controls, dim</span>
+                </div>
+                <ChevronRight size={18} className="mobile-settings-chevron" />
+              </button>
+              <button
+                type="button"
+                className="mobile-settings-row-btn"
+                onClick={() => { setMobileDetail('hotkeys'); setActiveSection('hotkeys'); }}
+              >
+                <div className="mobile-settings-row-text">
+                  <span className="mobile-settings-row-title">Hotkeys</span>
+                  <span className="mobile-settings-row-desc">Gestures</span>
+                </div>
+                <ChevronRight size={18} className="mobile-settings-chevron" />
+              </button>
+              <button
+                type="button"
+                className="mobile-settings-row-btn"
+                onClick={() => { setMobileDetail('player-controls'); setActiveSection('player-controls'); }}
+              >
+                <div className="mobile-settings-row-text">
+                  <span className="mobile-settings-row-title">Player controls</span>
+                  <span className="mobile-settings-row-desc">Buttons, seek, speed</span>
+                </div>
+                <ChevronRight size={18} className="mobile-settings-chevron" />
+              </button>
+            </div>
+
+            {/* ACCOUNT */}
+            <div className="mobile-settings-group">
+              <div className="mobile-settings-group-title">ACCOUNT</div>
+              <button
+                type="button"
+                className="mobile-settings-row-btn"
+                onClick={() => { setMobileDetail('profile-storage'); setActiveSection('profile-storage'); }}
+              >
+                <div className="mobile-settings-row-text">
+                  <span className="mobile-settings-row-title">Profile & storage</span>
+                  <span className="mobile-settings-row-desc">{availableProfiles.length || 1} profile{(availableProfiles.length || 1) > 1 ? 's' : ''} · cached</span>
+                </div>
+                <ChevronRight size={18} className="mobile-settings-chevron" />
+              </button>
+              <button
+                type="button"
+                className="mobile-settings-row-btn"
+                onClick={() => { setMobileDetail('connected-services'); setActiveSection('connected-services'); }}
+              >
+                <div className="mobile-settings-row-text">
+                  <span className="mobile-settings-row-title">Connected services</span>
+                  <span className="mobile-settings-row-desc">Trakt, TMDB, OpenSubtitles</span>
+                </div>
+                <ChevronRight size={18} className="mobile-settings-chevron" />
+              </button>
+            </div>
+
+            {/* ADVANCED */}
+            <div className="mobile-settings-group">
+              <div className="mobile-settings-group-title">ADVANCED</div>
+              <button
+                type="button"
+                className="mobile-settings-row-btn"
+                onClick={() => { setMobileDetail('loading-animation'); setActiveSection('loading-animation'); }}
+              >
+                <div className="mobile-settings-row-text">
+                  <span className="mobile-settings-row-title">Loading animation</span>
+                  <span className="mobile-settings-row-desc">What shows while buffering</span>
+                </div>
+                <ChevronRight size={18} className="mobile-settings-chevron" />
+              </button>
+              <button
+                type="button"
+                className="mobile-settings-row-btn"
+                onClick={() => { setMobileDetail('local-engine'); setActiveSection('local-engine'); }}
+              >
+                <div className="mobile-settings-row-text">
+                  <span className="mobile-settings-row-title">Local engine</span>
+                  <span className="mobile-settings-row-desc">Run streams on your machine</span>
+                </div>
+                <ChevronRight size={18} className="mobile-settings-chevron" />
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+            <div className="mobile-detail-header">
+              <button
+                type="button"
+                onClick={() => setMobileDetail(null)}
+                className="mobile-detail-back-btn"
+                aria-label="Back to settings menu"
+              >
+                <ArrowLeft size={18} />
+              </button>
+              <h2 className="mobile-detail-title">
+                {mobileDetail === 'general' ? 'General' :
+                 mobileDetail === 'subtitles' ? 'Subtitles' :
+                 mobileDetail === 'pause-overlay' ? 'Pause overlay' :
+                 mobileDetail === 'hotkeys' ? 'Hotkeys & Gestures' :
+                 mobileDetail === 'player-controls' ? 'Player controls' :
+                 mobileDetail === 'profile-storage' ? 'Profile & storage' :
+                 mobileDetail === 'connected-services' ? 'Connected services' :
+                 mobileDetail === 'loading-animation' ? 'Loading animation' :
+                 mobileDetail === 'local-engine' ? 'Local engine' : 'Settings'}
+              </h2>
+            </div>
+
+            {/* General detail view special section: scrollable chips + 2-column theme preview */}
+            {mobileDetail === 'general' && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                <div className="settings-anchor-chips" style={{ overflowX: 'auto', paddingBottom: '4px' }}>
+                  {[
+                    { id: 'card-appearance', label: 'Appearance' },
+                    { id: 'card-comfort', label: 'Comfort' },
+                    { id: 'card-language', label: 'Language' },
+                    { id: 'card-history', label: 'History' },
+                    { id: 'card-overlays', label: 'Display' },
+                    { id: 'card-behaviour', label: 'Shortcuts' },
+                    { id: 'card-updates', label: 'Updates' },
+                  ].map((chip) => (
+                    <button
+                      key={chip.id}
+                      type="button"
+                      className="settings-anchor-chip"
+                      onClick={() => scrollToAnchor(chip.id)}
+                    >
+                      {chip.label}
+                    </button>
+                  ))}
+                </div>
+
+                <div className="mobile-theme-preview-grid">
+                  {THEME_OPTIONS.map((theme) => {
+                    const isSelected = settings.theme === theme.id || (!settings.theme && theme.id === 'midnight-slate');
+                    return (
+                      <div
+                        key={theme.id}
+                        onClick={() => updateSetting('theme', theme.id)}
+                        style={{
+                          background: theme.surface,
+                          border: isSelected ? '2px solid var(--ac, var(--accent))' : '1px solid var(--ln, var(--border))',
+                          borderRadius: '14px',
+                          padding: '12px',
+                          cursor: 'pointer',
+                          display: 'flex',
+                          flexDirection: 'column',
+                          gap: '8px'
+                        }}
+                      >
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                          <span style={{ fontSize: '13px', fontWeight: 600, color: theme.text }}>{theme.name}</span>
+                          {isSelected && <Check size={14} color="var(--ac, var(--accent))" />}
+                        </div>
+                        <div style={{ display: 'flex', gap: '4px' }}>
+                          <div style={{ width: '14px', height: '14px', borderRadius: '50%', background: theme.bg, border: '1px solid rgba(255,255,255,0.2)' }} />
+                          <div style={{ width: '14px', height: '14px', borderRadius: '50%', background: theme.dot }} />
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* Loading animation detail view: radio list + live preview card */}
+            {mobileDetail === 'loading-animation' && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                  {[
+                    { id: 'monogram', label: 'Monogram draw', desc: 'Two crimson strokes tracing the V mark' },
+                    { id: 'satin', label: 'Satin sweep', desc: 'VALOR wordmark with slow light pass' },
+                    { id: 'letters', label: 'Letter rise', desc: 'VALOR letters focusing in one by one' },
+                  ].map((anim) => {
+                    const isSelected = (settings.loadingAnimation || 'monogram') === anim.id;
+                    return (
+                      <div
+                        key={anim.id}
+                        onClick={() => updateSetting('loadingAnimation', anim.id)}
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'space-between',
+                          padding: '14px 16px',
+                          background: 'var(--s1, var(--surface-1))',
+                          border: isSelected ? '1.5px solid var(--ac, var(--accent))' : '1px solid var(--ln, var(--border))',
+                          borderRadius: '14px',
+                          cursor: 'pointer'
+                        }}
+                      >
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                          <span style={{ fontSize: '15px', fontWeight: 600, color: 'var(--tx, var(--text-1))' }}>{anim.label}</span>
+                          <span style={{ fontSize: '12px', color: 'var(--mut, var(--text-3))' }}>{anim.desc}</span>
+                        </div>
+                        <div style={{
+                          width: '20px',
+                          height: '20px',
+                          borderRadius: '50%',
+                          border: isSelected ? '6px solid var(--ac, var(--accent))' : '2px solid var(--ln, var(--border))',
+                          background: 'transparent',
+                          boxSizing: 'border-box'
+                        }} />
+                      </div>
+                    );
+                  })}
+                </div>
+
+                {/* Live Preview Card */}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                  <span style={{ fontSize: '12px', fontWeight: 700, color: 'var(--mut, var(--text-3))', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                    Live Preview
+                  </span>
+                  <div
+                    style={{
+                      height: '180px',
+                      position: 'relative',
+                      borderRadius: '16px',
+                      overflow: 'hidden',
+                      border: '1px solid var(--ln, var(--border))',
+                      background: '#000'
+                    }}
+                  >
+                    <PlayerLoader
+                      visible={true}
+                      variant="buffering"
+                      animationStyle={settings.loadingAnimation || 'monogram'}
+                    />
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Local engine detail view: 42x24 switch wired to existing engine setting */}
+            {mobileDetail === 'local-engine' && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                <div
+                  style={{
+                    background: 'var(--s1, var(--surface-1))',
+                    border: '1px solid var(--ln, var(--border))',
+                    borderRadius: '16px',
+                    padding: '16px',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: '12px'
+                  }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <div
+                        style={{
+                          width: '8px',
+                          height: '8px',
+                          borderRadius: '50%',
+                          background: sidecarStatus === 'Operational' ? '#22c55e' : '#ef4444'
+                        }}
+                      />
+                      <span style={{ fontSize: '15px', fontWeight: 600, color: 'var(--tx, var(--text-1))' }}>
+                        Local Engine ({sidecarStatus})
+                      </span>
+                    </div>
+                    <Switch
+                      checked={sidecarStatus === 'Operational'}
+                      onChange={() => handleCheckSidecarStatus()}
+                    />
+                  </div>
+                  <p style={{ margin: 0, fontSize: '13px', color: 'var(--mut, var(--text-3))', lineHeight: '1.4' }}>
+                    Handles MKV, audio tracks and embedded subtitles directly on your machine.
+                  </p>
+                </div>
+              </div>
+            )}
+
+            {/* Other sections info/card */}
+            {mobileDetail && !['general', 'loading-animation', 'local-engine'].includes(mobileDetail) && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+                <div style={{ background: 'var(--s1, var(--surface-1))', border: '1px solid var(--ln, var(--border))', borderRadius: '16px', padding: '16px' }}>
+                  <p style={{ margin: '0 0 8px 0', fontSize: '14px', fontWeight: 600, color: 'var(--tx, var(--text-1))' }}>
+                    {mobileDetail === 'subtitles' ? 'Subtitle Preferences' :
+                     mobileDetail === 'pause-overlay' ? 'Pause Overlay Settings' :
+                     mobileDetail === 'hotkeys' ? 'Hotkeys & Touch Gestures' :
+                     mobileDetail === 'player-controls' ? 'Player Controls' :
+                     mobileDetail === 'profile-storage' ? 'Profiles & Storage' :
+                     mobileDetail === 'connected-services' ? 'External Services' : 'Section Settings'}
+                  </p>
+                  <p style={{ margin: 0, fontSize: '13px', color: 'var(--mut, var(--text-3))', lineHeight: '1.4' }}>
+                    {mobileDetail === 'subtitles' && 'Default audio and subtitle tracks, sizes, and font styles are saved and applied automatically to all played media.'}
+                    {mobileDetail === 'pause-overlay' && 'Controls dim overlay and preview cards when video is paused.'}
+                    {mobileDetail === 'hotkeys' && 'Touch tap toggles controls. Double tap left/right seeks 10 seconds.'}
+                    {mobileDetail === 'player-controls' && 'Configure scrubber sensitivity, speed cycle steps, and audio boost.'}
+                    {mobileDetail === 'profile-storage' && `${availableProfiles.length || 1} active profile. Video playback resume positions are stored locally.`}
+                    {mobileDetail === 'connected-services' && 'Trakt scrobbling, TMDB metadata fetching, and OpenSubtitles auto-search status.'}
+                  </p>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* Desktop Settings View (> 768px) */}
+      <div className="desktop-settings-view settings-container">
         {/* Top Header Bar */}
         <header className="settings-header-bar">
         <div className="settings-title-group">
@@ -393,6 +803,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                         { id: 'card-overlays', label: 'Player display' },
                         { id: 'card-behaviour', label: 'Behaviour' },
                         { id: 'card-advanced', label: 'Advanced' },
+                        { id: 'card-updates', label: 'Updates' },
                       ].map((chip) => (
                         <button
                           key={chip.id}
@@ -921,6 +1332,103 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                           />
                         }
                       />
+                    </SettingsCard>
+                  </div>
+                )}
+
+                {/* 1.85 Auto-Updates & Patches Card */}
+                {matchesSearch('updates', 'update', 'patches', 'patch', 'production', 'github', 'version') && (
+                  <div id="card-updates">
+                    <SettingsCard
+                      title="System Auto-Updates"
+                      description="Monitors GitHub for the latest patches on branch production and updates the running instance automatically."
+                    >
+                      <SettingRow
+                        title="Automatic background updates"
+                        description="Continuously check GitHub for new production patches every 5 minutes and auto-update."
+                        control={
+                          <Switch
+                            checked={settings.autoUpdateEnabled !== false}
+                            onChange={(v) => {
+                              updateSetting('autoUpdateEnabled', v);
+                            }}
+                            aria-label="Automatic background updates"
+                          />
+                        }
+                      />
+
+                      <SettingRow
+                        title="Branch & Version"
+                        description={
+                          updateStatus
+                            ? `Tracking origin/${updateStatus.branch || 'production'} (Commit: ${updateStatus.currentCommitShort || 'unknown'})`
+                            : 'Tracking origin/production'
+                        }
+                        control={
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                            <button
+                              type="button"
+                              className="settings-card-btn"
+                              onClick={handleCheckUpdate}
+                              disabled={checkingUpdate || applyingUpdate}
+                              style={{
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: '6px',
+                                padding: '6px 12px',
+                                borderRadius: '6px',
+                                background: 'rgba(255,255,255,0.08)',
+                                border: '1px solid rgba(255,255,255,0.12)',
+                                color: '#fff',
+                                cursor: 'pointer',
+                                fontSize: '13px'
+                              }}
+                            >
+                              <RefreshCw size={13} className={checkingUpdate ? 'spin-anim' : ''} />
+                              {checkingUpdate ? 'Checking GitHub...' : 'Check for patches'}
+                            </button>
+                            {updateStatus?.updateAvailable && (
+                              <button
+                                type="button"
+                                className="settings-card-btn"
+                                onClick={handleApplyUpdate}
+                                disabled={applyingUpdate}
+                                style={{
+                                  display: 'inline-flex',
+                                  alignItems: 'center',
+                                  gap: '6px',
+                                  padding: '6px 12px',
+                                  borderRadius: '6px',
+                                  background: '#e53950',
+                                  border: 'none',
+                                  color: '#fff',
+                                  fontWeight: 600,
+                                  cursor: 'pointer',
+                                  fontSize: '13px'
+                                }}
+                              >
+                                {applyingUpdate ? 'Updating...' : 'Update & Restart'}
+                              </button>
+                            )}
+                          </div>
+                        }
+                      />
+
+                      {updateStatus?.lastCheckedAt && (
+                        <div style={{ fontSize: '12px', opacity: 0.7, marginTop: '8px', padding: '8px 12px', borderRadius: '6px', background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}>
+                          <div>Last checked GitHub: {new Date(updateStatus.lastCheckedAt).toLocaleTimeString()} ({new Date(updateStatus.lastCheckedAt).toLocaleDateString()})</div>
+                          {updateStatus.latestCommitShort && updateStatus.latestCommitShort !== updateStatus.currentCommitShort ? (
+                            <div style={{ color: '#ff6b7a', marginTop: '4px', fontWeight: 600 }}>
+                              🚀 New patch ready: {updateStatus.latestCommitShort}
+                              {updateStatus.latestCommitInfo?.message ? ` — "${updateStatus.latestCommitInfo.message.split('\n')[0]}"` : ''}
+                            </div>
+                          ) : (
+                            <div style={{ color: '#4ade80', marginTop: '4px' }}>
+                              ✓ Running instance is up to date with branch production
+                            </div>
+                          )}
+                        </div>
+                      )}
                     </SettingsCard>
                   </div>
                 )}

@@ -1,0 +1,151 @@
+/* Library Responsive & Design System Tokens */
+.library-page-wrapper {
+  width: 100%;
+  height: 100%;
+  min-height: 100%;
+  display: flex;
+  flex-direction: column;
+  background-color: var(--bg);
+  color: var(--tx, var(--text-1));
+  overflow-y: auto;
+  box-sizing: border-box;
+  padding: var(--space-6) var(--page-padding-x, var(--space-7)) var(--space-8) var(--page-padding-x, var(--space-7));
+}
+
+.library-content-container {
+  width: 100%;
+  max-width: var(--page-max-width, 1400px);
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+}
+
+.library-toolbar-root {
+  position: sticky;
+  top: 0;
+  z-index: 30;
+  background-color: var(--bg);
+  border-bottom: 1px solid var(--ln, var(--border));
+  padding-bottom: 0.75rem;
+  margin-bottom: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  width: 100%;
+}
+
+/* Desktop row */
+.library-desktop-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+}
+
+/* Mobile rows hidden on desktop */
+.library-mobile-row1,
+.library-mobile-row2 {
+  display: none;
+}
+
+/* Mobile media query <= 768px */
+@media (max-width: 768px) {
+  .library-page-wrapper {
+    padding: 10px 14px 80px 14px;
+  }
+
+  .library-desktop-row {
+    display: none;
+  }
+
+  /* Row 1: Segmented Movies [count] / Series [count] + right Grid/List toggle */
+  .library-mobile-row1 {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    width: 100%;
+    gap: 8px;
+  }
+
+  /* Row 2: Search input + sort chip */
+  .library-mobile-row2 {
+    display: flex;
+    align-items: center;
+    width: 100%;
+    gap: 8px;
+  }
+
+  .library-mobile-search {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .library-sort-chip-btn {
+    flex-shrink: 0;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    height: 38px;
+    padding: 0 12px;
+    background: var(--s1, var(--surface-1));
+    border: 1px solid var(--ln, var(--border));
+    border-radius: 12px;
+    color: var(--tx, var(--text-1));
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+
+  /* 2-column Grid on mobile */
+  .library-grid-container {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+    gap: 12px !important;
+  }
+
+  /* Mobile List item avatar */
+  .media-list-row {
+    grid-template-columns: 42px 1fr auto !important;
+    gap: 12px !important;
+    padding: 10px 12px !important;
+    min-height: 60px !important;
+    border-radius: 14px !important;
+  }
+
+  .media-list-row .desktop-only-meta {
+    display: none !important;
+  }
+
+  .media-list-row .mobile-only-btn {
+    display: inline-flex !important;
+  }
+}
+
+/* Hide mobile-only buttons on desktop */
+.media-list-row .mobile-only-btn {
+  display: none !important;
+}
+
+.library-sort-sheet-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 14px 16px;
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid var(--ln, var(--border));
+  color: var(--tx, var(--text-1));
+  font-size: 14px;
+  font-weight: 500;
+  text-align: left;
+  cursor: pointer;
+  border-radius: 8px;
+}
+
+.library-sort-sheet-item.active {
+  color: var(--ac, var(--accent));
+  font-weight: 600;
+  background: var(--s1, var(--surface-1));
+}

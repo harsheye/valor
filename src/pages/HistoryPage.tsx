@@ -377,8 +377,20 @@ export const HistoryPage: React.FC<HistoryPageProps> = ({
         {/* 1. TOP HEADER (History title, Search input, Clear button)          */}
         {/* ================================================================= */}
         <header className="history-header">
-          <div className="history-header-left">
-            <h1 className="history-title">History</h1>
+          <div className="history-header-top-row">
+            <div className="history-header-left">
+              <h1 className="history-title">History</h1>
+            </div>
+
+            {videos.length > 0 && (
+              <button
+                type="button"
+                className="history-clear-btn"
+                onClick={handleClearHistory}
+              >
+                Clear history
+              </button>
+            )}
           </div>
 
           <div className="history-header-right">
@@ -403,16 +415,6 @@ export const HistoryPage: React.FC<HistoryPageProps> = ({
                 </button>
               )}
             </div>
-
-            {videos.length > 0 && (
-              <button
-                type="button"
-                className="history-clear-btn"
-                onClick={handleClearHistory}
-              >
-                Clear history
-              </button>
-            )}
           </div>
         </header>
 
@@ -633,12 +635,8 @@ export const HistoryPage: React.FC<HistoryPageProps> = ({
           {/* Grouped Day Rows */}
           {groupedWatchLog.length === 0 ? (
             <div className="history-empty-state">
-              <Film size={36} color="var(--text-3)" />
-              <p style={{ margin: 0, fontWeight: 600, color: 'var(--text-1)' }}>
-                {selectedDateKey ? `No sessions recorded for ${selectedDateKey}` : 'No playback history recorded yet'}
-              </p>
-              <p style={{ margin: 0, fontSize: '0.8rem' }}>
-                {selectedDateKey ? 'Click the day again or select another day to view records.' : 'Play any media in Valor to begin recording your watch history.'}
+              <p style={{ margin: 0, fontWeight: 500, color: 'var(--text-3)' }}>
+                Nothing here.
               </p>
               {selectedDateKey && (
                 <button

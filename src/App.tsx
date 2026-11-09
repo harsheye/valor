@@ -65,10 +65,11 @@ import { CustomSelect } from './components/CustomSelect';
 import { CalendarView } from './components/CalendarView';
 import { LibraryView } from './components/LibraryView';
 import { ApiSettingsView } from './components/ApiSettingsView';
-import { SpinnerSettingsView } from './components/SpinnerSettingsView';
+
 import { EsportsLiveOverlay } from './components/EsportsLiveOverlay';
 import Calendar02 from './components/creative-tim/blocks/calendar-02';
 import { classifyVideoTitle } from './utils/libraryClassifier';
+import { resolveRemoteMediaName, getCachedMediaFileName } from './utils/corsCheck';
 import { saveEmbedSubtitles, getEmbedSubtitlesSync } from './utils/embedSubtitleStorage';
 import { 
   Film, UploadCloud, Play, Settings, X, Calendar, List,
@@ -81,10 +82,10 @@ import { storeFileHandle, getFileHandle, removeFileHandle, verifyPermission, cle
 import { HttpByteSource, CachedByteSource, detectUrlCapabilities, getBackendProxyUrl, getProxyHeaders } from './services/remote/remoteByteSource';
 import { probeContainer, parseMp4, parseMkv } from './utils/containerParser';
 import { parseHlsManifest } from './utils/hlsParser';
-import { LoadingSpinner, SPINNER_PRESETS, SpinnerThumbnail } from './components/LoadingSpinner';
-import type { SpinnerPreset } from './components/LoadingSpinner';
+
 import { ToggleSwitch } from './components/ToggleSwitch';
 import { Sidebar } from './components/Sidebar';
+import { MobileTopBar } from './components/MobileTopBar';
 import { MobileBottomNav } from './components/MobileBottomNav';
 import { HomePage } from './pages/HomePage';
 import { HistoryPage } from './pages/HistoryPage';
@@ -3178,6 +3179,20 @@ function App() {
 
       {/* Main Content Area */}
       <div className="main-layout-wrapper">
+        {/* Mobile Top Bar (<= 768px) */}
+        <MobileTopBar
+          onNavigateSettings={() => {
+            setSelectedActor(null);
+            setSelectedDetailsMedia(null);
+            setActiveTab('settings');
+          }}
+          onNavigateHome={() => {
+            setSelectedActor(null);
+            setSelectedDetailsMedia(null);
+            setActiveTab('home');
+          }}
+        />
+
         {/* Main Content Pane */}
         <main className="main-content full-width-details animate-fade-in">
           {selectedActor ? (
@@ -3291,6 +3306,8 @@ function App() {
                   onRemoveVideo={handleRemoveVideo}
                   addToast={addToast}
                   setVideos={setVideos}
+                  onSelectMedia={handleOpenMediaDetails}
+                  tmdbApiKey={settings.tmdbApiKey}
                 />
               )}
 
@@ -3304,8 +3321,10 @@ function App() {
                 ) : (
                   <OnlineStreamPage
                     onSelectMedia={handleOpenMediaDetails}
+                    onPlayVideo={handlePlayVideo}
                     tmdbApiKey={settings.tmdbApiKey}
                     traktAccessToken={settings.traktAccessToken}
+                    videos={videos}
                   />
                 )
               )}

@@ -1,9 +1,10 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Check, Sparkles, Search, Download, Globe, Key, RefreshCw } from 'lucide-react';
+import { Check, Sparkles, Search, Download, Key, RefreshCw, Minus, Plus, PanelRightClose, PanelRightOpen, X } from 'lucide-react';
 import type { CustomAudioTrack, CustomSubtitleTrack } from '../types/media';
 import type { MediaStream } from '../services/ffmpeg';
 import { CustomSelect } from './CustomSelect';
 import { trimSubtitleName } from '../utils/embedSubtitleStorage';
+import './AudioSubPopover.css';
 
 const fontOptions = [
   { value: 'sans-serif', label: 'Default' },
@@ -14,6 +15,9 @@ const fontOptions = [
   { value: 'serif', label: 'Playfair' },
   { value: 'monospace', label: 'Mono' }
 ];
+
+const PRESET_TEXT_COLORS = ['#ffffff', '#fef08a', '#67e8f9', '#86efac'];
+const PRESET_BG_COLORS = ['rgba(0, 0, 0, 0.75)', 'rgba(0, 0, 0, 0.4)', '#1e293b'];
 
 export interface AudioSubPopoverProps {
   audioStreams: MediaStream[];
@@ -85,8 +89,6 @@ export const AudioSubPopover: React.FC<AudioSubPopoverProps> = ({
   cleanSubtitleText,
   subSettings,
   onUpdateSubSettings,
-  audioBoost,
-  setAudioBoost,
   openSubtitles = [],
   isOpenSubLoading = false,
   onDownloadOpenSubtitle,
@@ -109,6 +111,19 @@ export const AudioSubPopover: React.FC<AudioSubPopoverProps> = ({
   });
   const [showCustomSearch, setShowCustomSearch] = useState(false);
   const [customSearchText, setCustomSearchText] = useState('');
+
+  // Mobile segmented tab state (Audio | Subs | Transcript | Style)
+  const [mobileTab, setMobileTab] = useState<'audio' | 'subs' | 'transcript' | 'style'>('subs');
+
+  // Screen width detection for mobile bottom sheet vs desktop popover (<= 680px)
+  const [vw, setVw] = useState(() => (typeof window !== 'undefined' ? window.innerWidth : 1200));
+  const isNarrow = vw <= 680;
+
+  useEffect(() => {
+    const handleResize = () => setVw(window.innerWidth);
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
 
   const hasApiKey = Boolean(apiKeyVal.trim());
 
@@ -137,66 +152,75 @@ export const AudioSubPopover: React.FC<AudioSubPopoverProps> = ({
       setDownloadingFileId(null);
     }
   };
-  
-  // Use subSettings for persistence, defaulting to false
-  const showStyleColumn = subSettings?.showStyleColumn ?? false;
-  const showViewColumn = subSettings?.showViewColumn ?? false;
-  
-  void setActiveAudioStreamIndex; // consumed by parent; kept in props for potential future use
 
-  // Ref to transcript cues container for auto-scrolling
+  // Unified rightTab state: 'transcript' | 'style', persisted in subSettings (keeps showViewColumn/showStyleColumn working)
+  const rightTab: 'transcript' | 'style' = subSettings?.rightTab || (subSettings?.showStyleColumn ? 'style' : 'transcript');
+
+  // Foldable state for desktop Transcript & Style pane
+  const [isFolded, setIsFolded] = useState<boolean>(() => {
+    try {
+      const saved = localStorage.getItem('valor_sub_folded');
+      if (saved !== null) return JSON.parse(saved);
+    } catch {}
+    return subSettings?.isFolded ?? false;
+  });
+
+  const toggleFold = () => {
+    const next = !isFolded;
+    setIsFolded(next);
+    try {
+      localStorage.setItem('valor_sub_folded', JSON.stringify(next));
+    } catch {}
+    onUpdateSubSettings({ ...subSettings, isFolded: next });
+  };
+
+  const setRightTab = (tab: 'transcript' | 'style') => {
+    if (tab === 'transcript' && !selectedSubTrack) {
+      if (subtitleTracks.length > 0) {
+        setSelectedSubTrack(subtitleTracks[subtitleTracks.length - 1]);
+      } else if (subtitleStreams.length > 0) {
+        handleSelectEmbeddedSubtitle(subtitleStreams[0].index, subtitleStreams[0].codec, subtitleStreams[0].language);
+      }
+    }
+    if (isFolded) {
+      setIsFolded(false);
+      try {
+        localStorage.setItem('valor_sub_folded', JSON.stringify(false));
+      } catch {}
+    }
+    onUpdateSubSettings({ ...subSettings, rightTab: tab, isFolded: false, showStyleColumn: tab === 'style', showViewColumn: tab === 'transcript' });
+  };
+
+  void setActiveAudioStreamIndex; // Preserved for parent binding
+
+  // Transcript auto-scrolling
   const transcriptListRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
-    if (!showViewColumn || !selectedSubTrack) return;
-    const activeCueEl = transcriptListRef.current?.querySelector('.transcript-cue-item.active');
+    if ((rightTab !== 'transcript' && mobileTab !== 'transcript') || !selectedSubTrack) return;
+    const activeCueEl = transcriptListRef.current?.querySelector('.asp-cue.active');
     if (activeCueEl) {
       activeCueEl.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
     }
-  }, [currentTime, showViewColumn, selectedSubTrack]);
-
-  // Dynamic layout calculations based on active columns
-  const effectiveAudioVisible = showAudioControl !== false;
-  const effectiveSubVisible = showSubtitleControl !== false;
+  }, [currentTime, rightTab, mobileTab, selectedSubTrack]);
 
   const popoverRef = useRef<HTMLDivElement>(null);
 
-  let baseCols: string[] = [];
-  let baseWidth = 0;
-
-  if (effectiveAudioVisible) {
-    baseCols.push('minmax(130px, 1fr)');
-    baseWidth += 140;
-  }
-  if (effectiveSubVisible) {
-    baseCols.push('minmax(165px, 1fr)');
-    baseWidth += 175;
-  }
-  if (baseCols.length === 0) {
-    baseCols.push('minmax(140px, 1fr)');
-    baseWidth = 150;
-  }
-
-  if (showViewColumn) {
-    baseCols.push('minmax(190px, 1.1fr)');
-    baseWidth += 200;
-  }
-  if (showStyleColumn) {
-    baseCols.push('minmax(200px, 1.1fr)');
-    baseWidth += 210;
-  }
-
-  const popoverWidth = Math.max(baseWidth + 24, 260);
-  const gridCols = baseCols.join(' ');
-
+  // Reposition effect: clamp both sides within 16px of window boundaries
   useEffect(() => {
+    if (isNarrow) return;
     const handleReposition = () => {
       const el = popoverRef.current;
       if (!el) return;
       el.style.transform = '';
       const rect = el.getBoundingClientRect();
+      let dx = 0;
       if (rect.left < 16) {
-        const overflow = 16 - rect.left;
-        el.style.transform = `translateX(${overflow}px)`;
+        dx = 16 - rect.left;
+      } else if (rect.right > window.innerWidth - 16) {
+        dx = window.innerWidth - 16 - rect.right;
+      }
+      if (dx) {
+        el.style.transform = `translateX(${dx}px)`;
       }
     };
     handleReposition();
@@ -206,758 +230,695 @@ export const AudioSubPopover: React.FC<AudioSubPopoverProps> = ({
       clearTimeout(timer);
       window.removeEventListener('resize', handleReposition);
     };
-  }, [popoverWidth, showViewColumn, showStyleColumn]);
+  }, [rightTab, isNarrow, isFolded]);
 
+  const effectiveAudioVisible = showAudioControl !== false;
+  const effectiveSubVisible = showSubtitleControl !== false;
+
+  const getLangCode = (lang?: string, fallback = 'UND') => {
+    if (!lang) return fallback;
+    const clean = lang.trim().slice(0, 3).toUpperCase();
+    return clean || fallback;
+  };
+
+  // --- CONTENT SECTION RENDERERS ---
+
+  const renderAudioContent = () => (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+      <div className="asp-section-label">
+        <span>Audio</span>
+      </div>
+      <div className="asp-chips">
+        {/* Default / Original Track */}
+        <button
+          type="button"
+          className={`asp-chip ${selectedAudioTrack === null ? 'selected' : ''}`}
+          aria-pressed={selectedAudioTrack === null}
+          onClick={() => {
+            setSelectedAudioTrack(null);
+            setActiveAudioStreamIndex(null);
+            if (!isNarrow && isFolded) setShowAudioSubMenu(false);
+          }}
+        >
+          <span>Original</span>
+          {selectedAudioTrack === null && <Check size={13} className="asp-check" />}
+        </button>
+
+        {/* Embedded Audio Streams */}
+        {audioStreams.map((s) => {
+          const active = selectedAudioTrack?.streamIndex === s.index;
+          const label = getLangLabel(s.language, (s as any).title || `Track #${s.index}`, (s as any).title);
+          return (
+            <button
+              key={`embed-aud-${s.index}`}
+              type="button"
+              className={`asp-chip ${active ? 'selected' : ''}`}
+              aria-pressed={active}
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                if (active) return;
+                handleSelectEmbeddedAudio(s.index, s.codec, s.language);
+                if (!isNarrow && isFolded) setShowAudioSubMenu(false);
+              }}
+            >
+              <span>{label}</span>
+              {active && <Check size={13} className="asp-check" />}
+            </button>
+          );
+        })}
+
+        {/* Custom Uploaded Audio Tracks */}
+        {audioTracks.map((track) => {
+          const active = selectedAudioTrack?.id === track.id;
+          return (
+            <button
+              key={track.id}
+              type="button"
+              className={`asp-chip ${active ? 'selected' : ''}`}
+              aria-pressed={active}
+              onClick={() => {
+                setSelectedAudioTrack(track);
+                if (!isNarrow && isFolded) setShowAudioSubMenu(false);
+              }}
+            >
+              <span>{track.name}</span>
+              {active && <Check size={13} className="asp-check" />}
+            </button>
+          );
+        })}
+
+        {/* + File Button */}
+        <button
+          type="button"
+          className="asp-chip dashed"
+          onClick={() => customAudioInputRef.current?.click()}
+        >
+          + File
+        </button>
+      </div>
+    </div>
+  );
+
+  const renderSubsContent = () => (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+      <div className="asp-section-label">
+        <span>Subtitles</span>
+        {!isNarrow && (
+          <button
+            type="button"
+            className={`asp-fold-toggle-btn ${!isFolded ? 'active' : ''}`}
+            onClick={toggleFold}
+            title={isFolded ? 'Unfold Transcript & Style panel' : 'Fold Transcript & Style panel'}
+          >
+            {isFolded ? <PanelRightOpen size={12} /> : <PanelRightClose size={12} />}
+            <span>{isFolded ? 'Unfold' : 'Fold'}</span>
+          </button>
+        )}
+      </div>
+      <div className="asp-sub-list">
+        {/* Off Row */}
+        <button
+          type="button"
+          className={`asp-row ${selectedSubTrack === null ? 'selected' : ''}`}
+          aria-pressed={selectedSubTrack === null}
+          onClick={() => {
+            setSelectedSubTrack(null);
+            setActiveSubStreamIndex(null);
+            if (!isNarrow && isFolded) setShowAudioSubMenu(false);
+          }}
+        >
+          <span className="asp-lang-tag">OFF</span>
+          <span className="asp-row-name">Off</span>
+          {selectedSubTrack === null && <Check size={14} className="asp-check" />}
+        </button>
+
+        {/* Embedded Subtitle Streams */}
+        {subtitleStreams.map((s) => {
+          const active = selectedSubTrack?.streamIndex === s.index;
+          const label = getLangLabel(s.language, (s as any).title || `Track #${s.index}`, (s as any).title);
+          const langTag = getLangCode(s.language);
+          return (
+            <button
+              key={`embed-sub-${s.index}`}
+              type="button"
+              className={`asp-row ${active ? 'selected' : ''}`}
+              aria-pressed={active}
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                if (active) return;
+                handleSelectEmbeddedSubtitle(s.index, s.codec, s.language);
+                if (!isNarrow && isFolded) setShowAudioSubMenu(false);
+              }}
+            >
+              <span className="asp-lang-tag">{langTag}</span>
+              <span className="asp-row-name">{label}</span>
+              {active && <Check size={14} className="asp-check" />}
+            </button>
+          );
+        })}
+
+        {/* Custom Uploaded Subtitle Tracks */}
+        {subtitleTracks.map((track) => {
+          const active = selectedSubTrack?.id === track.id;
+          const langTag = getLangCode(track.language, 'CUS');
+          return (
+            <button
+              key={track.id}
+              type="button"
+              className={`asp-row ${active ? 'selected' : ''}`}
+              aria-pressed={active}
+              onClick={() => {
+                setSelectedSubTrack(track);
+                if (!isNarrow && isFolded) setShowAudioSubMenu(false);
+              }}
+            >
+              <span className="asp-lang-tag">{langTag}</span>
+              <span className="asp-row-name">{trimSubtitleName(track.name)}</span>
+              {active && <Check size={14} className="asp-check" />}
+            </button>
+          );
+        })}
+
+        {/* Add Custom Subtitle File */}
+        {allowSubUpload && (
+          <button
+            type="button"
+            className="asp-row dashed"
+            onClick={() => customSubInputRef.current?.click()}
+          >
+            + Add subtitle file
+          </button>
+        )}
+      </div>
+
+      {/* OpenSubtitles Slim Card */}
+      {!subFileOnly && (
+        <div className="asp-os">
+          <div className="asp-os-header">
+            <div className="asp-os-title-wrap">
+              <span className="asp-os-label">OpenSubtitles</span>
+              <span className={`asp-os-dot ${hasApiKey ? 'green' : 'amber'}`} title={hasApiKey ? 'API Key Configured' : 'No API Key set'} />
+            </div>
+            <div className="asp-os-actions">
+              <button
+                type="button"
+                className="asp-os-btn"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setShowCustomSearch(!showCustomSearch);
+                }}
+                title="Search specific title"
+              >
+                <Search size={12} />
+              </button>
+              <button
+                type="button"
+                className="asp-os-btn"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setShowKeyInput(!showKeyInput);
+                }}
+                title="Set OpenSubtitles API Key"
+              >
+                <Key size={12} />
+              </button>
+            </div>
+          </div>
+
+          {/* API Key Drawer */}
+          {showKeyInput && (
+            <div className="asp-os-drawer" onClick={(e) => e.stopPropagation()}>
+              <div style={{ display: 'flex', gap: '4px' }}>
+                <input
+                  type="password"
+                  placeholder="Paste API Key..."
+                  value={apiKeyVal}
+                  onChange={(e) => setApiKeyVal(e.target.value)}
+                  style={{
+                    flex: 1,
+                    minWidth: 0,
+                    background: 'rgba(0,0,0,0.5)',
+                    border: '1px solid rgba(255,255,255,0.15)',
+                    borderRadius: '4px',
+                    color: '#fff',
+                    fontSize: '11px',
+                    padding: '3px 6px',
+                    outline: 'none'
+                  }}
+                />
+                <button
+                  type="button"
+                  onClick={handleSaveApiKey}
+                  style={{
+                    background: 'var(--asp-amber)',
+                    border: 'none',
+                    color: '#000',
+                    borderRadius: '4px',
+                    padding: '3px 8px',
+                    fontSize: '11px',
+                    fontWeight: 700,
+                    cursor: 'pointer'
+                  }}
+                >
+                  Save
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Custom Search Drawer */}
+          {showCustomSearch && (
+            <div className="asp-os-drawer" onClick={(e) => e.stopPropagation()}>
+              <div style={{ display: 'flex', gap: '4px' }}>
+                <input
+                  type="text"
+                  placeholder="Movie / Show title..."
+                  value={customSearchText}
+                  onChange={(e) => setCustomSearchText(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      if (!hasApiKey) setShowKeyInput(true);
+                      else if (onFetchOpenSubtitles) onFetchOpenSubtitles(customSearchText.trim());
+                    }
+                  }}
+                  style={{
+                    flex: 1,
+                    minWidth: 0,
+                    background: 'rgba(0,0,0,0.5)',
+                    border: '1px solid rgba(255,255,255,0.15)',
+                    borderRadius: '4px',
+                    color: '#fff',
+                    fontSize: '11px',
+                    padding: '3px 6px',
+                    outline: 'none'
+                  }}
+                />
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (!hasApiKey) setShowKeyInput(true);
+                    else if (onFetchOpenSubtitles) onFetchOpenSubtitles(customSearchText.trim());
+                  }}
+                  style={{
+                    background: 'rgba(245, 165, 36, 0.25)',
+                    border: '1px solid var(--asp-amber)',
+                    color: 'var(--asp-amber)',
+                    borderRadius: '4px',
+                    padding: '3px 8px',
+                    fontSize: '11px',
+                    fontWeight: 700,
+                    cursor: 'pointer'
+                  }}
+                >
+                  Go
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Full-width Search Online button */}
+          {!hasFetchedOpenSubtitles || openSubtitles.length === 0 ? (
+            <button
+              type="button"
+              className="asp-os-search-btn"
+              disabled={isOpenSubLoading}
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                if (!hasApiKey) setShowKeyInput(true);
+                else if (onFetchOpenSubtitles) onFetchOpenSubtitles(customSearchText.trim() || undefined);
+              }}
+            >
+              {isOpenSubLoading ? (
+                <>
+                  <RefreshCw size={12} style={{ animation: 'spin-slow 1s linear infinite' }} />
+                  <span>Searching…</span>
+                </>
+              ) : (
+                <>
+                  <Sparkles size={12} />
+                  <span>{hasFetchedOpenSubtitles ? 'Retry search' : 'Search online'}</span>
+                </>
+              )}
+            </button>
+          ) : null}
+
+          {/* Subtitle Results List */}
+          {openSubtitles && openSubtitles.length > 0 && (
+            <div className="asp-os-results">
+              {openSubtitles.map((sub: any) => {
+                const isDownloading = downloadingFileId === sub.fileId;
+                const langTag = getLangCode(sub.language);
+                return (
+                  <div key={sub.fileId} className="asp-os-result-row">
+                    <span className="asp-lang-tag" style={{ color: 'var(--asp-amber)' }}>{langTag}</span>
+                    <span className="asp-row-name" title={sub.fileName} style={{ fontSize: '11px' }}>
+                      {trimSubtitleName(sub.fileName)}
+                    </span>
+                    <button
+                      type="button"
+                      className="asp-os-btn"
+                      disabled={isDownloading}
+                      onClick={() => handleDownload(sub)}
+                      title="Download and apply subtitle"
+                    >
+                      {isDownloading ? (
+                        <RefreshCw size={11} style={{ animation: 'spin-slow 1s linear infinite' }} />
+                      ) : (
+                        <Download size={11} />
+                      )}
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+
+  const renderTranscriptContent = () => (
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0 }}>
+      {selectedSubTrack ? (
+        <>
+          <input
+            type="text"
+            className="asp-transcript-search"
+            placeholder="Search subtitles..."
+            value={subSearchQuery}
+            onChange={(e) => setSubSearchQuery(e.target.value)}
+            onKeyDown={(e) => e.stopPropagation()}
+            onClick={(e) => e.stopPropagation()}
+          />
+          <div ref={transcriptListRef} className="asp-cue-list">
+            {(selectedSubTrack.cues || []).length === 0 ? (
+              <div style={{ padding: '1.5rem', textAlign: 'center', color: 'var(--asp-text-muted)', fontSize: '12px' }}>
+                No cues found in this track.
+              </div>
+            ) : (
+              (selectedSubTrack.cues || []).map((cue, originalIdx) => {
+                const isMatched = cleanSubtitleText(cue.text).toLowerCase().includes(subSearchQuery.toLowerCase());
+                if (!isMatched) return null;
+
+                const isActive = currentTime >= cue.startTime && currentTime <= cue.endTime;
+                return (
+                  <div
+                    key={cue.id || originalIdx}
+                    className={`asp-cue ${isActive ? 'active' : ''}`}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      if (videoRef.current) {
+                        videoRef.current.currentTime = cue.startTime;
+                        setCurrentTime(cue.startTime);
+                      }
+                    }}
+                  >
+                    <span className="asp-cue-time">{formatTime(cue.startTime)}</span>
+                    <span className="asp-cue-text">{cleanSubtitleText(cue.text)}</span>
+                  </div>
+                );
+              })
+            )}
+          </div>
+        </>
+      ) : (
+        <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', textAlign: 'center', padding: '1.5rem', color: 'var(--asp-text-muted)', fontSize: '12px', lineHeight: 1.5 }}>
+          Select a subtitle track to view the interactive transcript.
+        </div>
+      )}
+    </div>
+  );
+
+  const renderStyleContent = () => (
+    <div className="asp-style">
+      {/* Font Field */}
+      <div className="asp-field">
+        <span className="asp-field-label">Font</span>
+        <div style={{ width: '100%', minWidth: 0 }}>
+          <CustomSelect
+            value={subSettings.fontFamily}
+            onChange={(val) => onUpdateSubSettings({ fontFamily: val })}
+            options={fontOptions}
+            width="100%"
+          />
+        </div>
+      </div>
+
+      {/* Text Color Field */}
+      <div className="asp-field">
+        <span className="asp-field-label">Text Color</span>
+        <div className="asp-swatches">
+          {PRESET_TEXT_COLORS.map((color) => {
+            const isSelected = (subSettings.customTextColor || '#ffffff').toLowerCase() === color.toLowerCase();
+            return (
+              <button
+                key={color}
+                type="button"
+                className={`asp-swatch ${isSelected ? 'selected' : ''}`}
+                style={{ backgroundColor: color }}
+                onClick={() => onUpdateSubSettings({ customTextColor: color })}
+                title={`Select ${color}`}
+              />
+            );
+          })}
+          <input
+            type="color"
+            className="asp-color-native"
+            value={subSettings.customTextColor || '#ffffff'}
+            onChange={(e) => onUpdateSubSettings({ customTextColor: e.target.value })}
+            onClick={(e) => e.stopPropagation()}
+            title="Custom text color"
+          />
+        </div>
+      </div>
+
+      {/* Background Color Field */}
+      <div className="asp-field">
+        <span className="asp-field-label">Background</span>
+        <div className="asp-swatches">
+          {/* None / Transparent Swatch */}
+          <button
+            type="button"
+            className={`asp-swatch asp-swatch-none ${subSettings.customBgColor === 'transparent' ? 'selected' : ''}`}
+            onClick={() => onUpdateSubSettings({ customBgColor: 'transparent' })}
+            title="None (transparent)"
+          />
+          {PRESET_BG_COLORS.map((color) => {
+            const isSelected = subSettings.customBgColor === color;
+            return (
+              <button
+                key={color}
+                type="button"
+                className={`asp-swatch ${isSelected ? 'selected' : ''}`}
+                style={{ backgroundColor: color }}
+                onClick={() => onUpdateSubSettings({ customBgColor: color })}
+                title={`Select ${color}`}
+              />
+            );
+          })}
+          <input
+            type="color"
+            className="asp-color-native"
+            value={subSettings.customBgColor && !subSettings.customBgColor.startsWith('rgba') && subSettings.customBgColor !== 'transparent' ? subSettings.customBgColor : '#000000'}
+            onChange={(e) => onUpdateSubSettings({ customBgColor: e.target.value })}
+            disabled={subSettings.customBgColor === 'transparent'}
+            onClick={(e) => e.stopPropagation()}
+            title="Custom background color"
+          />
+        </div>
+      </div>
+
+      {/* Size Button Control */}
+      <div className="asp-field">
+        <div className="asp-field-label">
+          <span>Size</span>
+        </div>
+        <div className="asp-size-row">
+          <div className="asp-size-btn-group">
+            <button
+              type="button"
+              className="asp-size-btn"
+              onClick={() => {
+                const current = subSettings.customSize || 100;
+                onUpdateSubSettings({ customSize: Math.max(50, current - 10) });
+              }}
+              title="Decrease size (-10%)"
+            >
+              <Minus size={14} />
+            </button>
+            <span className="asp-size-display">{subSettings.customSize || 100}%</span>
+            <button
+              type="button"
+              className="asp-size-btn"
+              onClick={() => {
+                const current = subSettings.customSize || 100;
+                onUpdateSubSettings({ customSize: Math.min(300, current + 10) });
+              }}
+              title="Increase size (+10%)"
+            >
+              <Plus size={14} />
+            </button>
+          </div>
+          <div className="asp-size-presets">
+            {[75, 100, 125, 150].map((preset) => {
+              const isSelected = (subSettings.customSize || 100) === preset;
+              return (
+                <button
+                  key={preset}
+                  type="button"
+                  className={`asp-size-preset-btn ${isSelected ? 'active' : ''}`}
+                  onClick={() => onUpdateSubSettings({ customSize: preset })}
+                  title={`Set size to ${preset}%`}
+                >
+                  {preset}%
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+
+      {/* Reset Button */}
+      <button
+        type="button"
+        className="asp-reset-btn"
+        onClick={(e) => {
+          e.stopPropagation();
+          onUpdateSubSettings({
+            fontSize: 'medium',
+            color: 'white',
+            backdrop: 'shadow',
+            fontFamily: 'poppins',
+            fontStyle: 'normal',
+            customTextColor: '',
+            customBgColor: '',
+            customSize: 100
+          });
+        }}
+        title="Reset styles to defaults"
+      >
+        Reset to Defaults
+      </button>
+    </div>
+  );
+
+  // --- NARROW / MOBILE RENDER: BOTTOM SHEET (Section 6 & 7) ---
+  if (isNarrow) {
+    return (
+      <div
+        className="asp-sheet-backdrop"
+        onClick={() => setShowAudioSubMenu(false)}
+        role="dialog"
+        aria-modal="true"
+        aria-label="Audio and Subtitle Settings"
+      >
+        <div
+          className="asp-sheet"
+          onClick={(e) => e.stopPropagation()}
+          onWheel={(e) => e.stopPropagation()}
+        >
+          <div className="asp-sheet-handle" />
+          <div className="asp-sheet-nav">
+            <button
+              type="button"
+              className={`asp-sheet-tab ${mobileTab === 'audio' ? 'active' : ''}`}
+              onClick={() => setMobileTab('audio')}
+            >
+              Audio
+            </button>
+            <button
+              type="button"
+              className={`asp-sheet-tab ${mobileTab === 'subs' ? 'active' : ''}`}
+              onClick={() => setMobileTab('subs')}
+            >
+              Subs
+            </button>
+            <button
+              type="button"
+              className={`asp-sheet-tab ${mobileTab === 'transcript' ? 'active' : ''}`}
+              onClick={() => setMobileTab('transcript')}
+            >
+              Transcript
+            </button>
+            <button
+              type="button"
+              className={`asp-sheet-tab ${mobileTab === 'style' ? 'active' : ''}`}
+              onClick={() => setMobileTab('style')}
+            >
+              Style
+            </button>
+          </div>
+          <div className="asp-sheet-body">
+            {mobileTab === 'audio' && renderAudioContent()}
+            {mobileTab === 'subs' && renderSubsContent()}
+            {mobileTab === 'transcript' && renderTranscriptContent()}
+            {mobileTab === 'style' && renderStyleContent()}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // --- DESKTOP RENDER: TWO-COLUMN CLAMPED POPOVER (Section 7) ---
   return (
-    <div 
+    <div
       ref={popoverRef}
-      className="audio-sub-popover audio-sub-popover-center animate-fade-in"
-      style={{ 
-        width: `${popoverWidth}px`, 
-        maxWidth: 'calc(100vw - 32px)',
-        overflow: 'visible',
-        boxSizing: 'border-box'
-      }}
+      className={`asp-pop audio-sub-popover audio-sub-popover-center animate-fade-in ${isFolded ? 'is-folded' : ''}`}
       onWheel={(e) => {
-        // Prevent player from intercepting mouse wheel scroll in any popover children
         e.stopPropagation();
       }}
       onMouseEnter={() => {
         if (audioSubTimeoutRef.current) clearTimeout(audioSubTimeoutRef.current);
       }}
     >
-      <div className="popover-cols" style={{ gridTemplateColumns: gridCols, height: '100%' }}>
-        {/* Audio Column */}
-        {effectiveAudioVisible && (
-          <div className="popover-col">
-            <h4 style={{ flexShrink: 0 }}>Audio</h4>
-            <div className="popover-options">
-              {/* Original / Native Stream Audio (always available) */}
-              <label 
-                className={`popover-option ${selectedAudioTrack === null ? 'active' : ''}`}
-                onClick={() => {
-                  setSelectedAudioTrack(null);
-                  setActiveAudioStreamIndex(null);
-                  setShowAudioSubMenu(false);
-                }}
-              >
-                <input type="radio" name="audio-lang" checked={selectedAudioTrack === null} readOnly />
-                <span>Original (Default)</span>
-                {selectedAudioTrack === null && <Check size={14} className="check-icon" />}
-              </label>
-
-              {/* Scanned/Probed Embedded Tracks */}
-              {audioStreams.map((s) => {
-                const active = selectedAudioTrack?.streamIndex === s.index;
-                const label = getLangLabel(s.language, (s as any).title || `Track #${s.index}`, (s as any).title);
-                return (
-                  <label key={`embed-aud-${s.index}`} className={`popover-option ${active ? 'active' : ''}`} onClick={(e) => { e.preventDefault(); e.stopPropagation(); if (active) return; handleSelectEmbeddedAudio(s.index, s.codec, s.language); setShowAudioSubMenu(false); }}>
-                    <input type="radio" name="audio-lang" checked={active} readOnly />
-                    <span>{label}</span>
-                    {active && <Check size={14} className="check-icon" />}
-                  </label>
-                );
-              })}
-
-              {/* Custom Uploaded Tracks */}
-              {audioTracks.map((track) => {
-                const active = selectedAudioTrack?.id === track.id;
-                return (
-                  <label key={track.id} className={`popover-option ${active ? 'active' : ''}`} onClick={() => { setSelectedAudioTrack(track); setShowAudioSubMenu(false); }}>
-                    <input type="radio" name="audio-lang" checked={active} readOnly />
-                    <span>{track.name}</span>
-                    {active && <Check size={14} className="check-icon" />}
-                  </label>
-                );
-              })}
-
-              {/* Custom Add Trigger */}
-              <label className="popover-option add-custom-btn" onClick={() => { customAudioInputRef.current?.click(); setShowAudioSubMenu(false); }}>
-                <span>+ Add Custom File</span>
-              </label>
-            </div>
-          </div>
-        )}
-
-        {/* Subtitles Column */}
-        {effectiveSubVisible && (
-        <div className="popover-col">
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid var(--border-subtle, rgba(255, 255, 255, 0.08))', paddingBottom: '0.35rem', marginBottom: '0.6rem', flexShrink: 0 }}>
-            <h4 style={{ margin: 0, borderBottom: 'none', paddingBottom: 0 }}>Sub</h4>
-            <div style={{ display: 'flex', gap: '6px' }}>
-              <button 
-                type="button"
-                onClick={(e) => { 
-                  e.stopPropagation(); 
-                  if (!showViewColumn && !selectedSubTrack) {
-                    if (subtitleTracks.length > 0) {
-                      setSelectedSubTrack(subtitleTracks[subtitleTracks.length - 1]);
-                    } else if (subtitleStreams.length > 0) {
-                      handleSelectEmbeddedSubtitle(subtitleStreams[0].index, subtitleStreams[0].codec, subtitleStreams[0].language);
-                    }
-                  }
-                  onUpdateSubSettings({ ...subSettings, showViewColumn: !showViewColumn }); 
-                }}
-                style={{
-                  background: showViewColumn ? 'var(--accent-glow, rgba(59, 130, 246, 0.15))' : 'var(--border-subtle, rgba(255, 255, 255, 0.08))',
-                  border: `1px solid ${showViewColumn ? 'var(--accent-color, rgba(59, 130, 246, 0.3))' : 'var(--border-color, rgba(255, 255, 255, 0.12))'}`,
-                  color: showViewColumn ? 'var(--accent-color, #3b82f6)' : 'var(--text-secondary, rgba(255, 255, 255, 0.7))',
-                  borderRadius: '4px',
-                  padding: '0.15rem 0.4rem',
-                  fontSize: '0.7rem',
-                  cursor: 'pointer',
-                  fontWeight: 600,
-                  transition: 'all 0.15s ease'
-                }}
-                title="Toggle subtitle transcript viewer"
-              >
-                VIEW
-              </button>
-              <button 
-                type="button"
-                onClick={(e) => { 
-                  e.stopPropagation(); 
-                  onUpdateSubSettings({ ...subSettings, showStyleColumn: !showStyleColumn }); 
-                }}
-                style={{
-                  background: showStyleColumn ? 'var(--accent-glow, rgba(59, 130, 246, 0.15))' : 'var(--border-subtle, rgba(255, 255, 255, 0.08))',
-                  border: `1px solid ${showStyleColumn ? 'var(--accent-color, rgba(59, 130, 246, 0.3))' : 'var(--border-color, rgba(255, 255, 255, 0.12))'}`,
-                  color: showStyleColumn ? 'var(--accent-color, #3b82f6)' : 'var(--text-secondary, rgba(255, 255, 255, 0.7))',
-                  borderRadius: '4px',
-                  padding: '0.15rem 0.4rem',
-                  fontSize: '0.7rem',
-                  cursor: 'pointer',
-                  fontWeight: 600,
-                  transition: 'all 0.15s ease'
-                }}
-                title="Toggle subtitle styling options"
-              >
-                STYLE
-              </button>
-            </div>
-          </div>
-          <div className="popover-options">
-            {/* Off */}
-            <label className={`popover-option ${selectedSubTrack === null ? 'active' : ''}`} onClick={(e) => { e.preventDefault(); e.stopPropagation(); setSelectedSubTrack(null); setActiveSubStreamIndex(null); if (!showViewColumn && !showStyleColumn) setShowAudioSubMenu(false); }}>
-              <input type="radio" name="sub-lang" checked={selectedSubTrack === null} readOnly />
-              <span>Off</span>
-              {selectedSubTrack === null && <Check size={14} className="check-icon" />}
-            </label>
-
-            {/* OpenSubtitles Cloud Section (Placed 2nd as requested) */}
-            {!subFileOnly && (
-              <div 
-                className="opensub-section-container"
-                style={{
-                  background: 'rgba(255, 255, 255, 0.03)',
-                  border: '1px solid rgba(245, 158, 11, 0.25)',
-                  borderRadius: '7px',
-                  padding: '0.4rem',
-                  margin: '0.2rem 0',
-                  boxSizing: 'border-box',
-                  width: '100%'
-                }}
-              >
-                <div style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'space-between',
-                  paddingBottom: '0.3rem',
-                  borderBottom: '1px solid rgba(255, 255, 255, 0.06)',
-                  marginBottom: '0.35rem'
-                }}>
-                  <div style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '5px',
-                    fontSize: '0.68rem',
-                    textTransform: 'uppercase',
-                    color: '#f59e0b',
-                    fontWeight: 700,
-                    letterSpacing: '0.04em'
-                  }}>
-                    <Globe size={11} style={{ color: '#f59e0b', flexShrink: 0 }} />
-                    <span style={{ whiteSpace: 'nowrap' }}>OpenSub</span>
-                    <span style={{
-                      display: 'inline-block',
-                      width: '6px',
-                      height: '6px',
-                      borderRadius: '50%',
-                      background: hasApiKey ? '#10b981' : '#f59e0b',
-                      boxShadow: hasApiKey ? '0 0 6px rgba(16, 185, 129, 0.6)' : '0 0 6px rgba(245, 158, 11, 0.6)',
-                      flexShrink: 0
-                    }} />
-                  </div>
-
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '3px' }}>
-                    <button
-                      type="button"
-                      title="Search by custom keyword"
-                      onClick={(e) => {
-                        e.preventDefault();
-                        e.stopPropagation();
-                        setShowCustomSearch(!showCustomSearch);
-                      }}
-                      style={{
-                        background: showCustomSearch ? 'rgba(245, 158, 11, 0.25)' : 'rgba(255, 255, 255, 0.06)',
-                        border: '1px solid rgba(255, 255, 255, 0.1)',
-                        color: showCustomSearch ? '#f59e0b' : 'rgba(255, 255, 255, 0.7)',
-                        padding: '2px 4px',
-                        borderRadius: '4px',
-                        cursor: 'pointer',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center'
-                      }}
-                    >
-                      <Search size={10} />
-                    </button>
-
-                    <button
-                      type="button"
-                      title={hasApiKey ? "Edit OpenSubtitles API Key" : "Enter OpenSubtitles API Key"}
-                      onClick={(e) => {
-                        e.preventDefault();
-                        e.stopPropagation();
-                        setShowKeyInput(!showKeyInput);
-                      }}
-                      style={{
-                        background: showKeyInput ? 'rgba(245, 158, 11, 0.25)' : 'rgba(255, 255, 255, 0.06)',
-                        border: '1px solid rgba(255, 255, 255, 0.1)',
-                        color: showKeyInput ? '#f59e0b' : (hasApiKey ? 'rgba(255, 255, 255, 0.7)' : '#f59e0b'),
-                        padding: '2px 4px',
-                        borderRadius: '4px',
-                        cursor: 'pointer',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center'
-                      }}
-                    >
-                      <Key size={10} />
-                    </button>
-                  </div>
-                </div>
-
-                {/* Inline API Key Drawer */}
-                {showKeyInput && (
-                  <div 
-                    onClick={(e) => e.stopPropagation()}
-                    style={{
-                      background: 'rgba(20, 20, 20, 0.98)',
-                      border: '1px solid rgba(245, 158, 11, 0.35)',
-                      borderRadius: '6px',
-                      padding: '0.4rem',
-                      marginBottom: '0.35rem',
-                      display: 'flex',
-                      flexDirection: 'column',
-                      gap: '4px',
-                      boxSizing: 'border-box',
-                      width: '100%'
-                    }}
-                  >
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <span style={{ fontSize: '0.65rem', color: '#f59e0b', fontWeight: 600 }}>API Key</span>
-                      <span 
-                        onClick={() => setShowKeyInput(false)}
-                        style={{ fontSize: '0.65rem', color: 'rgba(255, 255, 255, 0.4)', cursor: 'pointer', padding: '0 2px' }}
-                      >✕</span>
-                    </div>
-                    <div style={{ display: 'flex', gap: '4px' }}>
-                      <input
-                        type="password"
-                        placeholder="Key..."
-                        value={apiKeyVal}
-                        onChange={(e) => setApiKeyVal(e.target.value)}
-                        style={{
-                          flex: 1,
-                          minWidth: 0,
-                          background: 'rgba(0, 0, 0, 0.6)',
-                          border: '1px solid rgba(255, 255, 255, 0.15)',
-                          borderRadius: '4px',
-                          color: '#fff',
-                          fontSize: '0.7rem',
-                          padding: '3px 5px',
-                          outline: 'none',
-                          boxSizing: 'border-box'
-                        }}
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter') handleSaveApiKey();
-                        }}
-                      />
-                      <button
-                        type="button"
-                        onClick={handleSaveApiKey}
-                        style={{
-                          background: '#f59e0b',
-                          color: '#000',
-                          border: 'none',
-                          borderRadius: '4px',
-                          padding: '3px 6px',
-                          fontSize: '0.68rem',
-                          fontWeight: 700,
-                          cursor: 'pointer',
-                          flexShrink: 0
-                        }}
-                      >
-                        Save
-                      </button>
-                    </div>
-                    <div style={{ fontSize: '0.6rem', color: 'rgba(255, 255, 255, 0.45)', wordBreak: 'break-word', lineHeight: 1.2 }}>
-                      Free at <span style={{ color: '#f59e0b', textDecoration: 'underline', cursor: 'pointer' }} onClick={() => window.open('https://www.opensubtitles.com/consumers', '_blank')}>opensubtitles.com</span>
-                    </div>
-                  </div>
-                )}
-
-                {/* Custom Search Query Drawer */}
-                {showCustomSearch && (
-                  <div 
-                    onClick={(e) => e.stopPropagation()}
-                    style={{
-                      background: 'rgba(20, 20, 20, 0.98)',
-                      border: '1px solid rgba(255, 255, 255, 0.12)',
-                      borderRadius: '6px',
-                      padding: '0.35rem',
-                      marginBottom: '0.35rem',
-                      display: 'flex',
-                      gap: '4px',
-                      boxSizing: 'border-box',
-                      width: '100%'
-                    }}
-                  >
-                    <input
-                      type="text"
-                      placeholder="Title query..."
-                      value={customSearchText}
-                      onChange={(e) => setCustomSearchText(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter') {
-                          if (!hasApiKey) {
-                            setShowKeyInput(true);
-                          } else if (onFetchOpenSubtitles) {
-                            onFetchOpenSubtitles(customSearchText.trim());
-                          }
-                        }
-                      }}
-                      style={{
-                        flex: 1,
-                        minWidth: 0,
-                        background: 'rgba(0, 0, 0, 0.5)',
-                        border: '1px solid rgba(255, 255, 255, 0.12)',
-                        borderRadius: '4px',
-                        color: '#fff',
-                        fontSize: '0.7rem',
-                        padding: '3px 5px',
-                        outline: 'none',
-                        boxSizing: 'border-box'
-                      }}
-                    />
-                    <button
-                      type="button"
-                      onClick={() => {
-                        if (!hasApiKey) {
-                          setShowKeyInput(true);
-                        } else if (onFetchOpenSubtitles) {
-                          onFetchOpenSubtitles(customSearchText.trim());
-                        }
-                      }}
-                      style={{
-                        background: 'rgba(245, 158, 11, 0.25)',
-                        border: '1px solid rgba(245, 158, 11, 0.4)',
-                        color: '#f59e0b',
-                        borderRadius: '4px',
-                        padding: '3px 6px',
-                        fontSize: '0.68rem',
-                        fontWeight: 600,
-                        cursor: 'pointer',
-                        flexShrink: 0
-                      }}
-                    >
-                      Go
-                    </button>
-                  </div>
-                )}
-
-                {/* The Main Search OpenSubtitles Button */}
-                {!hasFetchedOpenSubtitles || openSubtitles.length === 0 ? (
-                  <button
-                    type="button"
-                    className="opensub-sexy-btn"
-                    disabled={isOpenSubLoading}
-                    onClick={(e) => {
-                      e.preventDefault();
-                      e.stopPropagation();
-                      if (!hasApiKey) {
-                        setShowKeyInput(true);
-                      } else if (onFetchOpenSubtitles) {
-                        onFetchOpenSubtitles(customSearchText.trim() || undefined);
-                      }
-                    }}
-                    style={{
-                      width: '100%',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      gap: '5px',
-                      padding: '0.38rem 0.45rem',
-                      borderRadius: '5px',
-                      background: isOpenSubLoading 
-                        ? 'rgba(245, 158, 11, 0.15)' 
-                        : 'linear-gradient(135deg, rgba(245, 158, 11, 0.22) 0%, rgba(234, 88, 12, 0.26) 100%)',
-                      border: '1px solid rgba(245, 158, 11, 0.4)',
-                      boxShadow: isOpenSubLoading 
-                        ? 'none' 
-                        : '0 2px 10px rgba(245, 158, 11, 0.15)',
-                      color: '#fbbf24',
-                      fontSize: '0.72rem',
-                      fontWeight: 600,
-                      cursor: isOpenSubLoading ? 'wait' : 'pointer',
-                      boxSizing: 'border-box'
-                    }}
-                  >
-                    {isOpenSubLoading ? (
-                      <>
-                        <RefreshCw size={11} style={{ animation: 'spin-slow 1s linear infinite' }} />
-                        <span style={{ whiteSpace: 'nowrap' }}>Searching...</span>
-                      </>
-                    ) : (
-                      <>
-                        <Sparkles size={11} style={{ color: '#fbbf24', flexShrink: 0 }} />
-                        <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                          {hasFetchedOpenSubtitles ? 'Retry Search' : 'Search OpenSub'}
-                        </span>
-                      </>
-                    )}
-                  </button>
-                ) : null}
-
-                {/* Subtitle Results List */}
-                {openSubtitles && openSubtitles.length > 0 && (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', marginTop: '0.25rem' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 0.2rem', marginBottom: '2px' }}>
-                      <span style={{ fontSize: '0.62rem', color: 'rgba(255, 255, 255, 0.5)' }}>
-                        {openSubtitles.length} Found
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          if (onFetchOpenSubtitles) {
-                            onFetchOpenSubtitles(customSearchText.trim() || undefined);
-                          }
-                        }}
-                        style={{
-                          background: 'none',
-                          border: 'none',
-                          color: '#f59e0b',
-                          fontSize: '0.62rem',
-                          cursor: 'pointer',
-                          display: 'flex',
-                          alignItems: 'center',
-                          gap: '2px',
-                          padding: 0
-                        }}
-                      >
-                        <RefreshCw size={8} />
-                        <span>Refresh</span>
-                      </button>
-                    </div>
-                    {openSubtitles.map((sub) => {
-                      const isSelected = selectedSubTrack?.id === `opensub-${sub.fileId}`;
-                      const isDownloadingThis = downloadingFileId === sub.fileId;
-                      return (
-                        <div
-                          key={sub.id}
-                          className={`popover-option ${isSelected ? 'active' : ''}`}
-                          onClick={() => handleDownload(sub)}
-                          title={sub.fileName}
-                          style={{
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'space-between',
-                            padding: '0.3rem 0.45rem',
-                            borderRadius: '5px',
-                            cursor: 'pointer',
-                            transition: 'all 0.15s ease'
-                          }}
-                        >
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '5px', overflow: 'hidden' }}>
-                            <span style={{
-                              background: 'rgba(245, 158, 11, 0.2)',
-                              color: '#f59e0b',
-                              border: '1px solid rgba(245, 158, 11, 0.35)',
-                              borderRadius: '3px',
-                              padding: '1px 4px',
-                              fontSize: '0.62rem',
-                              fontWeight: 700,
-                              flexShrink: 0
-                            }}>
-                              {sub.language.toUpperCase()}
-                            </span>
-                            <span style={{
-                              fontSize: '0.72rem',
-                              whiteSpace: 'nowrap',
-                              overflow: 'hidden',
-                              textOverflow: 'ellipsis',
-                              maxWidth: '90px'
-                            }}>
-                              {sub.fileName.replace(/\.(srt|vtt|sub|ass)$/i, '')}
-                            </span>
-                          </div>
-
-                          <div style={{ flexShrink: 0, marginLeft: '4px' }}>
-                            {isDownloadingThis ? (
-                              <RefreshCw size={11} style={{ animation: 'spin-slow 1s linear infinite', color: '#f59e0b' }} />
-                            ) : isSelected ? (
-                              <Check size={12} className="check-icon" style={{ color: '#22c55e' }} />
-                            ) : (
-                              <Download size={11} style={{ opacity: 0.4 }} />
-                            )}
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-            )}
-
-            {/* Embedded Subtitle Streams */}
-            {!subFileOnly && subtitleStreams.map((s) => {
-              const active = selectedSubTrack?.streamIndex === s.index;
-              const label = getLangLabel(s.language, (s as any).title || `Track #${s.index}`, (s as any).title);
-              return (
-                <label key={`embed-sub-${s.index}`} className={`popover-option ${active ? 'active' : ''}`} onClick={(e) => { e.preventDefault(); e.stopPropagation(); if (active) return; handleSelectEmbeddedSubtitle(s.index, s.codec, s.language); if (!showViewColumn && !showStyleColumn) setShowAudioSubMenu(false); }}>
-                  <input type="radio" name="sub-lang" checked={active} readOnly style={{ pointerEvents: 'none' }} />
-                  <span>{label}</span>
-                  {active && <Check size={14} className="check-icon" />}
-                </label>
-              );
-            })}
-
-            {/* Custom Uploaded Tracks */}
-            {subtitleTracks.map((track) => {
-              const active = selectedSubTrack?.id === track.id;
-              return (
-                <label key={track.id} className={`popover-option ${active ? 'active' : ''}`} onClick={(e) => { e.preventDefault(); e.stopPropagation(); if (active) return; setSelectedSubTrack(track); if (!showViewColumn && !showStyleColumn) setShowAudioSubMenu(false); }}>
-                  <input type="radio" name="sub-lang" checked={active} readOnly style={{ pointerEvents: 'none' }} />
-                  <span>{trimSubtitleName(track.name, track.language)}</span>
-                  {active && <Check size={14} className="check-icon" />}
-                </label>
-              );
-            })}
-
-            {/* Custom Add Trigger */}
-            {allowSubUpload !== false && (
-              <label className="popover-option add-custom-btn" onClick={() => { customSubInputRef.current?.click(); setShowAudioSubMenu(false); }}>
-                <span>+ Add Custom File</span>
-              </label>
-            )}
-          </div>
+      <div className="asp-grid">
+        {/* Left Pane (Audio, Subs, OpenSubtitles) */}
+        <div className="asp-left">
+          {effectiveAudioVisible && renderAudioContent()}
+          {effectiveSubVisible && renderSubsContent()}
         </div>
-        )}
 
-        {/* Subtitle Cue Transcript Column */}
-        {showViewColumn && (
-          <div className="popover-col popover-transcript-col">
-            <h4 style={{ flexShrink: 0 }}>Subtitle View</h4>
-            {selectedSubTrack ? (
-              <>
-                <div className="transcript-search-box" style={{ flexShrink: 0 }}>
-                  <input 
-                    type="text" 
-                    placeholder="Search subtitles..." 
-                    value={subSearchQuery}
-                    onChange={(e) => setSubSearchQuery(e.target.value)}
-                    onKeyDown={(e) => e.stopPropagation()}
-                    className="transcript-search-input"
-                    onClick={(e) => e.stopPropagation()}
-                  />
-                </div>
-                <div ref={transcriptListRef} className="transcript-cues-list">
-                  {(selectedSubTrack.cues || []).length === 0 ? (
-                    <div style={{ padding: '1.2rem', textAlign: 'center', color: 'var(--text-secondary, rgba(255,255,255,0.5))', fontSize: '0.8rem' }}>
-                      No cues found in this track.
-                    </div>
-                  ) : (
-                    (selectedSubTrack.cues || []).map((cue, originalIdx) => {
-                      const isMatched = cleanSubtitleText(cue.text).toLowerCase().includes(subSearchQuery.toLowerCase());
-                      if (!isMatched) return null;
-                      
-                      const isActive = currentTime >= cue.startTime && currentTime <= cue.endTime;
-                      return (
-                        <div 
-                          key={cue.id || originalIdx} 
-                          id={`cue-item-${originalIdx}`}
-                          className={`transcript-cue-item ${isActive ? 'active' : ''}`}
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            if (videoRef.current) {
-                              videoRef.current.currentTime = cue.startTime;
-                              setCurrentTime(cue.startTime);
-                            }
-                          }}
-                        >
-                          <span className="cue-time">{formatTime(cue.startTime)}</span>
-                          <span className="cue-text">{cleanSubtitleText(cue.text)}</span>
-                        </div>
-                      );
-                    })
-                  )}
-                </div>
-              </>
-            ) : (
-              <div style={{ padding: '1.5rem', textAlign: 'center', color: 'var(--text-secondary, rgba(255,255,255,0.6))', fontSize: '0.8rem', lineHeight: '1.5' }}>
-                Select a subtitle track on the left to view the interactive transcript.
-              </div>
-            )}
-          </div>
-        )}
-        
-        {/* Subtitle Style Customization Column */}
-        {showStyleColumn && (
-          <div className="popover-col popover-style-col">
-            <div className="style-header-row" style={{ flexShrink: 0 }}>
-              <h4>Subtitle Style</h4>
-              <button 
-                className="style-reset-btn-header"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onUpdateSubSettings({
-                    fontSize: 'medium',
-                    color: 'white',
-                    backdrop: 'shadow',
-                    fontFamily: 'poppins',
-                    fontStyle: 'normal',
-                    customTextColor: '',
-                    customBgColor: '',
-                    customSize: 100
-                  });
-                }}
-                title="Reset styles to defaults"
+        {/* Right Pane (Segmented [Transcript | Style]) */}
+        {!isFolded && (
+          <div className="asp-right">
+            <div className="asp-seg-wrap">
+              <button
+                type="button"
+                className="asp-fold-btn"
+                onClick={toggleFold}
+                title="Fold Transcript & Style panel"
               >
-                Reset
+                <PanelRightClose size={14} />
+                <span className="asp-fold-btn-text">Fold</span>
               </button>
+              <div className="asp-seg">
+                <button
+                  type="button"
+                  className={`asp-seg-btn ${rightTab === 'transcript' ? 'active' : ''}`}
+                  onClick={() => setRightTab('transcript')}
+                >
+                  Transcript
+                </button>
+                <button
+                  type="button"
+                  className={`asp-seg-btn ${rightTab === 'style' ? 'active' : ''}`}
+                  onClick={() => setRightTab('style')}
+                >
+                  Style
+                </button>
+              </div>
             </div>
-            
-            <div className="style-customizer" style={{ display: 'flex', flexDirection: 'column', gap: '0.85rem' }}>
-              {/* Font Family */}
-              <div className="style-row" style={{ minWidth: 0, width: '100%', overflow: 'visible' }}>
-                <span className="style-label" style={{ display: 'block', fontSize: '0.64rem', letterSpacing: '0.05em', textTransform: 'uppercase', color: 'var(--text-muted, rgba(255, 255, 255, 0.45))', fontWeight: 600, marginBottom: '5px' }}>
-                  Font Family
-                </span>
-                <CustomSelect 
-                  value={subSettings.fontFamily}
-                  onChange={(val) => onUpdateSubSettings({ fontFamily: val })}
-                  options={fontOptions}
-                />
-              </div>
 
-              {/* Colors Row: Text Color & Background in 1 Line */}
-              <div className="style-row" style={{ minWidth: 0, width: '100%', overflow: 'visible' }}>
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', gap: '8px' }}>
-                  {/* Text Color */}
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                    <span className="style-label" style={{ fontSize: '0.64rem', letterSpacing: '0.05em', textTransform: 'uppercase', color: 'var(--text-muted, rgba(255, 255, 255, 0.45))', fontWeight: 600 }}>
-                      Text
-                    </span>
-                    <input 
-                      type="color" 
-                      value={subSettings.customTextColor || '#ffffff'}
-                      onChange={(e) => onUpdateSubSettings({ customTextColor: e.target.value })}
-                      className="color-picker-input-premium"
-                      onClick={(e) => e.stopPropagation()}
-                      title="Choose text color"
-                      style={{ width: '26px', height: '26px' }}
-                    />
-                  </div>
-
-                  {/* Background Color & None Button */}
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                    <span className="style-label" style={{ fontSize: '0.64rem', letterSpacing: '0.05em', textTransform: 'uppercase', color: 'var(--text-muted, rgba(255, 255, 255, 0.45))', fontWeight: 600 }}>
-                      Bg
-                    </span>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
-                      <input 
-                        type="color" 
-                        value={subSettings.customBgColor && !subSettings.customBgColor.startsWith('rgba') && subSettings.customBgColor !== 'transparent' ? subSettings.customBgColor : '#000000'}
-                        onChange={(e) => onUpdateSubSettings({ customBgColor: e.target.value })}
-                        className="color-picker-input-premium"
-                        disabled={subSettings.customBgColor === 'transparent'}
-                        onClick={(e) => e.stopPropagation()}
-                        title="Choose background color"
-                        style={{ width: '26px', height: '26px' }}
-                      />
-                      <button 
-                        className={`bg-clear-circle-btn ${subSettings.customBgColor === 'transparent' ? 'active' : ''}`}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          onUpdateSubSettings({ 
-                            customBgColor: subSettings.customBgColor === 'transparent' ? '#000000' : 'transparent' 
-                          });
-                        }}
-                        title={subSettings.customBgColor === 'transparent' ? "Background is None (transparent) - Click to restore" : "Set background to None (transparent)"}
-                        style={{
-                          width: '24px',
-                          height: '24px',
-                          borderRadius: '50%',
-                          border: `1.5px solid ${subSettings.customBgColor === 'transparent' ? '#ef4444' : 'rgba(255, 255, 255, 0.28)'}`,
-                          background: subSettings.customBgColor === 'transparent' ? 'rgba(239, 68, 68, 0.2)' : 'rgba(255, 255, 255, 0.06)',
-                          cursor: 'pointer',
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                          padding: 0,
-                          transition: 'all 0.2s ease',
-                          flexShrink: 0
-                        }}
-                      >
-                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke={subSettings.customBgColor === 'transparent' ? '#ef4444' : 'rgba(255, 255, 255, 0.7)'} strokeWidth="2.5" strokeLinecap="round">
-                          <circle cx="12" cy="12" r="9" strokeWidth="2" />
-                          <line x1="6" y1="6" x2="18" y2="18" />
-                        </svg>
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              {/* Font Size Row (Placed below text and background colors) */}
-              <div className="style-row" style={{ minWidth: 0, width: '100%', overflow: 'visible' }}>
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%' }}>
-                  <span className="style-label" style={{ fontSize: '0.64rem', letterSpacing: '0.05em', textTransform: 'uppercase', color: 'var(--text-muted, rgba(255, 255, 255, 0.45))', fontWeight: 600 }}>
-                    Size
-                  </span>
-                  <div className="size-btn-group" style={{ margin: 0, alignSelf: 'center' }}>
-                    <button 
-                      className="size-action-btn"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        const currentSize = subSettings.customSize || 100;
-                        onUpdateSubSettings({ customSize: Math.max(50, currentSize - 10) });
-                      }}
-                      title="Decrease size"
-                    >
-                      -
-                    </button>
-                    <span className="size-value-display">{subSettings.customSize || 100}%</span>
-                    <button 
-                      className="size-action-btn"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        const currentSize = subSettings.customSize || 100;
-                        onUpdateSubSettings({ customSize: Math.min(300, currentSize + 10) });
-                      }}
-                      title="Increase size"
-                    >
-                      +
-                    </button>
-                  </div>
-                </div>
-              </div>
-
-            </div>
+            {rightTab === 'transcript' && renderTranscriptContent()}
+            {rightTab === 'style' && renderStyleContent()}
           </div>
         )}
       </div>
     </div>
   );
 };
+
+export default AudioSubPopover;

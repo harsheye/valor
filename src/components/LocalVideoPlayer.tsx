@@ -42,7 +42,7 @@ const getAudioBoostMultiplier = (boostPercent: number): number => {
 };
 import { classifyVideoTitle, getRegexedTitleWithYear } from '../utils/libraryClassifier';
 import { syncTraktHistory, syncTraktRating, resolveTraktMetadata } from '../services/traktAuth';
-import { PlayerLoader } from './player/PlayerLoader';
+import { LoadingSpinner, BufferingOverlay } from './LoadingSpinner';
 import { MobilePlayerOverlay } from './player/MobilePlayerOverlay';
 import { PlayerIsland, usePlayerIsland, type IslandAudioTrack, type IslandSubtitleTrack } from './player';
 import { RadialMenu } from './RadialMenu';
@@ -1803,6 +1803,8 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
   const [activeAudioStreamIndex, setActiveAudioStreamIndex] = useState<number | null>(() => {
     const prefs = getSavedMediaPreferences();
     const streams = video.streams || [];
+    const audioStreams = streams.filter((s: any) => s.type === 'audio');
+    if (audioStreams.length < 2) return null;
     return getPreferredAudioStreamIndex(streams, prefs.defaultAudio);
   });
   const [activeSubStreamIndex, setActiveSubStreamIndex] = useState<number | null>(null);
@@ -4151,7 +4153,9 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
         });
 
         try {
-          await controller.initialize(videoRef.current, activeAudioStreamIndex);
+          const audioTracksCount = (video.streams || []).filter((s: any) => s.type === 'audio').length;
+          const targetAudioIndex = audioTracksCount >= 2 ? activeAudioStreamIndex : null;
+          await controller.initialize(videoRef.current, targetAudioIndex);
         } catch (err) {
           console.warn(`[LocalVideoPlayer] PlaybackController init failed:`, err);
           return;
@@ -4418,22 +4422,36 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
         const targetAudio = settings.defaultAudio || 'ENG';
         const targetSub = settings.defaultSub || 'ENG';
 
-        let audioSelected = false;
-        // Auto-select audio stream (for both local and remote)
-        if (targetAudio !== 'Original' && !selectedAudioTrack) {
-          const stream = findPreferredStream(audioStreams, targetAudio, 'audio');
-          if (stream) {
-            audioSelected = true;
-            logger.player(`Auto-selecting audio track: ${stream.language || stream.title}`);
-            handleSelectEmbeddedAudio(stream.index, stream.codec, stream.language, false, stream.title, true);
+        // Auto-select audio stream ONLY if media has 2 or more audio tracks
+        if (audioStreams.length >= 2) {
+          let audioSelected = false;
+          if (targetAudio !== 'Original' && !selectedAudioTrack) {
+            const stream = findPreferredStream(audioStreams, targetAudio, 'audio');
+            if (stream) {
+              audioSelected = true;
+              logger.player(`Auto-selecting audio track: ${stream.language || stream.title}`);
+              handleSelectEmbeddedAudio(stream.index, stream.codec, stream.language, false, stream.title, true);
+            }
           }
-        }
 
-        // Always auto-select the first audio track when available (for both local and remote) if no preferred track matched
-        if (!audioSelected && !selectedAudioTrack && audioStreams.length > 0) {
-          const firstAudio = audioStreams[0];
-          logger.player(`Auto-selecting first audio track: ${firstAudio.language || firstAudio.title || 'unknown'} (${firstAudio.codec})`);
-          handleSelectEmbeddedAudio(firstAudio.index, firstAudio.codec, firstAudio.language, false, firstAudio.title, true);
+          // Always auto-select the first audio track when available (for both local and remote) if no preferred track matched
+          if (!audioSelected && !selectedAudioTrack && audioStreams.length > 0) {
+            const firstAudio = audioStreams[0];
+            logger.player(`Auto-selecting first audio track: ${firstAudio.language || firstAudio.title || 'unknown'} (${firstAudio.codec})`);
+            handleSelectEmbeddedAudio(firstAudio.index, firstAudio.codec, firstAudio.language, false, firstAudio.title, true);
+          }
+        } else {
+          // Fewer than 2 audio tracks (< 2): halt/suspend audio parser, use HTML5 audio natively
+          setActiveAudioStreamIndex(null);
+          setSelectedAudioTrack(null);
+          if (playbackControllerRef.current) {
+            playbackControllerRef.current.switchAudioTrack(null);
+          }
+          if (videoRef.current) {
+            videoRef.current.muted = isMuted;
+            videoRef.current.volume = volume;
+          }
+          logger.player(`Media has ${audioStreams.length} audio track(s) (< 2). Audio parser suspended; using native HTML5 audio.`);
         }
 
         // Auto-select subtitle stream
@@ -5427,16 +5445,12 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
         </div>
       )}
 
-      {/* Shared PlayerLoader (Logo loader: active only when playing and buffering, never when paused) */}
-      <PlayerLoader 
-        visible={isBuffering && isPlaying}
-        variant="buffering"
-        onRetry={() => {
-          if (videoRef.current) {
-            videoRef.current.load();
-            videoRef.current.play().catch(() => {});
-          }
-        }}
+      {/* Buffering fire ring loader */}
+      <BufferingOverlay 
+        isBuffering={isBuffering}
+        customLoaderUrl={customLoaderUrl} 
+        customLoaderType={customLoaderType} 
+        preset={(spinnerPreset || 'fire-circle') as any} 
       />
 
       {/* Mobile Player Overlay (<= 768px) */}

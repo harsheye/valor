@@ -1,6 +1,8 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Play, MoreVertical, Star, Edit3, Trash2, CheckCircle2, Circle } from 'lucide-react';
 import type { BaseMediaViewModel, SeriesViewModel } from '../../utils/libraryViewModel';
+import { BottomSheet } from '../ui/BottomSheet';
+import { isSeriesDropped } from '../../utils/seriesDropState';
 
 interface MediaListRowProps {
   item: BaseMediaViewModel | SeriesViewModel;
@@ -92,7 +94,7 @@ export const MediaListRow: React.FC<MediaListRowProps> = ({
       className="media-list-row"
       style={{
         display: 'grid',
-        gridTemplateColumns: '36px 1fr auto auto auto auto 40px',
+        gridTemplateColumns: '36px 1fr auto auto auto auto minmax(36px, auto)',
         alignItems: 'center',
         gap: '14px',
         padding: '8px 14px',
@@ -108,14 +110,16 @@ export const MediaListRow: React.FC<MediaListRowProps> = ({
         transition: 'background-color 0.15s ease-out, border-color 0.15s ease-out'
       }}
     >
-      {/* 1. Poster Thumbnail (34px wide x ~51px tall) */}
+      {/* 1. Poster Thumbnail / Avatar (42px on mobile) */}
       <div
+        className="media-list-avatar"
         style={{
-          width: '34px',
+          width: '38px',
           height: '48px',
-          borderRadius: '4px',
+          borderRadius: '8px',
           overflow: 'hidden',
-          backgroundColor: tileBg,
+          backgroundColor: isSeries ? '#4b2a4f' : tileBg,
+          color: isSeries ? '#e3b8ea' : tileGlyphColor,
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
@@ -132,7 +136,7 @@ export const MediaListRow: React.FC<MediaListRowProps> = ({
             style={{ width: '100%', height: '100%', objectFit: 'cover' }}
           />
         ) : (
-          <span style={{ fontSize: '1rem', fontWeight: 600, color: tileGlyphColor }}>
+          <span style={{ fontSize: '1rem', fontWeight: 700 }}>
             {item.tileGlyph}
           </span>
         )}
@@ -144,8 +148,8 @@ export const MediaListRow: React.FC<MediaListRowProps> = ({
           title={item.rawName}
           style={{
             fontSize: '14px',
-            fontWeight: 500,
-            color: 'var(--text-1)',
+            fontWeight: 600,
+            color: 'var(--tx, var(--text-1))',
             overflow: 'hidden',
             textOverflow: 'ellipsis',
             whiteSpace: 'nowrap'
@@ -153,25 +157,23 @@ export const MediaListRow: React.FC<MediaListRowProps> = ({
         >
           {item.displayTitle}
         </span>
-        {isSeries && seriesItem && (
-          <span style={{ fontSize: '12px', color: 'var(--text-2)' }}>
-            {seriesItem.metaLabel}
-          </span>
-        )}
+        <span style={{ fontSize: '12px', color: 'var(--mut, var(--text-2))', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          {isSeries && seriesItem ? seriesItem.metaLabel : (item.runtimeLabel || (item.year ? `${item.year}` : ''))}
+        </span>
       </div>
 
       {/* 3. Year */}
-      <div style={{ fontSize: '12px', color: 'var(--text-2)', minWidth: '40px', textAlign: 'center' }}>
+      <div className="desktop-only-meta" style={{ fontSize: '12px', color: 'var(--text-2)', minWidth: '40px', textAlign: 'center' }}>
         {item.year || ''}
       </div>
 
       {/* 4. Runtime */}
-      <div style={{ fontSize: '12px', color: 'var(--text-2)', fontVariantNumeric: 'tabular-nums', minWidth: '55px', textAlign: 'right' }}>
+      <div className="desktop-only-meta" style={{ fontSize: '12px', color: 'var(--text-2)', fontVariantNumeric: 'tabular-nums', minWidth: '55px', textAlign: 'right' }}>
         {!isSeries && item.runtimeLabel ? item.runtimeLabel : ''}
       </div>
 
       {/* 5. Quality Chips (only if probed) */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+      <div className="desktop-only-meta" style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
         {item.resolution && (
           <span
             style={{
@@ -205,15 +207,57 @@ export const MediaListRow: React.FC<MediaListRowProps> = ({
       </div>
 
       {/* 6. State Text (Right-Aligned) */}
-      <div style={{ textAlign: 'right', minWidth: '130px' }}>
+      <div className="desktop-only-meta" style={{ textAlign: 'right', minWidth: '130px' }}>
         {isSeries && seriesItem ? (
-          <span style={{ fontSize: '12px', color: seriesItem.status === 'in-progress' ? 'var(--accent)' : 'var(--text-2)', fontWeight: seriesItem.status === 'in-progress' ? 500 : 400 }}>
-            {seriesItem.stateLine}
-          </span>
+          (isSeriesDropped(seriesItem.seriesTitle) || isSeriesDropped(item.displayTitle)) ? (
+            <span style={{ fontSize: '12px', color: '#f59e0b', fontWeight: 600 }}>
+              Dropped
+            </span>
+          ) : (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                onPlay();
+              }}
+              style={{
+                background: 'transparent',
+                border: 'none',
+                color: seriesItem.status === 'in-progress' ? 'var(--accent)' : 'var(--text-2)',
+                fontWeight: seriesItem.status === 'in-progress' ? 600 : 400,
+                fontSize: '12px',
+                cursor: 'pointer',
+                padding: '4px 6px',
+                borderRadius: '4px'
+              }}
+              onMouseEnter={(e) => e.currentTarget.style.textDecoration = 'underline'}
+              onMouseLeave={(e) => e.currentTarget.style.textDecoration = 'none'}
+            >
+              {seriesItem.stateLine}
+            </button>
+          )
         ) : item.status === 'in-progress' ? (
-          <span style={{ fontSize: '12px', color: 'var(--accent)', fontWeight: 500 }}>
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              onPlay();
+            }}
+            style={{
+              background: 'transparent',
+              border: 'none',
+              color: 'var(--accent)',
+              fontWeight: 500,
+              fontSize: '12px',
+              cursor: 'pointer',
+              padding: '4px 6px',
+              borderRadius: '4px'
+            }}
+            onMouseEnter={(e) => e.currentTarget.style.textDecoration = 'underline'}
+            onMouseLeave={(e) => e.currentTarget.style.textDecoration = 'none'}
+          >
             {item.resumeLabel}
-          </span>
+          </button>
         ) : item.status === 'watched' ? (
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: '4px' }}>
             {item.rating && item.rating > 0 && (
@@ -229,8 +273,34 @@ export const MediaListRow: React.FC<MediaListRowProps> = ({
         )}
       </div>
 
-      {/* 7. More Menu Button */}
-      <div style={{ position: 'relative' }} onClick={(e) => e.stopPropagation()}>
+      {/* 7. Action / More Menu Button */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: '6px', position: 'relative' }} onClick={(e) => e.stopPropagation()}>
+        {/* Mobile quick action button */}
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            onPlay();
+          }}
+          className="mobile-only-btn"
+          style={{
+            background: 'var(--ac, var(--accent))',
+            color: 'var(--on, #fff)',
+            border: 'none',
+            borderRadius: '8px',
+            padding: '4px 10px',
+            fontSize: '11px',
+            fontWeight: 600,
+            cursor: 'pointer',
+            whiteSpace: 'nowrap'
+          }}
+        >
+          {isSeries && seriesItem?.status === 'in-progress'
+            ? (seriesItem.stateLine?.replace('Next: ', 'Resume ') || 'Resume')
+            : item.status === 'in-progress'
+              ? 'Resume'
+              : 'Play'}
+        </button>
         <button
           ref={moreBtnRef}
           type="button"
@@ -255,7 +325,75 @@ export const MediaListRow: React.FC<MediaListRowProps> = ({
           <MoreVertical size={16} />
         </button>
 
-        {isMenuOpen && (
+        {isMenuOpen && (typeof window !== 'undefined' && window.innerWidth <= 768 ? (
+          <BottomSheet
+            isOpen={isMenuOpen}
+            onClose={() => setIsMenuOpen(false)}
+            title={item.displayTitle}
+          >
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+              <button
+                type="button"
+                className="library-sort-sheet-item"
+                onClick={() => {
+                  setIsMenuOpen(false);
+                  if (isSeries && onOpenSeries) onOpenSeries();
+                  else onPlay();
+                }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                  <Play size={16} />
+                  <span>{isSeries ? 'View series' : item.status === 'in-progress' ? 'Resume' : 'Play'}</span>
+                </div>
+              </button>
+
+              {!isSeries && (
+                <button
+                  type="button"
+                  className="library-sort-sheet-item"
+                  onClick={() => {
+                    setIsMenuOpen(false);
+                    onToggleWatched();
+                  }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                    {item.status === 'watched' ? <Circle size={16} /> : <CheckCircle2 size={16} />}
+                    <span>{item.status === 'watched' ? 'Mark as unwatched' : 'Mark as watched'}</span>
+                  </div>
+                </button>
+              )}
+
+              <button
+                type="button"
+                className="library-sort-sheet-item"
+                onClick={() => {
+                  setIsMenuOpen(false);
+                  onRename();
+                }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                  <Edit3 size={16} />
+                  <span>Rename</span>
+                </div>
+              </button>
+
+              <button
+                type="button"
+                className="library-sort-sheet-item"
+                onClick={() => {
+                  setIsMenuOpen(false);
+                  onRemove();
+                }}
+                style={{ color: '#ef4444' }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                  <Trash2 size={16} />
+                  <span>Remove from library</span>
+                </div>
+              </button>
+            </div>
+          </BottomSheet>
+        ) : (
           <div
             ref={menuRef}
             role="menu"
@@ -396,7 +534,7 @@ export const MediaListRow: React.FC<MediaListRowProps> = ({
               <span>Remove</span>
             </button>
           </div>
-        )}
+        ))}
       </div>
 
       <style>{`
