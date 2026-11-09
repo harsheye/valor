@@ -97,10 +97,9 @@ export const extractTitleFromUrl = (url?: string): string => {
   return '';
 };
 import { LoadingSpinner, BufferingOverlay } from './LoadingSpinner';
-import { VlcContextMenu } from './player/VlcContextMenu';
 import { MobilePlayerOverlay } from './player/MobilePlayerOverlay';
 import { PlayerIsland, usePlayerIsland, type IslandAudioTrack, type IslandSubtitleTrack } from './player';
-import { RadialMenu } from './RadialMenu';
+import { VlcContextMenu } from './player/VlcContextMenu';
 import { ConsoleOverlay } from './ConsoleOverlay';
 import { SpeedPopover } from './SpeedPopover';
 import { EsportsLiveOverlay } from './EsportsLiveOverlay';
@@ -1700,7 +1699,57 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
   const [playbackRate, setPlaybackRate] = useState(1.0);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [isPseudoFullscreen, setIsPseudoFullscreen] = useState(false);
-  const [radialMenuState, setRadialMenuState] = useState<{ visible: boolean; x: number; y: number }>({ visible: false, x: 0, y: 0 });
+  // Ambiance Lighting Controls & Persistence
+  const [isAmbianceEnabled, setIsAmbianceEnabled] = useState<boolean>(() => {
+    try {
+      const saved = localStorage.getItem('valor_ambiance_enabled');
+      if (saved !== null) return saved === 'true';
+    } catch {}
+    return true;
+  });
+
+  const [ambianceBlur, setAmbianceBlur] = useState<number>(() => {
+    try {
+      const saved = localStorage.getItem('valor_ambiance_blur');
+      if (saved) {
+        const val = parseInt(saved, 10);
+        if (!isNaN(val) && val >= 0) return val;
+      }
+    } catch {}
+    return 54;
+  });
+
+  const [ambianceOpacity, setAmbianceOpacity] = useState<number>(() => {
+    try {
+      const saved = localStorage.getItem('valor_ambiance_opacity');
+      if (saved) {
+        const val = parseFloat(saved);
+        if (!isNaN(val) && val >= 0 && val <= 1) return val;
+      }
+    } catch {}
+    return 0.7;
+  });
+
+  const handleToggleAmbiance = useCallback(() => {
+    setIsAmbianceEnabled(prev => {
+      const next = !prev;
+      try { localStorage.setItem('valor_ambiance_enabled', String(next)); } catch {}
+      triggerSwitchToast(next ? 'Ambiance Lighting Enabled' : 'Ambiance Lighting Disabled');
+      return next;
+    });
+  }, []);
+
+  const handleSetAmbianceBlur = useCallback((blurPx: number) => {
+    setAmbianceBlur(blurPx);
+    try { localStorage.setItem('valor_ambiance_blur', String(blurPx)); } catch {}
+    triggerSwitchToast(`Ambiance Blur: ${blurPx}px`);
+  }, []);
+
+  const handleSetAmbianceOpacity = useCallback((opacity: number) => {
+    setAmbianceOpacity(opacity);
+    try { localStorage.setItem('valor_ambiance_opacity', String(opacity)); } catch {}
+    triggerSwitchToast(`Ambiance Opacity: ${Math.round(opacity * 100)}%`);
+  }, []);
   const [hoverTime, setHoverTime] = useState<string | null>(null);
   const [hoverPercent, setHoverPercent] = useState(0);
   const [isScrubbing, setIsScrubbing] = useState(false);
@@ -5299,11 +5348,7 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
         onContextMenu={(e) => {
           e.preventDefault();
           e.stopPropagation();
-          if (radialMenuState.visible) {
-            setRadialMenuState({ visible: false, x: 0, y: 0 });
-          } else {
-            setRadialMenuState({ visible: true, x: e.clientX, y: e.clientY });
-          }
+          setVlcContextMenuState(prev => prev.visible ? { visible: false, x: 0, y: 0 } : { visible: true, x: e.clientX, y: e.clientY });
         }}
       >
         <video
@@ -5527,11 +5572,7 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
           onContextMenu={(e) => {
             e.preventDefault();
             e.stopPropagation();
-            if (radialMenuState.visible) {
-              setRadialMenuState({ visible: false, x: 0, y: 0 });
-            } else {
-              setRadialMenuState({ visible: true, x: e.clientX, y: e.clientY });
-            }
+            setVlcContextMenuState(prev => prev.visible ? { visible: false, x: 0, y: 0 } : { visible: true, x: e.clientX, y: e.clientY });
           }}
           style={{
             position: 'absolute',
@@ -5646,6 +5687,10 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
           <div style={{ flex: 1 }} />
 
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+            {/* PiP button next to Google Cast */}
+            <button className="cast-btn" onClick={togglePiP} title="Picture in Picture">
+              <MonitorPlay size={22} />
+            </button>
             {/* Chromecast trigger (acting as native browser cast prompt) */}
             <button className="cast-btn" onClick={handleCast} title="Chromecast">
               <Cast size={24} />
@@ -6241,21 +6286,7 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
                   )}
                 </div>
 
-                <button 
-                  className="control-btn-netflix control-btn-pip" 
-                  onClick={togglePiP} 
-                  title="Picture in Picture"
-                >
-                  <MonitorPlay size={22} />
-                </button>
 
-                <button 
-                  className="control-btn-netflix control-btn-settings" 
-                  onClick={() => setShowSettingsPanel(prev => !prev)} 
-                  title="Player Settings"
-                >
-                  <Settings size={22} />
-                </button>
 
                 {(showFullscreen || hoveredSetting === 'showFullscreen') && (
                   <button 
@@ -8795,61 +8826,129 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
 
 
 
-      {radialMenuState.visible && (() => {
-        // Max 5 items: 1 mid (Pause/Play) and 4 on outer
-        const rItems = [
-          {
-            id: 'settings',
-            label: 'Settings (Del)',
-            icon: <Settings size={22} />,
-            onClick: () => {
-              setShowSettingsPanel(true);
-            },
-            disabled: isLocked
-          },
-          {
-            id: 'audio',
-            label: 'Audio/Subs',
-            icon: <MessageSquare size={22} />,
-            onClick: () => setShowAudioSubMenu(true),
-            disabled: isLocked
-          },
-          {
-            id: 'fullscreen',
-            label: (isFullscreen || isPseudoFullscreen) ? 'Exit Screen' : 'Fullscreen',
-            icon: (isFullscreen || isPseudoFullscreen) ? <Minimize size={22} /> : <Maximize size={22} />,
-            onClick: toggleFullscreen,
-            disabled: isLocked
-          },
-          isLocked ? {
-            id: 'unlock',
-            label: 'Unlock UI',
-            icon: <Unlock size={22} />,
-            onClick: () => setIsLocked(false),
-            disabled: false
-          } : {
-            id: 'mute',
-            label: isMuted ? 'Unmute' : 'Mute',
-            icon: isMuted ? <VolumeX size={22} /> : <Volume2 size={22} />,
-            onClick: () => setIsMuted(prev => !prev),
-            disabled: false
-          }
-        ];
-
-        return (
-          <RadialMenu
-            x={radialMenuState.x}
-            y={radialMenuState.y}
-            onClose={() => setRadialMenuState({ visible: false, x: 0, y: 0 })}
-            items={rItems}
-            centerItem={{
-              icon: isPlaying ? <Pause size={24} fill="white" /> : <Play size={24} fill="white" />,
-              onClick: togglePlay,
-              disabled: isLocked
-            }}
-          />
-        );
-      })()}
+      {vlcContextMenuState.visible && (
+        <VlcContextMenu
+          x={vlcContextMenuState.x}
+          y={vlcContextMenuState.y}
+          onClose={() => setVlcContextMenuState({ visible: false, x: 0, y: 0 })}
+          onOpenFile={() => {}}
+          onOpenNetworkStream={() => {}}
+          onAddToPlaylist={() => {}}
+          playlist={videos}
+          onSelectPlaylistItem={() => {}}
+          isPlaying={isPlaying}
+          onPlayPause={togglePlay}
+          onStop={() => {
+            if (videoRef.current) {
+              videoRef.current.pause();
+              videoRef.current.currentTime = 0;
+              setCurrentTime(0);
+            }
+          }}
+          onPrevious={() => handleRewind(10)}
+          onNext={() => handleForward(10)}
+          onJumpForward={() => handleForward(10)}
+          onJumpBackward={() => handleRewind(10)}
+          playbackRate={playbackRate}
+          onSetPlaybackRate={setPlaybackRate}
+          audioStreams={audioStreams}
+          audioTracks={audioTracks}
+          selectedAudioTrack={selectedAudioTrack}
+          onSelectAudioStream={handleSelectEmbeddedAudio}
+          onSelectAudioTrack={setSelectedAudioTrack}
+          volume={volume}
+          isMuted={isMuted}
+          onIncreaseVolume={() => {
+            setIsMuted(false);
+            setVolume(prev => {
+              const nextVol = Math.min(1.0, prev + 0.05);
+              triggerVolumeToast(nextVol, false, 100);
+              return nextVol;
+            });
+          }}
+          onDecreaseVolume={() => {
+            setIsMuted(false);
+            setVolume(prev => {
+              const nextVol = Math.max(0.0, prev - 0.05);
+              triggerVolumeToast(nextVol, false, 100);
+              return nextVol;
+            });
+          }}
+          onToggleMute={() => {
+            setIsMuted(prev => {
+              const nextMuted = !prev;
+              triggerVolumeToast(volume, nextMuted);
+              return nextMuted;
+            });
+          }}
+          isFullscreen={isFullscreen || isPseudoFullscreen}
+          onToggleFullscreen={toggleFullscreen}
+          onTakeSnapshot={handleTakeSnapshot}
+          subtitleStreams={subtitleStreams}
+          subtitleTracks={subtitleTracks}
+          selectedSubTrack={selectedSubTrack}
+          onSelectSubStream={handleSelectEmbeddedSubtitle}
+          onSelectSubTrack={setSelectedSubTrack}
+          onAddSubtitleFile={() => customSubInputRef.current?.click()}
+          onOpenSubtitleSettings={() => {
+            onUpdateSubSettings({ ...subSettings, showStyleColumn: true });
+            setShowAudioSubMenu(true);
+          }}
+          onOpenSubtitleTranscript={() => {
+            onUpdateSubSettings({ ...subSettings, showViewColumn: true });
+            setShowAudioSubMenu(true);
+          }}
+          isTimelineOnly={timelineOnlyMode}
+          onToggleTimelineOnly={() => {
+            setTimelineOnlyMode(prev => {
+              const next = !prev;
+              triggerSwitchToast(next ? 'Timeline Only (VLC Mode)' : 'Standard Controls');
+              return next;
+            });
+          }}
+          aspectRatio={aspectRatio}
+          onSetAspectRatio={(ratio) => {
+            setAspectRatio(ratio);
+            const labels: Record<string, string> = {
+              'default': 'Default (Fit)',
+              'stretch': 'Stretch to Screen (0% Detail Lost)',
+              '14:9': 'Smart Crop (14:9 - Minimal Loss)',
+              '16:10': '16:10 Minimal Crop',
+              '16:9': '16:9 Widescreen',
+              '1.85:1': '1.85:1 Cinema',
+              '21:9': '21:9 Ultrawide Cinema',
+              'cover': 'Fill / Crop Screen (Full Zoom)',
+              '4:3': '4:3 Standard'
+            };
+            triggerSwitchToast(`Aspect Ratio: ${labels[ratio] || ratio}`);
+          }}
+          isAmbianceEnabled={isAmbianceEnabled}
+          onToggleAmbiance={handleToggleAmbiance}
+          ambianceBlur={ambianceBlur}
+          onSetAmbianceBlur={handleSetAmbianceBlur}
+          ambianceOpacity={ambianceOpacity}
+          onSetAmbianceOpacity={handleSetAmbianceOpacity}
+          onOpenSettings={() => setShowSettingsPanel(true)}
+          onOpenAudioSubMenu={() => setShowAudioSubMenu(true)}
+          bookmarks={bookmarks}
+          onSeekToBookmark={(t) => {
+            if (videoRef.current) videoRef.current.currentTime = t;
+            setCurrentTime(t);
+          }}
+          onAddBookmark={() => {
+            if (videoRef.current) {
+              setEditingBookmark({
+                id: '',
+                time: Math.round(videoRef.current.currentTime),
+                title: '',
+                label: 'Scene Bookmark',
+                category: 'Key Scene'
+              });
+              setShowAddDialog(true);
+            }
+          }}
+        />
+      )}
 
       {showConsoleOverlay && (
         <ConsoleOverlay onClose={() => setShowConsoleOverlay(false)} />
