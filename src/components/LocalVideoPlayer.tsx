@@ -43,7 +43,6 @@ const getAudioBoostMultiplier = (boostPercent: number): number => {
 import { classifyVideoTitle, getRegexedTitleWithYear } from '../utils/libraryClassifier';
 import { syncTraktHistory, syncTraktRating, resolveTraktMetadata } from '../services/traktAuth';
 import { LoadingSpinner, BufferingOverlay } from './LoadingSpinner';
-import { MobilePlayerOverlay } from './player/MobilePlayerOverlay';
 import { isMobileDevice, useAutoLandscape } from '../utils/screenOrientation';
 import { PlayerIsland, usePlayerIsland, type IslandAudioTrack, type IslandSubtitleTrack } from './player';
 import { RadialMenu } from './RadialMenu';
@@ -341,19 +340,6 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
       document.body.style.overflow = origOverflow;
     };
   }, []);
-
-  const [isMobile, setIsMobile] = useState(() => isMobileDevice());
-  useEffect(() => {
-    const handleResize = () => setIsMobile(isMobileDevice());
-    window.addEventListener('resize', handleResize);
-    window.addEventListener('orientationchange', handleResize);
-    return () => {
-      window.removeEventListener('resize', handleResize);
-      window.removeEventListener('orientationchange', handleResize);
-    };
-  }, []);
-
-
 
   const [isVolumeHovered, setIsVolumeHovered] = useState(false);
   const [isPlaying, setIsPlaying] = useState(false);
@@ -4741,7 +4727,7 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
                 setShowBookmarksPopover(false);
                 setShowAudioSubMenu(false);
                 setShowAddDialog(false);
-                triggerSwitchToast(isMobile ? 'Controls Locked' : `Controls Locked (${getLockShortcutKey().toUpperCase()})`);
+                triggerSwitchToast(`Controls Locked (${getLockShortcutKey().toUpperCase()})`);
               }
             }}
             onMouseEnter={() => setHoveredSetting('lockModeActive')}
@@ -5439,9 +5425,9 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
             onClick={(e) => {
               e.stopPropagation();
               setIsLocked(false);
-              triggerSwitchToast(isMobile ? 'Controls Unlocked' : `Controls Unlocked (${getLockShortcutKey()})`);
+              triggerSwitchToast(`Controls Unlocked (${getLockShortcutKey()})`);
             }}
-            title={isMobile ? 'Unlock Controls' : `Unlock Controls (Shortcut: ${getLockShortcutKey()})`}
+            title={`Unlock Controls (Shortcut: ${getLockShortcutKey()})`}
             style={{
               pointerEvents: 'auto'
             }}
@@ -5458,66 +5444,6 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
         customLoaderType={customLoaderType} 
         preset={(spinnerPreset || 'fire-circle') as any} 
       />
-
-      {/* Mobile Player Overlay (<= 768px) */}
-      {isMobile && !isLocked && (
-        <MobilePlayerOverlay
-          title={video.title || 'Valor Player'}
-          currentTime={currentTime}
-          duration={duration || effectiveDuration || 0}
-          isPlaying={isPlaying}
-          isMuted={isMuted}
-          playbackRate={playbackRate}
-          isFullscreen={isFullscreen || isPseudoFullscreen}
-          bookmarks={bookmarks}
-          upNextVideos={videos}
-          metadata={{
-            resolution: (video as any).resolution || '1080p',
-            codec: (video as any).codec || 'H.264',
-            audioChannels: 'Stereo 2.0'
-          }}
-          onBack={handleExit}
-          onTogglePlay={togglePlay}
-          onRewind10={() => handleRewind(10)}
-          onForward10={() => handleForward(10)}
-          onToggleMute={() => {
-            setIsMuted(prev => !prev);
-          }}
-          onAddBookmark={(time) => {
-            const newBm: Bookmark = {
-              id: `bm-${Date.now()}`,
-              time: Math.round(time),
-              label: 'Bookmark',
-              title: `Bookmark at ${formatTime(time)}`,
-              createdAt: new Date().toISOString()
-            };
-            setBookmarks(prev => [...prev, newBm]);
-            onUpdateVideo((prev: any) => ({ ...prev, bookmarks: [...(prev.bookmarks || []), newBm] }), false);
-          }}
-          onDeleteBookmark={(id) => {
-            setBookmarks(prev => prev.filter(b => b.id !== id));
-            onUpdateVideo((prev: any) => ({ ...prev, bookmarks: (prev.bookmarks || []).filter((b: any) => b.id !== id) }), false);
-          }}
-          onSeekToBookmark={(t) => {
-            if (videoRef.current) videoRef.current.currentTime = t;
-            setCurrentTime(t);
-          }}
-          onOpenAudioSubMenu={() => setShowAudioSubMenu(true)}
-          onChangeSpeed={(s) => setPlaybackRate(s)}
-          onToggleFullscreen={toggleFullscreen}
-          onSeek={(t) => {
-            if (videoRef.current) videoRef.current.currentTime = t;
-            setCurrentTime(t);
-          }}
-          onSelectVideo={(v) => {
-            if (videoRef.current && typeof videoRef.current.currentTime === 'number') {
-              saveMediaTimestamp(video, videoRef.current.currentTime, duration || effectiveDuration || 0, video.title);
-            }
-            onUpdateVideo(v);
-          }}
-          formatTime={formatTime}
-        />
-      )}
 
       {/* Top Header Overlay */}
       {!isLocked && (!hideUIOverlays || hoveredSetting === 'showUIOverlays') && !timelineOnlyMode && (

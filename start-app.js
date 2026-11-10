@@ -1003,7 +1003,7 @@ const backendServer = http.createServer(async (req, res) => {
     return;
   }
 
-  // Remote media proxy endpoint with SessionMediaManager (240s sliding window cache)
+  // Remote media proxy endpoint with SessionMediaManager (120s ahead / 30s behind sliding window cache)
   if (pathname === '/api/proxy-media') {
     (async () => {
       const clientIp = req.socket.remoteAddress || 'local';

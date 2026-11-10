@@ -95,7 +95,7 @@ export class StreamChunkManager extends EventEmitter {
       !workerState ||
       !workerState.worker ||
       segmentIndex < workerState.startSegmentIndex ||
-      segmentIndex > workerState.lastObservedSegment + 12;
+      segmentIndex > workerState.lastObservedSegment + 30; // 30 segments * 4s = 120s ahead
 
     if (needNewWorker) {
       if (workerState && workerState.worker) {
@@ -179,7 +179,7 @@ export class StreamChunkManager extends EventEmitter {
         if (file.startsWith('seg_') && file.endsWith('.ts')) {
           const numStr = file.replace('seg_', '').replace('.ts', '');
           const idx = parseInt(numStr, 10);
-          if (!isNaN(idx) && idx < currentSegmentIndex - 40) {
+          if (!isNaN(idx) && idx < currentSegmentIndex - 8 /* 8 segments * 4s = 32s (30s retention behind) */) {
             try {
               fs.unlinkSync(path.join(session.tempDir, file));
             } catch {

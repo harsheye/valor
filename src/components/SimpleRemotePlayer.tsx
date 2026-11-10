@@ -16,11 +16,10 @@ import {
   PlayerBottomBar,
   PauseDetailsOverlay,
   SkipIntroButton,
-  MobilePlayerOverlay,
   PlayerIsland,
   usePlayerIsland
 } from './player';
-import { isMobileDevice, useAutoLandscape } from '../utils/screenOrientation';
+import { useAutoLandscape } from '../utils/screenOrientation';
 import type { MediaDetails } from './player/PauseDetailsOverlay';
 import { getSavedCredentials, saveCredentials, clearCredentials } from '../services/remote/mediaAuthStore';
 import { saveMediaTimestamp } from '../utils/mediaTimestampStorage';
@@ -94,16 +93,7 @@ export const SimpleRemotePlayer: React.FC<SimpleRemotePlayerProps> = ({
 
   useAutoLandscape(true, containerRef);
 
-  const [isMobile, setIsMobile] = useState(() => isMobileDevice());
-  useEffect(() => {
-    const handleResize = () => setIsMobile(isMobileDevice());
-    window.addEventListener('resize', handleResize);
-    window.addEventListener('orientationchange', handleResize);
-    return () => {
-      window.removeEventListener('resize', handleResize);
-      window.removeEventListener('orientationchange', handleResize);
-    };
-  }, []);
+
 
   // Playback & Timing State
   const [isPlaying, setIsPlaying] = useState(false);
@@ -1009,100 +999,8 @@ export const SimpleRemotePlayer: React.FC<SimpleRemotePlayerProps> = ({
         onSkip={handleSeek}
       />
 
-      {/* Mobile Player Overlay (<= 768px) */}
-      {isMobile && !isLocked && (
-        <>
-          <MobilePlayerOverlay
-            title={video.title || 'Simple Player'}
-            currentTime={currentTime}
-            duration={duration}
-            isPlaying={isPlaying}
-            isMuted={isMuted}
-            playbackRate={playbackRate}
-            isFullscreen={isFullscreen}
-            bookmarks={bookmarks}
-            upNextVideos={videos}
-            metadata={{
-              resolution: '1080p',
-              codec: isHlsActive ? 'HLS (m3u8)' : 'MP4'
-            }}
-            onBack={onBack}
-            onTogglePlay={togglePlay}
-            onRewind10={() => handleSeek(currentTime - 10)}
-            onForward10={() => handleSeek(currentTime + 10)}
-            onToggleMute={toggleMute}
-            onAddBookmark={(time) => {
-              const newBm: Bookmark = {
-                id: `bm-${Date.now()}`,
-                time: Math.round(time),
-                label: 'Bookmark',
-                title: `Bookmark at ${formatTime(time)}`,
-                createdAt: new Date().toISOString()
-              };
-              setBookmarks(prev => [...prev, newBm]);
-              onUpdateVideo({ ...video, bookmarks: [...bookmarks, newBm] }, false);
-            }}
-            onDeleteBookmark={(id) => {
-              const filtered = bookmarks.filter(b => b.id !== id);
-              setBookmarks(filtered);
-              onUpdateVideo({ ...video, bookmarks: filtered }, false);
-            }}
-            onSeekToBookmark={handleSeek}
-            onOpenAudioSubMenu={() => setShowAudioSubMenu(true)}
-            onChangeSpeed={handleSpeedChange}
-            onToggleFullscreen={toggleFullscreen}
-            onSeek={handleSeek}
-            onSelectVideo={(v) => onUpdateVideo(v)}
-            formatTime={formatTime}
-          />
-
-          {showAudioSubMenu && (
-            <AudioSubPopover
-              audioStreams={[]}
-              audioTracks={audioTracks}
-              selectedAudioTrack={selectedAudioTrack}
-              setSelectedAudioTrack={setSelectedAudioTrack}
-              setActiveAudioStreamIndex={() => {}}
-              handleSelectEmbeddedAudio={async () => {}}
-              customAudioInputRef={customAudioInputRef}
-              subtitleStreams={[]}
-              subtitleTracks={subtitleTracks}
-              selectedSubTrack={selectedSubTrack}
-              setSelectedSubTrack={setSelectedSubTrack}
-              setActiveSubStreamIndex={() => {}}
-              handleSelectEmbeddedSubtitle={async () => {}}
-              customSubInputRef={customSubInputRef}
-              currentTime={currentTime}
-              videoRef={videoRef}
-              setCurrentTime={handleSeek}
-              setShowAudioSubMenu={setShowAudioSubMenu}
-              audioSubTimeoutRef={{ current: null }}
-              getLangLabel={(l) => l || 'Default'}
-              formatTime={formatTime}
-              cleanSubtitleText={cleanSubtitleText}
-              subSettings={subSettings}
-              onUpdateSubSettings={(s) => {
-                setSubSettings(prev => ({ ...prev, ...s }));
-                propOnUpdateSubSettings?.(s);
-              }}
-              audioBoost={audioBoost}
-              setAudioBoost={setAudioBoost}
-              openSubtitles={openSubtitles}
-              isOpenSubLoading={isOpenSubLoading}
-              onDownloadOpenSubtitle={downloadOpenSubtitle}
-              hasFetchedOpenSubtitles={hasFetchedOpenSubtitles}
-              onFetchOpenSubtitles={fetchOpenSubtitles}
-              showAudioControl={showAudioControl !== false}
-              showSubtitleControl={showSubtitleControl !== false}
-              subFileOnly={subFileOnly === true}
-              allowSubUpload={allowSubUpload !== false}
-            />
-          )}
-        </>
-      )}
-
-      {/* Desktop Top Header Overlay Bar (> 768px) */}
-      {!isMobile && !isLocked && (
+      {/* Desktop Top Header Overlay Bar */}
+      {!isLocked && (
         <div
           style={{
             position: 'absolute',
@@ -1134,8 +1032,8 @@ export const SimpleRemotePlayer: React.FC<SimpleRemotePlayerProps> = ({
         </div>
       )}
 
-      {/* Desktop Bottom Controls Bar (> 768px) */}
-      {!isMobile && !isLocked && (
+      {/* Desktop Bottom Controls Bar */}
+      {!isLocked && (
         <div
           style={{
             position: 'absolute',

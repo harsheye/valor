@@ -39,6 +39,9 @@ let cacheHits = 0;
 let activeStreams = 0;
 
 const BLOCK_SIZE = 2 * 1024 * 1024; // 2 MB blocks
+const FORWARD_BUFFER_SECONDS = 120;  // 120s buffer ahead
+const BACKWARD_BUFFER_SECONDS = 30;  // 30s buffer retention behind
+const DEFAULT_BITRATE_BYTES_PER_SEC = 600 * 1024; // ~4.8 Mbps default video+audio bitrate
 
 const httpsAgent = new https.Agent({ keepAlive: true, maxSockets: 32, maxFreeSockets: 16, timeout: 30000 });
 const httpAgent = new http.Agent({ keepAlive: true, maxSockets: 32, maxFreeSockets: 16, timeout: 30000 });
@@ -314,6 +317,64 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  /**
+ * Sliding window prefetcher: Caches 120s ahead and retains 30s behind
+ */
+const activePrefetches = new Set();
+function triggerSlidingPrefetch(url, currentByte, totalSize, duration, auth) {
+  const urlHash = crypto.createHash('md5').update(url).digest('hex').slice(0, 16);
+  if (activePrefetches.has(urlHash)) return;
+  activePrefetches.add(urlHash);
+
+  (async () => {
+    try {
+      const bitrate = duration > 0 ? Math.max(200 * 1024, Math.ceil(totalSize / duration)) : DEFAULT_BITRATE_BYTES_PER_SEC;
+      const forwardBytes = bitrate * FORWARD_BUFFER_SECONDS;
+      const forwardBlocks = Math.max(10, Math.ceil(forwardBytes / BLOCK_SIZE));
+      const backwardBytes = bitrate * BACKWARD_BUFFER_SECONDS;
+      const backwardBlocks = Math.max(2, Math.ceil(backwardBytes / BLOCK_SIZE));
+
+      const curBlock = Math.floor(currentByte / BLOCK_SIZE);
+      const minKeepBlock = Math.max(1, curBlock - backwardBlocks);
+      const totalBlocks = Math.ceil(totalSize / BLOCK_SIZE);
+      const maxTargetBlock = Math.min(curBlock + forwardBlocks, totalBlocks - 1);
+
+      // 1. Prune blocks older than 30s behind (keep block 0 for critical container headers)
+      if (minKeepBlock > 1) {
+        try {
+          const files = fs.readdirSync(BLOCKS_DIR);
+          const prefix = `${urlHash}_b`;
+          for (const f of files) {
+            if (f.startsWith(prefix) && f.endsWith('.bin')) {
+              const idxStr = f.slice(prefix.length, -4);
+              const idx = parseInt(idxStr, 10);
+              if (!isNaN(idx) && idx > 0 && idx < minKeepBlock) {
+                try { fs.unlinkSync(path.join(BLOCKS_DIR, f)); } catch {}
+              }
+            }
+          }
+        } catch {}
+      }
+
+      // 2. Prefetch missing blocks up to 120s ahead
+      for (let b = curBlock; b <= maxTargetBlock; b++) {
+        const blockFile = path.join(BLOCKS_DIR, `${urlHash}_b${b}.bin`);
+        if (!fs.existsSync(blockFile)) {
+          try {
+            await getOrFetchBlock(url, b, auth);
+          } catch {
+            await new Promise(r => setTimeout(r, 200));
+          }
+        }
+      }
+    } catch (e) {
+      // prefetch error ignored
+    } finally {
+      activePrefetches.delete(urlHash);
+    }
+  })();
+}
+
   // 3. Local Media Proxy with 2MB Block Caching (/api/proxy-media)
   if (pathname === '/api/proxy-media') {
     const rawUrl = parsedUrl.searchParams.get('url');
@@ -393,14 +454,13 @@ const server = http.createServer(async (req, res) => {
       }
 
       totalBytesProxied += resultBuffer.length;
+      res.setHeader('Cache-Control', 'public, max-age=3600');
       res.end(resultBuffer);
 
-      // Asynchronously prefetch next block in background
-      const nextBlock = lastBlock + 1;
-      const totalBlocks = Math.ceil(totalSize / BLOCK_SIZE);
-      if (nextBlock < totalBlocks) {
-        getOrFetchBlock(rawUrl, nextBlock, auth).catch(() => {});
-      }
+      // Trigger sliding window prefetch: 120s ahead & 30s retention behind
+      const durationParam = parsedUrl.searchParams.get('duration');
+      const streamDuration = durationParam ? parseFloat(durationParam) : 0;
+      triggerSlidingPrefetch(rawUrl, start, totalSize, streamDuration, auth);
     } catch (err) {
       if (!res.headersSent) {
         res.statusCode = 502;

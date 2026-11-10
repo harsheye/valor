@@ -1,4 +1,5 @@
 import React, { useEffect, useState, useCallback } from 'react';
+import { Play, Sparkles, Tv, Link2 } from 'lucide-react';
 import { RemoteVideoPlayer } from '../components/RemoteVideoPlayer';
 import { BufferingOverlay } from '../components/LoadingSpinner';
 import type { VideoItem, CustomSubtitleTrack } from '../types/media';
@@ -441,74 +442,213 @@ export const EmbedPlayerPage: React.FC = () => {
   }, []);
 
   if (!video) {
+    const accentColor = theme.accent || 'var(--accent-fill, #e50914)';
+    const onAccentColor = 'var(--on-accent, #ffffff)';
+
     return (
-      <div style={{
-        width: '100vw',
-        height: '100vh',
-        display: 'flex',
-        flexDirection: 'column',
-        alignItems: 'center',
-        justifyContent: 'center',
-        backgroundColor: 'var(--bg-color, #0b0f19)',
-        color: 'var(--text-primary, #ffffff)',
-        fontFamily: 'var(--font-family, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif)',
-        padding: '20px',
-        boxSizing: 'border-box'
-      }}>
-        <div style={{
-          maxWidth: '480px',
-          width: '100%',
-          backgroundColor: '#141a28',
-          borderRadius: '12px',
-          padding: '28px 24px',
-          boxShadow: '0 8px 32px rgba(0,0,0,0.5)',
-          border: '1px solid rgba(255,255,255,0.08)',
-          textAlign: 'center'
-        }}>
-          <div style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: '48px', height: '48px', borderRadius: '50%', background: 'linear-gradient(135deg, #ff3e3e, #d62828)', marginBottom: '16px' }}>
-            <span style={{ fontSize: '22px', color: '#fff', marginLeft: '3px' }}>▶</span>
+      <div 
+        className="embed-entry-container"
+        style={{
+          width: '100vw',
+          height: '100vh',
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          justifyContent: 'center',
+          backgroundColor: 'var(--bg, var(--bg-color, #0F1217))',
+          color: 'var(--text-1, var(--text-primary, #E4E8EE))',
+          fontFamily: 'var(--font-ui, var(--font-sans, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif))',
+          padding: '24px',
+          boxSizing: 'border-box',
+          position: 'relative',
+          overflow: 'hidden'
+        }}
+      >
+        {/* Ambient background glow */}
+        <div 
+          style={{
+            position: 'absolute',
+            width: '420px',
+            height: '420px',
+            borderRadius: '50%',
+            background: `radial-gradient(circle, ${accentColor} 0%, rgba(0,0,0,0) 70%)`,
+            opacity: 0.12,
+            filter: 'blur(60px)',
+            pointerEvents: 'none',
+            transform: 'translate(-50%, -50%)',
+            top: '40%',
+            left: '50%'
+          }} 
+        />
+
+        <div 
+          style={{
+            maxWidth: '520px',
+            width: '100%',
+            backgroundColor: 'var(--surface-1, rgba(21, 26, 33, 0.85))',
+            backdropFilter: 'blur(20px)',
+            WebkitBackdropFilter: 'blur(20px)',
+            borderRadius: 'var(--radius-lg, 16px)',
+            padding: '36px 32px',
+            boxShadow: '0 24px 60px rgba(0, 0, 0, 0.6), 0 0 0 1px var(--border, rgba(255, 255, 255, 0.08))',
+            textAlign: 'center',
+            position: 'relative',
+            zIndex: 1
+          }}
+        >
+          {/* Valor Themed Icon Badge */}
+          <div 
+            style={{ 
+              display: 'inline-flex', 
+              alignItems: 'center', 
+              justifyContent: 'center', 
+              width: '56px', 
+              height: '56px', 
+              borderRadius: 'var(--radius-md, 12px)', 
+              background: `linear-gradient(135deg, ${accentColor}, #b20710)`,
+              boxShadow: `0 8px 24px rgba(229, 9, 20, 0.35)`,
+              marginBottom: '20px'
+            }}
+          >
+            <Play size={24} fill="currentColor" stroke="none" style={{ color: onAccentColor, marginLeft: '3px' }} />
           </div>
-          <h2 style={{ margin: '0 0 8px 0', fontSize: '20px', fontWeight: 600 }}>Valor Embed Player</h2>
-          <p style={{ margin: '0 0 20px 0', fontSize: '13px', color: '#94a3b8' }}>
-            Enter a direct video or stream URL (MP4, MKV, HLS .m3u8, WebM) to begin playback:
-          </p>
-          <div style={{ display: 'flex', gap: '8px' }}>
-            <input 
-              type="text" 
-              placeholder="https://example.com/video.mp4 or .m3u8" 
-              value={inputVal}
-              onChange={(e) => setInputVal(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') handlePlayUrl(inputVal);
-              }}
-              style={{
-                flex: 1,
-                padding: '10px 14px',
-                borderRadius: '8px',
-                border: '1px solid #334155',
-                backgroundColor: '#0b0f19',
-                color: '#ffffff',
-                fontSize: '13px',
-                outline: 'none'
-              }}
-            />
-            <button 
-              type="button"
-              onClick={() => handlePlayUrl(inputVal)}
-              style={{
-                padding: '10px 18px',
-                borderRadius: '8px',
-                backgroundColor: '#ff3e3e',
-                color: '#ffffff',
-                border: 'none',
-                cursor: 'pointer',
-                fontWeight: 600,
-                fontSize: '13px',
-                transition: 'background-color 0.2s'
+
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', marginBottom: '8px' }}>
+            <h2 
+              style={{ 
+                margin: 0, 
+                fontSize: '22px', 
+                fontWeight: 700, 
+                letterSpacing: '-0.02em',
+                color: 'var(--text-1, #E4E8EE)',
+                fontFamily: 'var(--font-display, var(--font-ui, sans-serif))'
               }}
             >
-              Play
+              Valor Embed Player
+            </h2>
+            <span 
+              style={{
+                fontSize: '11px',
+                fontWeight: 600,
+                textTransform: 'uppercase',
+                letterSpacing: '0.06em',
+                padding: '2px 8px',
+                borderRadius: '6px',
+                background: 'rgba(255, 255, 255, 0.08)',
+                color: 'var(--text-2, #A9B2C0)'
+              }}
+            >
+              Stream
+            </span>
+          </div>
+
+          <p 
+            style={{ 
+              margin: '0 0 24px 0', 
+              fontSize: '13.5px', 
+              lineHeight: 1.5,
+              color: 'var(--text-2, #A9B2C0)' 
+            }}
+          >
+            Paste any direct media or stream URL (HLS <code style={{ color: accentColor, background: 'rgba(255,255,255,0.06)', padding: '2px 5px', borderRadius: '4px' }}>.m3u8</code>, <code style={{ color: accentColor, background: 'rgba(255,255,255,0.06)', padding: '2px 5px', borderRadius: '4px' }}>MKV</code>, <code style={{ color: accentColor, background: 'rgba(255,255,255,0.06)', padding: '2px 5px', borderRadius: '4px' }}>MP4</code>, WebM) to play:
+          </p>
+
+          <form 
+            onSubmit={(e) => {
+              e.preventDefault();
+              handlePlayUrl(inputVal);
+            }}
+            style={{ display: 'flex', gap: '10px' }}
+          >
+            <div style={{ position: 'relative', flex: 1, display: 'flex', alignItems: 'center' }}>
+              <Link2 
+                size={16} 
+                style={{ 
+                  position: 'absolute', 
+                  left: '14px', 
+                  color: 'var(--text-3, #6C778A)',
+                  pointerEvents: 'none' 
+                }} 
+              />
+              <input 
+                type="text" 
+                placeholder="https://domain.com/video.m3u8 or .mkv" 
+                value={inputVal}
+                onChange={(e) => setInputVal(e.target.value)}
+                autoFocus
+                style={{
+                  width: '100%',
+                  padding: '12px 14px 12px 38px',
+                  borderRadius: 'var(--radius-sm, 8px)',
+                  border: '1px solid var(--control-border, #262D39)',
+                  backgroundColor: 'var(--surface-2, #1B212A)',
+                  color: 'var(--text-1, #E4E8EE)',
+                  fontSize: '13.5px',
+                  outline: 'none',
+                  transition: 'border-color 0.2s, box-shadow 0.2s',
+                  boxSizing: 'border-box'
+                }}
+                onFocus={(e) => {
+                  e.currentTarget.style.borderColor = accentColor;
+                  e.currentTarget.style.boxShadow = `0 0 0 2px ${accentColor}33`;
+                }}
+                onBlur={(e) => {
+                  e.currentTarget.style.borderColor = 'var(--control-border, #262D39)';
+                  e.currentTarget.style.boxShadow = 'none';
+                }}
+              />
+            </div>
+
+            <button 
+              type="submit"
+              disabled={!inputVal.trim()}
+              style={{
+                padding: '12px 22px',
+                borderRadius: 'var(--radius-sm, 8px)',
+                backgroundColor: accentColor,
+                color: onAccentColor,
+                border: 'none',
+                cursor: inputVal.trim() ? 'pointer' : 'not-allowed',
+                fontWeight: 700,
+                fontSize: '13.5px',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '8px',
+                opacity: inputVal.trim() ? 1 : 0.6,
+                boxShadow: inputVal.trim() ? `0 4px 16px rgba(229, 9, 20, 0.4)` : 'none',
+                transition: 'all 0.2s ease',
+                whiteSpace: 'nowrap'
+              }}
+              onMouseEnter={(e) => {
+                if (inputVal.trim()) {
+                  e.currentTarget.style.transform = 'translateY(-1px)';
+                  e.currentTarget.style.filter = 'brightness(1.1)';
+                }
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.transform = 'none';
+                e.currentTarget.style.filter = 'none';
+              }}
+            >
+              <Play size={14} fill="currentColor" stroke="none" />
+              <span>Stream</span>
             </button>
+          </form>
+
+          {/* Quick Format Compatibility Tags */}
+          <div 
+            style={{ 
+              display: 'flex', 
+              alignItems: 'center', 
+              justifyContent: 'center', 
+              gap: '6px', 
+              marginTop: '20px',
+              fontSize: '11px',
+              color: 'var(--text-3, #6C778A)'
+            }}
+          >
+            <Tv size={12} style={{ opacity: 0.8 }} />
+            <span>Hardware Accelerated HLS Adaptive & MKV Multi-Track Audio/Subs</span>
           </div>
         </div>
       </div>

@@ -46,7 +46,7 @@ const getAudioBoostMultiplier = (boostPercent: number): number => {
   }
   return 1.0;
 };
-import { classifyVideoTitle, getRegexedTitleWithYear } from '../utils/libraryClassifier';
+import { classifyVideoTitle, getRegexedTitleWithYear, tryDecodeBase64Segment } from '../utils/libraryClassifier';
 import { detectMediaPlatform } from './LocalVideoPlayer';
 import { syncTraktHistory, syncTraktRating, resolveTraktMetadata, isTraktLoggedIn, getTraktToken, searchTraktMedia, fetchTraktEpisode } from '../services/traktAuth';
 
@@ -88,7 +88,8 @@ export const extractTitleFromUrl = (url?: string): string => {
     }
     const segments = parsed.pathname.split('/').filter(Boolean).reverse();
     for (const seg of segments) {
-      const clean = decodeURIComponent(seg).replace(/\.[^/.]+$/, '').trim();
+      const decodedSeg = tryDecodeBase64Segment(seg);
+      const clean = decodeURIComponent(decodedSeg).replace(/\.[^/.]+$/, '').trim();
       if (clean && !isGenericTitle(clean)) {
         return clean;
       }
@@ -97,8 +98,7 @@ export const extractTitleFromUrl = (url?: string): string => {
   return '';
 };
 import { LoadingSpinner, BufferingOverlay } from './LoadingSpinner';
-import { MobilePlayerOverlay } from './player/MobilePlayerOverlay';
-import { isMobileDevice, useAutoLandscape } from '../utils/screenOrientation';
+import { useAutoLandscape } from '../utils/screenOrientation';
 import { PlayerIsland, usePlayerIsland, type IslandAudioTrack, type IslandSubtitleTrack } from './player';
 import { VlcContextMenu } from './player/VlcContextMenu';
 import { ConsoleOverlay } from './ConsoleOverlay';
@@ -1677,16 +1677,7 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
   const [showConsoleOverlay, setShowConsoleOverlay] = useState(false);
   const [isLocked, setIsLocked] = useState(false);
 
-  const [isMobile, setIsMobile] = useState(() => isMobileDevice());
-  useEffect(() => {
-    const handleResize = () => setIsMobile(isMobileDevice());
-    window.addEventListener('resize', handleResize);
-    window.addEventListener('orientationchange', handleResize);
-    return () => {
-      window.removeEventListener('resize', handleResize);
-      window.removeEventListener('orientationchange', handleResize);
-    };
-  }, []);
+
 
   const [aspectRatio, setAspectRatio] = useState<string>('default');
   const [timelineOnlyMode, setTimelineOnlyMode] = useState(false);
@@ -2024,10 +2015,14 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
           const currentStreams = (v as any)?.streams;
           const streamsChanged = !currentStreams || currentStreams.length !== allStreams.length;
           const durationChanged = probeData.duration && String(probeData.duration) !== String(v.duration);
+          const probedFileName = probeData.fileName && !isGenericTitle(probeData.fileName) ? probeData.fileName : undefined;
+          const titleNeedsUpdate = probedFileName && (isGenericTitle(v.title) || v.title.startsWith('http://') || v.title.startsWith('https://'));
 
-          if (streamsChanged || durationChanged) {
+          if (streamsChanged || durationChanged || titleNeedsUpdate) {
             onUpdateVideoRef.current?.({
               ...v,
+              title: titleNeedsUpdate ? probedFileName : v.title,
+              fileName: probedFileName || v.fileName,
               auth: creds ? { username: creds.username, password: creds.password } : (v as any).auth,
               streams: allStreams,
               duration: probeData.duration ? String(probeData.duration) : v.duration
@@ -2542,7 +2537,7 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
       if (video.type === 'local' && video.file && !video.streams && probingVideoIdRef.current !== video.id) {
         const targetFile = video.file;
         if (!targetFile) return;
-        // Remote media runs on native hardware acceleration with backend 240s sliding cache
+        // Remote media runs on native hardware acceleration with backend 120s ahead / 30s behind sliding cache
     if (true || !isWasmSupported()) {
           logger.player('WebAssembly is not supported in this browser. Skipping FFmpeg probe and using native stream.');
           return;
@@ -3069,7 +3064,7 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
 
       const subStream = subtitleStreams.find(s => s.index === streamIndex);
       const codec = subStream?.codec || 'srt';
-      const subDuration = video.isRemote ? 60 : 300;
+      const subDuration = video.isRemote ? 120 : 300;
 
       let startOffset = 0;
       let endOffset = 0;
@@ -5119,7 +5114,7 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
                 setShowBookmarksPopover(false);
                 setShowAudioSubMenu(false);
                 setShowAddDialog(false);
-                triggerSwitchToast(isMobile ? 'Controls Locked' : `Controls Locked (${getLockShortcutKey().toUpperCase()})`);
+                triggerSwitchToast(`Controls Locked (${getLockShortcutKey().toUpperCase()})`);
               }
             }}
             onMouseEnter={() => setHoveredSetting('lockModeActive')}
@@ -5596,9 +5591,9 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
             onClick={(e) => {
               e.stopPropagation();
               setIsLocked(false);
-              triggerSwitchToast(isMobile ? 'Controls Unlocked' : `Controls Unlocked (${getLockShortcutKey()})`);
+              triggerSwitchToast(`Controls Unlocked (${getLockShortcutKey()})`);
             }}
-            title={isMobile ? 'Unlock Controls' : `Unlock Controls (Shortcut: ${getLockShortcutKey()})`}
+            title={`Unlock Controls (Shortcut: ${getLockShortcutKey()})`}
             style={{
               pointerEvents: 'auto'
             }}
@@ -5616,65 +5611,7 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
         preset={(spinnerPreset || 'fire-circle') as any} 
       />
 
-      {/* Mobile Player Overlay (<= 768px) */}
-      {isMobile && !isLocked && (
-        <MobilePlayerOverlay
-          title={video.title || video.fileName || 'Valor Player'}
-          currentTime={currentTime}
-          duration={duration || effectiveDuration || 0}
-          isPlaying={isPlaying}
-          isMuted={isMuted}
-          playbackRate={playbackRate}
-          isFullscreen={isFullscreen || isPseudoFullscreen}
-          bookmarks={bookmarks}
-          upNextVideos={videos}
-          metadata={{
-            resolution: (video as any).resolution || '1080p',
-            codec: (video as any).codec || 'H.264',
-            audioChannels: 'Stereo 2.0'
-          }}
-          onBack={handleExit}
-          onTogglePlay={togglePlay}
-          onRewind10={() => handleRewind(10)}
-          onForward10={() => handleForward(10)}
-          onToggleMute={() => {
-            setIsMuted(prev => !prev);
-          }}
-          onAddBookmark={(time) => {
-            const newBm: Bookmark = {
-              id: `bm-${Date.now()}`,
-              time: Math.round(time),
-              label: 'Bookmark',
-              title: `Bookmark at ${formatTime(time)}`,
-              createdAt: new Date().toISOString()
-            };
-            setBookmarks(prev => [...prev, newBm]);
-            onUpdateVideo((prev: any) => ({ ...prev, bookmarks: [...(prev.bookmarks || []), newBm] }), false);
-          }}
-          onDeleteBookmark={(id) => {
-            setBookmarks(prev => prev.filter(b => b.id !== id));
-            onUpdateVideo((prev: any) => ({ ...prev, bookmarks: (prev.bookmarks || []).filter((b: any) => b.id !== id) }), false);
-          }}
-          onSeekToBookmark={(t) => {
-            if (videoRef.current) videoRef.current.currentTime = t;
-            setCurrentTime(t);
-          }}
-          onOpenAudioSubMenu={() => setShowAudioSubMenu(true)}
-          onChangeSpeed={(s) => setPlaybackRate(s)}
-          onToggleFullscreen={toggleFullscreen}
-          onSeek={(t) => {
-            if (videoRef.current) videoRef.current.currentTime = t;
-            setCurrentTime(t);
-          }}
-          onSelectVideo={(v) => {
-            if (videoRef.current && typeof videoRef.current.currentTime === 'number') {
-              saveMediaTimestamp(video, videoRef.current.currentTime, duration || effectiveDuration || 0, video.title);
-            }
-            onUpdateVideo(v);
-          }}
-          formatTime={formatTime}
-        />
-      )}
+
 
       {/* Top Header Overlay */}
       {!isLocked && (!hideUIOverlays || hoveredSetting === 'showUIOverlays') && (

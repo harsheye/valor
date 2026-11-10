@@ -22,7 +22,7 @@ export const isMobileDevice = (): boolean => {
 
   const isSmallDevice = screenMinDim <= 850 || innerMinDim <= 850;
   
-  return Boolean((hasTouch || isCoarsePointer) && isSmallDevice) || window.innerWidth <= 768;
+  return Boolean((hasTouch || isCoarsePointer) && isSmallDevice);
 };
 
 /**

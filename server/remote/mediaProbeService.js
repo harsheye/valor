@@ -1,8 +1,66 @@
 import { spawn } from 'child_process';
+import http from 'http';
+import https from 'https';
 import ffprobeInstaller from '@ffprobe-installer/ffprobe';
 import { validateRemoteUrl } from './ssrfGuard.js';
 
 const ffprobePath = ffprobeInstaller.path;
+
+function parseContentDispositionHeader(header) {
+  if (!header || typeof header !== 'string') return null;
+  const fnStarMatch = header.match(/filename\*\s*=\s*([^;]+)/i);
+  if (fnStarMatch) {
+    let val = fnStarMatch[1].trim();
+    if (val.startsWith('"') && val.endsWith('"')) val = val.slice(1, -1);
+    const qIdx = val.indexOf("''");
+    let encoded = qIdx !== -1 ? val.slice(qIdx + 2) : val;
+    try {
+      const decoded = decodeURIComponent(encoded.trim());
+      if (decoded) {
+        const clean = decoded.split(/[\/\\]/).pop();
+        if (clean && clean.trim()) return clean.trim();
+      }
+    } catch {}
+  }
+  const fnMatch = header.match(/filename\s*=\s*(?:"([^"]+)"|([^;\s]+))/i);
+  if (fnMatch) {
+    let raw = fnMatch[1] || fnMatch[2] || '';
+    raw = raw.trim();
+    try {
+      if (raw.includes('%')) raw = decodeURIComponent(raw);
+    } catch {}
+    if (raw) {
+      const clean = raw.split(/[\/\\]/).pop();
+      if (clean && clean.trim()) return clean.trim();
+    }
+  }
+  return null;
+}
+
+async function fetchRemoteFilename(urlStr, headers) {
+  return new Promise((resolve) => {
+    try {
+      const parsed = new URL(urlStr);
+      const isHttps = parsed.protocol === 'https:';
+      const lib = isHttps ? https : http;
+      const reqHeaders = { ...headers, Range: 'bytes=0-0' };
+      const req = lib.request(parsed, { method: 'GET', headers: reqHeaders, timeout: 3500 }, (res) => {
+        req.destroy();
+        const cd = res.headers['content-disposition'];
+        if (cd) {
+          const fn = parseContentDispositionHeader(cd);
+          if (fn) return resolve(fn);
+        }
+        resolve(null);
+      });
+      req.on('error', () => resolve(null));
+      req.on('timeout', () => { req.destroy(); resolve(null); });
+      req.end();
+    } catch {
+      resolve(null);
+    }
+  });
+}
 
 export class MediaProbeService {
   /**
@@ -39,6 +97,9 @@ export class MediaProbeService {
     const headerLines = Object.entries(headers)
       .map(([k, v]) => `${k}: ${v}`)
       .join('\r\n') + '\r\n';
+
+    // In parallel, fetch content-disposition filename if server provides one
+    const remoteFilenamePromise = fetchRemoteFilename(targetUrlStr, headers);
 
     return new Promise((resolve, reject) => {
       const args = [
@@ -154,17 +215,33 @@ export class MediaProbeService {
           const canCopyVideo = primaryVideo ? primaryVideo.codec === 'h264' : false;
           const canCopyAudio = primaryAudio ? primaryAudio.codec === 'aac' : false;
 
-          resolve({
-            duration,
-            size: parseInt(format.size || '0', 10),
-            bitrate: parseInt(format.bit_rate || '0', 10),
-            formatName: format.format_name || '',
-            videoStreams,
-            audioStreams,
-            subtitleStreams,
-            canCopyVideo,
-            canCopyAudio,
-            headers
+          remoteFilenamePromise.then((fileName) => {
+            resolve({
+              fileName: fileName || undefined,
+              duration,
+              size: parseInt(format.size || '0', 10),
+              bitrate: parseInt(format.bit_rate || '0', 10),
+              formatName: format.format_name || '',
+              videoStreams,
+              audioStreams,
+              subtitleStreams,
+              canCopyVideo,
+              canCopyAudio,
+              headers
+            });
+          }).catch(() => {
+            resolve({
+              duration,
+              size: parseInt(format.size || '0', 10),
+              bitrate: parseInt(format.bit_rate || '0', 10),
+              formatName: format.format_name || '',
+              videoStreams,
+              audioStreams,
+              subtitleStreams,
+              canCopyVideo,
+              canCopyAudio,
+              headers
+            });
           });
         } catch (parseErr) {
           reject(new Error(`MediaProbeService: JSON parse failed: ${parseErr.message}. Output: ${stdout.slice(0, 300)}`));

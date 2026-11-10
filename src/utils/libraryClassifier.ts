@@ -8,6 +8,55 @@ export interface ParsedLibraryItem {
   originalTitle: string;
 }
 
+/**
+ * Checks if a segment in a URL path is Base64 encoded and contains an embedded path or filename.
+ * E.g. MTc5ND... -> 1794.../echo11/.../kiDnap.GAME.S01E06.VIU.x264.1080p[MkvDrama.net].mkv
+ */
+export function tryDecodeBase64Segment(segment: string): string {
+  if (!segment) return segment;
+  let candidate = segment.trim();
+  candidate = candidate.split('?')[0].split('#')[0];
+  const partsToTry = [candidate];
+  const dotIndex = candidate.lastIndexOf('.');
+  if (dotIndex > 0) {
+    partsToTry.push(candidate.substring(0, dotIndex));
+  }
+  
+  for (const part of partsToTry) {
+    if (part.length < 16) continue;
+    if (/^[A-Za-z0-9+/=_-]+$/.test(part)) {
+      try {
+        let b64 = part.replace(/-/g, '+').replace(/_/g, '/');
+        while (b64.length % 4 !== 0) {
+          b64 += '=';
+        }
+        let decoded = '';
+        if (typeof atob === 'function') {
+          try {
+            decoded = decodeURIComponent(escape(atob(b64)));
+          } catch {
+            decoded = atob(b64);
+          }
+        } else if (typeof (globalThis as any).Buffer !== 'undefined') {
+          decoded = (globalThis as any).Buffer.from(b64, 'base64').toString('utf8');
+        }
+        if (decoded && (decoded.includes('/') || decoded.includes('\\') || /\.(mkv|mp4|webm|avi|m4v|ts|mov)/i.test(decoded))) {
+          const subParts = decoded.split(/[/\\]/).filter(Boolean);
+          const last = subParts[subParts.length - 1];
+          if (last) {
+            try {
+              return decodeURIComponent(last);
+            } catch {
+              return last;
+            }
+          }
+        }
+      } catch {}
+    }
+  }
+  return segment;
+}
+
 const JUNK_PATTERN = /\b(1080p|720p|2160p|4k|uhd|hd|sd|480p|576p|web-?dl|web-?rip|bluray|blu-ray|bdrip|brrip|hdrip|dvdrip|remux|imax|camrip|telesync|hdcam|x264|x265|h264|h265|hevc|avc|av1|10bit|8bit|hdr10\+?|hdr|dv|dolby\s*vision|sdr|dual[.\s-]audio|multi[.\s-]audio|multi[.\s-]sub|esubs?|subs?|subbed|dubbed|proper|repack|rerip|amzn|nf|dsnp|hmax|atvp|bilibili|bollyflix|yts(\.mx)?|psa|rarbg|eztv|tgx|galaxytv|ita|eng|english|hindi|tamil|telugu|korean|japanese|spanish|french|german|mandarin|cantonese|thai|vietnamese|russian|italian|ddp?5[.\s]1|atmos|truehd|dts(-hd)?|aac\d?(\.0)?|ac3|mp3|flac|eac3)\b.*/i;
 
 export function classifyVideoTitle(title: string): {
@@ -38,10 +87,13 @@ export function classifyVideoTitle(title: string): {
         raw = paramName;
       } else {
         const segs = u.pathname.split('/').filter(Boolean);
-        if (segs.length > 0) raw = segs[segs.length - 1];
+        if (segs.length > 0) {
+          raw = tryDecodeBase64Segment(segs[segs.length - 1]);
+        }
       }
     } catch {
-      raw = raw.split(/[/\\]/).filter(Boolean).pop() || raw;
+      const parts = raw.split(/[/\\]/).filter(Boolean);
+      raw = parts.length > 0 ? tryDecodeBase64Segment(parts[parts.length - 1]) : raw;
     }
   }
 

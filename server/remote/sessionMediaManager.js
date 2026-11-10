@@ -4,8 +4,8 @@ import crypto from 'crypto';
 import { RemoteDownloadManager } from './remoteDownloadManager.js';
 
 const BLOCK_SIZE = 2 * 1024 * 1024; // 2 MB blocks
-const FORWARD_BUFFER_SECONDS = 240;  // 4 minutes forward buffer
-const BACKWARD_BUFFER_SECONDS = 60;  // 1 minute backward retention
+const FORWARD_BUFFER_SECONDS = 120;  // 120s buffer ahead
+const BACKWARD_BUFFER_SECONDS = 30;  // 30s buffer retention behind
 const DEFAULT_BITRATE_BYTES_PER_SEC = 600 * 1024; // ~4.8 Mbps default video+audio bitrate
 
 export class SessionMediaWorker {
@@ -276,7 +276,8 @@ export class SessionMediaWorker {
   }
 
   /**
-   * Pre-buffers the 240-second forward sliding window in the background.
+   * Pre-buffers the 120-second forward sliding window in the background
+   * and retains the 30-second backward sliding window, evicting blocks older than 30s behind.
    */
   triggerPrefetch() {
     if (this.isPrefetching || this.isDestroyed) return;
@@ -286,6 +287,13 @@ export class SessionMediaWorker {
       try {
         const forwardBytes = this.bitrateBytesPerSec * FORWARD_BUFFER_SECONDS;
         const forwardBlocks = Math.max(10, Math.ceil(forwardBytes / BLOCK_SIZE));
+        const backwardBytes = this.bitrateBytesPerSec * BACKWARD_BUFFER_SECONDS;
+        const backwardBlocks = Math.max(2, Math.ceil(backwardBytes / BLOCK_SIZE));
+
+        // 1. Evict blocks older than BACKWARD_BUFFER_SECONDS (30s) behind current playhead (keeping block 0 for headers)
+        const curPlayheadBlock = Math.floor(this.currentPlayheadByte / BLOCK_SIZE);
+        const minKeepBlock = Math.max(1, curPlayheadBlock - backwardBlocks);
+        this.pruneOldBlocks(minKeepBlock);
 
         while (!this.isDestroyed) {
           const curPlayheadBlock = Math.floor(this.currentPlayheadByte / BLOCK_SIZE);

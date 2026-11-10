@@ -8,7 +8,7 @@ import { extractRemoteSubtitleSegment } from '../remote/ffmpegRemote';
 import { parseSubtitles } from '../../utils/subtitleParser';
 
 export class BufferManager {
-  private packetCache = new PacketCache(60, 120);
+  private packetCache = new PacketCache(30, 120); // 30s behind, 120s ahead
   private subtitleCache = new Map<string, any[]>(); // keyed by streamIndex_offsetTime
   private activeFills = new Map<string, Promise<any>>();
   private failedFills = new Map<string, { count: number; lastTime: number }>();

@@ -10,7 +10,7 @@ export class PacketCache {
 
   constructor(
     private keepBehind = 30, // seconds to keep behind currentTime
-    private keepAhead = 90   // seconds to keep ahead currentTime
+    private keepAhead = 120  // seconds to keep ahead currentTime
   ) {}
 
   add(packet: AudioPacket, keyStartTime = packet.startTime): void {
