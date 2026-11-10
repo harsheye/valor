@@ -65,6 +65,8 @@ import { CustomSelect } from './components/CustomSelect';
 import { CalendarView } from './components/CalendarView';
 import { LibraryView } from './components/LibraryView';
 import { ApiSettingsView } from './components/ApiSettingsView';
+import { AuthModal } from './components/auth/AuthModal';
+import { CreateAccountModal } from './components/auth/CreateAccountModal';
 
 import { EsportsLiveOverlay } from './components/EsportsLiveOverlay';
 import Calendar02 from './components/creative-tim/blocks/calendar-02';
@@ -87,6 +89,7 @@ import { ToggleSwitch } from './components/ToggleSwitch';
 import { Sidebar } from './components/Sidebar';
 import { MobileTopBar } from './components/MobileTopBar';
 import { MobileBottomNav } from './components/MobileBottomNav';
+import { isMobileDevice, lockToLandscape, unlockOrientation } from './utils/screenOrientation';
 import { HomePage } from './pages/HomePage';
 import { HistoryPage } from './pages/HistoryPage';
 import { LibraryPage } from './pages/LibraryPage';
@@ -1477,16 +1480,46 @@ function App() {
   const handleSwitchProfile = (p: any) => {
     const isServer = p.userId && !p.userId.startsWith('local_') && p.userId !== 'local';
     if (isServer) {
-      openAuthModal('login', p);
+      if (p.hasPassword === false) {
+        // Direct switch for server profile without password
+        localStorage.setItem('valor_active_user_id', p.userId);
+        if (p.username) localStorage.setItem('valor_logged_in_username', p.username);
+        setSettings(prev => ({
+          ...prev,
+          userId: p.userId,
+          profileName: p.name || prev.profileName,
+          storageMode: 'file',
+          experienceMode: 'cloud'
+        }));
+        (async () => {
+          try {
+            const pData = await gqlFetch(`
+              query GetProfileData($userId: String!) {
+                profile(userId: $userId) { settings history }
+              }
+            `, { userId: p.userId });
+            const profileData = pData.profile || {};
+            if (profileData.settings) {
+              setSettings(prev => ({ ...prev, ...profileData.settings, userId: p.userId, storageMode: 'file' }));
+            }
+            if (Array.isArray(profileData.history)) {
+              setVideos(profileData.history);
+            }
+          } catch {}
+        })();
+        addToast(`Switched to profile: ${p.name || p.userId}`, 'success');
+      } else {
+        openAuthModal('login', p);
+      }
     } else {
       localStorage.setItem('valor_active_user_id', p.userId);
       const settingsKey = p.userId === 'local' ? 'valor_settings' : `valor_settings_${p.userId}`;
       const videosKey = p.userId === 'local' ? 'valor_videos' : `valor_videos_${p.userId}`;
       const savedSettings = localStorage.getItem(settingsKey);
       if (savedSettings) {
-        try { setSettings(prev => ({ ...prev, ...JSON.parse(savedSettings), userId: p.userId, storageMode: 'localstorage' })); } catch {}
+        try { setSettings(prev => ({ ...prev, ...JSON.parse(savedSettings), userId: p.userId, storageMode: 'localstorage', experienceMode: 'local' })); } catch {}
       } else {
-        setSettings(prev => ({ ...prev, userId: p.userId, profileName: p.name || 'Local Profile', storageMode: 'localstorage' }));
+        setSettings(prev => ({ ...prev, userId: p.userId, profileName: p.name || 'Local Profile', storageMode: 'localstorage', experienceMode: 'local' }));
       }
       const savedVideos = localStorage.getItem(videosKey);
       if (savedVideos) {
@@ -1865,6 +1898,16 @@ function App() {
       return updated;
     });
   };
+
+  // Automatically lock orientation to landscape on mobile when playing any video
+  useEffect(() => {
+    if (playingVideo && isMobileDevice()) {
+      lockToLandscape(document.documentElement);
+      return () => {
+        unlockOrientation();
+      };
+    }
+  }, [playingVideo]);
 
   // Global keybind for 'm' to play last played media when player is closed
   useEffect(() => {
@@ -3659,1026 +3702,44 @@ function App() {
         })}
       </div>
 
-      {/* Global Auth Modal (Login / Signup) */}
-      {isAuthModalOpen && (
-        <div style={{
-          position: 'fixed',
-          top: 0,
-          left: 0,
-          right: 0,
-          bottom: 0,
-          background: 'rgba(0,0,0,0.6)',
-          backdropFilter: 'blur(8px)',
-          zIndex: 9990,
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          animation: 'fadeIn 0.2s ease-out'
-        }}>
-          <div style={{
-            width: '380px',
-            background: '#141414',
-            borderRadius: '16px',
-            boxShadow: '0 0 35px rgba(239, 68, 68, 0.18)',
-            overflow: 'hidden',
-            padding: '32px 24px 28px 24px',
-            display: 'flex',
-            flexDirection: 'column',
-            gap: '20px',
-            animation: 'scaleIn 0.3s cubic-bezier(0.34, 1.56, 0.64, 1)',
-            position: 'relative',
-            border: '1px solid rgba(239, 68, 68, 0.25)'
-          }}>
-            {/* Close Button */}
-            <button
-              type="button"
-              onClick={() => {
-                setAuthName('');
-                setAuthUsername('');
-                setAuthPassword('');
-                setSelectedProfileForLogin(null);
-                setIsAuthModalOpen(false);
-                setAuthError('');
-              }}
-              style={{
-                position: 'absolute',
-                top: '16px',
-                right: '16px',
-                background: 'none',
-                border: 'none',
-                color: 'rgba(255, 255, 255, 0.4)',
-                cursor: 'pointer',
-                fontSize: '1.25rem',
-                fontWeight: 'bold',
-                padding: 0,
-                lineHeight: 1
-              }}
-              title="Close"
-            >
-              ×
-            </button>
+      {/* Modal 1: "Log in or create account" */}
+      <AuthModal
+        isOpen={isAuthModalOpen}
+        initialTab={authModalTab}
+        onClose={() => {
+          setIsAuthModalOpen(false);
+          setSelectedProfileForLogin(null);
+        }}
+        selectedProfileForLogin={selectedProfileForLogin}
+        onAuthSuccess={onAuthSuccess ? (uid, uname) => {
+          if (onAuthSuccess) onAuthSuccess(uid);
+        } : undefined}
+        initiateTraktPkceAuth={initiateTraktPkceAuth}
+        settings={settings}
+        setSettings={setSettings}
+        saveSettingsToStorage={saveSettingsToStorage}
+        videos={videos}
+        setVideos={setVideos}
+        addToast={addToast}
+        fetchProfiles={fetchProfiles}
+        defaultSettings={defaultSettings}
+      />
 
-            {/* Header Title */}
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', textAlign: 'center' }}>
-              <h2 style={{ 
-                margin: 0, 
-                fontSize: '1.35rem', 
-                fontWeight: 700, 
-                color: '#ef4444', 
-                fontFamily: 'Outfit, sans-serif' 
-              }}>
-                {selectedProfileForLogin ? "Enter Profile Password" : "Log in or create account"}
-              </h2>
-              {selectedProfileForLogin && (
-                <span style={{ fontSize: '0.8rem', color: 'rgba(255,255,255,0.5)', fontFamily: 'Outfit, sans-serif' }}>
-                  Logging into profile <strong>{selectedProfileForLogin.name}</strong>
-                </span>
-              )}
-            </div>
-
-            {/* Tab Selection (Centered in the middle) */}
-            {!selectedProfileForLogin && (
-              <div style={{ 
-                display: 'flex', 
-                justifyContent: 'center', 
-                gap: '24px', 
-                borderBottom: '1px solid rgba(255, 255, 255, 0.08)', 
-                paddingBottom: '8px' 
-              }}>
-                <button
-                  type="button"
-                  onClick={() => { setAuthModalTab('login'); setAuthError(''); }}
-                  style={{
-                    background: 'none',
-                    border: 'none',
-                    color: authModalTab === 'login' ? '#ef4444' : 'rgba(255, 255, 255, 0.4)',
-                    fontWeight: 700,
-                    fontSize: '0.9rem',
-                    cursor: 'pointer',
-                    position: 'relative',
-                    paddingBottom: '6px',
-                    fontFamily: 'Outfit, sans-serif'
-                  }}
-                >
-                  Login
-                  {authModalTab === 'login' && (
-                    <div style={{
-                      position: 'absolute',
-                      bottom: '-9px',
-                      left: 0,
-                      right: 0,
-                      height: '2px',
-                      background: 'linear-gradient(90deg, #ef4444, #f97316)'
-                    }} />
-                  )}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => { setAuthModalTab('signup'); setAuthError(''); }}
-                  style={{
-                    background: 'none',
-                    border: 'none',
-                    color: authModalTab === 'signup' ? '#ef4444' : 'rgba(255, 255, 255, 0.4)',
-                    fontWeight: 700,
-                    fontSize: '0.9rem',
-                    cursor: 'pointer',
-                    position: 'relative',
-                    paddingBottom: '6px',
-                    fontFamily: 'Outfit, sans-serif'
-                  }}
-                >
-                  Sign Up
-                  {authModalTab === 'signup' && (
-                    <div style={{
-                      position: 'absolute',
-                      bottom: '-9px',
-                      left: 0,
-                      right: 0,
-                      height: '2px',
-                      background: 'linear-gradient(90deg, #ef4444, #f97316)'
-                    }} />
-                  )}
-                </button>
-              </div>
-            )}
-
-            {/* Trakt.tv PKCE Sign-In Option */}
-            {!selectedProfileForLogin && (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '4px' }}>
-                <button
-                  type="button"
-                  onClick={() => initiateTraktPkceAuth({ isLoginAction: true, redirectUri: settings.traktRedirectUri || TRAKT_DEFAULT_REDIRECT_URI })}
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    gap: '10px',
-                    width: '100%',
-                    background: 'linear-gradient(135deg, rgba(237, 28, 36, 0.18) 0%, rgba(185, 28, 28, 0.22) 100%)',
-                    border: '1px solid rgba(237, 28, 36, 0.4)',
-                    color: '#ff4d4f',
-                    padding: '10px 14px',
-                    borderRadius: '10px',
-                    fontSize: '0.84rem',
-                    fontWeight: 700,
-                    cursor: 'pointer',
-                    boxShadow: '0 4px 14px rgba(237, 28, 36, 0.12)',
-                    transition: 'all 0.2s ease',
-                    fontFamily: 'Outfit, sans-serif'
-                  }}
-                  onMouseEnter={e => {
-                    e.currentTarget.style.background = 'linear-gradient(135deg, rgba(237, 28, 36, 0.3) 0%, rgba(185, 28, 28, 0.35) 100%)';
-                    e.currentTarget.style.borderColor = 'rgba(237, 28, 36, 0.65)';
-                  }}
-                  onMouseLeave={e => {
-                    e.currentTarget.style.background = 'linear-gradient(135deg, rgba(237, 28, 36, 0.18) 0%, rgba(185, 28, 28, 0.22) 100%)';
-                    e.currentTarget.style.borderColor = 'rgba(237, 28, 36, 0.4)';
-                  }}
-                >
-                  <span style={{ display: 'inline-block', width: '8px', height: '8px', borderRadius: '50%', background: '#ed1c24', boxShadow: '0 0 8px #ed1c24' }}></span>
-                  <span>Continue with Trakt.tv</span>
-                  <span style={{ fontSize: '0.62rem', background: 'rgba(34, 197, 94, 0.16)', color: '#22c55e', border: '1px solid rgba(34, 197, 94, 0.28)', padding: '1px 5px', borderRadius: '4px', marginLeft: 'auto' }}>
-                    PKCE S256
-                  </span>
-                </button>
-
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', margin: '2px 0' }}>
-                  <div style={{ flex: 1, height: '1px', background: 'rgba(255, 255, 255, 0.08)' }} />
-                  <span style={{ fontSize: '0.68rem', color: 'rgba(255, 255, 255, 0.35)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>or with credentials</span>
-                  <div style={{ flex: 1, height: '1px', background: 'rgba(255, 255, 255, 0.08)' }} />
-                </div>
-              </div>
-            )}
-
-            {/* Error Message */}
-            {authError && (
-              <div style={{
-                background: 'rgba(239, 68, 68, 0.1)',
-                border: '1px solid rgba(239, 68, 68, 0.2)',
-                color: '#ef4444',
-                fontSize: '0.78rem',
-                padding: '10px',
-                borderRadius: '8px',
-                fontWeight: 500,
-                fontFamily: 'Outfit, sans-serif'
-              }}>
-                ⚠️ {authError}
-              </div>
-            )}
-
-            {/* Form Fields */}
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
-              {/* Profile Name Input (Only on Sign Up) */}
-              {authModalTab === 'signup' && !selectedProfileForLogin && (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                  <label style={{ fontSize: '0.85rem', color: 'rgba(255, 255, 255, 0.7)', fontWeight: 600, fontFamily: 'Outfit, sans-serif' }}>
-                    Profile Name
-                  </label>
-                  <input
-                    type="text"
-                    placeholder="Enter profile name..."
-                    value={authName}
-                    onChange={e => setAuthName(e.target.value)}
-                    style={{
-                      background: 'rgba(0, 0, 0, 0.3)',
-                      border: '1px solid rgba(255, 255, 255, 0.12)',
-                      borderRadius: '8px',
-                      padding: '12px 14px',
-                      fontSize: '0.88rem',
-                      color: '#ffffff',
-                      outline: 'none',
-                      fontFamily: 'Outfit, sans-serif'
-                    }}
-                  />
-                </div>
-              )}
-
-              {/* Username Input */}
-              {!selectedProfileForLogin && (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                  <label style={{ fontSize: '0.85rem', color: 'rgba(255, 255, 255, 0.7)', fontWeight: 600, fontFamily: 'Outfit, sans-serif' }}>
-                    Username
-                  </label>
-                  <input
-                    type="text"
-                    placeholder="Enter username..."
-                    value={authUsername}
-                    onChange={e => setAuthUsername(e.target.value)}
-                    style={{
-                      background: 'rgba(0, 0, 0, 0.3)',
-                      border: '1px solid rgba(255, 255, 255, 0.12)',
-                      borderRadius: '8px',
-                      padding: '12px 14px',
-                      fontSize: '0.88rem',
-                      color: '#ffffff',
-                      outline: 'none',
-                      fontFamily: 'Outfit, sans-serif'
-                    }}
-                  />
-                </div>
-              )}
-
-              {/* Password Input */}
-              {(selectedProfileForLogin || authModalTab === 'login' || authModalTab === 'signup') && (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                  <label style={{ fontSize: '0.85rem', color: 'rgba(255, 255, 255, 0.7)', fontWeight: 600, fontFamily: 'Outfit, sans-serif' }}>
-                    Password
-                  </label>
-                  <input
-                    type="password"
-                    placeholder="••••••••••••"
-                    value={authPassword}
-                    onChange={e => setAuthPassword(e.target.value)}
-                    style={{
-                      background: 'rgba(0, 0, 0, 0.3)',
-                      border: '1px solid rgba(255, 255, 255, 0.12)',
-                      borderRadius: '8px',
-                      padding: '12px 14px',
-                      fontSize: '0.88rem',
-                      color: '#ffffff',
-                      outline: 'none',
-                      fontFamily: 'Outfit, sans-serif'
-                    }}
-                    onKeyDown={e => {
-                      if (e.key === 'Enter') {
-                        document.getElementById('auth-modal-submit-btn')?.click();
-                      }
-                    }}
-                  />
-                </div>
-              )}
-            </div>
-
-            {/* Actions Submit Button */}
-            <button
-              id="auth-modal-submit-btn"
-              type="button"
-              onClick={async () => {
-                setAuthError('');
-                const isSignUp = authModalTab === 'signup' && !selectedProfileForLogin;
-                
-                if (isSignUp) {
-                  const profileName = authName.trim() || authUsername.trim() || 'New User';
-                  const currentIsOnboarded = settings.isOnboarded;
-                  try {
-                    const res = await secureFetch(`${BACKEND_ORIGIN}/api/profile/migrate`, {
-                      method: 'POST',
-                      headers: { 'Content-Type': 'application/json' },
-                      body: JSON.stringify({ 
-                        name: profileName, 
-                        username: authUsername.trim() || undefined,
-                        password: authPassword || undefined,
-                        isSignUp: true,
-                        settings: { ...settings, isOnboarded: currentIsOnboarded }, 
-                        history: videos 
-                      })
-                    });
-                    const resData = await res.json();
-                    if (resData.success) {
-                      const oldUserId = settings.userId;
-                      localStorage.setItem('valor_active_user_id', resData.userId);
-                      localStorage.setItem('valor_logged_in_username', authUsername.trim());
-                      const updated = {
-                         ...settings,
-                         userId: resData.userId,
-                         storageMode: 'file' as const,
-                         isOnboarded: currentIsOnboarded
-                       };
-                       setSettings(updated);
-                       saveSettingsToStorage(updated);
-                      
-                      // Remove local profile from localStorage
-                      if (oldUserId && (oldUserId === 'local' || oldUserId.startsWith('local_'))) {
-                        let localProfiles = [];
-                        try {
-                          const localSaved = localStorage.getItem('valor_local_profiles');
-                          if (localSaved) localProfiles = JSON.parse(localSaved);
-                        } catch {}
-                        localProfiles = localProfiles.filter((p: any) => p.userId !== oldUserId);
-                        localStorage.setItem('valor_local_profiles', JSON.stringify(localProfiles));
-                        
-                        const oldSettingsKey = oldUserId === 'local' ? 'valor_settings' : `valor_settings_${oldUserId}`;
-                        const oldVideosKey = oldUserId === 'local' ? 'valor_videos' : `valor_videos_${oldUserId}`;
-                        localStorage.removeItem(oldSettingsKey);
-                        localStorage.removeItem(oldVideosKey);
-                      }
-                      
-                      addToast(`Successfully created Server Profile: ${profileName}!`, 'success');
-                      addToast('Starting synchronization of watch history and settings...', 'success');
-                      
-                      const historyRes = await secureFetch(`${BACKEND_ORIGIN}/api/history?userId=${resData.userId}`);
-                      const serverHistory = await historyRes.json();
-                      if (Array.isArray(serverHistory)) {
-                        setVideos(serverHistory);
-                      }
-                      
-                      addToast('Synchronization complete! All settings and watch history synced.', 'success');
-                      
-                      if (onAuthSuccess) {
-                        onAuthSuccess(resData.userId);
-                      }
-                      
-                      setAuthName('');
-                      setAuthUsername('');
-                      setAuthPassword('');
-                      setIsAuthModalOpen(false);
-                      await fetchProfiles();
-                    } else {
-                      setAuthError(resData.error || 'Failed to create profile');
-                    }
-                  } catch (err: any) {
-                    setAuthError(err.message || 'Profile generation failed.');
-                  }
-                } else {
-                  try {
-                    const isAccountLoginAndSync = !selectedProfileForLogin && (!settings.userId || settings.userId === 'local' || settings.userId.startsWith('local_'));
-                    
-                    if (isAccountLoginAndSync) {
-                      // 1. Verify credentials by attempting a login
-                      const verifyRes = await secureFetch(`${BACKEND_ORIGIN}/api/profile/login`, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ username: authUsername.trim(), password: authPassword })
-                      });
-                      const verifyData = await verifyRes.json();
-                      if (!verifyData.success) {
-                        setAuthError(verifyData.error || 'Incorrect username or password');
-                        return;
-                      }
-                      
-                      // 2. Credentials are correct! Create a new profile under this account with the current local data
-                      const profileName = settings.profileName || 'Local Browser Saves';
-                      const migrateRes = await secureFetch(`${BACKEND_ORIGIN}/api/profile/migrate`, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ 
-                          name: profileName, 
-                          username: authUsername.trim(),
-                          password: authPassword,
-                          isLoginAndSync: true,
-                          settings: { ...settings, isOnboarded: true }, 
-                          history: videos 
-                        })
-                      });
-                      const migrateData = await migrateRes.json();
-                      if (migrateData.success) {
-                        const oldUserId = settings.userId;
-                        const pId = migrateData.userId;
-                        localStorage.setItem('valor_active_user_id', pId);
-                        localStorage.setItem('valor_logged_in_username', authUsername.trim());
-                        
-                        const updated = {
-                          ...settings,
-                          userId: pId,
-                          storageMode: 'file' as const,
-                          isOnboarded: true
-                        };
-                        setSettings(updated);
-                        saveSettingsToStorage(updated);
-                        
-                        // Remove local profile from localStorage
-                        if (oldUserId && (oldUserId === 'local' || oldUserId.startsWith('local_'))) {
-                          let localProfiles = [];
-                          try {
-                            const localSaved = localStorage.getItem('valor_local_profiles');
-                            if (localSaved) localProfiles = JSON.parse(localSaved);
-                          } catch {}
-                          localProfiles = localProfiles.filter((p: any) => p.userId !== oldUserId);
-                          localStorage.setItem('valor_local_profiles', JSON.stringify(localProfiles));
-                          
-                          const oldSettingsKey = oldUserId === 'local' ? 'valor_settings' : `valor_settings_${oldUserId}`;
-                          const oldVideosKey = oldUserId === 'local' ? 'valor_videos' : `valor_videos_${oldUserId}`;
-                          localStorage.removeItem(oldSettingsKey);
-                          localStorage.removeItem(oldVideosKey);
-                        }
-                        
-                        addToast(`Successfully created Server Profile under account: ${profileName}!`, 'success');
-                        addToast('Starting synchronization of watch history and settings...', 'success');
-                        
-                        const historyRes = await secureFetch(`${BACKEND_ORIGIN}/api/history?userId=${pId}`);
-                        const serverHistory = await historyRes.json();
-                        if (Array.isArray(serverHistory)) {
-                          setVideos(serverHistory);
-                        }
-                        
-                        addToast('Synchronization complete! All settings and watch history synced.', 'success');
-                        
-                        if (onAuthSuccess) {
-                          onAuthSuccess(pId);
-                        }
-                        
-                        setAuthName('');
-                        setAuthUsername('');
-                        setAuthPassword('');
-                        setIsAuthModalOpen(false);
-                        await fetchProfiles();
-                      } else {
-                        setAuthError(migrateData.error || 'Failed to create profile under account');
-                      }
-                    } else {
-                      // Regular login (unlocking an existing profile, or server profile switch)
-                      const payload = selectedProfileForLogin 
-                        ? { userId: selectedProfileForLogin.userId, password: authPassword }
-                        : { username: authUsername.trim(), password: authPassword };
-                        
-                      const res = await secureFetch(`${BACKEND_ORIGIN}/api/profile/login`, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify(payload)
-                      });
-                      const resData = await res.json();
-                      if (resData.success) {
-                        const pId = resData.userId;
-                        const finalUsername = selectedProfileForLogin ? selectedProfileForLogin.username : authUsername.trim();
-                        localStorage.setItem('valor_active_user_id', pId);
-                        if (finalUsername) {
-                          localStorage.setItem('valor_logged_in_username', finalUsername);
-                        }
-                        const initialLoaded = {
-                          ...settings,
-                          userId: pId,
-                          storageMode: 'file' as const
-                        };
-                        setSettings(initialLoaded);
-                        saveSettingsToStorage(initialLoaded);
-                        
-                        const profileRes = await secureFetch(`${BACKEND_ORIGIN}/api/profile/data?userId=${pId}`);
-                        const profileData = await profileRes.json();
-                        if (profileData && profileData.settings) {
-                          const loaded = {
-                            ...defaultSettings,
-                            ...profileData.settings,
-                            userId: pId,
-                            storageMode: 'file' as const
-                          };
-                          setSettings(loaded);
-                          saveSettingsToStorage(loaded);
-                        }
-                        if (profileData && Array.isArray(profileData.history)) {
-                          setVideos(profileData.history.map((v: any) => ({
-                            ...v,
-                            audioTracks: v.audioTracks || [],
-                            subtitleTracks: v.subtitleTracks || []
-                          })));
-                        }
-                        
-                        addToast(`Logged in and switched to profile: ${resData.name}`, 'success');
-                        
-                        if (onAuthSuccess) {
-                          onAuthSuccess(pId);
-                        }
-                        
-                        setAuthName('');
-                        setAuthUsername('');
-                        setAuthPassword('');
-                        setSelectedProfileForLogin(null);
-                        setIsAuthModalOpen(false);
-                        await fetchProfiles();
-                      } else {
-                        setAuthError(resData.error || 'Incorrect username or password');
-                      }
-                    }
-                  } catch (err: any) {
-                    setAuthError(err.message || 'Login / Sync failed.');
-                  }
-                }
-              }}
-              style={{
-                width: '100%',
-                background: 'linear-gradient(135deg, #ef4444, #f97316)',
-                border: 'none',
-                color: '#ffffff',
-                padding: '14px',
-                fontSize: '0.9rem',
-                borderRadius: '999px',
-                cursor: 'pointer',
-                fontWeight: 600,
-                marginTop: '10px',
-                transition: 'opacity 0.2s',
-                fontFamily: 'Outfit, sans-serif',
-                boxShadow: '0 4px 15px rgba(249, 115, 22, 0.3)'
-              }}
-              onMouseEnter={e => e.currentTarget.style.opacity = '0.9'}
-              onMouseLeave={e => e.currentTarget.style.opacity = '1'}
-            >
-              {selectedProfileForLogin || authModalTab === 'login' ? 'Sign in' : 'Create account'}
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* Universal Theme Account Creation Modal (Local vs Cloud Account) */}
-      {isCreateProfileModalOpen && (
-        <div style={{
-          position: 'fixed',
-          top: 0,
-          left: 0,
-          right: 0,
-          bottom: 0,
-          background: 'rgba(0, 0, 0, 0.78)',
-          backdropFilter: 'blur(10px)',
-          zIndex: 9990,
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          padding: '16px',
-          animation: 'fadeIn 0.2s ease-out'
-        }}>
-          <div style={{
-            width: '540px',
-            maxWidth: '100%',
-            maxHeight: '92vh',
-            overflowY: 'auto',
-            background: 'var(--surface, #12121a)',
-            borderRadius: '16px',
-            border: '1px solid var(--border-color, rgba(255, 255, 255, 0.12))',
-            boxShadow: '0 20px 50px rgba(0, 0, 0, 0.7)',
-            padding: '28px 24px',
-            display: 'flex',
-            flexDirection: 'column',
-            gap: '18px',
-            animation: 'scaleIn 0.3s cubic-bezier(0.34, 1.56, 0.64, 1)',
-            position: 'relative'
-          }}>
-            {/* Close Button */}
-            <button
-              type="button"
-              onClick={() => {
-                setIsCreateProfileModalOpen(false);
-                setCreateProfileError('');
-              }}
-              style={{
-                position: 'absolute',
-                top: '16px',
-                right: '16px',
-                background: 'rgba(255, 255, 255, 0.05)',
-                border: '1px solid rgba(255, 255, 255, 0.1)',
-                color: 'var(--text-muted, rgba(255, 255, 255, 0.6))',
-                cursor: 'pointer',
-                fontSize: '1.2rem',
-                lineHeight: 1,
-                width: '32px',
-                height: '32px',
-                borderRadius: '50%',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                transition: 'all 0.2s ease'
-              }}
-              onMouseEnter={e => {
-                e.currentTarget.style.background = 'rgba(255, 255, 255, 0.12)';
-                e.currentTarget.style.color = '#fff';
-              }}
-              onMouseLeave={e => {
-                e.currentTarget.style.background = 'rgba(255, 255, 255, 0.05)';
-                e.currentTarget.style.color = 'var(--text-muted, rgba(255, 255, 255, 0.6))';
-              }}
-            >
-              ×
-            </button>
-
-            {/* Header */}
-            <div style={{ textAlign: 'center', display: 'flex', flexDirection: 'column', gap: '6px' }}>
-              <div style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto', width: '42px', height: '42px', borderRadius: '12px', background: 'rgba(255, 255, 255, 0.06)', border: '1px solid var(--border-color, rgba(255, 255, 255, 0.1))' }}>
-                <UserPlus size={20} color={createProfileType === 'cloud' ? 'var(--accent)' : '#10b981'} />
-              </div>
-              <h3 style={{ margin: 0, fontSize: '1.35rem', fontWeight: 700, color: 'var(--text-primary, #ffffff)', fontFamily: 'Outfit, sans-serif' }}>
-                Create Account
-              </h3>
-              <p style={{ margin: 0, fontSize: '0.82rem', color: 'var(--text-muted, #9ca3af)', fontFamily: 'Outfit, sans-serif', lineHeight: 1.4 }}>
-                Choose where your watch history, settings, and media library are stored.
-              </p>
-            </div>
-
-            {/* Account Type Selection Blocks */}
-            <div style={{
-              display: 'grid',
-              gridTemplateColumns: '1fr 1fr',
-              gap: '12px',
-              marginTop: '4px'
-            }}>
-              {/* Local Account Card */}
-              <div
-                onClick={() => { setCreateProfileType('local'); setCreateProfileError(''); }}
-                style={{
-                  background: createProfileType === 'local' ? 'rgba(16, 185, 129, 0.08)' : 'var(--card-bg, #161622)',
-                  border: createProfileType === 'local' ? '1.5px solid #10b981' : '1px solid var(--border-color, rgba(255, 255, 255, 0.1))',
-                  boxShadow: createProfileType === 'local' ? '0 0 16px rgba(16, 185, 129, 0.15)' : 'none',
-                  borderRadius: '12px',
-                  padding: '14px',
-                  cursor: 'pointer',
-                  display: 'flex',
-                  flexDirection: 'column',
-                  gap: '8px',
-                  transition: 'all 0.2s cubic-bezier(0.4, 0, 0.2, 1)',
-                  position: 'relative'
-                }}
-              >
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <div style={{
-                    fontSize: '0.65rem',
-                    fontWeight: 700,
-                    padding: '2px 8px',
-                    borderRadius: '4px',
-                    background: 'rgba(16, 185, 129, 0.18)',
-                    color: '#10b981',
-                    letterSpacing: '0.5px',
-                    textTransform: 'uppercase'
-                  }}>
-                    OFFLINE
-                  </div>
-                  <div style={{
-                    width: '18px',
-                    height: '18px',
-                    borderRadius: '50%',
-                    border: createProfileType === 'local' ? 'none' : '1.5px solid var(--border-color, rgba(255, 255, 255, 0.3))',
-                    background: createProfileType === 'local' ? '#10b981' : 'transparent',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center'
-                  }}>
-                    {createProfileType === 'local' && <Check size={12} color="#fff" strokeWidth={3} />}
-                  </div>
-                </div>
-
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '2px' }}>
-                  <HardDrive size={18} color="#10b981" />
-                  <span style={{ fontSize: '0.95rem', fontWeight: 700, color: 'var(--text-primary, #fff)', fontFamily: 'Outfit, sans-serif' }}>
-                    Local Account
-                  </span>
-                </div>
-
-                <p style={{ margin: 0, fontSize: '0.72rem', color: 'var(--text-muted, #9ca3af)', lineHeight: 1.35, fontFamily: 'Outfit, sans-serif' }}>
-                  Private browser sandbox (IndexedDB). Zero cloud latency, works completely offline.
-                </p>
-
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', marginTop: '4px', paddingTop: '6px', borderTop: '1px solid rgba(255,255,255,0.06)', fontSize: '0.7rem', color: 'var(--text-secondary, #d1d5db)' }}>
-                  <span>✓ 100% In-Browser Private</span>
-                  <span>✓ No Password Required</span>
-                </div>
-              </div>
-
-              {/* Cloud Account Card */}
-              <div
-                onClick={() => { setCreateProfileType('cloud'); setCreateProfileError(''); }}
-                style={{
-                  background: createProfileType === 'cloud' ? 'rgba(229, 9, 20, 0.08)' : 'var(--card-bg, #161622)',
-                  border: createProfileType === 'cloud' ? '1.5px solid var(--accent)' : '1px solid var(--border-color, rgba(255, 255, 255, 0.1))',
-                  boxShadow: createProfileType === 'cloud' ? '0 0 16px rgba(229, 9, 20, 0.15)' : 'none',
-                  borderRadius: '12px',
-                  padding: '14px',
-                  cursor: 'pointer',
-                  display: 'flex',
-                  flexDirection: 'column',
-                  gap: '8px',
-                  transition: 'all 0.2s cubic-bezier(0.4, 0, 0.2, 1)',
-                  position: 'relative'
-                }}
-              >
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <div style={{
-                    fontSize: '0.65rem',
-                    fontWeight: 700,
-                    padding: '2px 8px',
-                    borderRadius: '4px',
-                    background: 'rgba(229, 9, 20, 0.18)',
-                    color: 'var(--accent-color, #ef4444)',
-                    letterSpacing: '0.5px',
-                    textTransform: 'uppercase'
-                  }}>
-                    CLOUD SYNC
-                  </div>
-                  <div style={{
-                    width: '18px',
-                    height: '18px',
-                    borderRadius: '50%',
-                    border: createProfileType === 'cloud' ? 'none' : '1.5px solid var(--border-color, rgba(255, 255, 255, 0.3))',
-                    background: createProfileType === 'cloud' ? 'var(--accent)' : 'transparent',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center'
-                  }}>
-                    {createProfileType === 'cloud' && <Check size={12} color="#fff" strokeWidth={3} />}
-                  </div>
-                </div>
-
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '2px' }}>
-                  <Cloud size={18} color="var(--accent-color, #ef4444)" />
-                  <span style={{ fontSize: '0.95rem', fontWeight: 700, color: 'var(--text-primary, #fff)', fontFamily: 'Outfit, sans-serif' }}>
-                    Cloud Account
-                  </span>
-                </div>
-
-                <p style={{ margin: 0, fontSize: '0.72rem', color: 'var(--text-muted, #9ca3af)', lineHeight: 1.35, fontFamily: 'Outfit, sans-serif' }}>
-                  Docker PostgreSQL database with Redis lazy-loading cache. Multi-device sync & login.
-                </p>
-
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', marginTop: '4px', paddingTop: '6px', borderTop: '1px solid rgba(255,255,255,0.06)', fontSize: '0.7rem', color: 'var(--text-secondary, #d1d5db)' }}>
-                  <span>✓ PostgreSQL 16 Persistence</span>
-                  <span>✓ Redis Cache-Aside Speed</span>
-                </div>
-              </div>
-            </div>
-
-            {/* Error Message */}
-            {createProfileError && (
-              <div style={{
-                background: 'rgba(239, 68, 68, 0.12)',
-                border: '1px solid rgba(239, 68, 68, 0.25)',
-                color: '#ef4444',
-                fontSize: '0.78rem',
-                padding: '10px 12px',
-                borderRadius: '8px',
-                fontFamily: 'Outfit, sans-serif',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '8px'
-              }}>
-                <span>⚠️</span>
-                <span>{createProfileError}</span>
-              </div>
-            )}
-
-            {/* Form Fields */}
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '5px' }}>
-                <label style={{ fontSize: '0.8rem', color: 'var(--text-secondary, rgba(255,255,255,0.8))', fontWeight: 600, fontFamily: 'Outfit, sans-serif' }}>
-                  Profile Name <span style={{ color: 'var(--accent-color, #ef4444)' }}>*</span>
-                </label>
-                <input
-                  type="text"
-                  placeholder="e.g. Living Room, John, Personal..."
-                  value={newProfileName}
-                  onChange={e => setNewProfileName(e.target.value)}
-                  style={{
-                    background: 'var(--card-bg, #161622)',
-                    border: '1px solid var(--border-color, rgba(255, 255, 255, 0.12))',
-                    borderRadius: '8px',
-                    padding: '11px 13px',
-                    fontSize: '0.88rem',
-                    color: 'var(--text-primary, #ffffff)',
-                    outline: 'none',
-                    fontFamily: 'Outfit, sans-serif'
-                  }}
-                  onKeyDown={e => {
-                    if (e.key === 'Enter' && createProfileType === 'local') {
-                      document.getElementById('create-profile-submit-btn')?.click();
-                    }
-                  }}
-                />
-              </div>
-
-              {createProfileType === 'cloud' && (
-                <>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '5px' }}>
-                    <label style={{ fontSize: '0.8rem', color: 'var(--text-secondary, rgba(255,255,255,0.8))', fontWeight: 600, fontFamily: 'Outfit, sans-serif' }}>
-                      Username <span style={{ color: 'var(--accent-color, #ef4444)' }}>*</span>
-                    </label>
-                    <input
-                      type="text"
-                      placeholder="Enter account username..."
-                      value={newProfileUsername}
-                      onChange={e => setNewProfileUsername(e.target.value)}
-                      style={{
-                        background: 'var(--card-bg, #161622)',
-                        border: '1px solid var(--border-color, rgba(255, 255, 255, 0.12))',
-                        borderRadius: '8px',
-                        padding: '11px 13px',
-                        fontSize: '0.88rem',
-                        color: 'var(--text-primary, #ffffff)',
-                        outline: 'none',
-                        fontFamily: 'Outfit, sans-serif'
-                      }}
-                    />
-                  </div>
-
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '5px' }}>
-                    <label style={{ fontSize: '0.8rem', color: 'var(--text-secondary, rgba(255,255,255,0.8))', fontWeight: 600, fontFamily: 'Outfit, sans-serif' }}>
-                      Password <span style={{ color: 'var(--accent-color, #ef4444)' }}>*</span>
-                    </label>
-                    <input
-                      type="password"
-                      placeholder="••••••••••••"
-                      value={newProfilePassword}
-                      onChange={e => setNewProfilePassword(e.target.value)}
-                      style={{
-                        background: 'var(--card-bg, #161622)',
-                        border: '1px solid var(--border-color, rgba(255, 255, 255, 0.12))',
-                        borderRadius: '8px',
-                        padding: '11px 13px',
-                        fontSize: '0.88rem',
-                        color: 'var(--text-primary, #ffffff)',
-                        outline: 'none',
-                        fontFamily: 'Outfit, sans-serif'
-                      }}
-                      onKeyDown={e => {
-                        if (e.key === 'Enter') {
-                          document.getElementById('create-profile-submit-btn')?.click();
-                        }
-                      }}
-                    />
-                  </div>
-                </>
-              )}
-            </div>
-
-            {/* Action Buttons */}
-            <div style={{ display: 'flex', gap: '10px', marginTop: '6px' }}>
-              <button
-                type="button"
-                onClick={() => {
-                  setIsCreateProfileModalOpen(false);
-                  setCreateProfileError('');
-                }}
-                style={{
-                  flex: 1,
-                  background: 'var(--surface-hover, rgba(255, 255, 255, 0.06))',
-                  border: '1px solid var(--border-color, rgba(255, 255, 255, 0.1))',
-                  color: 'var(--text-secondary, #d1d5db)',
-                  padding: '12px',
-                  fontSize: '0.88rem',
-                  borderRadius: '10px',
-                  cursor: 'pointer',
-                  fontWeight: 600,
-                  fontFamily: 'Outfit, sans-serif',
-                  transition: 'background 0.2s'
-                }}
-                onMouseEnter={e => e.currentTarget.style.background = 'rgba(255, 255, 255, 0.1)'}
-                onMouseLeave={e => e.currentTarget.style.background = 'var(--surface-hover, rgba(255, 255, 255, 0.06))'}
-              >
-                Cancel
-              </button>
-
-              <button
-                id="create-profile-submit-btn"
-                type="button"
-                onClick={async () => {
-                  setCreateProfileError('');
-                  if (!newProfileName.trim()) {
-                    setCreateProfileError('Profile name is required');
-                    return;
-                  }
-
-                  if (createProfileType === 'cloud') {
-                    if (!newProfileUsername.trim()) {
-                      setCreateProfileError('Username is required for Cloud Account');
-                      return;
-                    }
-                    if (!newProfilePassword) {
-                      setCreateProfileError('Password is required for Cloud Account');
-                      return;
-                    }
-
-                    try {
-                      const res = await secureFetch(`${BACKEND_ORIGIN}/api/profile/migrate`, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ 
-                          name: newProfileName.trim(), 
-                          username: newProfileUsername.trim(),
-                          password: newProfilePassword,
-                          isSignUp: true,
-                          isLoggedIn: true,
-                          settings: { 
-                            ...settings, 
-                            profileName: newProfileName.trim(),
-                            storageMode: 'file',
-                            experienceMode: 'cloud',
-                            isOnboarded: true 
-                          },
-                          history: [] 
-                        })
-                      });
-                      const resData = await res.json();
-                      if (resData.success) {
-                        localStorage.setItem('valor_active_user_id', resData.userId);
-                        localStorage.setItem('valor_logged_in_username', newProfileUsername.trim());
-                        const newSettings = {
-                          ...defaultSettings,
-                          userId: resData.userId,
-                          profileName: newProfileName.trim(),
-                          storageMode: 'file' as const,
-                          experienceMode: 'cloud' as const,
-                          isOnboarded: true
-                        };
-                        setSettings(newSettings);
-                        setVideos([]);
-                        addToast(`Successfully created Cloud Account: ${newProfileName.trim()}`, 'success');
-                        setIsCreateProfileModalOpen(false);
-                        await fetchProfiles();
-                      } else {
-                        setCreateProfileError(resData.error || 'Failed to create cloud account');
-                      }
-                    } catch (err: any) {
-                      setCreateProfileError(err.message || 'Creation failed.');
-                    }
-                  } else {
-                    // Local Account Creation
-                    const newUserId = 'local_' + Math.random().toString(36).substring(2, 11);
-                    localStorage.setItem('valor_active_user_id', newUserId);
-                    
-                    let localProfiles = [];
-                    try {
-                      const localSaved = localStorage.getItem('valor_local_profiles');
-                      if (localSaved) localProfiles = JSON.parse(localSaved);
-                    } catch {}
-                    
-                    const newProfile = {
-                      userId: newUserId,
-                      name: newProfileName.trim(),
-                      storageMode: 'localstorage',
-                      hasPassword: false
-                    };
-                    localProfiles.push(newProfile);
-                    localStorage.setItem('valor_local_profiles', JSON.stringify(localProfiles));
-                    
-                    const newSettings = {
-                      ...defaultSettings,
-                      profileName: newProfileName.trim(),
-                      userId: newUserId,
-                      storageMode: 'localstorage' as const,
-                      experienceMode: 'local' as const,
-                      isOnboarded: true
-                    };
-                    try {
-                      const settingsKey = `valor_settings_${newUserId}`;
-                      localStorage.setItem(settingsKey, JSON.stringify(newSettings));
-                    } catch {}
-                    
-                    setSettings(newSettings);
-                    setVideos([]);
-                    addToast(`Successfully created Local Profile: ${newProfileName.trim()}`, 'success');
-                    setIsCreateProfileModalOpen(false);
-                    await fetchProfiles();
-                  }
-                }}
-                style={{
-                  flex: 2,
-                  background: createProfileType === 'cloud' 
-                    ? 'linear-gradient(135deg, var(--accent), #9b040c)' 
-                    : 'linear-gradient(135deg, #10b981, #059669)',
-                  border: 'none',
-                  color: '#ffffff',
-                  padding: '12px',
-                  fontSize: '0.88rem',
-                  borderRadius: '10px',
-                  cursor: 'pointer',
-                  fontWeight: 600,
-                  transition: 'opacity 0.2s',
-                  fontFamily: 'Outfit, sans-serif',
-                  boxShadow: createProfileType === 'cloud' 
-                    ? '0 4px 16px rgba(229, 9, 20, 0.3)' 
-                    : '0 4px 16px rgba(16, 185, 129, 0.3)'
-                }}
-                onMouseEnter={e => e.currentTarget.style.opacity = '0.9'}
-                onMouseLeave={e => e.currentTarget.style.opacity = '1'}
-              >
-                {createProfileType === 'cloud' ? 'Create Cloud Account & Sync' : 'Create Local Account'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      {/* Modal 2: "Create Account" (account type picker) */}
+      <CreateAccountModal
+        isOpen={isCreateProfileModalOpen}
+        onClose={() => setIsCreateProfileModalOpen(false)}
+        settings={settings}
+        setSettings={setSettings}
+        saveSettingsToStorage={saveSettingsToStorage}
+        setVideos={setVideos}
+        addToast={addToast}
+        fetchProfiles={fetchProfiles}
+        defaultSettings={defaultSettings}
+        onAuthSuccess={onAuthSuccess ? (uid) => {
+          if (onAuthSuccess) onAuthSuccess(uid);
+        } : undefined}
+      />
 
       {/* Delete Confirmation Modal */}
       {isDeleteModalOpen && (
@@ -4697,16 +3758,17 @@ function App() {
           animation: 'fadeIn 0.2s ease-out'
         }}>
           <div style={{
-            width: '380px',
-            background: 'rgba(22,22,22,0.95)',
-            border: '1px solid rgba(239,68,68,0.2)',
-            borderRadius: '12px',
-            boxShadow: '0 25px 50px -12px rgba(0,0,0,0.7)',
+            width: '400px',
+            background: '#121622',
+            border: '1px solid rgba(239, 68, 68, 0.25)',
+            borderRadius: '18px',
+            boxShadow: '0 25px 60px rgba(0, 0, 0, 0.8), 0 0 35px rgba(239, 68, 68, 0.15)',
             overflow: 'hidden',
-            padding: '24px',
+            padding: '26px 22px',
             display: 'flex',
             flexDirection: 'column',
             gap: '16px',
+            fontFamily: 'Outfit, sans-serif',
             animation: 'scaleIn 0.3s cubic-bezier(0.34, 1.56, 0.64, 1)'
           }}>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
@@ -4935,16 +3997,17 @@ function App() {
           animation: 'fadeIn 0.2s ease-out'
         }}>
           <div style={{
-            width: '380px',
-            background: 'rgba(22,22,22,0.95)',
-            border: '1px solid rgba(255,255,255,0.08)',
-            borderRadius: '12px',
-            boxShadow: '0 25px 50px -12px rgba(0,0,0,0.7)',
+            width: '400px',
+            background: '#121622',
+            border: '1px solid rgba(255, 255, 255, 0.08)',
+            borderRadius: '18px',
+            boxShadow: '0 25px 60px rgba(0, 0, 0, 0.8), 0 0 35px rgba(99, 102, 241, 0.15)',
             overflow: 'hidden',
-            padding: '24px',
+            padding: '26px 22px',
             display: 'flex',
             flexDirection: 'column',
             gap: '16px',
+            fontFamily: 'Outfit, sans-serif',
             animation: 'scaleIn 0.3s cubic-bezier(0.34, 1.56, 0.64, 1)'
           }}>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>

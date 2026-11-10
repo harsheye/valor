@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { X, Server, Bookmark, List, Play } from 'lucide-react';
 import { PlayerIsland } from './player';
+import { useAutoLandscape } from '../utils/screenOrientation';
 import type { VideoItem } from '../types/media';
 
 interface OnlineEmbedPlayerProps {
@@ -20,6 +21,7 @@ export const OnlineEmbedPlayer: React.FC<OnlineEmbedPlayerProps> = ({
   onAddBookmark,
   tmdbApiKey
 }) => {
+  useAutoLandscape(true);
   const [server, setServer] = useState<'videasy' | 'vidking'>('videasy');
   const [currentTime, setCurrentTime] = useState(video.currentTime || 0);
   const [duration, setDuration] = useState(0);

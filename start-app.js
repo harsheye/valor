@@ -20,6 +20,7 @@ import { outboundWebhookManager } from './server/realtime/outboundWebhooks.js';
 import { auditLogger } from './server/realtime/auditLogger.js';
 import { analyticsAndAdminManager } from './server/realtime/playbackQuality.js';
 import { AutoUpdater } from './server/updater/autoUpdater.js';
+import { handleAuthRoutes } from './server/auth/authController.js';
 
 try {
   dns.setDefaultResultOrder('ipv4first');
@@ -743,6 +744,10 @@ const backendServer = http.createServer(async (req, res) => {
   // Real-Time Event Portal Admin API Routes (Stream, Snapshot, Alerts, Webhooks, etc.)
   const handledRealtime = await handleAdminRealtimeRoutes(req, res, pathname, parsedUrl, cleanClientIp, getJsonBody, isValidAdminToken, dataStore);
   if (handledRealtime) return;
+
+  // Authentication Routes (POST /auth/signup, POST /auth/login, POST /auth/logout, GET /auth/me)
+  const handledAuth = await handleAuthRoutes(req, res, pathname, parsedUrl, cleanClientIp, getJsonBody, dataStore, isProd);
+  if (handledAuth) return;
 
   // Webhook Ingestion Receiver (For external embeds, player telemetry, and video events)
   if ((pathname === '/api/webhook' || pathname === '/api/webhook/visitor') && req.method === 'POST') {

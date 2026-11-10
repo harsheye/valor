@@ -53,7 +53,10 @@ export const SkipIntroButton: React.FC<SkipIntroButtonProps> = ({ bookmark, onSk
       <SkipForward size={16} color="var(--accent)" />
       Skip {displayLabel}
       {shortcutHint && (
-        <span style={{ fontSize: '11px', opacity: 0.6, marginLeft: '4px', padding: '2px 5px', borderRadius: '4px', background: 'rgba(255,255,255,0.1)' }}>
+        <span
+          className="shortcut-hint-badge desktop-only-setting"
+          style={{ fontSize: '11px', opacity: 0.6, marginLeft: '4px', padding: '2px 5px', borderRadius: '4px', background: 'rgba(255,255,255,0.1)' }}
+        >
           {shortcutHint}
         </span>
       )}

@@ -12,24 +12,6 @@ interface OnlineStreamPageProps {
   videos?: VideoItem[];
 }
 
-const SAMPLE_STREAMS = [
-  {
-    title: 'Big Buck Bunny',
-    type: 'HLS · 1080p test',
-    url: 'https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8',
-    initial: 'B',
-    bg: '#7a1b26',
-    color: '#ff8a95'
-  },
-  {
-    title: 'Tears of Steel',
-    type: 'MP4 · 4K test',
-    url: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/TearsOfSteel.mp4',
-    initial: 'T',
-    bg: '#1a365d',
-    color: '#90cdf4'
-  }
-];
 
 export const OnlineStreamPage: React.FC<OnlineStreamPageProps> = ({
   onSelectMedia,
@@ -39,7 +21,7 @@ export const OnlineStreamPage: React.FC<OnlineStreamPageProps> = ({
   videos = []
 }) => {
   const [streamUrl, setStreamUrl] = useState('');
-  const [mobileMode, setMobileMode] = useState<'url' | 'tmdb'>('url');
+  const [mobileMode, setMobileMode] = useState<'url' | 'tmdb'>('tmdb');
 
   const handleStreamSubmit = (e?: React.FormEvent, urlOverride?: string, titleOverride?: string) => {
     if (e) e.preventDefault();
@@ -70,32 +52,68 @@ export const OnlineStreamPage: React.FC<OnlineStreamPageProps> = ({
       }}
     >
       {/* Mobile Stream View (<= 768px) */}
-      <div className="mobile-stream-container">
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '14px' }}>
-          <h1 style={{ fontSize: '26px', fontWeight: 700, margin: 0, color: 'var(--tx, var(--text-1))', letterSpacing: '-0.02em' }}>
-            Online Stream
-          </h1>
-          {/* Toggle between URL streamer and TMDB explore on mobile */}
-          <button
-            type="button"
-            onClick={() => setMobileMode(m => m === 'url' ? 'tmdb' : 'url')}
-            style={{
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: '6px',
-              padding: '6px 12px',
-              borderRadius: '20px',
-              background: 'var(--s1, var(--surface-1))',
-              border: '1px solid var(--ln, var(--border))',
-              color: 'var(--ac, var(--accent))',
-              fontSize: '12px',
-              fontWeight: 600,
-              cursor: 'pointer'
-            }}
-          >
-            <Sparkles size={13} />
-            <span>{mobileMode === 'url' ? 'Explore TMDB' : 'Stream URL'}</span>
-          </button>
+      <div className={`mobile-stream-container ${mobileMode === 'tmdb' ? 'mode-tmdb' : ''}`}>
+        <div style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          padding: mobileMode === 'tmdb' ? '8px 12px 6px 12px' : '0 0 14px 0',
+          borderBottom: mobileMode === 'tmdb' ? '1px solid var(--border)' : 'none',
+          background: 'var(--bg)',
+          flexShrink: 0
+        }}>
+          <div style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: '4px',
+            background: 'var(--surface-2)',
+            padding: '3px',
+            borderRadius: '20px',
+            border: '1px solid var(--border)'
+          }}>
+            <button
+              type="button"
+              onClick={() => setMobileMode('tmdb')}
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '5px',
+                padding: '5px 13px',
+                borderRadius: '16px',
+                background: mobileMode === 'tmdb' ? 'var(--accent)' : 'transparent',
+                color: mobileMode === 'tmdb' ? '#fff' : 'var(--text-3)',
+                border: 'none',
+                fontSize: '12px',
+                fontWeight: 600,
+                cursor: 'pointer',
+                transition: 'all 0.15s ease'
+              }}
+            >
+              <Sparkles size={12} />
+              <span>Explore TMDB</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setMobileMode('url')}
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '5px',
+                padding: '5px 13px',
+                borderRadius: '16px',
+                background: mobileMode === 'url' ? 'var(--accent)' : 'transparent',
+                color: mobileMode === 'url' ? '#fff' : 'var(--text-3)',
+                border: 'none',
+                fontSize: '12px',
+                fontWeight: 600,
+                cursor: 'pointer',
+                transition: 'all 0.15s ease'
+              }}
+            >
+              <Link2 size={12} />
+              <span>Stream URL</span>
+            </button>
+          </div>
         </div>
 
         {mobileMode === 'url' ? (
@@ -180,83 +198,6 @@ export const OnlineStreamPage: React.FC<OnlineStreamPageProps> = ({
                 </button>
               </form>
             </div>
-
-            {/* Sample Streams Section */}
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-              <span style={{ fontSize: '12px', fontWeight: 700, letterSpacing: '0.05em', color: 'var(--mut, var(--text-3))', textTransform: 'uppercase' }}>
-                Sample Streams
-              </span>
-
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                {SAMPLE_STREAMS.map((sample) => (
-                  <div
-                    key={sample.title}
-                    onClick={() => {
-                      setStreamUrl(sample.url);
-                      handleStreamSubmit(undefined, sample.url, sample.title);
-                    }}
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'space-between',
-                      background: 'var(--s1, var(--surface-1))',
-                      border: '1px solid var(--ln, var(--border))',
-                      borderRadius: '16px',
-                      padding: '12px 14px',
-                      cursor: 'pointer',
-                      transition: 'background 0.15s ease'
-                    }}
-                  >
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px', minWidth: 0 }}>
-                      <div
-                        style={{
-                          width: '42px',
-                          height: '42px',
-                          borderRadius: '12px',
-                          background: sample.bg,
-                          color: sample.color,
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                          fontSize: '17px',
-                          fontWeight: 700,
-                          flexShrink: 0
-                        }}
-                      >
-                        {sample.initial}
-                      </div>
-                      <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}>
-                        <span style={{ fontSize: '15px', fontWeight: 600, color: 'var(--tx, var(--text-1))', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                          {sample.title}
-                        </span>
-                        <span style={{ fontSize: '12px', color: 'var(--mut, var(--text-3))' }}>
-                          {sample.type}
-                        </span>
-                      </div>
-                    </div>
-
-                    <button
-                      type="button"
-                      style={{
-                        width: '36px',
-                        height: '36px',
-                        borderRadius: '50%',
-                        background: 'var(--ac, var(--accent))',
-                        color: 'var(--on, #fff)',
-                        border: 'none',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        flexShrink: 0,
-                        cursor: 'pointer'
-                      }}
-                    >
-                      <Play size={16} fill="currentColor" />
-                    </button>
-                  </div>
-                ))}
-              </div>
-            </div>
           </div>
         ) : (
           <div style={{ flex: 1, minHeight: 0, overflow: 'auto' }}>
@@ -291,6 +232,11 @@ export const OnlineStreamPage: React.FC<OnlineStreamPageProps> = ({
           overflow-y: auto;
           padding: 10px 14px 80px 14px;
           box-sizing: border-box;
+        }
+
+        .mobile-stream-container.mode-tmdb {
+          padding: 0 !important;
+          overflow: hidden !important;
         }
 
         .desktop-stream-container {

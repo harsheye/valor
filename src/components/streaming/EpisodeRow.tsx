@@ -18,6 +18,7 @@ interface EpisodeListProps {
   currentSeason?: number;
   onSeasonChange?: (season: number) => void;
   loading?: boolean;
+  fallbackBackdrop?: string;
 }
 
 export const EpisodeList: React.FC<EpisodeListProps> = ({
@@ -26,11 +27,13 @@ export const EpisodeList: React.FC<EpisodeListProps> = ({
   seasons,
   currentSeason = 1,
   onSeasonChange,
-  loading = false
+  loading = false,
+  fallbackBackdrop
 }) => {
   return (
     <section
       aria-label="Episodes list"
+      className="streaming-episodes-section"
       style={{
         width: '100%',
         maxWidth: '1440px',
@@ -103,6 +106,7 @@ export const EpisodeList: React.FC<EpisodeListProps> = ({
         {episodes.map((ep, idx) => {
           const hasProgress = ep.progress !== undefined && ep.progress > 0;
           const progressPercent = Math.min(100, Math.round((ep.progress || 0) * 100));
+          const thumbnailImg = ep.stillPath || fallbackBackdrop;
 
           return (
             <div
@@ -117,163 +121,66 @@ export const EpisodeList: React.FC<EpisodeListProps> = ({
                 }
               }}
               aria-label={`Play episode ${ep.episodeNumber}: ${ep.name}`}
-              className="streaming-poster-card"
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: 'var(--space-4)',
-                padding: 'var(--space-3) var(--space-4)',
-                background: 'var(--surface-1)',
-                border: '1px solid var(--border)',
-                borderRadius: 'var(--radius-md)',
-                cursor: 'pointer',
-                outline: 'none',
-                position: 'relative',
-                boxSizing: 'border-box'
-              }}
+              className="streaming-episode-row"
             >
               {/* Episode Number */}
-              <span
-                style={{
-                  fontSize: '1.1rem',
-                  fontWeight: 700,
-                  color: 'var(--text-3)',
-                  minWidth: '24px',
-                  textAlign: 'center',
-                  fontVariantNumeric: 'tabular-nums'
-                }}
-              >
+              <span className="streaming-episode-number">
                 {ep.episodeNumber}
               </span>
 
               {/* 16:9 Thumbnail with play overlay on hover */}
-              <div
-                style={{
-                  width: '144px',
-                  minWidth: '144px',
-                  aspectRatio: '16/9',
-                  borderRadius: 'var(--radius-sm)',
-                  backgroundColor: 'var(--surface-2)',
-                  backgroundImage: ep.stillPath ? `url("${ep.stillPath}")` : 'none',
-                  backgroundSize: 'cover',
-                  backgroundPosition: 'top center',
-                  backgroundRepeat: 'no-repeat',
-                  position: 'relative',
-                  overflow: 'hidden',
-                  flexShrink: 0,
-                  border: '1px solid var(--border)',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center'
-                }}
-              >
-                {/* Hover Play Overlay */}
-                <div
-                  style={{
-                    position: 'absolute',
-                    inset: 0,
-                    background: 'rgba(0,0,0,0.4)',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    transition: 'opacity 0.15s ease'
-                  }}
-                >
-                  <div
-                    style={{
-                      width: '32px',
-                      height: '32px',
-                      borderRadius: '50%',
-                      background: 'var(--accent-fill)',
-                      color: 'var(--on-accent)',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      boxShadow: '0 2px 8px rgba(0,0,0,0.5)'
+              <div className="streaming-episode-row-thumbnail">
+                {thumbnailImg ? (
+                  <img
+                    src={thumbnailImg}
+                    alt={ep.name}
+                    loading="lazy"
+                    className="streaming-episode-thumbnail-img"
+                    onError={(e) => {
+                      (e.target as HTMLElement).style.display = 'none';
                     }}
-                  >
-                    <Play size={14} fill="currentColor" style={{ marginLeft: '2px' }} />
+                  />
+                ) : (
+                  <div className="streaming-episode-thumbnail-fallback">
+                    <span>EP {ep.episodeNumber}</span>
+                  </div>
+                )}
+
+                {/* Hover Play Overlay */}
+                <div className="streaming-episode-row-play">
+                  <div className="streaming-episode-play-circle">
+                    <Play size={16} fill="currentColor" style={{ marginLeft: '2px' }} />
                   </div>
                 </div>
 
-                {/* Thin --accent progress bar if started */}
+                {/* Progress bar if started */}
                 {hasProgress && (
-                  <div
-                    style={{
-                      position: 'absolute',
-                      bottom: 0,
-                      left: 0,
-                      right: 0,
-                      height: '3px',
-                      background: 'rgba(255, 255, 255, 0.25)'
-                    }}
-                  >
+                  <div className="streaming-episode-progress-track">
                     <div
-                      style={{
-                        width: `${progressPercent}%`,
-                        height: '100%',
-                        background: 'var(--accent)'
-                      }}
+                      className="streaming-episode-progress-fill"
+                      style={{ width: `${progressPercent}%` }}
                     />
                   </div>
                 )}
               </div>
 
-              {/* Episode Title & 2-line Synopsis */}
-              <div
-                style={{
-                  display: 'flex',
-                  flexDirection: 'column',
-                  gap: '4px',
-                  flex: 1,
-                  minWidth: 0
-                }}
-              >
-                <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}>
-                  {/* EP Chip */}
-                  <span
-                    style={{
-                      fontSize: '0.72rem',
-                      fontWeight: 700,
-                      color: 'var(--accent)',
-                      background: 'var(--accent-soft)',
-                      padding: '1px 6px',
-                      borderRadius: '4px',
-                      fontVariantNumeric: 'tabular-nums'
-                    }}
-                  >
+              {/* Episode Title & Synopsis */}
+              <div className="streaming-episode-row-info">
+                <div className="streaming-episode-row-title-wrap">
+                  <span className="streaming-episode-row-badge">
                     EP {ep.episodeNumber}
                   </span>
-
-                  <h3
-                    style={{
-                      margin: 0,
-                      fontSize: '0.95rem',
-                      fontWeight: 600,
-                      color: 'var(--text-1)',
-                      lineHeight: 1.3,
-                      overflow: 'hidden',
-                      textOverflow: 'ellipsis',
-                      whiteSpace: 'nowrap'
-                    }}
-                  >
+                  <h3 className="streaming-episode-row-title">
                     {ep.name}
                   </h3>
+                  {ep.runtime && (
+                    <span className="streaming-episode-row-runtime">
+                      {ep.runtime}
+                    </span>
+                  )}
                 </div>
 
-                {/* 2-line synopsis */}
-                <p
-                  style={{
-                    margin: 0,
-                    fontSize: '0.82rem',
-                    color: 'var(--text-2)',
-                    lineHeight: 1.45,
-                    display: '-webkit-box',
-                    WebkitLineClamp: 2,
-                    WebkitBoxOrient: 'vertical',
-                    overflow: 'hidden'
-                  }}
-                >
+                <p className="streaming-episode-row-overview">
                   {ep.overview || 'No description available for this episode.'}
                 </p>
               </div>

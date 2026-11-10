@@ -24,6 +24,7 @@ export const CastRail: React.FC<CastRailProps> = ({
   return (
     <section
       aria-label={title}
+      className="streaming-cast-section"
       style={{
         width: '100%',
         maxWidth: '1440px',

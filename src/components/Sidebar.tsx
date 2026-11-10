@@ -139,46 +139,49 @@ export const Sidebar: React.FC<SidebarProps> = ({
         className="app-sidebar collapsed streaming-nav-rail"
         aria-label="Main application navigation"
       >
-        {/* Top Logo */}
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: 'var(--space-2)' }}>
-          <button
-            type="button"
-            onClick={() => navigateTo('home')}
-            aria-label="Valor Home"
-            style={{
-              background: 'transparent',
-              border: 'none',
-              cursor: 'pointer',
-              padding: '4px',
-              lineHeight: 1
-            }}
-          >
-            <ValorVIcon width={24} height={26} />
-          </button>
+        {/* Top Group: Logo + Navigation Items */}
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 'var(--space-4)', width: '100%' }}>
+          {/* Top Logo */}
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <button
+              type="button"
+              onClick={() => navigateTo('home')}
+              aria-label="Valor Home"
+              style={{
+                background: 'transparent',
+                border: 'none',
+                cursor: 'pointer',
+                padding: '4px',
+                lineHeight: 1
+              }}
+            >
+              <ValorVIcon width={24} height={26} />
+            </button>
+          </div>
+
+          {/* Shrunk Nav Rail Items */}
+          <nav className="streaming-nav-group" aria-label="Sections">
+            {collapsedNavItems.map((item) => {
+              const isActive = activeTab === item.id;
+              return (
+                <button
+                  key={item.id}
+                  type="button"
+                  onClick={() => navigateTo(item.id)}
+                  className={`streaming-nav-item ${isActive ? 'active' : ''}`}
+                  aria-current={isActive ? 'page' : undefined}
+                  aria-label={item.label}
+                  title={item.label}
+                >
+                  {item.icon}
+                </button>
+              );
+            })}
+          </nav>
         </div>
 
-        {/* Shrunk Nav Rail Items */}
-        <nav className="streaming-nav-group" aria-label="Sections">
-          {collapsedNavItems.map((item) => {
-            const isActive = activeTab === item.id;
-            return (
-              <button
-                key={item.id}
-                type="button"
-                onClick={() => navigateTo(item.id)}
-                className={`streaming-nav-item ${isActive ? 'active' : ''}`}
-                aria-current={isActive ? 'page' : undefined}
-                aria-label={item.label}
-                title={item.label}
-              >
-                {item.icon}
-              </button>
-            );
-          })}
-        </nav>
-
         {/* Bottom Controls: Theme & Settings */}
-        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 'var(--space-2)', position: 'relative' }} ref={themeMenuRef}>
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 'var(--space-2)', position: 'relative', marginTop: 'auto' }} ref={themeMenuRef}>
           <button
             type="button"
             onClick={() => setIsThemeMenuOpen(prev => !prev)}
@@ -275,8 +278,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
             textAlign: 'left'
           }}
         >
-          <ValorVIcon width={22} height={24} style={{ marginRight: '2px' }} />
-          <div className="sidebar-logo">alor</div>
+          <ValorVIcon width={22} height={22} style={{ marginRight: '6px' }} />
+          <div className="sidebar-logo">Valor</div>
         </button>
       </div>
 

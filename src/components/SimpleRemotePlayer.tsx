@@ -20,6 +20,7 @@ import {
   PlayerIsland,
   usePlayerIsland
 } from './player';
+import { isMobileDevice, useAutoLandscape } from '../utils/screenOrientation';
 import type { MediaDetails } from './player/PauseDetailsOverlay';
 import { getSavedCredentials, saveCredentials, clearCredentials } from '../services/remote/mediaAuthStore';
 import { saveMediaTimestamp } from '../utils/mediaTimestampStorage';
@@ -91,11 +92,17 @@ export const SimpleRemotePlayer: React.FC<SimpleRemotePlayerProps> = ({
   const customAudioInputRef = useRef<HTMLInputElement | null>(null);
   const uiHideTimeout = propUiHideTimeout ?? (isEmbed ? 5 : 2.5);
 
-  const [isMobile, setIsMobile] = useState(() => typeof window !== 'undefined' ? window.innerWidth <= 768 : false);
+  useAutoLandscape(true, containerRef);
+
+  const [isMobile, setIsMobile] = useState(() => isMobileDevice());
   useEffect(() => {
-    const handleResize = () => setIsMobile(window.innerWidth <= 768);
+    const handleResize = () => setIsMobile(isMobileDevice());
     window.addEventListener('resize', handleResize);
-    return () => window.removeEventListener('resize', handleResize);
+    window.addEventListener('orientationchange', handleResize);
+    return () => {
+      window.removeEventListener('resize', handleResize);
+      window.removeEventListener('orientationchange', handleResize);
+    };
   }, []);
 
   // Playback & Timing State

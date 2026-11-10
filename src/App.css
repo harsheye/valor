@@ -1620,62 +1620,6 @@ html, body {
   color: var(--accent-color);
 }
 
-/* Mobile Viewports - Custom Responsive Sidebar & Bottom Nav Styles */
-@media (max-width: 768px) {
-  .app-sidebar {
-    display: none !important;
-  }
-  .navbar-logo-mobile {
-    display: block !important;
-    font-size: 1.3rem;
-    font-weight: 800;
-    color: #e50914;
-    text-shadow: 0 0 10px rgba(229, 9, 20, 0.2);
-  }
-  .mobile-bottom-nav {
-    display: flex !important;
-    position: fixed;
-    bottom: 0;
-    left: 0;
-    right: 0;
-    height: 64px;
-    background: rgba(18, 18, 18, 0.96);
-    backdrop-filter: blur(20px);
-    -webkit-backdrop-filter: blur(20px);
-    border-top: 1px solid rgba(255, 255, 255, 0.05);
-    justify-content: space-around;
-    align-items: center;
-    z-index: 500;
-    padding: 0 1rem;
-    box-sizing: border-box;
-  }
-  .mobile-bottom-nav-item {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    gap: 4px;
-    background: none;
-    border: none;
-    color: #888;
-    font-size: 0.75rem;
-    font-weight: 600;
-    cursor: pointer;
-    transition: all 0.2s ease;
-    flex: 1;
-    height: 100%;
-  }
-  .mobile-bottom-nav-item:hover {
-    color: #ccc;
-  }
-  .mobile-bottom-nav-item.active {
-    color: #e50914;
-  }
-  .main-layout-wrapper {
-    height: calc(100vh - 64px);
-    overflow-y: auto;
-  }
-}
 
 @media (max-width: 580px) {
   .premium-red-banner {
@@ -1747,8 +1691,10 @@ h1, .page-title {
   .mobile-tap-text {
     display: block !important;
   }
-  /* Hide desktop sidebar on mobile */
-  .app-sidebar {
+  /* Hide desktop sidebar and desktop-only elements on mobile */
+  .app-sidebar,
+  .desktop-only-setting,
+  .shortcut-hint-badge {
     display: none !important;
   }
 
@@ -1757,7 +1703,10 @@ h1, .page-title {
     width: 100% !important;
     max-width: 100% !important;
     padding: 0 !important;
-    overflow-x: hidden !important;
+    overflow: hidden !important;
+    height: 100vh !important;
+    display: flex !important;
+    flex-direction: column !important;
   }
 
   /* Main content mobile scroll container */
@@ -1789,6 +1738,12 @@ h1, .page-title {
   .home-page-content-wrapper {
     padding: 0 0 20px 0 !important;
     min-height: auto !important;
+  }
+
+  /* Full-bleed media details & actor containers on mobile */
+  .sidebar-collapsed .media-details-content-wrapper,
+  .sidebar-collapsed .actor-details-container {
+    padding: 0 0 40px 0 !important;
   }
 
   /* Continue watching card stacked on mobile with full-width progress & button */
@@ -1849,23 +1804,26 @@ h1, .page-title {
     box-sizing: border-box !important;
   }
 
-  /* Minimum touch target 40px */
-  button,
+  /* Minimum touch target */
   .btn,
   .icon-btn,
-  [role="button"],
   .mobile-touch-target {
     min-height: 40px;
     min-width: 40px;
     box-sizing: border-box;
   }
 
+  /* Inline URL stream row responsive wrap */
+  .url-form-row {
+    flex-wrap: wrap;
+  }
+
   /* Safe areas on top and bottom bars */
   .mobile-top-bar {
-    padding-top: max(12px, env(safe-area-inset-top, 12px));
+    padding-top: max(10px, env(safe-area-inset-top, 10px));
     padding-left: max(16px, env(safe-area-inset-left, 16px));
     padding-right: max(16px, env(safe-area-inset-right, 16px));
-    padding-bottom: 8px;
+    padding-bottom: 10px;
   }
 
   .mobile-bottom-nav {

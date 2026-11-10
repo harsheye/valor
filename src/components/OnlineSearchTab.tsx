@@ -510,6 +510,7 @@ export const OnlineSearchTab: React.FC<OnlineSearchTabProps> = ({
     >
       {/* Sticky Top Bar with Segmented Control & Pill Search Input */}
       <header
+        className="online-search-header"
         style={{
           position: 'sticky',
           top: 0,
@@ -558,6 +559,7 @@ export const OnlineSearchTab: React.FC<OnlineSearchTabProps> = ({
 
       {/* Main Content Area */}
       <main
+        className="online-search-content"
         style={{
           width: '100%',
           maxWidth: 'var(--page-max-width, 1400px)',
@@ -722,15 +724,7 @@ export const OnlineSearchTab: React.FC<OnlineSearchTabProps> = ({
                 </div>
               </div>
             ) : (
-              <div
-                style={{
-                  display: 'grid',
-                  gridTemplateColumns: 'repeat(auto-fill, minmax(168px, 1fr))',
-                  gap: 'var(--space-5)',
-                  width: '100%',
-                  boxSizing: 'border-box'
-                }}
-              >
+              <div className="online-stream-grid">
                 {filteredSearchResults.map((item, idx) => (
                   <PosterCard
                     key={`search-${item.type}-${item.id}`}
@@ -790,57 +784,22 @@ export const OnlineSearchTab: React.FC<OnlineSearchTabProps> = ({
                   </span>
                 </div>
 
-                <div
-                  style={{
-                    display: 'grid',
-                    gridTemplateColumns: 'repeat(auto-fill, minmax(168px, 1fr))',
-                    gap: 'var(--space-5)',
-                    width: '100%',
-                    boxSizing: 'border-box'
-                  }}
-                >
+                <div className="online-stream-grid">
                   {filteredHistory.map((item, idx) => (
-                    <div
+                    <PosterCard
                       key={`hist-${item.id}`}
-                      style={{ position: 'relative', display: 'flex', flexDirection: 'column' }}
-                    >
-                      <PosterCard
-                        item={{
-                          id: item.id,
-                          title: item.title,
-                          posterPath: item.posterPath,
-                          year: item.year,
-                          type: item.type,
-                          quality: item.seasonEpisode || 'History'
-                        }}
-                        onClick={() => handleCardClick(item)}
-                        index={idx}
-                      />
-                      {/* Play Action / Progress Bar Indicator */}
-                      {item.progressPercent !== undefined && item.progressPercent > 0 && (
-                        <div
-                          style={{
-                            position: 'relative',
-                            marginTop: '-12px',
-                            marginBottom: '10px',
-                            width: '100%',
-                            height: '4px',
-                            background: 'rgba(255, 255, 255, 0.15)',
-                            borderRadius: '2px',
-                            overflow: 'hidden',
-                            zIndex: 2
-                          }}
-                        >
-                          <div
-                            style={{
-                              width: `${item.progressPercent}%`,
-                              height: '100%',
-                              background: 'var(--accent)'
-                            }}
-                          />
-                        </div>
-                      )}
-                    </div>
+                      item={{
+                        id: item.id,
+                        title: item.title,
+                        posterPath: item.posterPath,
+                        year: item.year,
+                        type: item.type,
+                        quality: item.seasonEpisode || 'History',
+                        progressPercent: item.progressPercent
+                      }}
+                      onClick={() => handleCardClick(item)}
+                      index={idx}
+                    />
                   ))}
                 </div>
               </section>
@@ -897,15 +856,7 @@ export const OnlineSearchTab: React.FC<OnlineSearchTabProps> = ({
                 </div>
               </div>
 
-              <div
-                style={{
-                  display: 'grid',
-                  gridTemplateColumns: 'repeat(auto-fill, minmax(168px, 1fr))',
-                  gap: 'var(--space-5)',
-                  width: '100%',
-                  boxSizing: 'border-box'
-                }}
-              >
+              <div className="online-stream-grid">
                 {filteredRecommended.map((item, idx) => (
                   <PosterCard
                     key={`rec-${item.type}-${item.id}`}
@@ -959,15 +910,7 @@ export const OnlineSearchTab: React.FC<OnlineSearchTabProps> = ({
                 </span>
               </div>
 
-              <div
-                style={{
-                  display: 'grid',
-                  gridTemplateColumns: 'repeat(auto-fill, minmax(168px, 1fr))',
-                  gap: 'var(--space-5)',
-                  width: '100%',
-                  boxSizing: 'border-box'
-                }}
-              >
+              <div className="online-stream-grid">
                 {filteredTrending.map((item, idx) => (
                   <PosterCard
                     key={`trend-${item.type}-${item.id}`}

@@ -22,7 +22,7 @@ export const Rail: React.FC<RailProps> = ({
   return (
     <section
       aria-label={title}
-      className={className}
+      className={`streaming-recommendations-section ${className}`}
       style={{
         width: '100%',
         maxWidth: '1440px',

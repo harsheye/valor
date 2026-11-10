@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { 
   SettingsNav, 
   type SettingsSectionId,
@@ -20,7 +20,8 @@ import {
 } from '../components/settings';
 import { 
   User, Plus, RefreshCw, Copy, Check, RotateCcw, 
-  RotateCcw as RestoreIcon, ChevronRight, ArrowLeft, Radio
+  RotateCcw as RestoreIcon, ChevronRight, ArrowLeft, Radio,
+  Clock, Captions, Volume2, LayoutGrid, Monitor, Cloud, Download, Upload, Trash2, ShieldAlert
 } from 'lucide-react';
 import { PlayerLoader } from '../components/player/PlayerLoader';
 import { sidecarService } from '../services/remote/sidecarService';
@@ -119,6 +120,8 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
   setDeleteTargetProfile,
   setIsCreateProfileModalOpen,
   renderMockPreviewButton,
+  addToast,
+  setVideos,
 }) => {
   const resolveSectionId = (tab?: string): SettingsSectionId => {
     switch (tab) {
@@ -153,7 +156,13 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
   };
 
   const [activeSection, setActiveSection] = useState<SettingsSectionId>(() => resolveSectionId(settingsTab));
-  const [mobileDetail, setMobileDetail] = useState<SettingsSectionId | null>(() => settingsTab ? resolveSectionId(settingsTab) : null);
+  // On mobile (<= 768px), start at root menu (null). On desktop (> 768px), start on active section
+  const [mobileDetail, setMobileDetail] = useState<SettingsSectionId | null>(() => {
+    if (typeof window !== 'undefined' && window.innerWidth <= 768) {
+      return null;
+    }
+    return settingsTab ? resolveSectionId(settingsTab) : null;
+  });
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [showSavedToast, setShowSavedToast] = useState<boolean>(false);
   const [toastMessage, setToastMessage] = useState<string>('Saved');
@@ -233,7 +242,9 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
     if (settingsTab) {
       const resolved = resolveSectionId(settingsTab);
       setActiveSection(resolved);
-      setMobileDetail(resolved);
+      if (typeof window !== 'undefined' && window.innerWidth > 768) {
+        setMobileDetail(resolved);
+      }
     }
   }, [settingsTab]);
 
@@ -255,6 +266,70 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
     handleDefaultLangChange(field, val);
     triggerAutosaveToast();
   }, [handleDefaultLangChange, triggerAutosaveToast]);
+
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const handleExportBackup = useCallback(() => {
+    try {
+      const activeName = settings.profileName || 'Local Profile';
+      const k = settings.userId === 'local' ? 'valor_videos' : `valor_videos_${settings.userId}`;
+      let localHistory = [];
+      try {
+        localHistory = JSON.parse(localStorage.getItem(k) || '[]');
+      } catch {}
+
+      const exportData = {
+        version: 1,
+        exportedAt: new Date().toISOString(),
+        profileName: activeName,
+        userId: settings.userId,
+        settings,
+        localHistory,
+      };
+
+      const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `valor_backup_${activeName.toLowerCase().replace(/[^a-z0-9]/g, '_')}_${new Date().toISOString().slice(0, 10)}.json`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      triggerAutosaveToast('Backup exported successfully');
+    } catch {
+      triggerAutosaveToast('Failed to export backup');
+    }
+  }, [settings, triggerAutosaveToast]);
+
+  const handleImportBackup = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      try {
+        const text = event.target?.result as string;
+        const data = JSON.parse(text);
+        if (data && data.settings) {
+          const mergedSettings = { ...settings, ...data.settings };
+          setSettings(mergedSettings);
+          saveSettingsToStorage(mergedSettings);
+          if (Array.isArray(data.localHistory)) {
+            const k = settings.userId === 'local' ? 'valor_videos' : `valor_videos_${settings.userId}`;
+            localStorage.setItem(k, JSON.stringify(data.localHistory));
+            if (setVideos) setVideos(data.localHistory);
+          }
+          triggerAutosaveToast('Backup restored successfully!');
+        } else {
+          triggerAutosaveToast('Invalid backup file structure');
+        }
+      } catch {
+        triggerAutosaveToast('Failed to parse backup JSON');
+      }
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    };
+    reader.readAsText(file);
+  }, [settings, setSettings, saveSettingsToStorage, setVideos, triggerAutosaveToast]);
 
   // Subscribe to Sidecar health
   useEffect(() => {
@@ -415,7 +490,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
   };
 
   return (
-    <div className="settings-workspace" role="region" aria-label="Settings Area">
+    <div className={`settings-workspace ${mobileDetail ? 'mobile-detail-active' : ''}`} role="region" aria-label="Settings Area">
       {/* Mobile Settings View (<= 768px) */}
       <div className="mobile-settings-view">
         {mobileDetail === null ? (
@@ -434,7 +509,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
               >
                 <div className="mobile-settings-row-text">
                   <span className="mobile-settings-row-title">General</span>
-                  <span className="mobile-settings-row-desc">Theme, language, display</span>
+                  <span className="mobile-settings-row-desc">Language, display, comfort</span>
                 </div>
                 <ChevronRight size={18} className="mobile-settings-chevron" />
               </button>
@@ -462,17 +537,6 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                 <div className="mobile-settings-row-text">
                   <span className="mobile-settings-row-title">Pause overlay</span>
                   <span className="mobile-settings-row-desc">Show controls, dim</span>
-                </div>
-                <ChevronRight size={18} className="mobile-settings-chevron" />
-              </button>
-              <button
-                type="button"
-                className="mobile-settings-row-btn"
-                onClick={() => { setMobileDetail('hotkeys'); setActiveSection('hotkeys'); }}
-              >
-                <div className="mobile-settings-row-text">
-                  <span className="mobile-settings-row-title">Hotkeys</span>
-                  <span className="mobile-settings-row-desc">Gestures</span>
                 </div>
                 <ChevronRight size={18} className="mobile-settings-chevron" />
               </button>
@@ -530,236 +594,33 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                 </div>
                 <ChevronRight size={18} className="mobile-settings-chevron" />
               </button>
-              <button
-                type="button"
-                className="mobile-settings-row-btn"
-                onClick={() => { setMobileDetail('local-engine'); setActiveSection('local-engine'); }}
-              >
-                <div className="mobile-settings-row-text">
-                  <span className="mobile-settings-row-title">Local engine</span>
-                  <span className="mobile-settings-row-desc">Run streams on your machine</span>
-                </div>
-                <ChevronRight size={18} className="mobile-settings-chevron" />
-              </button>
             </div>
           </div>
         ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-            <div className="mobile-detail-header">
-              <button
-                type="button"
-                onClick={() => setMobileDetail(null)}
-                className="mobile-detail-back-btn"
-                aria-label="Back to settings menu"
-              >
-                <ArrowLeft size={18} />
-              </button>
-              <h2 className="mobile-detail-title">
-                {mobileDetail === 'general' ? 'General' :
-                 mobileDetail === 'subtitles' ? 'Subtitles' :
-                 mobileDetail === 'pause-overlay' ? 'Pause overlay' :
-                 mobileDetail === 'hotkeys' ? 'Hotkeys & Gestures' :
-                 mobileDetail === 'player-controls' ? 'Player controls' :
-                 mobileDetail === 'profile-storage' ? 'Profile & storage' :
-                 mobileDetail === 'connected-services' ? 'Connected services' :
-                 mobileDetail === 'loading-animation' ? 'Loading animation' :
-                 mobileDetail === 'local-engine' ? 'Local engine' : 'Settings'}
-              </h2>
-            </div>
-
-            {/* General detail view special section: scrollable chips + 2-column theme preview */}
-            {mobileDetail === 'general' && (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-                <div className="settings-anchor-chips" style={{ overflowX: 'auto', paddingBottom: '4px' }}>
-                  {[
-                    { id: 'card-appearance', label: 'Appearance' },
-                    { id: 'card-comfort', label: 'Comfort' },
-                    { id: 'card-language', label: 'Language' },
-                    { id: 'card-history', label: 'History' },
-                    { id: 'card-overlays', label: 'Display' },
-                    { id: 'card-behaviour', label: 'Shortcuts' },
-                    { id: 'card-updates', label: 'Updates' },
-                  ].map((chip) => (
-                    <button
-                      key={chip.id}
-                      type="button"
-                      className="settings-anchor-chip"
-                      onClick={() => scrollToAnchor(chip.id)}
-                    >
-                      {chip.label}
-                    </button>
-                  ))}
-                </div>
-
-                <div className="mobile-theme-preview-grid">
-                  {THEME_OPTIONS.map((theme) => {
-                    const isSelected = settings.theme === theme.id || (!settings.theme && theme.id === 'midnight-slate');
-                    return (
-                      <div
-                        key={theme.id}
-                        onClick={() => updateSetting('theme', theme.id)}
-                        style={{
-                          background: theme.surface,
-                          border: isSelected ? '2px solid var(--ac, var(--accent))' : '1px solid var(--ln, var(--border))',
-                          borderRadius: '14px',
-                          padding: '12px',
-                          cursor: 'pointer',
-                          display: 'flex',
-                          flexDirection: 'column',
-                          gap: '8px'
-                        }}
-                      >
-                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                          <span style={{ fontSize: '13px', fontWeight: 600, color: theme.text }}>{theme.name}</span>
-                          {isSelected && <Check size={14} color="var(--ac, var(--accent))" />}
-                        </div>
-                        <div style={{ display: 'flex', gap: '4px' }}>
-                          <div style={{ width: '14px', height: '14px', borderRadius: '50%', background: theme.bg, border: '1px solid rgba(255,255,255,0.2)' }} />
-                          <div style={{ width: '14px', height: '14px', borderRadius: '50%', background: theme.dot }} />
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
-
-            {/* Loading animation detail view: radio list + live preview card */}
-            {mobileDetail === 'loading-animation' && (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                  {[
-                    { id: 'monogram', label: 'Monogram draw', desc: 'Two crimson strokes tracing the V mark' },
-                    { id: 'satin', label: 'Satin sweep', desc: 'VALOR wordmark with slow light pass' },
-                    { id: 'letters', label: 'Letter rise', desc: 'VALOR letters focusing in one by one' },
-                  ].map((anim) => {
-                    const isSelected = (settings.loadingAnimation || 'monogram') === anim.id;
-                    return (
-                      <div
-                        key={anim.id}
-                        onClick={() => updateSetting('loadingAnimation', anim.id)}
-                        style={{
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'space-between',
-                          padding: '14px 16px',
-                          background: 'var(--s1, var(--surface-1))',
-                          border: isSelected ? '1.5px solid var(--ac, var(--accent))' : '1px solid var(--ln, var(--border))',
-                          borderRadius: '14px',
-                          cursor: 'pointer'
-                        }}
-                      >
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
-                          <span style={{ fontSize: '15px', fontWeight: 600, color: 'var(--tx, var(--text-1))' }}>{anim.label}</span>
-                          <span style={{ fontSize: '12px', color: 'var(--mut, var(--text-3))' }}>{anim.desc}</span>
-                        </div>
-                        <div style={{
-                          width: '20px',
-                          height: '20px',
-                          borderRadius: '50%',
-                          border: isSelected ? '6px solid var(--ac, var(--accent))' : '2px solid var(--ln, var(--border))',
-                          background: 'transparent',
-                          boxSizing: 'border-box'
-                        }} />
-                      </div>
-                    );
-                  })}
-                </div>
-
-                {/* Live Preview Card */}
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                  <span style={{ fontSize: '12px', fontWeight: 700, color: 'var(--mut, var(--text-3))', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-                    Live Preview
-                  </span>
-                  <div
-                    style={{
-                      height: '180px',
-                      position: 'relative',
-                      borderRadius: '16px',
-                      overflow: 'hidden',
-                      border: '1px solid var(--ln, var(--border))',
-                      background: '#000'
-                    }}
-                  >
-                    <PlayerLoader
-                      visible={true}
-                      variant="buffering"
-                      animationStyle={settings.loadingAnimation || 'monogram'}
-                    />
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {/* Local engine detail view: 42x24 switch wired to existing engine setting */}
-            {mobileDetail === 'local-engine' && (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-                <div
-                  style={{
-                    background: 'var(--s1, var(--surface-1))',
-                    border: '1px solid var(--ln, var(--border))',
-                    borderRadius: '16px',
-                    padding: '16px',
-                    display: 'flex',
-                    flexDirection: 'column',
-                    gap: '12px'
-                  }}
-                >
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                      <div
-                        style={{
-                          width: '8px',
-                          height: '8px',
-                          borderRadius: '50%',
-                          background: sidecarStatus === 'Operational' ? '#22c55e' : '#ef4444'
-                        }}
-                      />
-                      <span style={{ fontSize: '15px', fontWeight: 600, color: 'var(--tx, var(--text-1))' }}>
-                        Local Engine ({sidecarStatus})
-                      </span>
-                    </div>
-                    <Switch
-                      checked={sidecarStatus === 'Operational'}
-                      onChange={() => handleCheckSidecarStatus()}
-                    />
-                  </div>
-                  <p style={{ margin: 0, fontSize: '13px', color: 'var(--mut, var(--text-3))', lineHeight: '1.4' }}>
-                    Handles MKV, audio tracks and embedded subtitles directly on your machine.
-                  </p>
-                </div>
-              </div>
-            )}
-
-            {/* Other sections info/card */}
-            {mobileDetail && !['general', 'loading-animation', 'local-engine'].includes(mobileDetail) && (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
-                <div style={{ background: 'var(--s1, var(--surface-1))', border: '1px solid var(--ln, var(--border))', borderRadius: '16px', padding: '16px' }}>
-                  <p style={{ margin: '0 0 8px 0', fontSize: '14px', fontWeight: 600, color: 'var(--tx, var(--text-1))' }}>
-                    {mobileDetail === 'subtitles' ? 'Subtitle Preferences' :
-                     mobileDetail === 'pause-overlay' ? 'Pause Overlay Settings' :
-                     mobileDetail === 'hotkeys' ? 'Hotkeys & Touch Gestures' :
-                     mobileDetail === 'player-controls' ? 'Player Controls' :
-                     mobileDetail === 'profile-storage' ? 'Profiles & Storage' :
-                     mobileDetail === 'connected-services' ? 'External Services' : 'Section Settings'}
-                  </p>
-                  <p style={{ margin: 0, fontSize: '13px', color: 'var(--mut, var(--text-3))', lineHeight: '1.4' }}>
-                    {mobileDetail === 'subtitles' && 'Default audio and subtitle tracks, sizes, and font styles are saved and applied automatically to all played media.'}
-                    {mobileDetail === 'pause-overlay' && 'Controls dim overlay and preview cards when video is paused.'}
-                    {mobileDetail === 'hotkeys' && 'Touch tap toggles controls. Double tap left/right seeks 10 seconds.'}
-                    {mobileDetail === 'player-controls' && 'Configure scrubber sensitivity, speed cycle steps, and audio boost.'}
-                    {mobileDetail === 'profile-storage' && `${availableProfiles.length || 1} active profile. Video playback resume positions are stored locally.`}
-                    {mobileDetail === 'connected-services' && 'Trakt scrobbling, TMDB metadata fetching, and OpenSubtitles auto-search status.'}
-                  </p>
-                </div>
-              </div>
-            )}
+          <div className="mobile-detail-nav-bar">
+            <button
+              type="button"
+              onClick={() => setMobileDetail(null)}
+              className="mobile-detail-back-btn"
+              aria-label="Back to settings menu"
+            >
+              <ArrowLeft size={18} />
+            </button>
+            <h2 className="mobile-detail-title">
+              {mobileDetail === 'general' ? 'General' :
+               mobileDetail === 'subtitles' ? 'Subtitles' :
+               mobileDetail === 'pause-overlay' ? 'Pause overlay' :
+               mobileDetail === 'hotkeys' ? 'Hotkeys & Gestures' :
+               mobileDetail === 'player-controls' ? 'Player controls' :
+               mobileDetail === 'profile-storage' ? 'Profile & storage' :
+               mobileDetail === 'connected-services' ? 'Connected services' :
+               mobileDetail === 'loading-animation' ? 'Loading animation' : 'Settings'}
+            </h2>
           </div>
         )}
       </div>
 
-      {/* Desktop Settings View (> 768px) */}
-      <div className="desktop-settings-view settings-container">
+      <div className="settings-container">
         {/* Top Header Bar */}
         <header className="settings-header-bar">
         <div className="settings-title-group">
@@ -796,7 +657,6 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
 
                     <div className="settings-anchor-chips">
                       {[
-                        { id: 'card-appearance', label: 'Appearance' },
                         { id: 'card-comfort', label: 'Comfort' },
                         { id: 'card-language', label: 'Language' },
                         { id: 'card-history', label: 'History' },
@@ -818,111 +678,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                   </div>
                 )}
 
-                {/* 1.1 Appearance Card with Themes Gallery */}
-                {matchesSearch('appearance', 'theme', 'color', 'midnight', 'ember', 'paper', 'black-ops') && (
-                  <div id="card-appearance">
-                    <SettingsCard
-                      title="Appearance"
-                      description="Pick a color theme. It applies right away."
-                    >
-                      <div
-                        role="radiogroup"
-                        aria-label="Color themes"
-                        className="settings-theme-grid"
-                      >
-                        {THEME_OPTIONS.map((t) => {
-                          const currentTheme = settings.theme || 'midnight-slate';
-                          const isSelected = currentTheme === t.id;
-                          return (
-                            <div
-                              key={t.id}
-                              role="radio"
-                              tabIndex={0}
-                              aria-checked={isSelected}
-                              aria-label={t.name}
-                              onClick={() => {
-                                updateSetting('theme', t.id);
-                                let resolved = t.id;
-                                if (t.id === 'auto') {
-                                  const dark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-                                  resolved = dark ? 'midnight-slate' : 'soft-paper';
-                                }
-                                document.documentElement.setAttribute('data-theme', resolved);
-                                triggerAutosaveToast(`Theme: ${t.name}`);
-                              }}
-                              onKeyDown={(e) => {
-                                if (e.key === ' ' || e.key === 'Enter') {
-                                  e.preventDefault();
-                                  updateSetting('theme', t.id);
-                                  let resolved = t.id;
-                                  if (t.id === 'auto') {
-                                    const dark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-                                    resolved = dark ? 'midnight-slate' : 'soft-paper';
-                                  }
-                                  document.documentElement.setAttribute('data-theme', resolved);
-                                  triggerAutosaveToast(`Theme: ${t.name}`);
-                                }
-                              }}
-                              className={`settings-theme-card ${isSelected ? 'selected' : ''}`}
-                            >
-                              {/* Swatch Preview Frame */}
-                              <div
-                                style={{
-                                  height: '48px',
-                                  borderRadius: '6px',
-                                  background: t.bg,
-                                  border: '1px solid rgba(255, 255, 255, 0.08)',
-                                  padding: '6px 8px',
-                                  display: 'flex',
-                                  flexDirection: 'column',
-                                  justifyContent: 'space-between',
-                                  boxSizing: 'border-box',
-                                  position: 'relative',
-                                }}
-                              >
-                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                                  <div style={{ height: '6px', width: '32px', background: t.surface, borderRadius: '3px' }} />
-                                  <div style={{ width: '6px', height: '6px', borderRadius: '50%', background: t.dot }} />
-                                </div>
-                                <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
-                                  <div style={{ height: '3px', width: '48px', background: t.text, borderRadius: '2px', opacity: 0.8 }} />
-                                  <div style={{ height: '3px', width: '28px', background: t.text, borderRadius: '2px', opacity: 0.4 }} />
-                                </div>
-                                {isSelected && (
-                                  <div
-                                    style={{
-                                      position: 'absolute',
-                                      bottom: '5px',
-                                      right: '6px',
-                                      width: '16px',
-                                      height: '16px',
-                                      borderRadius: '50%',
-                                      background: 'var(--accent)',
-                                      display: 'flex',
-                                      alignItems: 'center',
-                                      justifyContent: 'center',
-                                      boxShadow: '0 1px 3px rgba(0,0,0,0.5)',
-                                    }}
-                                  >
-                                    <Check size={10} color="var(--on-accent)" strokeWidth={3} />
-                                  </div>
-                                )}
-                              </div>
-
-                              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                                <span style={{ fontSize: '0.825rem', fontWeight: 600, color: 'var(--text-1)' }}>
-                                  {t.name}
-                                </span>
-                              </div>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </SettingsCard>
-                  </div>
-                )}
-
-                {/* 1.2 Comfort Card */}
+                {/* 1.1 Comfort Card */}
                 {matchesSearch('comfort', 'brightness', 'text size', 'motion', 'dimmer') && (
                   <div id="card-comfort">
                     <SettingsCard
@@ -1309,17 +1065,19 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                         }
                       />
 
-                      <SettingRow
-                        title="Disable all overlays"
-                        description="Keyboard-only mode with no on-screen overlays."
-                        control={
-                          <Switch
-                            checked={!!settings.hideUIOverlays}
-                            onChange={(v) => updateSetting('hideUIOverlays', v)}
-                            aria-label="Disable all overlays"
-                          />
-                        }
-                      />
+                      <div className="desktop-only-setting">
+                        <SettingRow
+                          title="Disable all overlays"
+                          description="Keyboard-only mode with no on-screen overlays."
+                          control={
+                            <Switch
+                              checked={!!settings.hideUIOverlays}
+                              onChange={(v) => updateSetting('hideUIOverlays', v)}
+                              aria-label="Disable all overlays"
+                            />
+                          }
+                        />
+                      </div>
 
                       <SettingRow
                         title="Lock controls on startup"
@@ -1782,26 +1540,28 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
 
             {/* ─── 4. HOTKEYS SECTION ─── */}
             {(isSearching ? matchesSearch('hotkeys', 'hotkey', 'shortcuts', 'keyboard', 'play', 'rewind', 'forward', 'fullscreen', 'mute', 'rebind') : activeSection === 'hotkeys') && (
-              <SettingsCard
-                title="Hotkeys"
-                description="Customizable keyboard shortcuts for playback and navigation controls"
-              >
-                <KeyBinder
-                  keybinds={settings.keybinds || {}}
-                  onKeybindChange={(actionId, newKey) => {
-                    const updatedKeybinds = { ...(settings.keybinds || {}), [actionId]: newKey };
-                    updateSetting('keybinds', updatedKeybinds);
-                    triggerAutosaveToast('Hotkey updated');
-                  }}
-                  onResetKeybinds={() => {
-                    const defaults: Record<string, string> = {};
-                    HOTKEY_ACTIONS.forEach((a) => { defaults[a.id] = a.defaultKey; });
-                    updateSetting('keybinds', defaults);
-                    triggerAutosaveToast('Hotkeys reset');
-                  }}
-                  onConflict={(msg) => triggerAutosaveToast(msg)}
-                />
-              </SettingsCard>
+              <div className="desktop-only-setting">
+                <SettingsCard
+                  title="Hotkeys"
+                  description="Customizable keyboard shortcuts for playback and navigation controls"
+                >
+                  <KeyBinder
+                    keybinds={settings.keybinds || {}}
+                    onKeybindChange={(actionId, newKey) => {
+                      const updatedKeybinds = { ...(settings.keybinds || {}), [actionId]: newKey };
+                      updateSetting('keybinds', updatedKeybinds);
+                      triggerAutosaveToast('Hotkey updated');
+                    }}
+                    onResetKeybinds={() => {
+                      const defaults: Record<string, string> = {};
+                      HOTKEY_ACTIONS.forEach((a) => { defaults[a.id] = a.defaultKey; });
+                      updateSetting('keybinds', defaults);
+                      triggerAutosaveToast('Hotkeys reset');
+                    }}
+                    onConflict={(msg) => triggerAutosaveToast(msg)}
+                  />
+                </SettingsCard>
+              </div>
             )}
 
             {/* ─── 5. PLAYER CONTROLS (FORMERLY GRID OVERLAY) ─── */}
@@ -1821,210 +1581,730 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
               </SettingsCard>
             )}
 
-            {/* ─── 6. PROFILE & STORAGE SECTION ─── */}
+            {/* ─── 6. PROFILE & STORAGE SECTION (Redesigned 1:1 to Reference Screenshot) ─── */}
             {(isSearching ? matchesSearch('profile & storage', 'profile', 'storage', 'account', 'saves', 'history', 'volume', 'rating', 'sync') : activeSection === 'profile-storage') && (
-              <SettingsCard
-                title="Profile & storage"
-                description="Active profile credentials, save location, and storage persistence switches"
-              >
-                {/* Active Profile Card */}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '20px', width: '100%', fontFamily: 'Outfit, sans-serif' }}>
+                {/* 1. TOP HERO BANNER: Active Profile & Sync Status */}
                 <div
                   style={{
+                    background: '#121622',
+                    border: '1px solid rgba(255, 255, 255, 0.08)',
+                    borderRadius: '16px',
+                    padding: '24px 28px',
                     display: 'flex',
                     alignItems: 'center',
                     justifyContent: 'space-between',
-                    padding: 'var(--space-4)',
-                    background: 'var(--surface-2)',
-                    borderRadius: 'var(--radius-sm)',
-                    border: '1px solid var(--border)',
                     flexWrap: 'wrap',
-                    gap: 'var(--space-3)',
+                    gap: '24px',
+                    boxShadow: '0 4px 20px rgba(0, 0, 0, 0.25)',
                   }}
                 >
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)' }}>
-                    <div
-                      style={{
-                        width: '42px',
-                        height: '42px',
-                        borderRadius: '50%',
-                        background: 'var(--surface-3)',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        color: 'var(--accent)',
-                        fontWeight: 700,
-                        fontSize: '1.1rem',
-                        border: '1px solid var(--border)',
-                      }}
-                    >
-                      <User size={22} />
-                    </div>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                        <span style={{ fontSize: '0.95rem', fontWeight: 700, color: 'var(--text-1)' }}>
-                          {activeProfileName}
-                        </span>
-                        <span className="service-status-pill">
-                          {isCloudProfile ? 'Cloud synced' : 'This device only'}
+                  {/* Left: Avatar, Name, Status Pill, Subtitle, and Primary Actions */}
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '18px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+                      <div
+                        style={{
+                          width: '52px',
+                          height: '52px',
+                          borderRadius: '50%',
+                          background: 'linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%)',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          color: '#ffffff',
+                          boxShadow: '0 4px 14px rgba(99, 102, 241, 0.4)',
+                          flexShrink: 0,
+                        }}
+                      >
+                        <User size={24} />
+                      </div>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                          <span style={{ fontSize: '1.28rem', fontWeight: 700, color: '#ffffff', letterSpacing: '-0.3px' }}>
+                            {activeProfileName}
+                          </span>
+                          <span
+                            style={{
+                              fontSize: '0.72rem',
+                              fontWeight: 500,
+                              padding: '2px 10px',
+                              borderRadius: '9999px',
+                              background: 'rgba(255, 255, 255, 0.08)',
+                              border: '1px solid rgba(255, 255, 255, 0.1)',
+                              color: 'rgba(255, 255, 255, 0.75)',
+                            }}
+                          >
+                            {isCloudProfile ? 'Cloud synced' : 'This device only'}
+                          </span>
+                        </div>
+                        <span style={{ fontSize: '0.84rem', color: 'rgba(255, 255, 255, 0.5)' }}>
+                          {isCloudProfile ? 'Syncing across your registered devices.' : 'Your data stays in this browser.'}
                         </span>
                       </div>
-                      <span style={{ fontSize: '0.75rem', color: 'var(--text-3)' }}>
-                        {isCloudProfile ? `User ID: ${settings.userId}` : 'Local profile stored on this device'}
-                      </span>
+                    </div>
+
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+                      <button
+                        type="button"
+                        onClick={() => openAuthModal && openAuthModal('signup')}
+                        style={{
+                          background: '#6366f1',
+                          border: 'none',
+                          color: '#ffffff',
+                          fontWeight: 600,
+                          fontSize: '0.85rem',
+                          padding: '8px 20px',
+                          borderRadius: '8px',
+                          cursor: 'pointer',
+                          boxShadow: '0 2px 10px rgba(99, 102, 241, 0.35)',
+                          transition: 'background 0.2s, transform 0.1s',
+                          minHeight: '38px',
+                        }}
+                        onMouseEnter={(e) => (e.currentTarget.style.background = '#4f46e5')}
+                        onMouseLeave={(e) => (e.currentTarget.style.background = '#6366f1')}
+                      >
+                        Create account
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => openAuthModal && openAuthModal('login')}
+                        style={{
+                          background: 'rgba(255, 255, 255, 0.06)',
+                          border: '1px solid rgba(255, 255, 255, 0.12)',
+                          color: '#ffffff',
+                          fontWeight: 600,
+                          fontSize: '0.85rem',
+                          padding: '8px 20px',
+                          borderRadius: '8px',
+                          cursor: 'pointer',
+                          transition: 'background 0.2s',
+                          minHeight: '38px',
+                        }}
+                        onMouseEnter={(e) => (e.currentTarget.style.background = 'rgba(255, 255, 255, 0.1)')}
+                        onMouseLeave={(e) => (e.currentTarget.style.background = 'rgba(255, 255, 255, 0.06)')}
+                      >
+                        Log in to cloud
+                      </button>
                     </div>
                   </div>
 
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)', flexWrap: 'wrap' }}>
-                    <button
-                      type="button"
-                      className="settings-btn-primary"
-                      onClick={() => openAuthModal && openAuthModal('signup')}
-                    >
-                      Create account
-                    </button>
-                    <button
-                      type="button"
-                      className="settings-btn-secondary"
-                      onClick={() => openAuthModal && openAuthModal('login')}
-                    >
-                      Log in to cloud
-                    </button>
-                    <DestructiveButton
-                      label="Remove profile"
-                      confirmLabel="Click again to confirm"
-                      onConfirm={() => {
-                        if (setIsRemoveModalOpen) {
-                          setDeleteTargetProfile && setDeleteTargetProfile({ userId: settings.userId, name: activeProfileName });
-                          setIsRemoveModalOpen(true);
-                        } else {
-                          triggerAutosaveToast('Profile removed');
-                        }
+                  {/* Right: Device / Cloud Visual Connector & Segmented Switch */}
+                  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '12px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                      {/* Box 1: This device */}
+                      <div
+                        style={{
+                          width: '130px',
+                          padding: '14px 16px',
+                          borderRadius: '12px',
+                          background: settings.storageMode !== 'file' ? 'rgba(99, 102, 241, 0.1)' : 'rgba(255, 255, 255, 0.03)',
+                          border: `1px solid ${settings.storageMode !== 'file' ? '#6366f1' : 'rgba(255, 255, 255, 0.08)'}`,
+                          display: 'flex',
+                          flexDirection: 'column',
+                          alignItems: 'center',
+                          gap: '6px',
+                          textAlign: 'center',
+                          transition: 'all 0.2s',
+                        }}
+                      >
+                        <Monitor size={20} color={settings.storageMode !== 'file' ? '#818cf8' : 'rgba(255, 255, 255, 0.4)'} />
+                        <span style={{ fontSize: '0.8rem', fontWeight: 600, color: '#ffffff' }}>This device</span>
+                        <span style={{ fontSize: '0.7rem', color: settings.storageMode !== 'file' ? '#818cf8' : 'rgba(255, 255, 255, 0.45)' }}>
+                          Saving here
+                        </span>
+                      </div>
+
+                      {/* Dashed connector */}
+                      <div
+                        style={{
+                          width: '30px',
+                          borderTop: '1px dashed rgba(255, 255, 255, 0.25)',
+                        }}
+                      />
+
+                      {/* Box 2: Cloud */}
+                      <div
+                        style={{
+                          width: '130px',
+                          padding: '14px 16px',
+                          borderRadius: '12px',
+                          background: settings.storageMode === 'file' ? 'rgba(99, 102, 241, 0.1)' : 'rgba(255, 255, 255, 0.03)',
+                          border: `1px solid ${settings.storageMode === 'file' ? '#6366f1' : 'rgba(255, 255, 255, 0.08)'}`,
+                          display: 'flex',
+                          flexDirection: 'column',
+                          alignItems: 'center',
+                          gap: '6px',
+                          textAlign: 'center',
+                          transition: 'all 0.2s',
+                        }}
+                      >
+                        <Cloud size={20} color={settings.storageMode === 'file' ? '#818cf8' : 'rgba(255, 255, 255, 0.4)'} />
+                        <span style={{ fontSize: '0.8rem', fontWeight: 600, color: '#ffffff' }}>Cloud</span>
+                        <span style={{ fontSize: '0.7rem', color: isCloudProfile ? '#10b981' : 'rgba(255, 255, 255, 0.45)' }}>
+                          {isCloudProfile ? 'Connected' : 'Not connected'}
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Segmented Switch underneath */}
+                    <div
+                      style={{
+                        display: 'flex',
+                        background: 'rgba(0, 0, 0, 0.4)',
+                        border: '1px solid rgba(255, 255, 255, 0.08)',
+                        borderRadius: '10px',
+                        padding: '4px',
+                        width: '100%',
+                        maxWidth: '302px',
                       }}
-                    />
-                  </div>
-                </div>
-
-                {/* Saved Profiles Chips with + Add Profile */}
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                  <span style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-2)' }}>
-                    Saved profiles
-                  </span>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-                    {availableProfiles.map((p) => {
-                      const isCurrent = p.userId === settings.userId;
-                      return (
-                        <button
-                          key={p.userId}
-                          type="button"
-                          className={`settings-segmented-item ${isCurrent ? 'active' : ''}`}
-                          style={{
-                            padding: '6px 14px',
-                            background: isCurrent ? 'var(--surface-3)' : 'var(--surface-2)',
-                            border: `1px solid ${isCurrent ? 'var(--accent)' : 'var(--border)'}`,
-                            color: isCurrent ? 'var(--text-1)' : 'var(--text-2)',
-                          }}
-                          onClick={() => handleSwitchProfile && handleSwitchProfile(p)}
-                        >
-                          {p.name || 'Profile'}
-                        </button>
-                      );
-                    })}
-
-                    <button
-                      type="button"
-                      className="settings-btn-secondary"
-                      style={{ padding: '6px 12px', fontSize: '0.75rem' }}
-                      onClick={() => setIsCreateProfileModalOpen && setIsCreateProfileModalOpen(true)}
                     >
-                      <Plus size={14} />
-                      <span>Add profile</span>
-                    </button>
+                      <button
+                        type="button"
+                        onClick={() => updateSetting('storageMode', 'localstorage')}
+                        style={{
+                          flex: 1,
+                          padding: '8px 12px',
+                          fontSize: '0.78rem',
+                          fontWeight: 600,
+                          borderRadius: '7px',
+                          border: 'none',
+                          cursor: 'pointer',
+                          background: settings.storageMode !== 'file' ? '#1e2638' : 'transparent',
+                          color: settings.storageMode !== 'file' ? '#ffffff' : 'rgba(255, 255, 255, 0.5)',
+                          boxShadow: settings.storageMode !== 'file' ? '0 1px 4px rgba(0,0,0,0.5)' : 'none',
+                          transition: 'all 0.2s',
+                        }}
+                      >
+                        Local storage
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (!isCloudProfile) {
+                            openAuthModal && openAuthModal('login');
+                          } else {
+                            updateSetting('storageMode', 'file');
+                          }
+                        }}
+                        style={{
+                          flex: 1,
+                          padding: '8px 12px',
+                          fontSize: '0.78rem',
+                          fontWeight: 600,
+                          borderRadius: '7px',
+                          border: 'none',
+                          cursor: 'pointer',
+                          background: settings.storageMode === 'file' ? '#1e2638' : 'transparent',
+                          color: settings.storageMode === 'file' ? '#ffffff' : 'rgba(255, 255, 255, 0.5)',
+                          boxShadow: settings.storageMode === 'file' ? '0 1px 4px rgba(0,0,0,0.5)' : 'none',
+                          transition: 'all 0.2s',
+                        }}
+                      >
+                        Cloud sync
+                      </button>
+                    </div>
                   </div>
                 </div>
 
-                {/* Save Location & Ask Me to Rate */}
-                <SettingRow
-                  title="Save location"
-                  description="Where your settings and watch records are saved"
-                  control={
-                    <Select
-                      value={settings.storageMode || 'localstorage'}
-                      onChange={(val) => updateSetting('storageMode', val)}
-                      options={[
-                        { value: 'localstorage', label: 'Local storage' },
-                        { value: 'file', label: 'File system' },
-                      ]}
-                    />
-                  }
-                />
+                {/* 2. MAIN 2-COLUMN LAYOUT: Left (Persistence Toggles) & Right (Profiles / Backup) */}
+                <div
+                  style={{
+                    display: 'grid',
+                    gridTemplateColumns: 'minmax(0, 1.4fr) minmax(0, 1fr)',
+                    gap: '20px',
+                    alignItems: 'stretch',
+                  }}
+                >
+                  {/* ── LEFT COLUMN: REMEMBER ACROSS SESSIONS ── */}
+                  <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+                    <div
+                      style={{
+                        fontSize: '0.72rem',
+                        fontWeight: 700,
+                        letterSpacing: '0.08em',
+                        color: 'rgba(255, 255, 255, 0.45)',
+                        textTransform: 'uppercase',
+                        marginBottom: '10px',
+                      }}
+                    >
+                      REMEMBER ACROSS SESSIONS
+                    </div>
 
-                <SettingRow
-                  title="Ask me to rate"
-                  description="Frequency prompt for submitting ratings"
-                  control={
-                    <Select
-                      value={settings.ratingThreshold || 3}
-                      onChange={(val) => updateSetting('ratingThreshold', parseInt(String(val), 10))}
-                      options={[
-                        { value: 1, label: 'After rating 1 star' },
-                        { value: 2, label: 'After rating 2 stars' },
-                        { value: 3, label: 'After rating 3 stars' },
-                        { value: 4, label: 'After rating 4 stars' },
-                        { value: 5, label: 'After rating 5 stars' },
-                        { value: 0, label: 'Never ask' },
-                      ]}
-                    />
-                  }
-                />
+                    {/* 2x2 Grid of persistence cards */}
+                    <div
+                      style={{
+                        flex: 1,
+                        display: 'grid',
+                        gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
+                        gap: '12px',
+                        marginBottom: '12px',
+                      }}
+                    >
+                      {/* Card 1: Playback Position */}
+                      <div
+                        style={{
+                          background: '#121622',
+                          border: '1px solid rgba(255, 255, 255, 0.08)',
+                          borderRadius: '14px',
+                          padding: '16px 18px',
+                          display: 'flex',
+                          flexDirection: 'column',
+                          minHeight: '110px',
+                          justifyContent: 'space-between',
+                        }}
+                      >
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                          <Clock size={18} color="rgba(255, 255, 255, 0.45)" />
+                          <Switch
+                            checked={settings.saveHistory !== false}
+                            onChange={(v) => updateSetting('saveHistory', v)}
+                            aria-label="Save playback position"
+                          />
+                        </div>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', marginTop: '12px' }}>
+                          <span style={{ fontSize: '0.9rem', fontWeight: 600, color: '#ffffff' }}>
+                            Playback position
+                          </span>
+                          <span style={{ fontSize: '0.78rem', color: 'rgba(255, 255, 255, 0.45)' }}>
+                            Resume exactly where you left off
+                          </span>
+                        </div>
+                      </div>
 
-                <SettingRow
-                  title="Playback position & history"
-                  description="Remember where you left off across sessions"
-                  control={
-                    <Switch
-                      checked={settings.saveHistory !== false}
-                      onChange={(v) => updateSetting('saveHistory', v)}
-                      aria-label="Save playback position and history"
-                    />
-                  }
-                />
+                      {/* Card 2: Audio & Subtitles */}
+                      <div
+                        style={{
+                          background: '#121622',
+                          border: '1px solid rgba(255, 255, 255, 0.08)',
+                          borderRadius: '14px',
+                          padding: '16px 18px',
+                          display: 'flex',
+                          flexDirection: 'column',
+                          minHeight: '110px',
+                          justifyContent: 'space-between',
+                        }}
+                      >
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                          <Captions size={18} color="rgba(255, 255, 255, 0.45)" />
+                          <Switch
+                            checked={settings.saveTrackPreferences !== false}
+                            onChange={(v) => updateSetting('saveTrackPreferences', v)}
+                            aria-label="Save audio and subtitle choices"
+                          />
+                        </div>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', marginTop: '12px' }}>
+                          <span style={{ fontSize: '0.9rem', fontWeight: 600, color: '#ffffff' }}>
+                            Audio & subtitles
+                          </span>
+                          <span style={{ fontSize: '0.78rem', color: 'rgba(255, 255, 255, 0.45)' }}>
+                            Keep preferred languages
+                          </span>
+                        </div>
+                      </div>
 
-                <SettingRow
-                  title="Audio/subtitle choices"
-                  description="Remember your preferred audio and subtitle languages"
-                  control={
-                    <Switch
-                      checked={settings.saveTrackPreferences !== false}
-                      onChange={(v) => updateSetting('saveTrackPreferences', v)}
-                      aria-label="Save track preferences"
-                    />
-                  }
-                />
+                      {/* Card 3: Volume & Mute */}
+                      <div
+                        style={{
+                          background: '#121622',
+                          border: '1px solid rgba(255, 255, 255, 0.08)',
+                          borderRadius: '14px',
+                          padding: '16px 18px',
+                          display: 'flex',
+                          flexDirection: 'column',
+                          minHeight: '110px',
+                          justifyContent: 'space-between',
+                        }}
+                      >
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                          <Volume2 size={18} color="rgba(255, 255, 255, 0.45)" />
+                          <Switch
+                            checked={settings.saveVolume !== false}
+                            onChange={(v) => updateSetting('saveVolume', v)}
+                            aria-label="Save volume and mute status"
+                          />
+                        </div>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', marginTop: '12px' }}>
+                          <span style={{ fontSize: '0.9rem', fontWeight: 600, color: '#ffffff' }}>
+                            Volume & mute
+                          </span>
+                          <span style={{ fontSize: '0.78rem', color: 'rgba(255, 255, 255, 0.45)' }}>
+                            Persist sound levels
+                          </span>
+                        </div>
+                      </div>
 
-                <SettingRow
-                  title="Volume & mute"
-                  description="Persist sound levels and mute status across media"
-                  control={
-                    <Switch
-                      checked={settings.saveVolume !== false}
-                      onChange={(v) => updateSetting('saveVolume', v)}
-                      aria-label="Save volume and mute state"
-                    />
-                  }
-                />
+                      {/* Card 4: Layout */}
+                      <div
+                        style={{
+                          background: '#121622',
+                          border: '1px solid rgba(255, 255, 255, 0.08)',
+                          borderRadius: '14px',
+                          padding: '16px 18px',
+                          display: 'flex',
+                          flexDirection: 'column',
+                          minHeight: '110px',
+                          justifyContent: 'space-between',
+                        }}
+                      >
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                          <LayoutGrid size={18} color="rgba(255, 255, 255, 0.45)" />
+                          <Switch
+                            checked={settings.saveSettings !== false}
+                            onChange={(v) => updateSetting('saveSettings', v)}
+                            aria-label="Save layout arrangement"
+                          />
+                        </div>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', marginTop: '12px' }}>
+                          <span style={{ fontSize: '0.9rem', fontWeight: 600, color: '#ffffff' }}>
+                            Layout
+                          </span>
+                          <span style={{ fontSize: '0.78rem', color: 'rgba(255, 255, 255, 0.45)' }}>
+                            Keep your HUD arrangement
+                          </span>
+                        </div>
+                      </div>
+                    </div>
 
-                <SettingRow
-                  title="Layout preferences"
-                  description="Keep your custom HUD and UI arrangements"
-                  control={
-                    <Switch
-                      checked={settings.saveSettings !== false}
-                      onChange={(v) => updateSetting('saveSettings', v)}
-                      aria-label="Save layout preferences"
-                    />
-                  }
-                />
-              </SettingsCard>
+                    {/* Ask me to rate card */}
+                    <div
+                      style={{
+                        background: '#121622',
+                        border: '1px solid rgba(255, 255, 255, 0.08)',
+                        borderRadius: '14px',
+                        padding: '16px 20px',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        gap: '16px',
+                      }}
+                    >
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                        <span style={{ fontSize: '0.9rem', fontWeight: 600, color: '#ffffff' }}>
+                          Ask me to rate
+                        </span>
+                        <span style={{ fontSize: '0.78rem', color: 'rgba(255, 255, 255, 0.45)' }}>
+                          How often to prompt for a rating
+                        </span>
+                      </div>
+                      <Select
+                        value={settings.ratingThreshold ?? 3}
+                        onChange={(val) => updateSetting('ratingThreshold', parseInt(String(val), 10))}
+                        options={[
+                          { value: 1, label: 'After rating 1 star' },
+                          { value: 2, label: 'After rating 2 stars' },
+                          { value: 3, label: 'After rating 3 stars' },
+                          { value: 4, label: 'After rating 4 stars' },
+                          { value: 5, label: 'After rating 5 stars' },
+                          { value: 0, label: 'Never ask' },
+                        ]}
+                      />
+                    </div>
+                  </div>
+
+                  {/* ── RIGHT COLUMN: PROFILES & BACKUP ── */}
+                  <div style={{ display: 'flex', flexDirection: 'column', height: '100%', gap: '16px' }}>
+                    {/* A. PROFILES SECTION */}
+                    <div style={{ display: 'flex', flexDirection: 'column', flex: 1 }}>
+                      <div
+                        style={{
+                          fontSize: '0.72rem',
+                          fontWeight: 700,
+                          letterSpacing: '0.08em',
+                          color: 'rgba(255, 255, 255, 0.45)',
+                          textTransform: 'uppercase',
+                          marginBottom: '10px',
+                        }}
+                      >
+                        PROFILES
+                      </div>
+                      <div
+                        style={{
+                          background: '#121622',
+                          border: '1px solid rgba(255, 255, 255, 0.08)',
+                          borderRadius: '14px',
+                          padding: '14px',
+                          display: 'flex',
+                          flexDirection: 'column',
+                          gap: '10px',
+                          flex: 1,
+                          justifyContent: 'space-between',
+                        }}
+                      >
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                          {/* Active Profile Item */}
+                          <div
+                            style={{
+                              border: '1px solid rgba(99, 102, 241, 0.4)',
+                              background: 'rgba(99, 102, 241, 0.08)',
+                              borderRadius: '10px',
+                              padding: '10px 14px',
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: '12px',
+                            }}
+                          >
+                            <div
+                              style={{
+                                width: '34px',
+                                height: '34px',
+                                borderRadius: '50%',
+                                background: 'linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%)',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                color: '#ffffff',
+                                flexShrink: 0,
+                              }}
+                            >
+                              <User size={16} />
+                            </div>
+                            <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minWidth: 0 }}>
+                              <span style={{ fontSize: '0.88rem', fontWeight: 600, color: '#ffffff', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                {activeProfileName}
+                              </span>
+                              <span style={{ fontSize: '0.72rem', color: '#818cf8', fontWeight: 500 }}>
+                                Active
+                              </span>
+                            </div>
+                          </div>
+
+                          {/* Other available profiles */}
+                          {availableProfiles
+                            .filter((p) => p.userId !== settings.userId)
+                            .map((p) => (
+                              <div
+                                key={p.userId}
+                                onClick={() => handleSwitchProfile && handleSwitchProfile(p)}
+                                style={{
+                                  border: '1px solid rgba(255, 255, 255, 0.08)',
+                                  background: 'rgba(255, 255, 255, 0.02)',
+                                  borderRadius: '10px',
+                                  padding: '10px 14px',
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  gap: '12px',
+                                  cursor: 'pointer',
+                                  transition: 'background 0.2s',
+                                }}
+                                onMouseEnter={(e) => (e.currentTarget.style.background = 'rgba(255, 255, 255, 0.06)')}
+                                onMouseLeave={(e) => (e.currentTarget.style.background = 'rgba(255, 255, 255, 0.02)')}
+                              >
+                                <div
+                                  style={{
+                                    width: '34px',
+                                    height: '34px',
+                                    borderRadius: '50%',
+                                    background: 'rgba(255, 255, 255, 0.08)',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'center',
+                                    color: 'rgba(255, 255, 255, 0.7)',
+                                    flexShrink: 0,
+                                  }}
+                                >
+                                  <User size={16} />
+                                </div>
+                                <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minWidth: 0 }}>
+                                  <span style={{ fontSize: '0.88rem', fontWeight: 600, color: '#ffffff', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                    {p.name || p.username || 'Profile'}
+                                  </span>
+                                  <span style={{ fontSize: '0.72rem', color: 'rgba(255, 255, 255, 0.45)' }}>
+                                    Click to switch
+                                  </span>
+                                </div>
+                              </div>
+                            ))}
+                        </div>
+
+                        {/* + Add profile button */}
+                        <button
+                          type="button"
+                          onClick={() => setIsCreateProfileModalOpen && setIsCreateProfileModalOpen(true)}
+                          style={{
+                            width: '100%',
+                            padding: '10px',
+                            background: 'rgba(255, 255, 255, 0.04)',
+                            border: '1px solid rgba(255, 255, 255, 0.08)',
+                            borderRadius: '8px',
+                            color: '#ffffff',
+                            fontSize: '0.82rem',
+                            fontWeight: 600,
+                            cursor: 'pointer',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            gap: '6px',
+                            transition: 'background 0.2s',
+                            marginTop: '6px',
+                          }}
+                          onMouseEnter={(e) => (e.currentTarget.style.background = 'rgba(255, 255, 255, 0.08)')}
+                          onMouseLeave={(e) => (e.currentTarget.style.background = 'rgba(255, 255, 255, 0.04)')}
+                        >
+                          <Plus size={14} />
+                          <span>Add profile</span>
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* B. BACKUP SECTION */}
+                    <div style={{ display: 'flex', flexDirection: 'column' }}>
+                      <div
+                        style={{
+                          fontSize: '0.72rem',
+                          fontWeight: 700,
+                          letterSpacing: '0.08em',
+                          color: 'rgba(255, 255, 255, 0.45)',
+                          textTransform: 'uppercase',
+                          marginBottom: '8px',
+                        }}
+                      >
+                        BACKUP
+                      </div>
+                      <div
+                        style={{
+                          background: '#121622',
+                          border: '1px solid rgba(255, 255, 255, 0.08)',
+                          borderRadius: '14px',
+                          padding: '16px',
+                          display: 'flex',
+                          flexDirection: 'column',
+                          gap: '12px',
+                        }}
+                      >
+                        <span style={{ fontSize: '0.78rem', color: 'rgba(255, 255, 255, 0.5)', lineHeight: 1.4 }}>
+                          Local data is lost if browser storage is cleared. Keep a copy.
+                        </span>
+                        <div style={{ display: 'flex', gap: '10px' }}>
+                          <button
+                            type="button"
+                            onClick={handleExportBackup}
+                            style={{
+                              flex: 1,
+                              padding: '9px 14px',
+                              background: 'rgba(255, 255, 255, 0.05)',
+                              border: '1px solid rgba(255, 255, 255, 0.1)',
+                              borderRadius: '8px',
+                              color: '#ffffff',
+                              fontWeight: 600,
+                              fontSize: '0.82rem',
+                              cursor: 'pointer',
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              gap: '6px',
+                              transition: 'background 0.2s',
+                            }}
+                            onMouseEnter={(e) => (e.currentTarget.style.background = 'rgba(255, 255, 255, 0.09)')}
+                            onMouseLeave={(e) => (e.currentTarget.style.background = 'rgba(255, 255, 255, 0.05)')}
+                          >
+                            <Download size={14} />
+                            <span>Export</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => fileInputRef.current?.click()}
+                            style={{
+                              flex: 1,
+                              padding: '9px 14px',
+                              background: 'rgba(255, 255, 255, 0.05)',
+                              border: '1px solid rgba(255, 255, 255, 0.1)',
+                              borderRadius: '8px',
+                              color: '#ffffff',
+                              fontWeight: 600,
+                              fontSize: '0.82rem',
+                              cursor: 'pointer',
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              gap: '6px',
+                              transition: 'background 0.2s',
+                            }}
+                            onMouseEnter={(e) => (e.currentTarget.style.background = 'rgba(255, 255, 255, 0.09)')}
+                            onMouseLeave={(e) => (e.currentTarget.style.background = 'rgba(255, 255, 255, 0.05)')}
+                          >
+                            <Upload size={14} />
+                            <span>Import</span>
+                          </button>
+                          <input
+                            ref={fileInputRef}
+                            type="file"
+                            accept=".json"
+                            onChange={handleImportBackup}
+                            style={{ display: 'none' }}
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* 3. DANGER ZONE SECTION: Centered in the middle of the width */}
+                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', width: '100%', marginTop: '4px' }}>
+                  <div style={{ width: '100%', maxWidth: '540px', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+                    <div
+                      style={{
+                        fontSize: '0.72rem',
+                        fontWeight: 700,
+                        letterSpacing: '0.08em',
+                        color: '#ef4444',
+                        textTransform: 'uppercase',
+                        marginBottom: '8px',
+                        textAlign: 'center',
+                      }}
+                    >
+                      DANGER ZONE
+                    </div>
+                    <div
+                      style={{
+                        width: '100%',
+                        background: '#121622',
+                        border: '1px solid rgba(239, 68, 68, 0.2)',
+                        borderRadius: '14px',
+                        padding: '16px 24px',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        alignItems: 'center',
+                        textAlign: 'center',
+                        gap: '12px',
+                        boxShadow: '0 4px 20px rgba(0, 0, 0, 0.25)',
+                      }}
+                    >
+                      <span style={{ fontSize: '0.8rem', color: 'rgba(255, 255, 255, 0.55)', lineHeight: 1.4 }}>
+                        Removes this profile and its history from this device.
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (setIsRemoveModalOpen) {
+                            setDeleteTargetProfile && setDeleteTargetProfile({ userId: settings.userId, name: activeProfileName });
+                            setIsRemoveModalOpen(true);
+                          } else {
+                            triggerAutosaveToast('Profile removed');
+                          }
+                        }}
+                        style={{
+                          width: '100%',
+                          maxWidth: '280px',
+                          padding: '10px 18px',
+                          background: 'rgba(239, 68, 68, 0.08)',
+                          border: '1px solid rgba(239, 68, 68, 0.28)',
+                          borderRadius: '8px',
+                          color: '#ef4444',
+                          fontWeight: 600,
+                          fontSize: '0.84rem',
+                          cursor: 'pointer',
+                          textAlign: 'center',
+                          transition: 'all 0.2s',
+                        }}
+                        onMouseEnter={(e) => (e.currentTarget.style.background = 'rgba(239, 68, 68, 0.16)')}
+                        onMouseLeave={(e) => (e.currentTarget.style.background = 'rgba(239, 68, 68, 0.08)')}
+                      >
+                        Remove profile
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
             )}
 
             {/* ─── 7. CONNECTED SERVICES SECTION ─── */}

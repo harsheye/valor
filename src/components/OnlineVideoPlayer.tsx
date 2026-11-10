@@ -9,6 +9,7 @@ import { CustomSelect } from './CustomSelect';
 import { logger } from '../utils/logger';
 import { classifyVideoTitle } from '../utils/libraryClassifier';
 import { PlayerIsland, usePlayerIsland } from './player';
+import { useAutoLandscape } from '../utils/screenOrientation';
 
 interface OnlineVideoPlayerProps {
   video: VideoItem;
@@ -123,6 +124,8 @@ export const OnlineVideoPlayer: React.FC<OnlineVideoPlayerProps> = ({
   const lastSkipTimeRef = useRef<number>(0);
 
   const isAnime = video.type === 'online_anime';
+
+  useAutoLandscape(true, playerContainerRef);
 
   // Trigger Toast Notification
   const addToast = useCallback((msg: string) => {

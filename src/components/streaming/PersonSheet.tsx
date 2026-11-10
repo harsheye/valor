@@ -145,21 +145,12 @@ export const PersonSheet: React.FC<PersonSheetProps> = ({
         {loading || !person ? (
           <PersonSheetSkeleton />
         ) : (
-          <div
-            className="animate-rise"
-            style={{
-              display: 'grid',
-              gridTemplateColumns: 'minmax(220px, 280px) 1fr',
-              gap: 'var(--space-6)',
-              padding: 'var(--space-6)',
-              boxSizing: 'border-box',
-              minHeight: '100%'
-            }}
-          >
+          <div className="animate-rise person-sheet-grid">
             {/* Left Column: Portrait, Name, Role chip, Rating, Born, Birthplace */}
             <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}>
               {/* Portrait (Cover, top anchored, on --surface-2 base) */}
               <div
+                className="person-portrait-box"
                 style={{
                   width: '100%',
                   aspectRatio: '2/3',
@@ -330,14 +321,7 @@ export const PersonSheet: React.FC<PersonSheetProps> = ({
                 </div>
               ) : (
                 <>
-                  <div
-                    style={{
-                      display: 'grid',
-                      gridTemplateColumns: 'repeat(auto-fill, minmax(135px, 1fr))',
-                      gap: 'var(--space-3)',
-                      width: '100%'
-                    }}
-                  >
+                  <div className="person-sheet-credits-grid">
                     {paginatedCredits.map((credit, idx) => (
                       <PosterCard
                         key={`${credit.id}-${idx}`}

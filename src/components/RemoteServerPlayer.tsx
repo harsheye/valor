@@ -98,6 +98,7 @@ export const extractTitleFromUrl = (url?: string): string => {
 };
 import { LoadingSpinner, BufferingOverlay } from './LoadingSpinner';
 import { MobilePlayerOverlay } from './player/MobilePlayerOverlay';
+import { isMobileDevice, useAutoLandscape } from '../utils/screenOrientation';
 import { PlayerIsland, usePlayerIsland, type IslandAudioTrack, type IslandSubtitleTrack } from './player';
 import { VlcContextMenu } from './player/VlcContextMenu';
 import { ConsoleOverlay } from './ConsoleOverlay';
@@ -1675,11 +1676,16 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
   const [showControls, setShowControls] = useState(true);
   const [showConsoleOverlay, setShowConsoleOverlay] = useState(false);
   const [isLocked, setIsLocked] = useState(false);
-  const [isMobile, setIsMobile] = useState(() => typeof window !== 'undefined' ? window.innerWidth <= 768 : false);
+
+  const [isMobile, setIsMobile] = useState(() => isMobileDevice());
   useEffect(() => {
-    const handleResize = () => setIsMobile(window.innerWidth <= 768);
+    const handleResize = () => setIsMobile(isMobileDevice());
     window.addEventListener('resize', handleResize);
-    return () => window.removeEventListener('resize', handleResize);
+    window.addEventListener('orientationchange', handleResize);
+    return () => {
+      window.removeEventListener('resize', handleResize);
+      window.removeEventListener('orientationchange', handleResize);
+    };
   }, []);
 
   const [aspectRatio, setAspectRatio] = useState<string>('default');
@@ -2239,6 +2245,7 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
   const playbackControllerRef = useRef<PlaybackController | null>(null);
   const prevDestroyPromiseRef = useRef<Promise<void>>(Promise.resolve());
   const containerRef = useRef<HTMLDivElement>(null);
+  useAutoLandscape(true, containerRef);
 
   // Native wheel event handling: intercept Ctrl + Scroll for UI Scaling & prevent background page scrolling
   useEffect(() => {
@@ -5112,7 +5119,7 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
                 setShowBookmarksPopover(false);
                 setShowAudioSubMenu(false);
                 setShowAddDialog(false);
-                triggerSwitchToast(`Controls Locked (${getLockShortcutKey().toUpperCase()})`);
+                triggerSwitchToast(isMobile ? 'Controls Locked' : `Controls Locked (${getLockShortcutKey().toUpperCase()})`);
               }
             }}
             onMouseEnter={() => setHoveredSetting('lockModeActive')}
@@ -5589,9 +5596,9 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
             onClick={(e) => {
               e.stopPropagation();
               setIsLocked(false);
-              triggerSwitchToast(`Controls Unlocked (${getLockShortcutKey()})`);
+              triggerSwitchToast(isMobile ? 'Controls Unlocked' : `Controls Unlocked (${getLockShortcutKey()})`);
             }}
-            title={`Unlock Controls (Shortcut: ${getLockShortcutKey()})`}
+            title={isMobile ? 'Unlock Controls' : `Unlock Controls (Shortcut: ${getLockShortcutKey()})`}
             style={{
               pointerEvents: 'auto'
             }}

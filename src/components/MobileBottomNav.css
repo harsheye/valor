@@ -13,6 +13,14 @@
   padding-top: 8px;
   padding-bottom: max(10px, env(safe-area-inset-bottom, 10px));
   box-sizing: border-box;
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+}
+
+@media (min-width: 769px) {
+  .mobile-bottom-nav {
+    display: none !important;
+  }
 }
 
 .mbn-item {

@@ -1,4 +1,5 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
+import { Play } from 'lucide-react';
 import './streaming.css';
 
 export interface PosterMediaItem {
@@ -11,6 +12,7 @@ export interface PosterMediaItem {
   matchScore?: number;
   ageRating?: string;
   quality?: string;
+  progressPercent?: number;
 }
 
 interface PosterCardProps {
@@ -19,20 +21,25 @@ interface PosterCardProps {
   index?: number;
   className?: string;
   style?: React.CSSProperties;
+  progressPercent?: number;
 }
 
 export const PosterCard: React.FC<PosterCardProps> = ({
   item,
   onClick,
-  index = 0,
   className = '',
-  style
+  style,
+  progressPercent: propProgressPercent
 }) => {
-  // Format rating and match %
+  const [imgError, setImgError] = useState(false);
+
+  useEffect(() => {
+    setImgError(false);
+  }, [item.posterPath]);
+
+  const progressPercent = propProgressPercent ?? item.progressPercent;
   const ratingVal = item.rating !== undefined ? Number(item.rating) : 0;
-  const matchPercent = item.matchScore ?? (
-    ratingVal > 0 ? Math.min(99, Math.max(72, Math.round(ratingVal * 10))) : 90
-  );
+  const ratingStr = ratingVal > 0 ? ratingVal.toFixed(1) : '7.8';
 
   const yearLabel = item.year || '2024';
   const typeLabel = item.type === 'tv' || item.type === 'series'
@@ -41,151 +48,81 @@ export const PosterCard: React.FC<PosterCardProps> = ({
     ? 'Anime'
     : 'Movie';
 
-  const ratingStr = ratingVal > 0 ? ratingVal.toFixed(1) : '7.8';
-  const ageRating = item.ageRating || '16+';
-  const quality = item.quality || 'HD';
-
-  // Stagger class for entrance animation
-  const staggerClass = index < 12 ? `stagger-${index + 1}` : '';
+  const showImage = item.posterPath && !imgError;
 
   return (
-    <div
-      role="button"
+    <a
+      href="#play"
+      role="link"
       tabIndex={0}
-      onClick={onClick}
+      aria-label={`${item.title}, ${yearLabel} ${typeLabel}`}
+      onClick={(e) => {
+        e.preventDefault();
+        onClick();
+      }}
       onKeyDown={(e) => {
         if (e.key === 'Enter' || e.key === ' ') {
           e.preventDefault();
           onClick();
         }
       }}
-      aria-label={`${item.title}, ${yearLabel} ${typeLabel}, ${matchPercent}% match`}
-      className={`streaming-poster-card animate-rise ${staggerClass} ${className}`}
-      style={{
-        display: 'flex',
-        flexDirection: 'column',
-        gap: 'var(--space-2)',
-        background: 'transparent',
-        borderRadius: 'var(--radius-md)',
-        cursor: 'pointer',
-        outline: 'none',
-        position: 'relative',
-        userSelect: 'none',
-        ...style
-      }}
+      className={`streaming-poster-card ${className}`}
+      style={style}
     >
-      {/* Poster Image Container (Cover, anchored top, on --surface-2 base) */}
-      <div
-        style={{
-          width: '100%',
-          aspectRatio: '2/3',
-          borderRadius: 'var(--radius-md)',
-          backgroundColor: 'var(--surface-2)',
-          backgroundImage: item.posterPath ? `url("${item.posterPath}")` : 'none',
-          backgroundSize: 'cover',
-          backgroundPosition: 'top center',
-          backgroundRepeat: 'no-repeat',
-          border: '1px solid var(--border)',
-          position: 'relative',
-          overflow: 'hidden',
-          display: 'flex',
-          flexDirection: 'column',
-          justifyContent: 'space-between',
-          padding: 'var(--space-2)'
-        }}
-      >
-        {/* Top Chips Row: 16+ and HD chips (No % match on image) */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '4px', flexWrap: 'wrap' }}>
-          {/* Age Rating Chip */}
-          <span
-            style={{
-              fontSize: '0.68rem',
-              fontWeight: 600,
-              padding: '2px 5px',
-              borderRadius: '4px',
-              backgroundColor: 'rgba(27, 30, 38, 0.8)',
-              color: 'var(--text-2)',
-              border: '1px solid var(--border)',
-              backdropFilter: 'blur(4px)'
-            }}
-          >
-            {ageRating}
-          </span>
+      {/* Poster (2:3 aspect ratio, radius 16px, overflow:hidden) */}
+      <div className="streaming-card-poster">
+        {showImage ? (
+          <img
+            src={item.posterPath}
+            alt=""
+            loading="lazy"
+            onError={() => setImgError(true)}
+            className="streaming-card-poster-img"
+          />
+        ) : (
+          <div className="streaming-card-placeholder">
+            <div className="streaming-card-avatar">
+              {item.title ? item.title.trim().charAt(0).toUpperCase() : 'M'}
+            </div>
+            <span className="streaming-card-fallback-title">
+              {item.title}
+            </span>
+            <span className="streaming-card-type">{typeLabel}</span>
+          </div>
+        )}
 
-          {/* HD / 4K Chip */}
-          <span
-            style={{
-              fontSize: '0.65rem',
-              fontWeight: 700,
-              padding: '2px 5px',
-              borderRadius: '4px',
-              backgroundColor: 'rgba(27, 30, 38, 0.8)',
-              color: 'var(--text-3)',
-              border: '1px solid var(--border)',
-              backdropFilter: 'blur(4px)'
-            }}
-          >
-            {quality}
-          </span>
+        {/* Play button (48px round, fades in and scales from .85 to 1 on hover/focus) */}
+        <div className="streaming-card-play-btn" aria-hidden="true">
+          <Play size={20} fill="#0e1118" color="#0e1118" style={{ transform: 'translateX(1px)' }} />
         </div>
 
-        {/* Fallback placeholder if no poster */}
-        {!item.posterPath && (
-          <div
-            style={{
-              position: 'absolute',
-              inset: 0,
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              color: 'var(--text-3)',
-              fontSize: '2rem',
-              fontWeight: 700,
-              textTransform: 'uppercase'
-            }}
-          >
-            {item.title.charAt(0)}
+        {/* Progress bar (5px tall, pinned to poster bottom and clipped by rounded corners) */}
+        {progressPercent !== undefined && progressPercent > 0 && (
+          <div className="streaming-card-progress-track">
+            <div
+              className="streaming-card-progress-bar"
+              style={{
+                width: `${Math.min(100, Math.max(0, progressPercent))}%`
+              }}
+            />
           </div>
         )}
       </div>
 
-      {/* Meta underneath poster */}
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', padding: '0 2px' }}>
-        <h3
-          title={item.title}
-          style={{
-            margin: 0,
-            fontSize: '0.92rem',
-            fontWeight: 600,
-            color: 'var(--text-1)',
-            lineHeight: 1.3,
-            overflow: 'hidden',
-            textOverflow: 'ellipsis',
-            whiteSpace: 'nowrap'
-          }}
-        >
+      {/* Meta (title + subline, sits OUTSIDE the ring) */}
+      <div className="streaming-card-meta">
+        <b className="streaming-card-title" title={item.title}>
           {item.title}
-        </h3>
-
-        {/* "year · type · ★ rating" as plain text under title */}
-        <p
-          style={{
-            margin: 0,
-            fontSize: '0.78rem',
-            color: 'var(--text-3)',
-            display: 'flex',
-            alignItems: 'center',
-            gap: '4px'
-          }}
-        >
+        </b>
+        <span className="streaming-card-subline">
           <span>{yearLabel}</span>
           <span>·</span>
           <span>{typeLabel}</span>
           <span>·</span>
-          <span style={{ color: 'var(--warning)', fontWeight: 600 }}>★</span>
+          <span className="streaming-card-star">★</span>
           <span>{ratingStr}</span>
-        </p>
+        </span>
       </div>
-    </div>
+    </a>
   );
 };

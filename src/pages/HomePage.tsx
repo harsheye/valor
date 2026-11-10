@@ -557,45 +557,6 @@ export const HomePage: React.FC<HomePageProps> = ({
               </button>
             </div>
           </form>
-
-          {/* Quick Demo Streams Bar */}
-          <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '8px', marginTop: '-0.5rem' }} onClick={(e) => e.stopPropagation()}>
-            <span style={{ fontSize: '0.75rem', color: 'var(--text-3)', marginRight: '4px' }}>
-              Sample Streams:
-            </span>
-            <button
-              type="button"
-              className="sample-stream-chip"
-              onClick={() => handleLoadDemo('https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8')}
-              style={{
-                background: 'var(--surface-3)',
-                border: '1px solid var(--control-border)',
-                borderRadius: '16px',
-                padding: '6px 12px',
-                color: 'var(--text-2)',
-                fontSize: '0.75rem',
-                cursor: 'pointer'
-              }}
-            >
-              Big Buck Bunny (HLS)
-            </button>
-            <button
-              type="button"
-              className="sample-stream-chip"
-              onClick={() => handleLoadDemo('https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/TearsOfSteel.mp4')}
-              style={{
-                background: 'var(--surface-3)',
-                border: '1px solid var(--control-border)',
-                borderRadius: '16px',
-                padding: '6px 12px',
-                color: 'var(--text-2)',
-                fontSize: '0.75rem',
-                cursor: 'pointer'
-              }}
-            >
-              Tears of Steel (MP4)
-            </button>
-          </div>
         </div>
       </div>
 

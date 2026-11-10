@@ -57,6 +57,7 @@ export const Hero: React.FC<HeroProps> = ({
   return (
     <div
       ref={heroRef}
+      className="streaming-hero-root"
       style={{
         position: 'relative',
         width: '100%',
@@ -91,6 +92,7 @@ export const Hero: React.FC<HeroProps> = ({
 
       {/* Scrim fade on the left and bottom */}
       <div
+        className="streaming-hero-scrim"
         style={{
           position: 'absolute',
           inset: 0,
@@ -195,6 +197,7 @@ export const Hero: React.FC<HeroProps> = ({
 
         {/* Big Display Title */}
         <h1
+          className="streaming-hero-title"
           style={{
             margin: 0,
             fontFamily: 'var(--font-display)',
@@ -227,7 +230,7 @@ export const Hero: React.FC<HeroProps> = ({
         )}
 
         {/* Action Buttons: Primary "Play" and Ghost "+ Library" */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)', marginTop: 'var(--space-2)' }}>
+        <div className="streaming-hero-buttons" style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)', marginTop: 'var(--space-2)' }}>
           {/* Primary Play Button (--accent-fill / --on-accent) */}
           <button
             type="button"
@@ -276,7 +279,7 @@ export const Hero: React.FC<HeroProps> = ({
               }}
             >
               {isInLibrary ? <Check size={18} /> : <Plus size={18} />}
-              <span>{isInLibrary ? 'In Library' : '+ Library'}</span>
+              <span>{isInLibrary ? 'In Library' : 'Add to Library'}</span>
             </button>
           )}
         </div>

@@ -5,7 +5,9 @@
 import pg from 'pg';
 import Redis from 'ioredis';
 import crypto from 'crypto';
+import bcrypt from 'bcryptjs';
 import { lookupIpIntelligence, getFlagEmoji } from './geoLookup.js';
+import { runAccountMigrations } from './server/db/accountMigration.js';
 
 const { Pool } = pg;
 
@@ -88,6 +90,8 @@ export class DataStore {
   }
 
   async ensureTables() {
+    await runAccountMigrations(this.pgPool, this.sqliteDb);
+
     if (this.isPgConnected && this.pgPool) {
       const initSql = `
       CREATE TABLE IF NOT EXISTS profiles (
@@ -98,10 +102,14 @@ export class DataStore {
           created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
       );
 
+      CREATE EXTENSION IF NOT EXISTS "pgcrypto";
+
       CREATE TABLE IF NOT EXISTS accounts (
-          username VARCHAR(255) PRIMARY KEY,
-          password VARCHAR(255) NOT NULL,
-          email VARCHAR(255),
+          id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+          profile_name VARCHAR(255) NOT NULL,
+          username VARCHAR(255) NOT NULL,
+          username_lower VARCHAR(255) UNIQUE NOT NULL,
+          password_hash VARCHAR(255) NOT NULL,
           created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
       );
 
@@ -1245,12 +1253,13 @@ export class DataStore {
   async authenticateUser(username, password) {
     if (this.isPgConnected) {
       try {
-        const res = await this.pgPool.query('SELECT * FROM accounts WHERE username = $1', [username]);
+        const res = await this.pgPool.query('SELECT * FROM accounts WHERE username_lower = $1', [username.toLowerCase()]);
         if (res.rows.length === 0) {
-          return { error: 'Account not found', status: 400 };
+          return { error: 'Incorrect username or password', status: 401 };
         }
         const account = res.rows[0];
-        if (account.password !== password) {
+        const isMatch = await bcrypt.compare(password, account.password_hash || account.password || '');
+        if (!isMatch) {
           return { error: 'Incorrect username or password', status: 401 };
         }
 
@@ -1298,9 +1307,10 @@ export class DataStore {
     // Fallback to SQLite
     if (this.sqliteDb) {
       try {
-        const account = this.sqliteDb.prepare('SELECT * FROM accounts WHERE username = ?').get(username);
-        if (!account) return { error: 'Account not found', status: 400 };
-        if (account.password !== password) return { error: 'Incorrect username or password', status: 401 };
+        const account = this.sqliteDb.prepare('SELECT * FROM accounts WHERE username_lower = ?').get(username.toLowerCase());
+        if (!account) return { error: 'Incorrect username or password', status: 401 };
+        const isMatch = bcrypt.compareSync(password, account.password_hash || account.password || '');
+        if (!isMatch) return { error: 'Incorrect username or password', status: 401 };
         let profile = this.sqliteDb.prepare('SELECT * FROM profiles WHERE username = ? ORDER BY createdAt ASC').get(username);
         if (!profile) {
           const fallbackId = `u_${Math.random().toString(36).substring(2, 11)}`;
@@ -1324,7 +1334,7 @@ export class DataStore {
     return { error: 'Database service unavailable', status: 500 };
   }
 
-  async registerAccount(username, password, email = null) {
+  async registerAccount(username, password, profileName = null) {
     if (this.isPgConnected) {
       try {
         const existing = await this.pgPool.query('SELECT username FROM accounts WHERE username = $1', [username]);
@@ -1332,9 +1342,10 @@ export class DataStore {
           return { error: 'Username already exists', status: 409 };
         }
 
+        const passwordHash = await bcrypt.hash(password, 12);
         await this.pgPool.query(
-          'INSERT INTO accounts (username, password, email) VALUES ($1, $2, $3)',
-          [username, password, email]
+          'INSERT INTO accounts (id, profile_name, username, username_lower, password_hash) VALUES (gen_random_uuid(), $1, $2, $3, $4)',
+          [profileName || username, username, username.toLowerCase(), passwordHash]
         );
 
         const newUserId = `u_${crypto.randomBytes(6).toString('hex')}`;
@@ -1350,7 +1361,9 @@ export class DataStore {
       try {
         const existing = this.sqliteDb.prepare('SELECT username FROM accounts WHERE username = ?').get(username);
         if (existing) return { error: 'Username already exists', status: 409 };
-        this.sqliteDb.prepare('INSERT INTO accounts (username, password) VALUES (?, ?)').run(username, password);
+        const passwordHash = bcrypt.hashSync(password, 12);
+        const accId = crypto.randomUUID();
+        this.sqliteDb.prepare('INSERT INTO accounts (id, profile_name, username, username_lower, password_hash) VALUES (?, ?, ?, ?, ?)').run(accId, profileName || username, username, username.toLowerCase(), passwordHash);
         const newUserId = `u_${Math.random().toString(36).substring(2, 11)}`;
         this.sqliteDb.prepare('INSERT INTO profiles (userId, name, username, password) VALUES (?, ?, ?, null)').run(newUserId, username, username);
         return { success: true, username, userId: newUserId };

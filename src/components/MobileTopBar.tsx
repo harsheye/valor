@@ -1,9 +1,7 @@
-import React, { useState, useEffect } from 'react';
-import { Zap, Palette, Settings, Check } from 'lucide-react';
+import React, { useState } from 'react';
+import { Palette, Settings, Check } from 'lucide-react';
 import { ValorVIcon } from './ui/ValorVIcon';
 import { BottomSheet } from './ui/BottomSheet';
-import { sidecarService, type SidecarStatus } from '../services/remote/sidecarService';
-import { featureFlagService } from '../services/featureFlags';
 import './MobileTopBar.css';
 
 export interface MobileTopBarProps {
@@ -27,19 +25,10 @@ export const MobileTopBar: React.FC<MobileTopBarProps> = ({
   onNavigateSettings,
   onNavigateHome,
 }) => {
-  const [engineStatus, setEngineStatus] = useState<SidecarStatus>(() => sidecarService.getStatus());
-  const [engineSheetOpen, setEngineSheetOpen] = useState(false);
   const [themeSheetOpen, setThemeSheetOpen] = useState(false);
   const [currentTheme, setCurrentTheme] = useState<string>(() => {
     return document.documentElement.getAttribute('data-theme') || 'midnight-slate';
   });
-
-  useEffect(() => {
-    const unsub = sidecarService.subscribe((status) => {
-      setEngineStatus(status);
-    });
-    return () => unsub();
-  }, []);
 
   const handleSelectTheme = (themeId: string) => {
     let resolved = themeId;
@@ -58,47 +47,23 @@ export const MobileTopBar: React.FC<MobileTopBarProps> = ({
     setThemeSheetOpen(false);
   };
 
-  const isEngineRunning = engineStatus.isAvailable;
-
-  const toggleEngine = async () => {
-    if (isEngineRunning) {
-      featureFlagService.setFeatureState('localEngine', false, true);
-      await sidecarService.checkHealth();
-    } else {
-      featureFlagService.setFeatureState('localEngine', true, true);
-      await sidecarService.checkHealth();
-    }
-  };
-
   return (
     <>
       <header className="mobile-top-bar" aria-label="Valor Mobile Navigation">
-        {/* Left: V Logo + "Valor" Brand */}
+        {/* Left: V Logo + "VALOR" Brand */}
         <button
           type="button"
           className="mtb-brand"
           onClick={onNavigateHome}
           aria-label="Valor Home"
         >
-          <ValorVIcon width={24} height={26} />
-          <span className="mtb-wordmark">Valor</span>
+          <ValorVIcon width={24} height={24} />
+          <span className="mtb-wordmark">VALOR</span>
         </button>
 
-        {/* Right: Three 38x38 Icon Buttons */}
+        {/* Right: Icon Buttons */}
         <div className="mtb-actions">
-          {/* 1. Local Engine Button */}
-          <button
-            type="button"
-            className="mtb-icon-btn"
-            onClick={() => setEngineSheetOpen(true)}
-            aria-label={`Local engine: ${isEngineRunning ? 'Running' : 'Stopped'}`}
-            title="Local Engine"
-          >
-            <Zap size={18} />
-            {isEngineRunning && <span className="mtb-engine-dot" aria-hidden="true" />}
-          </button>
-
-          {/* 2. Theme Palette Button */}
+          {/* 1. Theme Palette Button */}
           <button
             type="button"
             className="mtb-icon-btn"
@@ -109,7 +74,7 @@ export const MobileTopBar: React.FC<MobileTopBarProps> = ({
             <Palette size={18} />
           </button>
 
-          {/* 3. Settings Gear Button */}
+          {/* 2. Settings Gear Button */}
           <button
             type="button"
             className="mtb-icon-btn"
@@ -121,35 +86,6 @@ export const MobileTopBar: React.FC<MobileTopBarProps> = ({
           </button>
         </div>
       </header>
-
-      {/* Engine Bottom Sheet */}
-      <BottomSheet
-        isOpen={engineSheetOpen}
-        onClose={() => setEngineSheetOpen(false)}
-        title="Local Engine"
-      >
-        <div className="mtb-sheet-body">
-          <div className="mtb-engine-status-row">
-            <span
-              className="mtb-engine-status-bulb"
-              style={{ background: isEngineRunning ? '#22c55e' : '#ef4444' }}
-            />
-            <span className="mtb-engine-status-text">
-              {isEngineRunning ? 'Running' : 'Stopped'}
-            </span>
-          </div>
-          <p className="mtb-engine-desc">
-            Handles MKV, audio tracks and embedded subtitles.
-          </p>
-          <button
-            type="button"
-            className={`mtb-engine-toggle-btn ${isEngineRunning ? 'stop' : 'start'}`}
-            onClick={toggleEngine}
-          >
-            {isEngineRunning ? 'Stop Engine' : 'Start Engine'}
-          </button>
-        </div>
-      </BottomSheet>
 
       {/* Theme Bottom Sheet */}
       <BottomSheet

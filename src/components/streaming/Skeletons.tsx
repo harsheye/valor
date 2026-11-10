@@ -31,13 +31,7 @@ export const ShimmerBox: React.FC<{
 export const PosterGridSkeleton: React.FC<{ count?: number }> = ({ count = 12 }) => {
   return (
     <div
-      style={{
-        display: 'grid',
-        gridTemplateColumns: 'repeat(auto-fill, minmax(168px, 1fr))',
-        gap: 'var(--space-5)',
-        width: '100%',
-        boxSizing: 'border-box'
-      }}
+      className="online-stream-grid"
       aria-label="Loading content"
       aria-busy="true"
     >

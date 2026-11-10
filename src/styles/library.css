@@ -52,7 +52,15 @@
 /* Mobile media query <= 768px */
 @media (max-width: 768px) {
   .library-page-wrapper {
-    padding: 10px 14px 80px 14px;
+    padding: 0 0 20px 0 !important;
+    overflow-y: visible !important;
+    height: auto !important;
+    min-height: auto !important;
+  }
+
+  .library-toolbar-root {
+    margin-bottom: 0.6rem !important;
+    padding-bottom: 0.5rem !important;
   }
 
   .library-desktop-row {
