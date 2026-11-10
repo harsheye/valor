@@ -1003,62 +1003,8 @@ const backendServer = http.createServer(async (req, res) => {
     return;
   }
 
-  // Remote media prefetch & sliding cache status endpoint (/api/proxy-media/prefetch)
-  if (pathname === '/api/proxy-media/prefetch' || pathname === '/api/proxy-media/cache-status') {
-    (async () => {
-      const rawTargetUrl = parsedUrl.searchParams.get('url');
-      if (!rawTargetUrl || !isSafeRemoteUrl(rawTargetUrl)) {
-        res.statusCode = 400;
-        res.setHeader('Content-Type', 'application/json');
-        res.end(JSON.stringify({ error: 'Invalid or blocked url parameter' }));
-        return;
-      }
-
-      setCorsHeaders(req, res);
-      setSecurityHeaders(res);
-
-      if (req.method === 'OPTIONS') {
-        res.statusCode = 204;
-        res.end();
-        return;
-      }
-
-      try {
-        const rawUser = parsedUrl.searchParams.get('user');
-        const rawPass = parsedUrl.searchParams.get('pass');
-        const auth = rawUser ? { username: rawUser, password: rawPass || '' } : undefined;
-
-        const durationStr = parsedUrl.searchParams.get('duration');
-        const duration = durationStr ? parseFloat(durationStr) : 0;
-        const currentTimeStr = parsedUrl.searchParams.get('currentTime');
-        const currentTime = currentTimeStr ? parseFloat(currentTimeStr) : 0;
-
-        let sessionId = parsedUrl.searchParams.get('sessionId');
-        if (!sessionId) {
-          const clientIp = req.socket.remoteAddress || 'local';
-          sessionId = `sess_${crypto.createHash('md5').update(`${clientIp}_${rawTargetUrl}`).digest('hex').slice(0, 8)}`;
-        }
-
-        const worker = sessionMediaManager.getOrCreateWorker(sessionId, rawTargetUrl, { auth, duration });
-        const status = await worker.prefetchWindow(currentTime, duration);
-
-        res.statusCode = 200;
-        res.setHeader('Content-Type', 'application/json');
-        res.setHeader('Cache-Control', 'no-cache, no-store');
-        res.end(JSON.stringify(status));
-      } catch (err) {
-        if (!res.headersSent) {
-          res.statusCode = 500;
-          res.setHeader('Content-Type', 'application/json');
-          res.end(JSON.stringify({ error: err.message }));
-        }
-      }
-    })();
-    return;
-  }
-
-  // Remote media proxy endpoint with SessionMediaManager (120s ahead / 30s behind sliding window cache)
-  if (pathname === '/api/proxy-media') {
+  // Remote media proxy & prefetch endpoint (120s ahead / 30s behind sliding window cache)
+  if (pathname === '/api/proxy-media' || pathname === '/api/proxy-media/prefetch' || pathname === '/api/proxy-media/cache-status') {
     (async () => {
       const clientIp = req.socket.remoteAddress || 'local';
       if (!checkRateLimit(clientIp, 120, 60000)) {
@@ -1084,16 +1030,17 @@ const backendServer = http.createServer(async (req, res) => {
         return;
       }
 
+      const isPrefetch = parsedUrl.searchParams.get('prefetch') === 'true' || pathname.endsWith('/prefetch') || pathname.endsWith('/cache-status');
+
       try {
         const rawUser = parsedUrl.searchParams.get('user');
         const rawPass = parsedUrl.searchParams.get('pass');
-        let auth = undefined;
-        if (rawUser) {
-          auth = { username: rawUser, password: rawPass || '' };
-        }
+        const auth = rawUser ? { username: rawUser, password: rawPass || '' } : undefined;
 
         const durationStr = parsedUrl.searchParams.get('duration');
         const duration = durationStr ? parseFloat(durationStr) : 0;
+        const currentTimeStr = parsedUrl.searchParams.get('currentTime');
+        const currentTime = currentTimeStr ? parseFloat(currentTimeStr) : 0;
 
         let sessionId = parsedUrl.searchParams.get('sessionId');
         if (!sessionId) {
@@ -1102,6 +1049,15 @@ const backendServer = http.createServer(async (req, res) => {
         }
 
         const worker = sessionMediaManager.getOrCreateWorker(sessionId, rawTargetUrl, { auth, duration });
+
+        if (isPrefetch) {
+          const status = await worker.prefetchWindow(currentTime, duration);
+          res.statusCode = 200;
+          res.setHeader('Content-Type', 'application/json');
+          res.setHeader('Cache-Control', 'no-cache, no-store');
+          res.end(JSON.stringify(status));
+          return;
+        }
         const rangeHeader = req.headers['range'];
 
         if (req.method === 'HEAD') {

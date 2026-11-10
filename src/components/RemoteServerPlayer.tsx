@@ -2656,26 +2656,33 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
           if (creds.password) params.set('pass', creds.password);
         }
 
-        const prefetchUrl = `${apiBase}/api/proxy-media/prefetch?${params.toString()}`;
+        const prefetchUrl = `${apiBase}/api/proxy-media?prefetch=true&${params.toString()}`;
         const res = await fetch(prefetchUrl);
         if (res.ok) {
-          const data = await res.json();
-          if (data && typeof data.cachedUntilSeconds === 'number') {
-            cachedBufferEndRef.current = data.cachedUntilSeconds;
-            if (dur > 0) {
-              let nativeEnd = 0;
-              if (videoRef.current && videoRef.current.buffered.length > 0) {
-                const b = videoRef.current.buffered;
-                for (let i = 0; i < b.length; i++) {
-                  if (b.start(i) <= currentPlayhead + 0.15 && b.end(i) >= currentPlayhead) {
-                    nativeEnd = b.end(i);
-                    break;
-                  }
+          const ct = res.headers.get('content-type') || '';
+          if (ct.includes('application/json')) {
+            const data = await res.json().catch(() => null);
+            if (data && typeof data.cachedUntilSeconds === 'number') {
+              cachedBufferEndRef.current = data.cachedUntilSeconds;
+            }
+          } else {
+            // Received media chunk from running server proxy - sliding cache is actively buffering
+            cachedBufferEndRef.current = Math.min(dur || (currentPlayhead + 120), Math.max(cachedBufferEndRef.current, currentPlayhead + 120));
+          }
+
+          if (dur > 0) {
+            let nativeEnd = 0;
+            if (videoRef.current && videoRef.current.buffered.length > 0) {
+              const b = videoRef.current.buffered;
+              for (let i = 0; i < b.length; i++) {
+                if (b.start(i) <= currentPlayhead + 0.15 && b.end(i) >= currentPlayhead) {
+                  nativeEnd = b.end(i);
+                  break;
                 }
               }
-              const effectiveEnd = Math.max(nativeEnd, data.cachedUntilSeconds);
-              setBufferedPercent(Math.min(100, (effectiveEnd / dur) * 100));
             }
+            const effectiveEnd = Math.max(nativeEnd, cachedBufferEndRef.current);
+            setBufferedPercent(Math.min(100, (effectiveEnd / dur) * 100));
           }
         }
       } catch {
