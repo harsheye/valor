@@ -7,6 +7,7 @@ import {
   Gauge
 } from 'lucide-react';
 import type { Bookmark } from '../../types/media';
+import { isMobileDevice } from '../../utils/screenOrientation';
 import { ScrubBar } from './ScrubBar';
 import { OdometerClock } from './OdometerClock';
 import { SpeedMenu } from './SpeedMenu';
@@ -249,10 +250,12 @@ export const PlayerBottomBar: React.FC<PlayerBottomBarProps> = ({
             className="popover-wrapper"
             style={{ position: 'relative' }}
             onMouseEnter={() => {
+              if (isMobileDevice()) return;
               if (audioSubTimeoutRef.current) clearTimeout(audioSubTimeoutRef.current);
               setShowAudioSubMenu(true);
             }}
             onMouseLeave={() => {
+              if (isMobileDevice()) return;
               audioSubTimeoutRef.current = setTimeout(() => {
                 setShowAudioSubMenu(false);
               }, 200);
@@ -291,10 +294,12 @@ export const PlayerBottomBar: React.FC<PlayerBottomBarProps> = ({
             className="popover-wrapper"
             style={{ position: 'relative' }}
             onMouseEnter={() => {
+              if (isMobileDevice()) return;
               if (bookmarksTimeoutRef.current) clearTimeout(bookmarksTimeoutRef.current);
               setShowBookmarksPopover(true);
             }}
             onMouseLeave={() => {
+              if (isMobileDevice()) return;
               bookmarksTimeoutRef.current = setTimeout(() => {
                 setShowBookmarksPopover(false);
               }, 200);

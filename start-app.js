@@ -1007,7 +1007,7 @@ const backendServer = http.createServer(async (req, res) => {
   if (pathname === '/api/proxy-media' || pathname === '/api/proxy-media/prefetch' || pathname === '/api/proxy-media/cache-status') {
     (async () => {
       const clientIp = req.socket.remoteAddress || 'local';
-      if (!checkRateLimit(clientIp, 120, 60000)) {
+      if (!checkRateLimit(clientIp, 600, 60000)) {
         res.statusCode = 429;
         res.setHeader('Retry-After', '60');
         res.end(JSON.stringify({ error: 'Rate limit exceeded' }));

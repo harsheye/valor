@@ -20,6 +20,7 @@ import { ToneMappingSvgDefs, isHdrOrX265Video, getToneMappingCssFilter, type Ton
 import { AudioSyncEngine } from '../services/remote/audioSync';
 import { parseSubtitles, cleanSubtitleText } from '../utils/subtitleParser';
 import { parseMkv, parseMp4, extractMkvSubtitles } from '../utils/containerParser';
+import { isMobileDevice } from '../utils/screenOrientation';
 import { ffmpegService } from '../services/ffmpeg';
 import { HttpByteSource, CachedByteSource } from '../services/remote/remoteByteSource';
 import { FileByteSource } from '../services/local/localByteSource';
@@ -1822,6 +1823,7 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
   const [playbackError, setPlaybackError] = useState<string | null>(null);
 
   const seekTargetRef = useRef<number | null>(null);
+  const queuePrefetchOnSeekRef = useRef<((targetTime: number) => void) | null>(null);
 
   const isTimeBuffered = useCallback((targetTime: number, margin = 0.1): boolean => {
     if (!videoRef.current) return false;
@@ -1869,6 +1871,7 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
         if (hasAltAudio && playbackControllerRef.current) {
           playbackControllerRef.current.seek(targetTime).catch(console.error);
         }
+        queuePrefetchOnSeekRef.current?.(targetTime);
         onUpdateVideoRef.current((prev: any) => ({
           ...prev,
           currentTime: targetTime
@@ -2654,78 +2657,158 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
     }
   }, [volume, audioBoost]);
 
-  // Active 120s Ahead / 30s Behind Sliding Cache Controller (Runs in BOTH Play AND Pause)
+  // Active 120s Ahead / 30s Behind Sliding Cache Controller (Smart adaptive prefetch)
+  const prefetchTimerRef = useRef<any>(null);
+  const debouncedPrefetchRef = useRef<any>(null);
+  const lastPrefetchTimeRef = useRef<number>(0);
+  const lastPrefetchPlayheadRef = useRef<number>(-1);
+
+  const triggerPrefetch = useCallback(async (forced = false) => {
+    if (!video.isRemote || !video.url) return;
+
+    const currentPlayhead = videoRef.current ? videoRef.current.currentTime : currentTime;
+    const dur = durationRef.current || duration || 0;
+    const now = Date.now();
+
+    // 1. Throttle requests: do not ping faster than once every 4 seconds unless explicitly forced
+    if (!forced && now - lastPrefetchTimeRef.current < 4000) {
+      return;
+    }
+
+    // 2. Check if we already have sufficient cache ahead and playhead hasn't moved significantly
+    const cachedAhead = cachedBufferEndRef.current - currentPlayhead;
+    const playheadMoved = Math.abs(currentPlayhead - lastPrefetchPlayheadRef.current);
+    const isPlaying = isPlayingRef.current;
+
+    // While playing: range requests from <video> drive server sliding window automatically.
+    // Only ping if playhead advanced by >= 25s or cached ahead dropped below 60s.
+    if (!forced && isPlaying && cachedAhead >= 60 && playheadMoved < 25 && now - lastPrefetchTimeRef.current < 15000) {
+      return;
+    }
+
+    // While paused: once 120s is cached ahead (or until end of media), STOP pinging completely!
+    if (!forced && !isPlaying && (cachedAhead >= 115 || (dur > 0 && cachedBufferEndRef.current >= dur - 1))) {
+      return;
+    }
+
+    lastPrefetchTimeRef.current = now;
+    lastPrefetchPlayheadRef.current = currentPlayhead;
+
+    try {
+      const apiBase = sidecarService.getRemoteApiBase();
+      const creds = (video as any).auth || getSavedCredentials(video.url);
+
+      const params = new URLSearchParams({
+        url: video.url,
+        sessionId: sessionIdRef.current,
+        currentTime: currentPlayhead.toFixed(2),
+        duration: dur.toString()
+      });
+      if (creds?.username) {
+        params.set('user', creds.username);
+        if (creds.password) params.set('pass', creds.password);
+      }
+
+      const prefetchUrl = `${apiBase}/api/proxy-media?prefetch=true&${params.toString()}`;
+      const res = await fetch(prefetchUrl);
+      if (res.ok) {
+        const ct = res.headers.get('content-type') || '';
+        if (ct.includes('application/json')) {
+          const data = await res.json().catch(() => null);
+          if (data && typeof data.cachedUntilSeconds === 'number') {
+            cachedBufferEndRef.current = data.cachedUntilSeconds;
+          }
+        } else {
+          cachedBufferEndRef.current = Math.min(dur || (currentPlayhead + 120), Math.max(cachedBufferEndRef.current, currentPlayhead + 120));
+        }
+
+        if (dur > 0) {
+          let nativeEnd = 0;
+          if (videoRef.current && videoRef.current.buffered.length > 0) {
+            const b = videoRef.current.buffered;
+            for (let i = 0; i < b.length; i++) {
+              if (b.start(i) <= currentPlayhead + 0.5 && b.end(i) >= currentPlayhead) {
+                nativeEnd = b.end(i);
+                break;
+              }
+            }
+          }
+          const effectiveEnd = Math.max(nativeEnd, cachedBufferEndRef.current);
+          setBufferedPercent(Math.min(100, (effectiveEnd / dur) * 100));
+        }
+      }
+    } catch {
+      // network error ignored
+    }
+  }, [video.url, video.isRemote, (video as any).auth, duration, currentTime]);
+
+  const queuePrefetchOnSeek = useCallback((targetTime: number) => {
+    if (!video.isRemote || !video.url) return;
+    if (debouncedPrefetchRef.current) {
+      clearTimeout(debouncedPrefetchRef.current);
+    }
+    debouncedPrefetchRef.current = setTimeout(() => {
+      const isAlreadyCached = targetTime <= cachedBufferEndRef.current && targetTime >= (videoRef.current?.currentTime ?? 0) - 30;
+      if (!isAlreadyCached) {
+        triggerPrefetch(true);
+      }
+    }, 400);
+  }, [video.isRemote, video.url, triggerPrefetch]);
+  queuePrefetchOnSeekRef.current = queuePrefetchOnSeek;
+
   useEffect(() => {
     if (!video.isRemote || !video.url) return;
 
     let isDisposed = false;
-    let inFlight = false;
 
-    const pingPrefetch = async () => {
-      if (isDisposed || inFlight) return;
-      inFlight = true;
+    // Initial prefetch on load
+    triggerPrefetch(true);
 
-      try {
-        const currentPlayhead = videoRef.current ? videoRef.current.currentTime : currentTime;
-        const dur = durationRef.current || duration || 0;
-        const apiBase = sidecarService.getRemoteApiBase();
-        const creds = (video as any).auth || getSavedCredentials(video.url);
+    const scheduleNext = () => {
+      if (isDisposed) return;
+      const isPlaying = isPlayingRef.current;
+      const currentPlayhead = videoRef.current ? videoRef.current.currentTime : 0;
+      const cachedAhead = cachedBufferEndRef.current - currentPlayhead;
+      const dur = durationRef.current || 0;
+      const isEndReached = dur > 0 && cachedBufferEndRef.current >= dur - 1;
 
-        const params = new URLSearchParams({
-          url: video.url,
-          sessionId: sessionIdRef.current,
-          currentTime: currentPlayhead.toFixed(2),
-          duration: dur.toString()
-        });
-        if (creds?.username) {
-          params.set('user', creds.username);
-          if (creds.password) params.set('pass', creds.password);
+      // Smart adaptive interval:
+      // - Paused & fully cached (>=115s or end reached): check very infrequently (every 30s) or sleep
+      // - Paused & filling 120s buffer: poll every 5s until filled
+      // - Playing: video element range requests drive server; poll every 15s (or 6s if buffer dipped below 60s)
+      let nextDelay = 15000;
+      if (!isPlaying) {
+        if (cachedAhead >= 115 || isEndReached) {
+          nextDelay = 30000;
+        } else {
+          nextDelay = 5000;
         }
-
-        const prefetchUrl = `${apiBase}/api/proxy-media?prefetch=true&${params.toString()}`;
-        const res = await fetch(prefetchUrl);
-        if (res.ok) {
-          const ct = res.headers.get('content-type') || '';
-          if (ct.includes('application/json')) {
-            const data = await res.json().catch(() => null);
-            if (data && typeof data.cachedUntilSeconds === 'number') {
-              cachedBufferEndRef.current = data.cachedUntilSeconds;
-            }
-          } else {
-            // Received media chunk from running server proxy - sliding cache is actively buffering
-            cachedBufferEndRef.current = Math.min(dur || (currentPlayhead + 120), Math.max(cachedBufferEndRef.current, currentPlayhead + 120));
-          }
-
-          if (dur > 0) {
-            let nativeEnd = 0;
-            if (videoRef.current && videoRef.current.buffered.length > 0) {
-              const b = videoRef.current.buffered;
-              for (let i = 0; i < b.length; i++) {
-                if (b.start(i) <= currentPlayhead + 0.15 && b.end(i) >= currentPlayhead) {
-                  nativeEnd = b.end(i);
-                  break;
-                }
-              }
-            }
-            const effectiveEnd = Math.max(nativeEnd, cachedBufferEndRef.current);
-            setBufferedPercent(Math.min(100, (effectiveEnd / dur) * 100));
-          }
-        }
-      } catch {
-        // network error ignored
-      } finally {
-        inFlight = false;
+      } else {
+        nextDelay = cachedAhead < 60 ? 6000 : 15000;
       }
+
+      prefetchTimerRef.current = setTimeout(async () => {
+        if (!isDisposed) {
+          await triggerPrefetch(false);
+          scheduleNext();
+        }
+      }, nextDelay);
     };
 
-    pingPrefetch();
-    const interval = setInterval(pingPrefetch, 2000);
+    scheduleNext();
 
     return () => {
       isDisposed = true;
-      clearInterval(interval);
+      if (prefetchTimerRef.current) {
+        clearTimeout(prefetchTimerRef.current);
+        prefetchTimerRef.current = null;
+      }
+      if (debouncedPrefetchRef.current) {
+        clearTimeout(debouncedPrefetchRef.current);
+        debouncedPrefetchRef.current = null;
+      }
     };
-  }, [video.url, video.isRemote, isPlaying, duration]);
+  }, [video.url, video.isRemote, triggerPrefetch]);
 
   // RequestAnimationFrame tick loop for micro-fine time updates (essential for subtitles)
   useEffect(() => {
@@ -3659,6 +3742,7 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
     if (hasAltAudio && playbackControllerRef.current) {
       playbackControllerRef.current.seek(targetTime).catch(console.error);
     }
+    queuePrefetchOnSeekRef.current?.(targetTime);
 
     setConsecutiveSkipInfo({ direction: 'rewind', totalSeconds: acc.totalSeconds, count: acc.count });
 
@@ -3720,6 +3804,7 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
     if (hasAltAudio && playbackControllerRef.current) {
       playbackControllerRef.current.seek(targetTime).catch(console.error);
     }
+    queuePrefetchOnSeekRef.current?.(targetTime);
 
     setConsecutiveSkipInfo({ direction: 'forward', totalSeconds: acc.totalSeconds, count: acc.count });
 
@@ -3788,6 +3873,7 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
       if (hasAltAudio && playbackControllerRef.current) {
         playbackControllerRef.current.seek(seekTime).catch(console.error);
       }
+      queuePrefetchOnSeekRef.current?.(seekTime);
       resetControlsTimeout();
       if (previewVideoRef.current) {
         previewVideoRef.current.currentTime = seekTime;
@@ -6291,10 +6377,12 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
                   <div 
                     className="popover-wrapper"
                     onMouseEnter={() => {
+                      if (isMobileDevice()) return;
                       if (bookmarksTimeoutRef.current) clearTimeout(bookmarksTimeoutRef.current);
                       setShowBookmarksPopover(true);
                     }}
                     onMouseLeave={() => {
+                      if (isMobileDevice()) return;
                       bookmarksTimeoutRef.current = setTimeout(() => {
                         setShowBookmarksPopover(false);
                       }, 150);
@@ -6355,10 +6443,12 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
                   <div 
                     className="popover-wrapper"
                     onMouseEnter={() => {
+                      if (isMobileDevice()) return;
                       if (audioSubTimeoutRef.current) clearTimeout(audioSubTimeoutRef.current);
                       setShowAudioSubMenu(true);
                     }}
                     onMouseLeave={() => {
+                      if (isMobileDevice()) return;
                       audioSubTimeoutRef.current = setTimeout(() => {
                         setShowAudioSubMenu(false);
                       }, 150);

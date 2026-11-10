@@ -5931,10 +5931,12 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
                   <div 
                     className="popover-wrapper"
                     onMouseEnter={() => {
+                      if (isMobileDevice()) return;
                       if (bookmarksTimeoutRef.current) clearTimeout(bookmarksTimeoutRef.current);
                       setShowBookmarksPopover(true);
                     }}
                     onMouseLeave={() => {
+                      if (isMobileDevice()) return;
                       bookmarksTimeoutRef.current = setTimeout(() => {
                         setShowBookmarksPopover(false);
                       }, 150);
@@ -5981,10 +5983,12 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
                   <div 
                     className="popover-wrapper"
                     onMouseEnter={() => {
+                      if (isMobileDevice()) return;
                       if (audioSubTimeoutRef.current) clearTimeout(audioSubTimeoutRef.current);
                       setShowAudioSubMenu(true);
                     }}
                     onMouseLeave={() => {
+                      if (isMobileDevice()) return;
                       audioSubTimeoutRef.current = setTimeout(() => {
                         setShowAudioSubMenu(false);
                       }, 150);
