@@ -2180,6 +2180,7 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
   const [isBuffering, setIsBuffering] = useState(true);
   const [isSeeking, setIsSeeking] = useState(false);
   const [bufferedPercent, setBufferedPercent] = useState(0);
+  const cachedBufferEndRef = useRef<number>(0);
 
   const videoRef = useRef<HTMLVideoElement>(null);
 
@@ -2627,6 +2628,72 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
     }
   }, [volume, audioBoost]);
 
+  // Active 120s Ahead / 30s Behind Sliding Cache Controller (Runs in BOTH Play AND Pause)
+  useEffect(() => {
+    if (!video.isRemote || !video.url) return;
+
+    let isDisposed = false;
+    let inFlight = false;
+
+    const pingPrefetch = async () => {
+      if (isDisposed || inFlight) return;
+      inFlight = true;
+
+      try {
+        const currentPlayhead = videoRef.current ? videoRef.current.currentTime : currentTime;
+        const dur = durationRef.current || duration || 0;
+        const apiBase = sidecarService.getRemoteApiBase();
+        const creds = (video as any).auth || getSavedCredentials(video.url);
+
+        const params = new URLSearchParams({
+          url: video.url,
+          sessionId: sessionIdRef.current,
+          currentTime: currentPlayhead.toFixed(2),
+          duration: dur.toString()
+        });
+        if (creds?.username) {
+          params.set('user', creds.username);
+          if (creds.password) params.set('pass', creds.password);
+        }
+
+        const prefetchUrl = `${apiBase}/api/proxy-media/prefetch?${params.toString()}`;
+        const res = await fetch(prefetchUrl);
+        if (res.ok) {
+          const data = await res.json();
+          if (data && typeof data.cachedUntilSeconds === 'number') {
+            cachedBufferEndRef.current = data.cachedUntilSeconds;
+            if (dur > 0) {
+              let nativeEnd = 0;
+              if (videoRef.current && videoRef.current.buffered.length > 0) {
+                const b = videoRef.current.buffered;
+                for (let i = 0; i < b.length; i++) {
+                  if (b.start(i) <= currentPlayhead + 0.15 && b.end(i) >= currentPlayhead) {
+                    nativeEnd = b.end(i);
+                    break;
+                  }
+                }
+              }
+              const effectiveEnd = Math.max(nativeEnd, data.cachedUntilSeconds);
+              setBufferedPercent(Math.min(100, (effectiveEnd / dur) * 100));
+            }
+          }
+        }
+      } catch {
+        // network error ignored
+      } finally {
+        inFlight = false;
+      }
+    };
+
+    pingPrefetch();
+    const interval = setInterval(pingPrefetch, 2000);
+
+    return () => {
+      isDisposed = true;
+      clearInterval(interval);
+    };
+  }, [video.url, video.isRemote, isPlaying, duration]);
+
   // RequestAnimationFrame tick loop for micro-fine time updates (essential for subtitles)
   useEffect(() => {
     let frameId: number;
@@ -2639,7 +2706,7 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
           setCurrentTime(currentPlayhead);
         }
         
-        // Update buffered percentage
+        // Update buffered percentage (native buffer + server 120s sliding cache)
         const buffered = videoRef.current.buffered;
         let currentBufferEnd = 0;
         if (buffered.length > 0) {
@@ -2649,9 +2716,10 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
               break;
             }
           }
-          if (duration) {
-            setBufferedPercent((currentBufferEnd / duration) * 100);
-          }
+        }
+        const effectiveBufferEnd = Math.max(currentBufferEnd, cachedBufferEndRef.current);
+        if (duration) {
+          setBufferedPercent(Math.min(100, (effectiveBufferEnd / duration) * 100));
         }
 
         // Timeframe Synchronization Barrier:

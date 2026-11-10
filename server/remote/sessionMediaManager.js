@@ -295,36 +295,116 @@ export class SessionMediaWorker {
         const minKeepBlock = Math.max(1, curPlayheadBlock - backwardBlocks);
         this.pruneOldBlocks(minKeepBlock);
 
+        const failedBlocks = new Map();
+        const CONCURRENCY = 4;
+
         while (!this.isDestroyed) {
           const curPlayheadBlock = Math.floor(this.currentPlayheadByte / BLOCK_SIZE);
           const maxTargetBlock = Math.min(curPlayheadBlock + forwardBlocks, this.totalBlocks - 1);
 
-          // Find the next block in the window that is not yet cached
-          let nextBlockToFetch = -1;
+          const missingBlocks = [];
           for (let b = curPlayheadBlock; b <= maxTargetBlock; b++) {
             const blockPath = path.join(this.cacheDir, `blk_${b}.bin`);
             if (!fs.existsSync(blockPath) && !this.activeBlockDownloads.has(b)) {
-              nextBlockToFetch = b;
-              break;
+              const fails = failedBlocks.get(b) || 0;
+              if (fails < 3) {
+                missingBlocks.push(b);
+                if (missingBlocks.length >= CONCURRENCY) break;
+              }
             }
           }
 
-          // If all blocks in the forward window are already cached or being downloaded, exit
-          if (nextBlockToFetch === -1) {
+          if (missingBlocks.length === 0) {
             break;
           }
 
-          // Fetch the block
-          try {
-            await this.getBlock(nextBlockToFetch);
-          } catch {
-            await new Promise(r => setTimeout(r, 250));
-          }
+          await Promise.all(missingBlocks.map(async (b) => {
+            try {
+              await this.getBlock(b);
+            } catch (err) {
+              const prev = failedBlocks.get(b) || 0;
+              failedBlocks.set(b, prev + 1);
+            }
+          }));
+
+          await new Promise(r => setTimeout(r, 30));
         }
       } finally {
         this.isPrefetching = false;
       }
     })();
+  }
+
+  /**
+   * Actively pre-buffers the 120s window ahead and retains 30s behind for a given playhead time.
+   * Can be called periodically while playing or while paused.
+   */
+  async prefetchWindow(currentTime = 0, explicitDuration = 0) {
+    await this.init();
+    if (explicitDuration > 0 && (!this.duration || this.duration <= 0)) {
+      this.duration = explicitDuration;
+      this.bitrateBytesPerSec = Math.max(200 * 1024, Math.ceil(this.totalSize / this.duration));
+    }
+
+    if (this.duration > 0 && this.totalSize > 0) {
+      const playheadByte = Math.max(0, Math.min(Math.floor((currentTime / this.duration) * this.totalSize), this.totalSize - 1));
+      this.currentPlayheadByte = playheadByte;
+    }
+    this.lastActivityTime = Date.now();
+    this.triggerPrefetch();
+    return this.getCacheStatus(currentTime);
+  }
+
+  /**
+   * Scans disk cache and returns actual coverage metrics around currentTime.
+   */
+  getCacheStatus(currentTime = 0) {
+    const curBlock = Math.floor(this.currentPlayheadByte / BLOCK_SIZE);
+    const forwardBytes = this.bitrateBytesPerSec * FORWARD_BUFFER_SECONDS;
+    const forwardBlocks = Math.max(10, Math.ceil(forwardBytes / BLOCK_SIZE));
+    const backwardBytes = this.bitrateBytesPerSec * BACKWARD_BUFFER_SECONDS;
+    const backwardBlocks = Math.max(2, Math.ceil(backwardBytes / BLOCK_SIZE));
+
+    let contiguousForwardBlocks = 0;
+    const maxTargetBlock = Math.min(curBlock + forwardBlocks, this.totalBlocks - 1);
+    for (let b = curBlock; b <= maxTargetBlock; b++) {
+      const blockPath = path.join(this.cacheDir, `blk_${b}.bin`);
+      if (fs.existsSync(blockPath)) {
+        contiguousForwardBlocks++;
+      } else {
+        break;
+      }
+    }
+
+    const secondsPerBlock = (BLOCK_SIZE / this.bitrateBytesPerSec);
+    const cachedAheadSec = contiguousForwardBlocks * secondsPerBlock;
+    const effectiveDur = this.duration > 0 ? this.duration : (this.totalBlocks * secondsPerBlock);
+    const cachedUntilSeconds = Math.min(effectiveDur, currentTime + cachedAheadSec);
+
+    let contiguousBackwardBlocks = 0;
+    const minTargetBlock = Math.max(1, curBlock - backwardBlocks);
+    for (let b = curBlock - 1; b >= minTargetBlock; b--) {
+      const blockPath = path.join(this.cacheDir, `blk_${b}.bin`);
+      if (fs.existsSync(blockPath)) {
+        contiguousBackwardBlocks++;
+      } else {
+        break;
+      }
+    }
+    const cachedFromSeconds = Math.max(0, currentTime - (contiguousBackwardBlocks * secondsPerBlock));
+
+    return {
+      success: true,
+      currentTime,
+      duration: effectiveDur,
+      cachedUntilSeconds,
+      cachedFromSeconds,
+      cachedAheadSeconds: Math.min(FORWARD_BUFFER_SECONDS, cachedAheadSec),
+      targetAheadSeconds: FORWARD_BUFFER_SECONDS,
+      targetBehindSeconds: BACKWARD_BUFFER_SECONDS,
+      curBlock,
+      totalBlocks: this.totalBlocks
+    };
   }
 
   /**

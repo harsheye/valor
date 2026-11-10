@@ -356,15 +356,19 @@ function triggerSlidingPrefetch(url, currentByte, totalSize, duration, auth) {
         } catch {}
       }
 
-      // 2. Prefetch missing blocks up to 120s ahead
-      for (let b = curBlock; b <= maxTargetBlock; b++) {
-        const blockFile = path.join(BLOCKS_DIR, `${urlHash}_b${b}.bin`);
-        if (!fs.existsSync(blockFile)) {
-          try {
-            await getOrFetchBlock(url, b, auth);
-          } catch {
-            await new Promise(r => setTimeout(r, 200));
+      // 2. Prefetch missing blocks up to 120s ahead in concurrent batches of 4
+      const CONCURRENCY = 4;
+      for (let b = curBlock; b <= maxTargetBlock; b += CONCURRENCY) {
+        const batch = [];
+        for (let i = 0; i < CONCURRENCY && (b + i) <= maxTargetBlock; i++) {
+          const targetB = b + i;
+          const blockFile = path.join(BLOCKS_DIR, `${urlHash}_b${targetB}.bin`);
+          if (!fs.existsSync(blockFile)) {
+            batch.push(getOrFetchBlock(url, targetB, auth).catch(() => {}));
           }
+        }
+        if (batch.length > 0) {
+          await Promise.all(batch);
         }
       }
     } catch (e) {
@@ -374,6 +378,67 @@ function triggerSlidingPrefetch(url, currentByte, totalSize, duration, auth) {
     }
   })();
 }
+
+  // 3.0 Prefetch & Cache Status Endpoint (/api/proxy-media/prefetch)
+  if (pathname === '/api/proxy-media/prefetch' || pathname === '/api/proxy-media/cache-status') {
+    const rawUrl = parsedUrl.searchParams.get('url');
+    if (!rawUrl) {
+      res.statusCode = 400;
+      res.setHeader('Content-Type', 'application/json');
+      res.end(JSON.stringify({ error: 'Missing url parameter' }));
+      return;
+    }
+
+    try {
+      const user = parsedUrl.searchParams.get('user');
+      const pass = parsedUrl.searchParams.get('pass');
+      const auth = user ? { username: user, password: pass || '' } : undefined;
+      const duration = parsedUrl.searchParams.has('duration') ? parseFloat(parsedUrl.searchParams.get('duration')) : 0;
+      const currentTime = parsedUrl.searchParams.has('currentTime') ? parseFloat(parsedUrl.searchParams.get('currentTime')) : 0;
+
+      const { totalSize } = await getMediaMetadata(rawUrl, auth);
+      const playheadByte = duration > 0 ? Math.floor((currentTime / duration) * totalSize) : 0;
+
+      triggerSlidingPrefetch(rawUrl, playheadByte, totalSize, duration, auth);
+
+      const urlHash = crypto.createHash('md5').update(rawUrl).digest('hex').slice(0, 16);
+      const bitrate = duration > 0 ? Math.max(200 * 1024, Math.ceil(totalSize / duration)) : DEFAULT_BITRATE_BYTES_PER_SEC;
+      const secondsPerBlock = BLOCK_SIZE / bitrate;
+      const curBlock = Math.floor(playheadByte / BLOCK_SIZE);
+      const forwardBlocks = Math.max(10, Math.ceil((bitrate * FORWARD_BUFFER_SECONDS) / BLOCK_SIZE));
+      const totalBlocks = Math.ceil(totalSize / BLOCK_SIZE);
+      const maxTargetBlock = Math.min(curBlock + forwardBlocks, totalBlocks - 1);
+
+      let contiguousAhead = 0;
+      for (let b = curBlock; b <= maxTargetBlock; b++) {
+        const blockFile = path.join(BLOCKS_DIR, `${urlHash}_b${b}.bin`);
+        if (fs.existsSync(blockFile)) contiguousAhead++;
+        else break;
+      }
+
+      const cachedUntilSeconds = Math.min(duration || (totalBlocks * secondsPerBlock), currentTime + (contiguousAhead * secondsPerBlock));
+
+      res.statusCode = 200;
+      res.setHeader('Content-Type', 'application/json');
+      res.setHeader('Cache-Control', 'no-cache, no-store');
+      res.end(JSON.stringify({
+        success: true,
+        currentTime,
+        duration,
+        cachedUntilSeconds,
+        cachedAheadSeconds: contiguousAhead * secondsPerBlock,
+        targetAheadSeconds: FORWARD_BUFFER_SECONDS,
+        targetBehindSeconds: BACKWARD_BUFFER_SECONDS
+      }));
+    } catch (err) {
+      if (!res.headersSent) {
+        res.statusCode = 500;
+        res.setHeader('Content-Type', 'application/json');
+        res.end(JSON.stringify({ error: err.message }));
+      }
+    }
+    return;
+  }
 
   // 3. Local Media Proxy with 2MB Block Caching (/api/proxy-media)
   if (pathname === '/api/proxy-media') {
