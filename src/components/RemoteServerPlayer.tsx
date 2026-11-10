@@ -1788,47 +1788,6 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
     return () => clearInterval(timer);
   }, []);
 
-  // Global mouseup/touchend listener to safely complete scrubbing free hand with 500ms debounce
-  useEffect(() => {
-    if (!isScrubbing) return;
-
-    const handleScrubEnd = () => {
-      setIsScrubbing(false);
-      if (debouncedSeekTimeoutRef.current) {
-        clearTimeout(debouncedSeekTimeoutRef.current);
-      }
-      const targetTime = scrubTimeRef.current;
-      if (targetTime !== null && targetTime !== undefined && videoRef.current) {
-        setIsSeeking(true);
-        setIsBuffering(true);
-        debouncedSeekTimeoutRef.current = setTimeout(() => {
-          if (videoRef.current) {
-            videoRef.current.currentTime = targetTime;
-            setCurrentTime(targetTime);
-            if (playbackControllerRef.current) {
-              playbackControllerRef.current.seek(targetTime).catch(console.error);
-            }
-            onUpdateVideoRef.current((prev: any) => ({
-              ...prev,
-              currentTime: targetTime
-            }), false, video.id);
-          }
-          setScrubTime(null);
-        }, 250);
-      } else {
-        setScrubTime(null);
-      }
-    };
-
-    window.addEventListener('mouseup', handleScrubEnd);
-    window.addEventListener('touchend', handleScrubEnd);
-
-    return () => {
-      window.removeEventListener('mouseup', handleScrubEnd);
-      window.removeEventListener('touchend', handleScrubEnd);
-    };
-  }, [isScrubbing, video.id]);
-
   // Tracks Selection State
   const [selectedAudioTrack, setSelectedAudioTrack] = useState<CustomAudioTrack | null>(null);
   const userExplicitlyTurnedOffSubRef = useRef(false);
@@ -1861,6 +1820,73 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
   });
   const [activeSubStreamIndex, setActiveSubStreamIndex] = useState<number | null>(null);
   const [playbackError, setPlaybackError] = useState<string | null>(null);
+
+  const seekTargetRef = useRef<number | null>(null);
+
+  const isTimeBuffered = useCallback((targetTime: number, margin = 0.1): boolean => {
+    if (!videoRef.current) return false;
+    const buffered = videoRef.current.buffered;
+    if (!buffered || buffered.length === 0) return false;
+    for (let i = 0; i < buffered.length; i++) {
+      if (targetTime >= buffered.start(i) && targetTime <= Math.max(buffered.start(i), buffered.end(i) - margin)) {
+        return true;
+      }
+    }
+    return false;
+  }, []);
+
+  const getEffectiveTime = useCallback(() => {
+    if (seekTargetRef.current !== null) {
+      return seekTargetRef.current;
+    }
+    return videoRef.current ? videoRef.current.currentTime : currentTime;
+  }, [currentTime]);
+
+  // Global mouseup/touchend listener to safely complete scrubbing free hand with instant seek
+  useEffect(() => {
+    if (!isScrubbing) return;
+
+    const handleScrubEnd = () => {
+      setIsScrubbing(false);
+      if (debouncedSeekTimeoutRef.current) {
+        clearTimeout(debouncedSeekTimeoutRef.current);
+      }
+      const targetTime = scrubTimeRef.current;
+      if (targetTime !== null && targetTime !== undefined && videoRef.current) {
+        seekTargetRef.current = targetTime;
+        const hasAltAudio = (activeAudioStreamIndex !== null && activeAudioStreamIndex >= 0) || (selectedAudioTrack !== null);
+        const buffered = isTimeBuffered(targetTime, 0.2);
+        setIsSeeking(true);
+        if (!buffered) {
+          setIsBuffering(true);
+          isWaitingForSyncRef.current = true;
+        } else {
+          isWaitingForSyncRef.current = false;
+          setIsBuffering(false);
+        }
+        videoRef.current.currentTime = targetTime;
+        setCurrentTime(targetTime);
+        if (hasAltAudio && playbackControllerRef.current) {
+          playbackControllerRef.current.seek(targetTime).catch(console.error);
+        }
+        onUpdateVideoRef.current((prev: any) => ({
+          ...prev,
+          currentTime: targetTime
+        }), false, video.id);
+        setScrubTime(null);
+      } else {
+        setScrubTime(null);
+      }
+    };
+
+    window.addEventListener('mouseup', handleScrubEnd);
+    window.addEventListener('touchend', handleScrubEnd);
+
+    return () => {
+      window.removeEventListener('mouseup', handleScrubEnd);
+      window.removeEventListener('touchend', handleScrubEnd);
+    };
+  }, [isScrubbing, video.id, activeAudioStreamIndex, selectedAudioTrack, isTimeBuffered]);
 
   const sessionIdRef = useRef<string>(Math.random().toString(36).substring(2, 10));
   const altAudioRef = useRef<HTMLAudioElement | null>(null);
@@ -2718,7 +2744,7 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
         let currentBufferEnd = 0;
         if (buffered.length > 0) {
           for (let i = 0; i < buffered.length; i++) {
-            if (buffered.start(i) <= currentPlayhead + 0.15 && buffered.end(i) >= currentPlayhead) {
+            if (buffered.start(i) <= currentPlayhead + 0.5 && buffered.end(i) >= currentPlayhead) {
               currentBufferEnd = buffered.end(i);
               break;
             }
@@ -2734,17 +2760,18 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
         const bufferedAhead = Math.max(0, currentBufferEnd - currentPlayhead);
         const effectiveDuration = durationRef.current || duration || 0;
         const isNearEnd = effectiveDuration > 0 && (effectiveDuration - currentPlayhead < 2.5);
+        const hasAltAudio = (activeAudioStreamIndex !== null && activeAudioStreamIndex >= 0) || (selectedAudioTrack !== null);
 
         // Genuine starvation check while playing: buffer is almost exhausted (< 0.25s) or element is not ready
         const isVideoStarving = !isNearEnd && (bufferedAhead < 0.25 && videoRef.current.readyState < 3);
-        const isAudioStarving = !isNearEnd && playbackControllerRef.current !== null && !playbackControllerRef.current.hasAudioCoverage(currentPlayhead, currentPlayhead + 0.25);
+        const isAudioStarving = !isNearEnd && hasAltAudio && playbackControllerRef.current !== null && !playbackControllerRef.current.hasAudioCoverage(currentPlayhead, currentPlayhead + 0.25);
 
         if (isPlayingRef.current) {
           if (!isWaitingForSyncRef.current) {
             if (isVideoStarving || isAudioStarving) {
               isWaitingForSyncRef.current = true;
               setIsBuffering(true);
-              if (playbackControllerRef.current) {
+              if (hasAltAudio && playbackControllerRef.current) {
                 playbackControllerRef.current.pauseForBuffering();
               }
               if (!videoRef.current.paused) {
@@ -2753,15 +2780,15 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
             }
           } else {
             // Hysteresis resume condition: require healthy buffer before resuming
-            const videoReadyToResume = isNearEnd || bufferedAhead >= 1.5 || videoRef.current.readyState >= 3;
-            const audioReadyToResume = isNearEnd || !playbackControllerRef.current || playbackControllerRef.current.hasAudioCoverage(currentPlayhead, currentPlayhead + 1.2);
+            const videoReadyToResume = isNearEnd || bufferedAhead >= 0.8 || videoRef.current.readyState >= 3;
+            const audioReadyToResume = isNearEnd || !hasAltAudio || !playbackControllerRef.current || playbackControllerRef.current.hasAudioCoverage(currentPlayhead, currentPlayhead + 0.8);
             if (videoReadyToResume && audioReadyToResume) {
               isWaitingForSyncRef.current = false;
               setIsBuffering(false);
               if (videoRef.current.paused) {
                 videoRef.current.play().catch(() => {});
               }
-              if (playbackControllerRef.current) {
+              if (hasAltAudio && playbackControllerRef.current) {
                 playbackControllerRef.current.play().catch(() => {});
               }
             }
@@ -2773,7 +2800,7 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
 
     frameId = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(frameId);
-  }, [duration]);
+  }, [duration, activeAudioStreamIndex, selectedAudioTrack]);
 
   const resetPauseOverlayTimer = useCallback(() => {
     if (pauseOverlayTimerRef.current) {
@@ -3377,10 +3404,19 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
 
   const handleVideoSeeked = async () => {
     if (playbackControllerRef.current?.isNudgingVideo) return;
-    isWaitingForSyncRef.current = true;
-    setIsBuffering(true);
     if (!videoRef.current) return;
     const newTime = videoRef.current.currentTime;
+    const hasAltAudio = (activeAudioStreamIndex !== null && activeAudioStreamIndex >= 0) || (selectedAudioTrack !== null);
+    const buffered = isTimeBuffered(newTime, 0.2);
+
+    if (!buffered) {
+      isWaitingForSyncRef.current = true;
+      setIsBuffering(true);
+    } else {
+      isWaitingForSyncRef.current = false;
+      setIsBuffering(false);
+      setIsSeeking(false);
+    }
 
     // Suppress parent history state updates while user is actively freehand scrubbing
     if (!isScrubbingRef.current) {
@@ -3392,7 +3428,7 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
     }
 
     // Sync PlaybackController playhead on seek (avoiding re-entrant seek loop)
-    if (playbackControllerRef.current && !playbackControllerRef.current.session.isTransitioningState) {
+    if (hasAltAudio && playbackControllerRef.current && !playbackControllerRef.current.session.isTransitioningState) {
       const ctrlTime = playbackControllerRef.current.getCurrentTime();
       if (Math.abs(ctrlTime - newTime) > 0.4) {
         logger.player(`Seek detected to ${newTime}s in player. Updating playback controller...`);
@@ -3594,21 +3630,35 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
     }
     acc.lastTime = now;
 
-    const targetTime = Math.max(0, videoRef.current.currentTime - seconds);
+    const baseTime = getEffectiveTime();
+    const targetTime = Math.max(0, baseTime - seconds);
+    seekTargetRef.current = targetTime;
+    const hasAltAudio = (activeAudioStreamIndex !== null && activeAudioStreamIndex >= 0) || (selectedAudioTrack !== null);
+    const buffered = isTimeBuffered(targetTime, 0.2);
+
     setIsSeeking(true);
-    setIsBuffering(true);
+    if (!buffered) {
+      setIsBuffering(true);
+      isWaitingForSyncRef.current = true;
+    } else {
+      isWaitingForSyncRef.current = false;
+      setIsBuffering(false);
+    }
+
     island.notify({
       type: 'seek',
       delta: -seconds,
       time: targetTime,
       duration
     });
-    if (playbackControllerRef.current) {
-      playbackControllerRef.current.seek(targetTime);
-    } else {
-      videoRef.current.currentTime = targetTime;
-    }
+
+    // Immediate native seek for zero-latency frame transition
+    videoRef.current.currentTime = targetTime;
     setCurrentTime(targetTime);
+
+    if (hasAltAudio && playbackControllerRef.current) {
+      playbackControllerRef.current.seek(targetTime).catch(console.error);
+    }
 
     setConsecutiveSkipInfo({ direction: 'rewind', totalSeconds: acc.totalSeconds, count: acc.count });
 
@@ -3618,6 +3668,7 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
     consecutiveSkipTimerRef.current = setTimeout(() => {
       consecutiveSkipAccumulatorRef.current = { direction: 'rewind', totalSeconds: 0, count: 0, lastTime: 0 };
       setConsecutiveSkipInfo(null);
+      seekTargetRef.current = null;
     }, 1800);
 
     resetControlsTimeout();
@@ -3639,21 +3690,36 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
     }
     acc.lastTime = now;
 
-    const targetTime = Math.min(duration, videoRef.current.currentTime + seconds);
+    const baseTime = getEffectiveTime();
+    const maxDuration = duration || (videoRef.current?.duration) || 0;
+    const targetTime = maxDuration > 0 ? Math.min(maxDuration, baseTime + seconds) : baseTime + seconds;
+    seekTargetRef.current = targetTime;
+    const hasAltAudio = (activeAudioStreamIndex !== null && activeAudioStreamIndex >= 0) || (selectedAudioTrack !== null);
+    const buffered = isTimeBuffered(targetTime, 0.2);
+
     setIsSeeking(true);
-    setIsBuffering(true);
+    if (!buffered) {
+      setIsBuffering(true);
+      isWaitingForSyncRef.current = true;
+    } else {
+      isWaitingForSyncRef.current = false;
+      setIsBuffering(false);
+    }
+
     island.notify({
       type: 'seek',
       delta: seconds,
       time: targetTime,
-      duration
+      duration: maxDuration
     });
-    if (playbackControllerRef.current) {
-      playbackControllerRef.current.seek(targetTime);
-    } else {
-      videoRef.current.currentTime = targetTime;
-    }
+
+    // Immediate native seek for zero-latency frame transition
+    videoRef.current.currentTime = targetTime;
     setCurrentTime(targetTime);
+
+    if (hasAltAudio && playbackControllerRef.current) {
+      playbackControllerRef.current.seek(targetTime).catch(console.error);
+    }
 
     setConsecutiveSkipInfo({ direction: 'forward', totalSeconds: acc.totalSeconds, count: acc.count });
 
@@ -3663,6 +3729,7 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
     consecutiveSkipTimerRef.current = setTimeout(() => {
       consecutiveSkipAccumulatorRef.current = { direction: 'forward', totalSeconds: 0, count: 0, lastTime: 0 };
       setConsecutiveSkipInfo(null);
+      seekTargetRef.current = null;
     }, 1800);
 
     resetControlsTimeout();
@@ -3696,20 +3763,31 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
     if (uiConfig.blockSeekingCompletely) return;
     resetPauseOverlayTimer();
     const seekTime = parseFloat(e.target.value);
-    setIsSeeking(true);
-    setIsBuffering(true);
+    const hasAltAudio = (activeAudioStreamIndex !== null && activeAudioStreamIndex >= 0) || (selectedAudioTrack !== null);
+
     if (isScrubbingRef.current) {
       setScrubTime(seekTime);
       if (previewVideoRef.current) {
         previewVideoRef.current.currentTime = seekTime;
       }
     } else {
-      if (playbackControllerRef.current) {
-        playbackControllerRef.current.seek(seekTime);
-      } else if (videoRef.current) {
+      seekTargetRef.current = seekTime;
+      const buffered = isTimeBuffered(seekTime, 0.2);
+      setIsSeeking(true);
+      if (!buffered) {
+        setIsBuffering(true);
+        isWaitingForSyncRef.current = true;
+      } else {
+        isWaitingForSyncRef.current = false;
+        setIsBuffering(false);
+      }
+      if (videoRef.current) {
         videoRef.current.currentTime = seekTime;
       }
       setCurrentTime(seekTime);
+      if (hasAltAudio && playbackControllerRef.current) {
+        playbackControllerRef.current.seek(seekTime).catch(console.error);
+      }
       resetControlsTimeout();
       if (previewVideoRef.current) {
         previewVideoRef.current.currentTime = seekTime;
@@ -4334,12 +4412,22 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
           ? duration 
           : (bm.endTime !== undefined && bm.endTime !== null ? bm.endTime : bm.time + 90);
         if (videoRef.current) {
-          if (playbackControllerRef.current) {
-            playbackControllerRef.current.seek(targetTime).catch(console.error);
+          seekTargetRef.current = targetTime;
+          const hasAltAudio = (activeAudioStreamIndex !== null && activeAudioStreamIndex >= 0) || (selectedAudioTrack !== null);
+          const buffered = isTimeBuffered(targetTime, 0.2);
+          setIsSeeking(true);
+          if (!buffered) {
+            setIsBuffering(true);
+            isWaitingForSyncRef.current = true;
           } else {
-            videoRef.current.currentTime = targetTime;
+            isWaitingForSyncRef.current = false;
+            setIsBuffering(false);
           }
+          videoRef.current.currentTime = targetTime;
           setCurrentTime(targetTime);
+          if (hasAltAudio && playbackControllerRef.current) {
+            playbackControllerRef.current.seek(targetTime).catch(console.error);
+          }
           triggerSwitchToast(`Skipped ${bm.label || bm.title || bm.category || 'Scene'}`);
         }
       }
@@ -5518,9 +5606,15 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
             }), false, video.id);
           }}
           onWaiting={() => {
-            isWaitingForSyncRef.current = true;
-            setIsBuffering(true);
-            playbackControllerRef.current?.pauseForBuffering();
+            const curr = videoRef.current?.currentTime ?? 0;
+            if (!isTimeBuffered(curr, 0.2)) {
+              isWaitingForSyncRef.current = true;
+              setIsBuffering(true);
+              const hasAltAudio = (activeAudioStreamIndex !== null && activeAudioStreamIndex >= 0) || (selectedAudioTrack !== null);
+              if (hasAltAudio) {
+                playbackControllerRef.current?.pauseForBuffering();
+              }
+            }
           }}
           onPlaying={() => {
             isWaitingForSyncRef.current = false;
@@ -5528,25 +5622,33 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
             setIsBuffering(false);
             setIsPlaying(true);
             isPlayingRef.current = true;
+            seekTargetRef.current = null;
           }}
           onCanPlay={() => {
             setIsSeeking(false);
             setIsBuffering(false);
+            isWaitingForSyncRef.current = false;
+            seekTargetRef.current = null;
             if (isPlayingRef.current && videoRef.current && videoRef.current.paused) {
               videoRef.current.play().catch(() => {});
             }
           }}
           onSeeked={async () => {
+            seekTargetRef.current = null;
             await handleVideoSeeked();
             if (videoRef.current && videoRef.current.readyState >= 2) {
               setIsSeeking(false);
               setIsBuffering(false);
+              isWaitingForSyncRef.current = false;
             }
           }}
           onSeeking={() => {
             setIsSeeking(true);
-            setIsBuffering(true);
-            isWaitingForSyncRef.current = true;
+            const target = videoRef.current?.currentTime ?? 0;
+            if (!isTimeBuffered(target, 0.2)) {
+              setIsBuffering(true);
+              isWaitingForSyncRef.current = true;
+            }
           }}
           onError={handleVideoError}
           onEnded={() => {
@@ -5680,7 +5782,7 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
 
       {/* Buffering fire ring loader */}
       <BufferingOverlay 
-        isBuffering={isBuffering || isSeeking}
+        isBuffering={isBuffering}
         customLoaderUrl={customLoaderUrl} 
         customLoaderType={customLoaderType} 
         preset={(spinnerPreset || 'fire-circle') as any} 
@@ -5799,9 +5901,19 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
             const targetTime = resumePromptTime;
             setResumePromptTime(null);
             if (videoRef.current) {
+              const hasAltAudio = (activeAudioStreamIndex !== null && activeAudioStreamIndex >= 0) || (selectedAudioTrack !== null);
+              const buffered = isTimeBuffered(targetTime, 0.2);
+              setIsSeeking(true);
+              if (!buffered) {
+                setIsBuffering(true);
+                isWaitingForSyncRef.current = true;
+              } else {
+                isWaitingForSyncRef.current = false;
+                setIsBuffering(false);
+              }
               videoRef.current.currentTime = targetTime;
               setCurrentTime(targetTime);
-              if (playbackControllerRef.current) {
+              if (hasAltAudio && playbackControllerRef.current) {
                 playbackControllerRef.current.seek(targetTime).catch(console.error);
               }
             }
@@ -5898,9 +6010,19 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
                             e.stopPropagation();
                             if (uiConfig.blockSeekingCompletely) return;
                             if (videoRef.current) {
+                              const hasAltAudio = (activeAudioStreamIndex !== null && activeAudioStreamIndex >= 0) || (selectedAudioTrack !== null);
+                              const buffered = isTimeBuffered(bm.time, 0.2);
+                              setIsSeeking(true);
+                              if (!buffered) {
+                                setIsBuffering(true);
+                                isWaitingForSyncRef.current = true;
+                              } else {
+                                isWaitingForSyncRef.current = false;
+                                setIsBuffering(false);
+                              }
                               videoRef.current.currentTime = bm.time;
                               setCurrentTime(bm.time);
-                              if (playbackControllerRef.current) {
+                              if (hasAltAudio && playbackControllerRef.current) {
                                 playbackControllerRef.current.seek(bm.time).catch(console.error);
                               }
                             }
@@ -5932,9 +6054,19 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
                           e.stopPropagation();
                           if (uiConfig.blockSeekingCompletely) return;
                           if (videoRef.current) {
+                            const hasAltAudio = (activeAudioStreamIndex !== null && activeAudioStreamIndex >= 0) || (selectedAudioTrack !== null);
+                            const buffered = isTimeBuffered(bm.time, 0.2);
+                            setIsSeeking(true);
+                            if (!buffered) {
+                              setIsBuffering(true);
+                              isWaitingForSyncRef.current = true;
+                            } else {
+                              isWaitingForSyncRef.current = false;
+                              setIsBuffering(false);
+                            }
                             videoRef.current.currentTime = bm.time;
                             setCurrentTime(bm.time);
-                            if (playbackControllerRef.current) {
+                            if (hasAltAudio && playbackControllerRef.current) {
                               playbackControllerRef.current.seek(bm.time).catch(console.error);
                             }
                           }

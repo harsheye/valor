@@ -4,6 +4,7 @@ import type { CustomAudioTrack, CustomSubtitleTrack } from '../types/media';
 import type { MediaStream } from '../services/ffmpeg';
 import { CustomSelect } from './CustomSelect';
 import { trimSubtitleName } from '../utils/embedSubtitleStorage';
+import { isMobileDevice } from '../utils/screenOrientation';
 import './AudioSubPopover.css';
 
 const fontOptions = [
@@ -115,15 +116,37 @@ export const AudioSubPopover: React.FC<AudioSubPopoverProps> = ({
   // Mobile segmented tab state (Audio | Subs | Transcript | Style)
   const [mobileTab, setMobileTab] = useState<'audio' | 'subs' | 'transcript' | 'style'>('subs');
 
-  // Screen width detection for mobile bottom sheet vs desktop popover (<= 680px)
-  const [vw, setVw] = useState(() => (typeof window !== 'undefined' ? window.innerWidth : 1200));
-  const isNarrow = vw <= 680;
+  // Device & orientation detection for responsive presentation (mobile portrait/landscape vs desktop popover)
+  const [deviceState, setDeviceState] = useState(() => {
+    if (typeof window === 'undefined') {
+      return { isMobile: false, isLandscape: false, width: 1200, height: 800 };
+    }
+    const w = window.innerWidth;
+    const h = window.innerHeight;
+    const mobile = isMobileDevice() || w <= 768 || h <= 520;
+    const landscape = w > h || h <= 520;
+    return { isMobile: mobile, isLandscape: landscape, width: w, height: h };
+  });
 
   useEffect(() => {
-    const handleResize = () => setVw(window.innerWidth);
+    const handleResize = () => {
+      const w = window.innerWidth;
+      const h = window.innerHeight;
+      const mobile = isMobileDevice() || w <= 768 || h <= 520;
+      const landscape = w > h || h <= 520;
+      setDeviceState({ isMobile: mobile, isLandscape: landscape, width: w, height: h });
+    };
+
     window.addEventListener('resize', handleResize);
-    return () => window.removeEventListener('resize', handleResize);
+    window.addEventListener('orientationchange', handleResize);
+    return () => {
+      window.removeEventListener('resize', handleResize);
+      window.removeEventListener('orientationchange', handleResize);
+    };
   }, []);
+
+  const isMobile = deviceState.isMobile;
+  const isLandscape = deviceState.isLandscape;
 
   const hasApiKey = Boolean(apiKeyVal.trim());
 
@@ -207,7 +230,7 @@ export const AudioSubPopover: React.FC<AudioSubPopoverProps> = ({
 
   // Reposition effect: clamp both sides within 16px of window boundaries
   useEffect(() => {
-    if (isNarrow) return;
+    if (isMobile) return;
     const handleReposition = () => {
       const el = popoverRef.current;
       if (!el) return;
@@ -230,7 +253,7 @@ export const AudioSubPopover: React.FC<AudioSubPopoverProps> = ({
       clearTimeout(timer);
       window.removeEventListener('resize', handleReposition);
     };
-  }, [rightTab, isNarrow, isFolded]);
+  }, [rightTab, isMobile, isFolded]);
 
   const effectiveAudioVisible = showAudioControl !== false;
   const effectiveSubVisible = showSubtitleControl !== false;
@@ -257,7 +280,7 @@ export const AudioSubPopover: React.FC<AudioSubPopoverProps> = ({
           onClick={() => {
             setSelectedAudioTrack(null);
             setActiveAudioStreamIndex(null);
-            if (!isNarrow && isFolded) setShowAudioSubMenu(false);
+            if (!isMobile && isFolded) setShowAudioSubMenu(false);
           }}
         >
           <span>Original</span>
@@ -279,7 +302,7 @@ export const AudioSubPopover: React.FC<AudioSubPopoverProps> = ({
                 e.stopPropagation();
                 if (active) return;
                 handleSelectEmbeddedAudio(s.index, s.codec, s.language);
-                if (!isNarrow && isFolded) setShowAudioSubMenu(false);
+                if (!isMobile && isFolded) setShowAudioSubMenu(false);
               }}
             >
               <span>{label}</span>
@@ -299,7 +322,7 @@ export const AudioSubPopover: React.FC<AudioSubPopoverProps> = ({
               aria-pressed={active}
               onClick={() => {
                 setSelectedAudioTrack(track);
-                if (!isNarrow && isFolded) setShowAudioSubMenu(false);
+                if (!isMobile && isFolded) setShowAudioSubMenu(false);
               }}
             >
               <span>{track.name}</span>
@@ -324,7 +347,7 @@ export const AudioSubPopover: React.FC<AudioSubPopoverProps> = ({
     <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
       <div className="asp-section-label">
         <span>Subtitles</span>
-        {!isNarrow && (
+        {!isMobile && (
           <button
             type="button"
             className={`asp-fold-toggle-btn ${!isFolded ? 'active' : ''}`}
@@ -345,7 +368,7 @@ export const AudioSubPopover: React.FC<AudioSubPopoverProps> = ({
           onClick={() => {
             setSelectedSubTrack(null);
             setActiveSubStreamIndex(null);
-            if (!isNarrow && isFolded) setShowAudioSubMenu(false);
+            if (!isMobile && isFolded) setShowAudioSubMenu(false);
           }}
         >
           <span className="asp-lang-tag">OFF</span>
@@ -369,7 +392,7 @@ export const AudioSubPopover: React.FC<AudioSubPopoverProps> = ({
                 e.stopPropagation();
                 if (active) return;
                 handleSelectEmbeddedSubtitle(s.index, s.codec, s.language);
-                if (!isNarrow && isFolded) setShowAudioSubMenu(false);
+                if (!isMobile && isFolded) setShowAudioSubMenu(false);
               }}
             >
               <span className="asp-lang-tag">{langTag}</span>
@@ -391,7 +414,7 @@ export const AudioSubPopover: React.FC<AudioSubPopoverProps> = ({
               aria-pressed={active}
               onClick={() => {
                 setSelectedSubTrack(track);
-                if (!isNarrow && isFolded) setShowAudioSubMenu(false);
+                if (!isMobile && isFolded) setShowAudioSubMenu(false);
               }}
             >
               <span className="asp-lang-tag">{langTag}</span>
@@ -805,55 +828,73 @@ export const AudioSubPopover: React.FC<AudioSubPopoverProps> = ({
     </div>
   );
 
-  // --- NARROW / MOBILE RENDER: BOTTOM SHEET (Section 6 & 7) ---
-  if (isNarrow) {
+  // --- MOBILE RENDER: RESPONSIVE BOTTOM SHEET / LANDSCAPE MODAL ---
+  if (isMobile) {
     return (
       <div
-        className="asp-sheet-backdrop"
+        className={`asp-sheet-backdrop ${isLandscape ? 'asp-sheet-backdrop-landscape' : ''}`}
         onClick={() => setShowAudioSubMenu(false)}
         role="dialog"
         aria-modal="true"
         aria-label="Audio and Subtitle Settings"
       >
         <div
-          className="asp-sheet"
+          className={`asp-sheet ${isLandscape ? 'asp-sheet-landscape' : ''}`}
           onClick={(e) => e.stopPropagation()}
           onWheel={(e) => e.stopPropagation()}
         >
-          <div className="asp-sheet-handle" />
+          {!isLandscape && <div className="asp-sheet-handle" />}
+          
           <div className="asp-sheet-nav">
+            <div className="asp-sheet-tabs">
+              {effectiveAudioVisible && (
+                <button
+                  type="button"
+                  className={`asp-sheet-tab ${mobileTab === 'audio' ? 'active' : ''}`}
+                  onClick={() => setMobileTab('audio')}
+                >
+                  Audio
+                </button>
+              )}
+              {effectiveSubVisible && (
+                <button
+                  type="button"
+                  className={`asp-sheet-tab ${mobileTab === 'subs' ? 'active' : ''}`}
+                  onClick={() => setMobileTab('subs')}
+                >
+                  Subs
+                </button>
+              )}
+              <button
+                type="button"
+                className={`asp-sheet-tab ${mobileTab === 'transcript' ? 'active' : ''}`}
+                onClick={() => setMobileTab('transcript')}
+              >
+                Transcript
+              </button>
+              <button
+                type="button"
+                className={`asp-sheet-tab ${mobileTab === 'style' ? 'active' : ''}`}
+                onClick={() => setMobileTab('style')}
+              >
+                Style
+              </button>
+            </div>
+
             <button
               type="button"
-              className={`asp-sheet-tab ${mobileTab === 'audio' ? 'active' : ''}`}
-              onClick={() => setMobileTab('audio')}
+              className="asp-sheet-close-btn"
+              onClick={() => setShowAudioSubMenu(false)}
+              aria-label="Close audio and subtitle menu"
+              title="Close"
             >
-              Audio
-            </button>
-            <button
-              type="button"
-              className={`asp-sheet-tab ${mobileTab === 'subs' ? 'active' : ''}`}
-              onClick={() => setMobileTab('subs')}
-            >
-              Subs
-            </button>
-            <button
-              type="button"
-              className={`asp-sheet-tab ${mobileTab === 'transcript' ? 'active' : ''}`}
-              onClick={() => setMobileTab('transcript')}
-            >
-              Transcript
-            </button>
-            <button
-              type="button"
-              className={`asp-sheet-tab ${mobileTab === 'style' ? 'active' : ''}`}
-              onClick={() => setMobileTab('style')}
-            >
-              Style
+              <X size={16} />
             </button>
           </div>
+
           <div className="asp-sheet-body">
-            {mobileTab === 'audio' && renderAudioContent()}
-            {mobileTab === 'subs' && renderSubsContent()}
+            {mobileTab === 'audio' && effectiveAudioVisible && renderAudioContent()}
+            {mobileTab === 'subs' && effectiveSubVisible && renderSubsContent()}
             {mobileTab === 'transcript' && renderTranscriptContent()}
             {mobileTab === 'style' && renderStyleContent()}
           </div>
