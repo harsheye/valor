@@ -11,3 +11,6 @@ export * from './RemoteStartupScreen';
 export * from './MobilePlayerOverlay';
 export * from './PlayerIsland';
 export * from './usePlayerIsland';
+export * from './AmbianceLighting';
+export * from './ToneMappingFilters';
+export * from './VlcContextMenu';

@@ -15,7 +15,7 @@ import type { SubtitleSettings } from './SubtitleOverlay';
 import { AudioSubPopover } from './AudioSubPopover';
 import { BookmarkPanel } from './BookmarkPanel';
 import { BookmarkModal } from './BookmarkModal';
-import { OdometerClock, PauseDetailsOverlay, SkipIntroButton, type MediaDetails } from './player';
+import { OdometerClock, PauseDetailsOverlay, SkipIntroButton, AmbianceLighting, type MediaDetails } from './player';
 import { ToneMappingSvgDefs, isHdrOrX265Video, getToneMappingCssFilter, type ToneMappingMode } from './player/ToneMappingFilters';
 import { AudioSyncEngine } from '../services/remote/audioSync';
 import { parseSubtitles, cleanSubtitleText } from '../utils/subtitleParser';
@@ -5651,6 +5651,12 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
           setVlcContextMenuState(prev => prev.visible ? { visible: false, x: 0, y: 0 } : { visible: true, x: e.clientX, y: e.clientY });
         }}
       >
+        <AmbianceLighting
+          videoRef={videoRef}
+          isEnabled={isAmbianceEnabled}
+          blur={ambianceBlur}
+          opacity={ambianceOpacity}
+        />
         <video
           ref={videoRef}
           onContextMenu={(e) => e.preventDefault()}
@@ -5660,6 +5666,8 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
           crossOrigin={video.playbackMode === 'advanced' ? 'anonymous' : undefined}
           className="main-video-element"
           style={{
+            position: 'relative',
+            zIndex: 1,
             ...(toneMappingMode !== 'off' ? { filter: getToneMappingCssFilter(toneMappingMode) } : {}),
             objectFit: aspectRatio === 'cover' ? 'cover' : (aspectRatio === '16:9' || aspectRatio === '4:3' ? 'fill' : 'contain'),
             aspectRatio: aspectRatio === '16:9' ? '16/9' : (aspectRatio === '4:3' ? '4/3' : undefined)
@@ -6598,145 +6606,68 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
         </div>
       )}
 
-      {/* Edge Slide-In Button (visible when settings panel is closed) */}
-      {!hideUIOverlays && !showSettingsPanel && (
-        <button
-          className="ui-settings-edge-slide-btn"
-          onClick={(e) => {
-            e.stopPropagation();
-            e.preventDefault();
-            setShowSettingsPanel(true);
-          }}
-          title="Slide in UI Settings (Del)"
-          aria-label="Slide in UI Settings"
-          style={{
-            position: 'absolute',
-            right: 0,
-            top: '50%',
-            transform: 'translateY(-50%)',
-            zIndex: 120,
-            width: '26px',
-            height: '64px',
-            background: 'var(--dropdown-bg, rgba(18, 18, 18, 0.92))',
-            backdropFilter: 'blur(8px)',
-            WebkitBackdropFilter: 'blur(8px)',
-            border: '1px solid var(--dropdown-border, rgba(255, 255, 255, 0.15))',
-            borderRight: 'none',
-            borderRadius: '12px 0 0 12px',
-            padding: 0,
-            margin: 0,
-            cursor: 'pointer',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            boxShadow: '-4px 0 16px rgba(0, 0, 0, 0.45)',
-            opacity: showControls ? 0.95 : 0.35,
-            color: 'var(--text-primary, #ffffff)',
-            outline: 'none',
-            transition: 'opacity 0.2s ease, background 0.2s'
-          }}
-        >
-          <ChevronLeft size={18} />
-        </button>
-      )}
-
-      {/* UI Settings Modal Drawer (visible when open) */}
-      {!hideUIOverlays && showSettingsPanel && (
+      {/* UI Settings Modal Drawer with Integrated Smooth Edge Handle */}
+      {!hideUIOverlays && (
         <div 
-          className="ui-settings-slideout-drawer" 
-          style={{
-            position: 'absolute',
-            top: 0,
-            bottom: 0,
-            right: 0,
-            zIndex: 150,
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'flex-end',
-            pointerEvents: 'none'
-          }}
+          className={`ui-settings-slideout-drawer ${showSettingsPanel ? 'is-open' : 'is-closed'}`}
         >
-          {/* The slide-out / collapse handle attached to the left edge of the modal */}
-          <button
-            className="ui-settings-modal-collapse-btn"
+          {/* Backdrop when open: click anywhere outside to smoothly close */}
+          <div 
+            className="ui-settings-drawer-backdrop"
             onClick={(e) => {
               e.stopPropagation();
-              e.preventDefault();
               setShowSettingsPanel(false);
               setIsSettingsExpanded(false);
             }}
-            title="Slide out / Collapse UI Settings (Del)"
-            aria-label="Collapse UI Settings"
-            style={{
-              pointerEvents: 'auto',
-              width: '26px',
-              height: '64px',
-              background: 'var(--dropdown-bg, rgba(18, 18, 18, 0.96))',
-              backdropFilter: 'blur(8px)',
-              WebkitBackdropFilter: 'blur(8px)',
-              border: '1px solid var(--dropdown-border, rgba(255, 255, 255, 0.15))',
-              borderRight: 'none',
-              borderRadius: '12px 0 0 12px',
-              cursor: 'pointer',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              color: 'var(--text-primary, #ffffff)',
-              boxShadow: '-4px 0 16px rgba(0, 0, 0, 0.45)',
-              outline: 'none',
-              padding: 0,
-              zIndex: 160,
-              marginRight: '-1px'
-            }}
-          >
-            <ChevronRight size={18} />
-          </button>
+          />
 
           <div 
-            className="settings-modal-card animate-slide-in-right" 
-            onClick={(e) => e.stopPropagation()}
-            style={{
-              position: 'relative',
-              pointerEvents: 'auto',
-              overflow: 'visible',
-              background: 'var(--dropdown-bg, rgba(18, 18, 18, 0.96))',
-              border: '1px solid var(--dropdown-border, rgba(255, 255, 255, 0.1))',
-              borderRight: 'none',
-              borderRadius: '16px 0 0 16px',
-              padding: '1.25rem 1rem',
-              width: isSettingsExpanded ? '280px' : '154px',
-              boxShadow: '-10px 0 30px rgba(0,0,0,0.6)',
-              display: 'flex',
-              flexDirection: 'column',
-              gap: '1rem',
-              fontFamily: 'sans-serif',
-              transition: 'width 0.3s cubic-bezier(0.16, 1, 0.3, 1), background 0.3s'
-            }}
+            className="ui-settings-drawer-container"
           >
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%' }}>
-              <h3 style={{ margin: 0, fontSize: '1rem', fontWeight: 600, color: 'var(--text-primary, #ffffff)' }}>UI Settings</h3>
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setShowSettingsPanel(false);
-                  setIsSettingsExpanded(false);
-                }}
-                style={{
-                  background: 'none',
-                  border: 'none',
-                  color: 'var(--text-muted, rgba(255, 255, 255, 0.6))',
-                  cursor: 'pointer',
-                  padding: '4px',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  borderRadius: '6px'
-                }}
-                title="Close UI Settings"
-              >
-                <X size={16} />
-              </button>
-            </div>
+            {/* The single integrated slide-out / collapse handle attached to the left edge of the modal */}
+            <button
+              className="ui-settings-edge-slide-btn"
+              onClick={(e) => {
+                e.stopPropagation();
+                e.preventDefault();
+                setShowSettingsPanel(prev => {
+                  const next = !prev;
+                  if (!next) setIsSettingsExpanded(false);
+                  return next;
+                });
+              }}
+              title={showSettingsPanel ? "Collapse UI Settings (Del)" : "Slide in UI Settings (Del)"}
+              aria-label={showSettingsPanel ? "Collapse UI Settings" : "Slide in UI Settings"}
+              style={{
+                opacity: showSettingsPanel ? 1 : (showControls ? 0.95 : 0.35)
+              }}
+            >
+              <div className="ui-settings-chevron-wrapper">
+                <ChevronLeft size={18} />
+              </div>
+            </button>
+
+            <div 
+              className="ui-settings-drawer-card" 
+              onClick={(e) => e.stopPropagation()}
+              style={{
+                width: isSettingsExpanded ? '280px' : '154px',
+              }}
+            >
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%' }}>
+                <h3 style={{ margin: 0, fontSize: '1rem', fontWeight: 600, color: 'var(--text-primary, #ffffff)' }}>UI Settings</h3>
+                <button
+                  className="ui-settings-close-x-btn"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setShowSettingsPanel(false);
+                    setIsSettingsExpanded(false);
+                  }}
+                  title="Close UI Settings"
+                >
+                  <X size={16} />
+                </button>
+              </div>
             
             <div 
               style={{
@@ -9212,6 +9143,8 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
             };
             triggerSwitchToast(`Aspect Ratio: ${labels[ratio] || ratio}`);
           }}
+          toneMappingMode={toneMappingMode}
+          onSetToneMappingMode={(m) => setToneMappingMode(m as ToneMappingMode)}
           isAmbianceEnabled={isAmbianceEnabled}
           onToggleAmbiance={handleToggleAmbiance}
           ambianceBlur={ambianceBlur}

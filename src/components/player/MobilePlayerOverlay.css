@@ -216,11 +216,12 @@
   right: 0;
   top: 50%;
   transform: translateY(-50%);
-  width: 22px;
-  height: 70px;
+  width: 24px;
+  height: 68px;
   border-radius: 14px 0 0 14px;
-  background: rgba(20, 20, 25, 0.85);
-  backdrop-filter: blur(10px);
+  background: rgba(20, 20, 25, 0.88);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
   border: 1px solid rgba(255, 255, 255, 0.15);
   border-right: none;
   display: flex;
@@ -230,11 +231,20 @@
   cursor: pointer;
   z-index: 20;
   pointer-events: auto;
-  box-shadow: -2px 0 12px rgba(0, 0, 0, 0.4);
+  box-shadow: -2px 0 12px rgba(0, 0, 0, 0.45);
+  transition: transform 0.28s cubic-bezier(0.16, 1, 0.3, 1), background 0.25s ease, box-shadow 0.28s ease, border-color 0.25s ease;
+}
+
+.mobile-player-drawer-tab:hover {
+  transform: translateY(-50%) translateX(-4px);
+  background: rgba(30, 32, 44, 0.98);
+  border-color: rgba(255, 255, 255, 0.35);
+  box-shadow: -5px 0 18px rgba(0, 0, 0, 0.65), 0 0 12px rgba(139, 92, 246, 0.25);
 }
 
 .mobile-player-drawer-tab:active {
-  background: rgba(40, 40, 50, 0.95);
+  transform: translateY(-50%) translateX(-2px) scale(0.95);
+  background: rgba(40, 40, 50, 0.98);
 }
 
 /* Right Drawer Panel (78% width) */

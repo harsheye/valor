@@ -581,12 +581,12 @@ export const VlcContextMenu: React.FC<VlcContextMenuProps> = ({
         },
         {
           id: 'ambiance-lighting',
-          label: <span><u>A</u>mbiance Lighting</span>,
+          label: <span><u>A</u>mbiance Glow</span>,
           icon: <Sparkles size={12} color="#000" />,
           children: [
             {
               id: 'amb-toggle',
-              label: isAmbianceEnabled ? 'Turn Off Ambiance' : 'Turn On Ambiance',
+              label: 'Ambiance Glow',
               checked: isAmbianceEnabled,
               onClick: () => {
                 onToggleAmbiance?.();
@@ -596,12 +596,12 @@ export const VlcContextMenu: React.FC<VlcContextMenuProps> = ({
             { id: 'amb-div-1', isDivider: true, label: '' },
             {
               id: 'amb-blur',
-              label: <span><u>B</u>lur Amount ({ambianceBlur}px)</span>,
+              label: <span><u>B</u>lur ({ambianceBlur}px)</span>,
               disabled: !isAmbianceEnabled,
               children: [
                 {
                   id: 'blur-16',
-                  label: 'Very Light (16px)',
+                  label: '16px (Light)',
                   isRadio: true,
                   checked: isAmbianceEnabled && ambianceBlur === 16,
                   onClick: () => {
@@ -611,7 +611,7 @@ export const VlcContextMenu: React.FC<VlcContextMenuProps> = ({
                 },
                 {
                   id: 'blur-32',
-                  label: 'Subtle / Low (32px)',
+                  label: '32px (Subtle)',
                   isRadio: true,
                   checked: isAmbianceEnabled && ambianceBlur === 32,
                   onClick: () => {
@@ -621,7 +621,7 @@ export const VlcContextMenu: React.FC<VlcContextMenuProps> = ({
                 },
                 {
                   id: 'blur-54',
-                  label: 'Medium (54px) — Default',
+                  label: '54px (Default)',
                   isRadio: true,
                   checked: isAmbianceEnabled && ambianceBlur === 54,
                   onClick: () => {
@@ -631,7 +631,7 @@ export const VlcContextMenu: React.FC<VlcContextMenuProps> = ({
                 },
                 {
                   id: 'blur-75',
-                  label: 'Soft / High (75px)',
+                  label: '75px (Soft)',
                   isRadio: true,
                   checked: isAmbianceEnabled && ambianceBlur === 75,
                   onClick: () => {
@@ -641,7 +641,7 @@ export const VlcContextMenu: React.FC<VlcContextMenuProps> = ({
                 },
                 {
                   id: 'blur-100',
-                  label: 'Strong Glow (100px)',
+                  label: '100px (Strong)',
                   isRadio: true,
                   checked: isAmbianceEnabled && ambianceBlur === 100,
                   onClick: () => {
@@ -651,7 +651,7 @@ export const VlcContextMenu: React.FC<VlcContextMenuProps> = ({
                 },
                 {
                   id: 'blur-140',
-                  label: 'Ultra Dreamy (140px)',
+                  label: '140px (Max)',
                   isRadio: true,
                   checked: isAmbianceEnabled && ambianceBlur === 140,
                   onClick: () => {
@@ -663,12 +663,12 @@ export const VlcContextMenu: React.FC<VlcContextMenuProps> = ({
             },
             {
               id: 'amb-opacity',
-              label: <span><u>I</u>ntensity / Opacity ({Math.round(ambianceOpacity * 100)}%)</span>,
+              label: <span><u>O</u>pacity ({Math.round(ambianceOpacity * 100)}%)</span>,
               disabled: !isAmbianceEnabled,
               children: [
                 {
                   id: 'op-40',
-                  label: 'Soft (40%)',
+                  label: '40% (Soft)',
                   isRadio: true,
                   checked: isAmbianceEnabled && ambianceOpacity === 0.4,
                   onClick: () => {
@@ -678,7 +678,7 @@ export const VlcContextMenu: React.FC<VlcContextMenuProps> = ({
                 },
                 {
                   id: 'op-70',
-                  label: 'Balanced (70%) — Default',
+                  label: '70% (Default)',
                   isRadio: true,
                   checked: isAmbianceEnabled && ambianceOpacity === 0.7,
                   onClick: () => {
@@ -688,7 +688,7 @@ export const VlcContextMenu: React.FC<VlcContextMenuProps> = ({
                 },
                 {
                   id: 'op-90',
-                  label: 'Vivid (90%)',
+                  label: '90% (Vivid)',
                   isRadio: true,
                   checked: isAmbianceEnabled && ambianceOpacity === 0.9,
                   onClick: () => {
@@ -698,7 +698,7 @@ export const VlcContextMenu: React.FC<VlcContextMenuProps> = ({
                 },
                 {
                   id: 'op-100',
-                  label: 'Maximum (100%)',
+                  label: '100% (Max)',
                   isRadio: true,
                   checked: isAmbianceEnabled && ambianceOpacity === 1.0,
                   onClick: () => {
@@ -728,7 +728,7 @@ export const VlcContextMenu: React.FC<VlcContextMenuProps> = ({
             },
             {
               id: 'hdr-aces',
-              label: 'ACES Filmic (High Contrast)',
+              label: 'ACES Filmic',
               isRadio: true,
               checked: toneMappingMode === 'aces',
               onClick: () => {
@@ -738,7 +738,7 @@ export const VlcContextMenu: React.FC<VlcContextMenuProps> = ({
             },
             {
               id: 'hdr-vibrant',
-              label: 'Vibrant (Rich Colors)',
+              label: 'Vibrant',
               isRadio: true,
               checked: toneMappingMode === 'vibrant',
               onClick: () => {
@@ -748,7 +748,7 @@ export const VlcContextMenu: React.FC<VlcContextMenuProps> = ({
             },
             {
               id: 'hdr-reinhard',
-              label: 'Reinhard (Natural Roll-off)',
+              label: 'Reinhard',
               isRadio: true,
               checked: toneMappingMode === 'reinhard',
               onClick: () => {
@@ -757,15 +757,6 @@ export const VlcContextMenu: React.FC<VlcContextMenuProps> = ({
               }
             }
           ]
-        },
-        {
-          id: 'snapshot',
-          label: <span>Take <u>S</u>napshot</span>,
-          shortcut: 'Shift+S',
-          onClick: () => {
-            onTakeSnapshot();
-            onClose();
-          }
         }
       ]
     },
@@ -900,7 +891,7 @@ export const VlcContextMenu: React.FC<VlcContextMenuProps> = ({
         },
         {
           id: 'view-ambiance-toggle',
-          label: isAmbianceEnabled ? 'Turn Off Ambiance' : 'Turn On Ambiance',
+          label: 'Ambiance Glow',
           shortcut: 'A',
           checked: isAmbianceEnabled,
           onClick: () => {

@@ -44,7 +44,7 @@ import { classifyVideoTitle, getRegexedTitleWithYear } from '../utils/libraryCla
 import { syncTraktHistory, syncTraktRating, resolveTraktMetadata } from '../services/traktAuth';
 import { LoadingSpinner, BufferingOverlay } from './LoadingSpinner';
 import { isMobileDevice, useAutoLandscape } from '../utils/screenOrientation';
-import { PlayerIsland, usePlayerIsland, type IslandAudioTrack, type IslandSubtitleTrack } from './player';
+import { PlayerIsland, usePlayerIsland, type IslandAudioTrack, type IslandSubtitleTrack, AmbianceLighting, ToneMappingSvgDefs, isHdrOrX265Video, getToneMappingCssFilter, type ToneMappingMode } from './player';
 import { RadialMenu } from './RadialMenu';
 import { VlcContextMenu } from './player/VlcContextMenu';
 import { ConsoleOverlay } from './ConsoleOverlay';
@@ -1930,6 +1930,62 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
       setPlayPauseFeedback(null);
     }, 550);
   };
+
+  // Ambiance Lighting Controls & Persistence
+  const [isAmbianceEnabled, setIsAmbianceEnabled] = useState<boolean>(() => {
+    try {
+      const saved = localStorage.getItem('valor_ambiance_enabled');
+      return saved !== null ? saved === 'true' : true;
+    } catch {
+      return true;
+    }
+  });
+  const [ambianceBlur, setAmbianceBlur] = useState<number>(() => {
+    try {
+      const saved = localStorage.getItem('valor_ambiance_blur');
+      if (saved) {
+        const val = parseInt(saved, 10);
+        if (!isNaN(val) && val >= 16 && val <= 140) return val;
+      }
+    } catch {}
+    return 54;
+  });
+  const [ambianceOpacity, setAmbianceOpacity] = useState<number>(() => {
+    try {
+      const saved = localStorage.getItem('valor_ambiance_opacity');
+      if (saved) {
+        const val = parseFloat(saved);
+        if (!isNaN(val) && val >= 0.1 && val <= 1.0) return val;
+      }
+    } catch {}
+    return 0.7;
+  });
+
+  const handleToggleAmbiance = useCallback(() => {
+    setIsAmbianceEnabled(prev => {
+      const next = !prev;
+      try { localStorage.setItem('valor_ambiance_enabled', String(next)); } catch {}
+      triggerSwitchToast(next ? 'Ambiance Lighting Enabled' : 'Ambiance Lighting Disabled');
+      return next;
+    });
+  }, []);
+
+  const handleSetAmbianceBlur = useCallback((blurPx: number) => {
+    setAmbianceBlur(blurPx);
+    try { localStorage.setItem('valor_ambiance_blur', String(blurPx)); } catch {}
+    triggerSwitchToast(`Ambiance Blur: ${blurPx}px`);
+  }, []);
+
+  const handleSetAmbianceOpacity = useCallback((opacity: number) => {
+    setAmbianceOpacity(opacity);
+    try { localStorage.setItem('valor_ambiance_opacity', String(opacity)); } catch {}
+    triggerSwitchToast(`Ambiance Opacity: ${Math.round(opacity * 100)}%`);
+  }, []);
+
+  // HDR Tone Mapping State
+  const [toneMappingMode, setToneMappingMode] = useState<ToneMappingMode>(() => {
+    return isHdrOrX265Video(video) ? 'aces' : 'off';
+  });
 
   const [switchToast, setSwitchToast] = useState<{ text: string; visible: boolean; duration?: number }>({ text: '', visible: false });
   const switchToastTimeoutRef = useRef<any>(null);
@@ -5005,6 +5061,13 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
           setVlcContextMenuState(prev => prev.visible ? { visible: false, x: 0, y: 0 } : { visible: true, x: e.clientX, y: e.clientY });
         }}
       >
+        <AmbianceLighting
+          videoRef={videoRef}
+          isEnabled={isAmbianceEnabled}
+          blur={ambianceBlur}
+          opacity={ambianceOpacity}
+        />
+        <ToneMappingSvgDefs />
         <video
           ref={videoRef}
           onContextMenu={(e) => e.preventDefault()}
@@ -5013,6 +5076,9 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
           crossOrigin={video.playbackMode === 'advanced' ? 'anonymous' : undefined}
           className="main-video-element"
           style={{
+            position: 'relative',
+            zIndex: 1,
+            ...(toneMappingMode !== 'off' ? { filter: getToneMappingCssFilter(toneMappingMode) } : {}),
             objectFit: aspectRatio === 'cover' ? 'cover' : (aspectRatio === '16:9' || aspectRatio === '4:3' ? 'fill' : 'contain'),
             aspectRatio: aspectRatio === '16:9' ? '16/9' : (aspectRatio === '4:3' ? '4/3' : undefined)
           }}
@@ -6095,244 +6161,168 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
         </div>
       )}
 
-      {/* Edge Slide-In Button (visible when settings panel is closed) */}
-      {!hideUIOverlays && !showSettingsPanel && (
-        <button
-          className="ui-settings-edge-slide-btn"
-          onClick={(e) => {
-            e.stopPropagation();
-            e.preventDefault();
-            setShowSettingsPanel(true);
-          }}
-          title="Slide in UI Settings (Del)"
-          aria-label="Slide in UI Settings"
-          style={{
-            position: 'absolute',
-            right: 0,
-            top: '50%',
-            transform: 'translateY(-50%)',
-            zIndex: 120,
-            width: '26px',
-            height: '64px',
-            background: 'var(--dropdown-bg, rgba(18, 18, 18, 0.92))',
-            backdropFilter: 'blur(8px)',
-            WebkitBackdropFilter: 'blur(8px)',
-            border: '1px solid var(--dropdown-border, rgba(255, 255, 255, 0.15))',
-            borderRight: 'none',
-            borderRadius: '12px 0 0 12px',
-            padding: 0,
-            margin: 0,
-            cursor: 'pointer',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            boxShadow: '-4px 0 16px rgba(0, 0, 0, 0.45)',
-            opacity: showControls ? 0.95 : 0.35,
-            color: 'var(--text-primary, #ffffff)',
-            outline: 'none',
-            transition: 'opacity 0.2s ease, background 0.2s'
-          }}
-        >
-          <ChevronLeft size={18} />
-        </button>
-      )}
-
-      {/* UI Settings Modal Drawer (visible when open) */}
-      {!hideUIOverlays && showSettingsPanel && (
+      {/* UI Settings Modal Drawer with Integrated Smooth Edge Handle */}
+      {!hideUIOverlays && (
         <div 
-          className="ui-settings-slideout-drawer" 
-          style={{
-            position: 'absolute',
-            top: 0,
-            bottom: 0,
-            right: 0,
-            zIndex: 150,
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'flex-end',
-            pointerEvents: 'none'
-          }}
+          className={`ui-settings-slideout-drawer ${showSettingsPanel ? 'is-open' : 'is-closed'}`}
         >
-          {/* The slide-out / collapse handle attached to the left edge of the modal */}
-          <button
-            className="ui-settings-modal-collapse-btn"
+          {/* Backdrop when open: click anywhere outside to smoothly close */}
+          <div 
+            className="ui-settings-drawer-backdrop"
             onClick={(e) => {
               e.stopPropagation();
-              e.preventDefault();
               setShowSettingsPanel(false);
               setIsSettingsExpanded(false);
             }}
-            title="Slide out / Collapse UI Settings (Del)"
-            aria-label="Collapse UI Settings"
-            style={{
-              pointerEvents: 'auto',
-              width: '26px',
-              height: '64px',
-              background: 'var(--dropdown-bg, rgba(18, 18, 18, 0.96))',
-              backdropFilter: 'blur(8px)',
-              WebkitBackdropFilter: 'blur(8px)',
-              border: '1px solid var(--dropdown-border, rgba(255, 255, 255, 0.15))',
-              borderRight: 'none',
-              borderRadius: '12px 0 0 12px',
-              cursor: 'pointer',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              color: 'var(--text-primary, #ffffff)',
-              boxShadow: '-4px 0 16px rgba(0, 0, 0, 0.45)',
-              outline: 'none',
-              padding: 0,
-              zIndex: 160,
-              marginRight: '-1px'
-            }}
-          >
-            <ChevronRight size={18} />
-          </button>
+          />
 
           <div 
-            className="settings-modal-card animate-slide-in-right" 
-            onClick={(e) => e.stopPropagation()}
-            style={{
-              position: 'relative',
-              pointerEvents: 'auto',
-              overflow: 'visible',
-              background: 'var(--dropdown-bg, rgba(18, 18, 18, 0.96))',
-              border: '1px solid var(--dropdown-border, rgba(255, 255, 255, 0.1))',
-              borderRight: 'none',
-              borderRadius: '16px 0 0 16px',
-              padding: '1.25rem 1rem',
-              width: isSettingsExpanded ? '280px' : '154px',
-              boxShadow: '-10px 0 30px rgba(0,0,0,0.6)',
-              display: 'flex',
-              flexDirection: 'column',
-              gap: '1rem',
-              fontFamily: 'sans-serif',
-              transition: 'width 0.3s cubic-bezier(0.16, 1, 0.3, 1), background 0.3s'
-            }}
+            className="ui-settings-drawer-container"
           >
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%' }}>
-              <h3 style={{ margin: 0, fontSize: '1rem', fontWeight: 600, color: 'var(--text-primary, #ffffff)' }}>UI Settings</h3>
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setShowSettingsPanel(false);
-                  setIsSettingsExpanded(false);
-                }}
-                style={{
-                  background: 'none',
-                  border: 'none',
-                  color: 'var(--text-muted, rgba(255, 255, 255, 0.6))',
-                  cursor: 'pointer',
-                  padding: '4px',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  borderRadius: '6px'
-                }}
-                title="Close UI Settings"
-              >
-                <X size={16} />
-              </button>
-            </div>
-            
-            <div 
+            {/* The single integrated slide-out / collapse handle attached to the left edge of the modal */}
+            <button
+              className="ui-settings-edge-slide-btn"
+              onClick={(e) => {
+                e.stopPropagation();
+                e.preventDefault();
+                setShowSettingsPanel(prev => {
+                  const next = !prev;
+                  if (!next) setIsSettingsExpanded(false);
+                  return next;
+                });
+              }}
+              title={showSettingsPanel ? "Collapse UI Settings (Del)" : "Slide in UI Settings (Del)"}
+              aria-label={showSettingsPanel ? "Collapse UI Settings" : "Slide in UI Settings"}
               style={{
-                display: 'grid',
-                gridTemplateColumns: isSettingsExpanded ? 'repeat(4, 1fr)' : 'repeat(2, 1fr)',
-                gap: '0.6rem',
-                justifyContent: 'center',
-                alignItems: 'center'
+                opacity: showSettingsPanel ? 1 : (showControls ? 0.95 : 0.35)
               }}
             >
-              {!isSettingsExpanded ? (
-                <>
-                  {(settingsOrder || [
-                    'hideUIOverlays', 'hideVideoName', 'showPlayButton', 'showTimeDisplay', 'showPlayBar', 'showVolumeControl',
-                    'showFullscreen', 'disableAnimations', 'pauseOnFocusChange', 'allowUiSkipping', 'blockSeekingCompletely', 'autoSkipIntroOutro', 'lockModeActive'
-                  ]).slice(0, 5).map((key) => renderSettingsButton(key))}
-                  
-                  {/* 6th item is the show more (uncollapse) button */}
-                  <button
-                    onClick={() => setIsSettingsExpanded(true)}
-                    title="Show More Settings"
-                    className="settings-icon-toggle"
-                    style={{
-                      background: 'var(--border-subtle, rgba(255, 255, 255, 0.05))',
-                      border: '1px solid var(--dropdown-border, rgba(255, 255, 255, 0.1))',
-                      color: 'var(--text-secondary, rgba(255, 255, 255, 0.8))',
-                      borderRadius: '12px',
-                      padding: '8px',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      cursor: 'pointer',
-                      transition: 'background 0.2s, border-color 0.2s',
-                      height: '54px',
-                      width: '54px'
-                    }}
-                  >
-                    <ChevronRight size={22} />
-                  </button>
-                </>
-              ) : (
-                <>
-                  {(settingsOrder || [
-                    'hideUIOverlays', 'hideVideoName', 'showPlayButton', 'showTimeDisplay', 'showPlayBar', 'showVolumeControl',
-                    'showFullscreen', 'disableAnimations', 'pauseOnFocusChange', 'allowUiSkipping', 'blockSeekingCompletely', 'autoSkipIntroOutro', 'lockModeActive'
-                  ]).map((key) => renderSettingsButton(key))}
+              <div className="ui-settings-chevron-wrapper">
+                <ChevronLeft size={18} />
+              </div>
+            </button>
 
-                  {/* Esports Overlay Toggle */}
-                  <button
-                    onClick={() => {
-                      const nextVal = !vctOverlayEnabled;
-                      setVctOverlayEnabled(nextVal);
-                      localStorage.setItem('vct_overlay_enabled', nextVal ? 'true' : 'false');
-                      window.dispatchEvent(new Event('storage'));
-                    }}
-                    title="Toggle Esports Live Overlay"
-                    className="settings-icon-toggle"
-                    style={{
-                      background: vctOverlayEnabled ? 'rgba(46, 204, 113, 0.2)' : 'var(--border-subtle, rgba(255, 255, 255, 0.05))',
-                      border: `1px solid ${vctOverlayEnabled ? 'rgba(46, 204, 113, 0.5)' : 'var(--border-color, rgba(255, 255, 255, 0.1))'}`,
-                      color: vctOverlayEnabled ? '#2ecc71' : 'var(--text-secondary, rgba(255, 255, 255, 0.8))',
-                      borderRadius: '12px',
-                      padding: '8px',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      cursor: 'pointer',
-                      transition: 'all 0.2s ease',
-                      height: '54px',
-                      width: '54px'
-                    }}
-                  >
-                    <Activity size={22} />
-                  </button>
+            <div 
+              className="ui-settings-drawer-card" 
+              onClick={(e) => e.stopPropagation()}
+              style={{
+                width: isSettingsExpanded ? '280px' : '154px',
+              }}
+            >
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%' }}>
+                <h3 style={{ margin: 0, fontSize: '1rem', fontWeight: 600, color: 'var(--text-primary, #ffffff)' }}>UI Settings</h3>
+                <button
+                  className="ui-settings-close-x-btn"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setShowSettingsPanel(false);
+                    setIsSettingsExpanded(false);
+                  }}
+                  title="Close UI Settings"
+                >
+                  <X size={16} />
+                </button>
+              </div>
+              
+              <div 
+                style={{
+                  display: 'grid',
+                  gridTemplateColumns: isSettingsExpanded ? 'repeat(4, 1fr)' : 'repeat(2, 1fr)',
+                  gap: '0.6rem',
+                  justifyContent: 'center',
+                  alignItems: 'center'
+                }}
+              >
+                {!isSettingsExpanded ? (
+                  <>
+                    {(settingsOrder || [
+                      'hideUIOverlays', 'hideVideoName', 'showPlayButton', 'showTimeDisplay', 'showPlayBar', 'showVolumeControl',
+                      'showFullscreen', 'disableAnimations', 'pauseOnFocusChange', 'allowUiSkipping', 'blockSeekingCompletely', 'autoSkipIntroOutro', 'lockModeActive'
+                    ]).slice(0, 5).map((key) => renderSettingsButton(key))}
+                    
+                    {/* 6th item is the show more (uncollapse) button */}
+                    <button
+                      onClick={() => setIsSettingsExpanded(true)}
+                      title="Show More Settings"
+                      className="settings-icon-toggle"
+                      style={{
+                        background: 'var(--border-subtle, rgba(255, 255, 255, 0.05))',
+                        border: '1px solid var(--dropdown-border, rgba(255, 255, 255, 0.1))',
+                        color: 'var(--text-secondary, rgba(255, 255, 255, 0.8))',
+                        borderRadius: '12px',
+                        padding: '8px',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        cursor: 'pointer',
+                        transition: 'background 0.2s, border-color 0.2s',
+                        height: '54px',
+                        width: '54px'
+                      }}
+                    >
+                      <ChevronRight size={22} />
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    {(settingsOrder || [
+                      'hideUIOverlays', 'hideVideoName', 'showPlayButton', 'showTimeDisplay', 'showPlayBar', 'showVolumeControl',
+                      'showFullscreen', 'disableAnimations', 'pauseOnFocusChange', 'allowUiSkipping', 'blockSeekingCompletely', 'autoSkipIntroOutro', 'lockModeActive'
+                    ]).map((key) => renderSettingsButton(key))}
 
-                  {/* Collapse button inside the grid */}
-                  <button
-                    onClick={() => setIsSettingsExpanded(false)}
-                    title="Show Less Settings"
-                    className="settings-icon-toggle"
-                    style={{
-                      background: 'var(--border-subtle, rgba(255, 255, 255, 0.05))',
-                      border: '1px solid var(--dropdown-border, rgba(255, 255, 255, 0.1))',
-                      color: 'var(--text-secondary, rgba(255, 255, 255, 0.8))',
-                      borderRadius: '12px',
-                      padding: '8px',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      cursor: 'pointer',
-                      transition: 'background 0.2s, border-color 0.2s',
-                      height: '54px',
-                      width: '54px'
-                    }}
-                  >
-                    <ChevronLeft size={22} />
-                  </button>
-                </>
-              )}
+                    {/* Esports Overlay Toggle */}
+                    <button
+                      onClick={() => {
+                        const nextVal = !vctOverlayEnabled;
+                        setVctOverlayEnabled(nextVal);
+                        localStorage.setItem('vct_overlay_enabled', nextVal ? 'true' : 'false');
+                        window.dispatchEvent(new Event('storage'));
+                      }}
+                      title="Toggle Esports Live Overlay"
+                      className="settings-icon-toggle"
+                      style={{
+                        background: vctOverlayEnabled ? 'rgba(46, 204, 113, 0.2)' : 'var(--border-subtle, rgba(255, 255, 255, 0.05))',
+                        border: `1px solid ${vctOverlayEnabled ? 'rgba(46, 204, 113, 0.5)' : 'var(--border-color, rgba(255, 255, 255, 0.1))'}`,
+                        color: vctOverlayEnabled ? '#2ecc71' : 'var(--text-secondary, rgba(255, 255, 255, 0.8))',
+                        borderRadius: '12px',
+                        padding: '8px',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        cursor: 'pointer',
+                        transition: 'all 0.2s ease',
+                        height: '54px',
+                        width: '54px'
+                      }}
+                    >
+                      <Activity size={22} />
+                    </button>
+
+                    {/* Collapse button inside the grid */}
+                    <button
+                      onClick={() => setIsSettingsExpanded(false)}
+                      title="Show Less Settings"
+                      className="settings-icon-toggle"
+                      style={{
+                        background: 'var(--border-subtle, rgba(255, 255, 255, 0.05))',
+                        border: '1px solid var(--dropdown-border, rgba(255, 255, 255, 0.1))',
+                        color: 'var(--text-secondary, rgba(255, 255, 255, 0.8))',
+                        borderRadius: '12px',
+                        padding: '8px',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        cursor: 'pointer',
+                        transition: 'background 0.2s, border-color 0.2s',
+                        height: '54px',
+                        width: '54px'
+                      }}
+                    >
+                      <ChevronLeft size={22} />
+                    </button>
+                  </>
+                )}
+              </div>
             </div>
           </div>
         </div>
@@ -6903,27 +6893,187 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
 
 
 
-        /* Animations */
-        @keyframes slideInRight {
-          from { transform: translateX(100%); }
-          to { transform: translateX(0); }
+        /* UI Settings Slideout Drawer & Edge Handle Tab */
+        .ui-settings-slideout-drawer {
+          position: absolute;
+          top: 0;
+          bottom: 0;
+          right: 0;
+          z-index: 150;
+          display: flex;
+          align-items: center;
+          justify-content: flex-end;
+          pointer-events: none;
         }
-        .animate-slide-in-right {
-          animation: slideInRight 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+
+        .ui-settings-drawer-backdrop {
+          position: absolute;
+          inset: 0;
+          z-index: 140;
+          background: rgba(0, 0, 0, 0.4);
+          backdrop-filter: blur(2px);
+          -webkit-backdrop-filter: blur(2px);
+          opacity: 0;
+          pointer-events: none;
+          transition: opacity 0.35s cubic-bezier(0.16, 1, 0.3, 1);
         }
-        .ui-settings-edge-slide-btn, .radial-edge-slide-btn {
-          transition: transform 0.25s cubic-bezier(0.34, 1.56, 0.64, 1), background 0.2s, box-shadow 0.2s, opacity 0.25s, border-color 0.2s;
+
+        .ui-settings-slideout-drawer.is-open .ui-settings-drawer-backdrop {
+          opacity: 1;
+          pointer-events: auto;
         }
-        .ui-settings-edge-slide-btn:hover, .radial-edge-slide-btn:hover {
-          transform: translateY(-50%) translateX(-6px) !important;
-          background: rgba(28, 30, 42, 0.98) !important;
-          border-color: rgba(255, 255, 255, 0.35) !important;
-          box-shadow: -6px 0 20px rgba(0, 0, 0, 0.6) !important;
+
+        .ui-settings-drawer-container {
+          position: relative;
+          display: flex;
+          align-items: center;
+          transition: transform 0.38s cubic-bezier(0.16, 1, 0.3, 1);
+          pointer-events: none;
+          will-change: transform;
+        }
+
+        .ui-settings-slideout-drawer.is-closed .ui-settings-drawer-container {
+          transform: translateX(100%);
+        }
+
+        .ui-settings-slideout-drawer.is-open .ui-settings-drawer-container {
+          transform: translateX(0);
+        }
+
+        .ui-settings-edge-slide-btn {
+          position: absolute;
+          right: 100%;
+          top: 50%;
+          transform: translateY(-50%);
+          z-index: 160;
+          pointer-events: auto;
+          width: 26px;
+          height: 64px;
+          background: var(--dropdown-bg, rgba(18, 18, 18, 0.94));
+          backdrop-filter: blur(12px);
+          -webkit-backdrop-filter: blur(12px);
+          border: 1px solid var(--dropdown-border, rgba(255, 255, 255, 0.15));
+          border-right: none;
+          border-radius: 12px 0 0 12px;
+          cursor: pointer;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          color: var(--text-primary, #ffffff);
+          box-shadow: -4px 0 16px rgba(0, 0, 0, 0.45);
+          outline: none;
+          padding: 0;
+          margin: 0;
+          margin-right: -1px;
+          transition: transform 0.28s cubic-bezier(0.16, 1, 0.3, 1), background 0.25s ease, box-shadow 0.28s ease, border-color 0.25s ease, opacity 0.3s ease !important;
+          will-change: transform, opacity;
+        }
+
+        /* Hover when CLOSED */
+        .ui-settings-slideout-drawer.is-closed .ui-settings-edge-slide-btn:hover {
+          transform: translateY(-50%) translateX(-5px) !important;
+          background: rgba(28, 30, 44, 0.98) !important;
+          border-color: rgba(255, 255, 255, 0.38) !important;
+          box-shadow: -6px 0 22px rgba(0, 0, 0, 0.65), 0 0 14px rgba(139, 92, 246, 0.25) !important;
           color: #ffffff !important;
           opacity: 1 !important;
         }
-        .ui-settings-edge-slide-btn:active, .radial-edge-slide-btn:active {
-          transform: translateY(-50%) translateX(-3px) scale(0.96) !important;
+
+        .ui-settings-slideout-drawer.is-closed .ui-settings-edge-slide-btn:hover .ui-settings-chevron-wrapper {
+          transform: translateX(-2px) !important;
+        }
+
+        /* Hover when OPEN */
+        .ui-settings-slideout-drawer.is-open .ui-settings-edge-slide-btn:hover {
+          transform: translateY(-50%) translateX(3px) !important;
+          background: rgba(28, 30, 44, 0.98) !important;
+          border-color: rgba(255, 255, 255, 0.38) !important;
+          box-shadow: -4px 0 18px rgba(0, 0, 0, 0.6) !important;
+          color: #ffffff !important;
+          opacity: 1 !important;
+        }
+
+        .ui-settings-slideout-drawer.is-open .ui-settings-edge-slide-btn:hover .ui-settings-chevron-wrapper {
+          transform: rotate(180deg) translateX(-2px) !important;
+        }
+
+        /* Active click press */
+        .ui-settings-slideout-drawer.is-closed .ui-settings-edge-slide-btn:active {
+          transform: translateY(-50%) translateX(-2px) scale(0.95) !important;
+        }
+
+        .ui-settings-slideout-drawer.is-open .ui-settings-edge-slide-btn:active {
+          transform: translateY(-50%) translateX(1px) scale(0.95) !important;
+        }
+
+        .ui-settings-chevron-wrapper {
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          transition: transform 0.38s cubic-bezier(0.16, 1, 0.3, 1) !important;
+          will-change: transform;
+        }
+
+        .ui-settings-slideout-drawer.is-open .ui-settings-chevron-wrapper {
+          transform: rotate(180deg);
+        }
+
+        .ui-settings-slideout-drawer.is-closed .ui-settings-chevron-wrapper {
+          transform: rotate(0deg);
+        }
+
+        /* Drawer Card */
+        .ui-settings-drawer-card {
+          position: relative;
+          pointer-events: auto;
+          overflow: visible;
+          background: var(--dropdown-bg, rgba(18, 18, 18, 0.96));
+          backdrop-filter: blur(16px);
+          -webkit-backdrop-filter: blur(16px);
+          border: 1px solid var(--dropdown-border, rgba(255, 255, 255, 0.12));
+          border-right: none;
+          border-radius: 16px 0 0 16px;
+          padding: 1.25rem 1rem;
+          display: flex;
+          flex-direction: column;
+          gap: 1rem;
+          font-family: sans-serif;
+          transition: width 0.32s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.35s ease, background 0.3s ease;
+        }
+
+        .ui-settings-slideout-drawer.is-closed .ui-settings-drawer-card {
+          box-shadow: none !important;
+        }
+
+        .ui-settings-slideout-drawer.is-open .ui-settings-drawer-card {
+          box-shadow: -10px 0 32px rgba(0, 0, 0, 0.65) !important;
+        }
+
+        .ui-settings-close-x-btn {
+          background: none;
+          border: none;
+          color: var(--text-muted, rgba(255, 255, 255, 0.6));
+          cursor: pointer;
+          padding: 4px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          border-radius: 6px;
+          transition: background 0.2s ease, color 0.2s ease;
+        }
+
+        .ui-settings-close-x-btn:hover {
+          background: rgba(255, 255, 255, 0.1);
+          color: #ffffff;
+        }
+
+        .no-animations .ui-settings-drawer-container,
+        .no-animations .ui-settings-edge-slide-btn,
+        .no-animations .ui-settings-chevron-wrapper,
+        .no-animations .ui-settings-drawer-backdrop,
+        .no-animations .ui-settings-drawer-card {
+          transition: none !important;
+          animation: none !important;
         }
 
         @keyframes scaleIn {
@@ -8647,6 +8797,14 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
             setAspectRatio(ratio);
             triggerSwitchToast(`Aspect Ratio: ${ratio === 'default' ? 'Default Fit' : ratio.toUpperCase()}`);
           }}
+          toneMappingMode={toneMappingMode}
+          onSetToneMappingMode={(mode) => setToneMappingMode(mode as ToneMappingMode)}
+          isAmbianceEnabled={isAmbianceEnabled}
+          onToggleAmbiance={handleToggleAmbiance}
+          ambianceBlur={ambianceBlur}
+          onSetAmbianceBlur={handleSetAmbianceBlur}
+          ambianceOpacity={ambianceOpacity}
+          onSetAmbianceOpacity={handleSetAmbianceOpacity}
           onOpenSettings={() => setShowSettingsPanel(true)}
           onOpenAudioSubMenu={() => setShowAudioSubMenu(true)}
           bookmarks={bookmarks}
