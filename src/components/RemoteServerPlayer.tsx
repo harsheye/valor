@@ -5423,6 +5423,77 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
             <Lock size={22} />
           </button>
         );
+      case 'ambianceLighting':
+        return (
+          <button
+            key="ambianceLighting"
+            onClick={handleToggleAmbiance}
+            onMouseEnter={() => setHoveredSetting('ambianceLighting')}
+            onMouseLeave={() => setHoveredSetting(null)}
+            title={`Ambiance Glow: ${isAmbianceEnabled ? 'Enabled' : 'Disabled'}`}
+            className={`settings-icon-toggle ${isAmbianceEnabled ? 'active-blue' : ''}`}
+            style={{
+              background: isAmbianceEnabled ? 'rgba(59, 130, 246, 0.22)' : 'var(--border-subtle, rgba(255, 255, 255, 0.05))',
+              border: `1px solid ${isAmbianceEnabled ? 'rgba(59, 130, 246, 0.65)' : 'var(--border-color, rgba(255, 255, 255, 0.1))'}`,
+              color: isAmbianceEnabled ? '#60a5fa' : 'var(--text-secondary, rgba(255, 255, 255, 0.8))',
+              borderRadius: '12px',
+              padding: '8px',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              cursor: 'pointer',
+              transition: 'all 0.2s ease',
+              height: '54px',
+              width: '54px'
+            }}
+          >
+            <Sparkles size={22} />
+          </button>
+        );
+      case 'hdrToneMapping':
+        return (
+          <button
+            key="hdrToneMapping"
+            onClick={cycleToneMapping}
+            onMouseEnter={() => setHoveredSetting('hdrToneMapping')}
+            onMouseLeave={() => setHoveredSetting(null)}
+            title={`HDR Tone Mapping: ${toneMappingMode.toUpperCase()} (Click to cycle)`}
+            className={`settings-icon-toggle ${toneMappingMode !== 'off' ? 'active-yellow' : ''}`}
+            style={{
+              position: 'relative',
+              background: toneMappingMode !== 'off' ? 'rgba(245, 158, 11, 0.22)' : 'var(--border-subtle, rgba(255, 255, 255, 0.05))',
+              border: `1px solid ${toneMappingMode !== 'off' ? 'rgba(245, 158, 11, 0.65)' : 'var(--border-color, rgba(255, 255, 255, 0.1))'}`,
+              color: toneMappingMode !== 'off' ? '#fbbf24' : 'var(--text-secondary, rgba(255, 255, 255, 0.8))',
+              borderRadius: '12px',
+              padding: '8px',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              cursor: 'pointer',
+              transition: 'all 0.2s ease',
+              height: '54px',
+              width: '54px'
+            }}
+          >
+            <Sun size={22} />
+            {toneMappingMode !== 'off' && (
+              <span style={{
+                position: 'absolute',
+                top: '3px',
+                right: '3px',
+                fontSize: '8px',
+                fontWeight: 800,
+                background: '#f59e0b',
+                color: '#000',
+                borderRadius: '3px',
+                padding: '0 3px',
+                lineHeight: '11px'
+              }}>
+                {toneMappingMode === 'aces' ? 'ACES' : toneMappingMode === 'vibrant' ? 'VIB' : 'REIN'}
+              </span>
+            )}
+          </button>
+        );
       default:
         return null;
     }
@@ -6680,10 +6751,12 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
             >
               {!isSettingsExpanded ? (
                 <>
+                  {renderSettingsButton('ambianceLighting')}
+                  {renderSettingsButton('hdrToneMapping')}
                   {(settingsOrder || [
                     'hideUIOverlays', 'hideVideoName', 'showPlayButton', 'showTimeDisplay', 'showPlayBar', 'showVolumeControl',
                     'showFullscreen', 'disableAnimations', 'pauseOnFocusChange', 'allowUiSkipping', 'blockSeekingCompletely', 'autoSkipIntroOutro', 'lockModeActive'
-                  ]).slice(0, 5).map((key) => renderSettingsButton(key))}
+                  ]).slice(0, 3).map((key) => renderSettingsButton(key))}
                   
                   {/* Esports Overlay Toggle */}
                   <button
@@ -6736,6 +6809,8 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
                 </>
               ) : (
                 <>
+                  {renderSettingsButton('ambianceLighting')}
+                  {renderSettingsButton('hdrToneMapping')}
                   {(settingsOrder || [
                     'hideUIOverlays', 'hideVideoName', 'showPlayButton', 'showTimeDisplay', 'showPlayBar', 'showVolumeControl',
                     'showFullscreen', 'disableAnimations', 'pauseOnFocusChange', 'allowUiSkipping', 'blockSeekingCompletely', 'autoSkipIntroOutro', 'lockModeActive'
@@ -6768,6 +6843,7 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
             </div>
           </div>
         </div>
+      </div>
       )}
 
 
@@ -7335,27 +7411,187 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
 
 
 
-        /* Animations */
-        @keyframes slideInRight {
-          from { transform: translateX(100%); }
-          to { transform: translateX(0); }
+        /* UI Settings Slideout Drawer & Edge Handle Tab */
+        .ui-settings-slideout-drawer {
+          position: absolute;
+          top: 0;
+          bottom: 0;
+          right: 0;
+          z-index: 150;
+          display: flex;
+          align-items: center;
+          justify-content: flex-end;
+          pointer-events: none;
         }
-        .animate-slide-in-right {
-          animation: slideInRight 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+
+        .ui-settings-drawer-backdrop {
+          position: absolute;
+          inset: 0;
+          z-index: 140;
+          background: rgba(0, 0, 0, 0.4);
+          backdrop-filter: blur(2px);
+          -webkit-backdrop-filter: blur(2px);
+          opacity: 0;
+          pointer-events: none;
+          transition: opacity 0.35s cubic-bezier(0.16, 1, 0.3, 1);
         }
-        .ui-settings-edge-slide-btn, .radial-edge-slide-btn {
-          transition: transform 0.25s cubic-bezier(0.34, 1.56, 0.64, 1), background 0.2s, box-shadow 0.2s, opacity 0.25s, border-color 0.2s;
+
+        .ui-settings-slideout-drawer.is-open .ui-settings-drawer-backdrop {
+          opacity: 1;
+          pointer-events: auto;
         }
-        .ui-settings-edge-slide-btn:hover, .radial-edge-slide-btn:hover {
-          transform: translateY(-50%) translateX(-6px) !important;
-          background: rgba(28, 30, 42, 0.98) !important;
-          border-color: rgba(255, 255, 255, 0.35) !important;
-          box-shadow: -6px 0 20px rgba(0, 0, 0, 0.6) !important;
+
+        .ui-settings-drawer-container {
+          position: relative;
+          display: flex;
+          align-items: center;
+          transition: transform 0.38s cubic-bezier(0.16, 1, 0.3, 1);
+          pointer-events: none;
+          will-change: transform;
+        }
+
+        .ui-settings-slideout-drawer.is-closed .ui-settings-drawer-container {
+          transform: translateX(100%);
+        }
+
+        .ui-settings-slideout-drawer.is-open .ui-settings-drawer-container {
+          transform: translateX(0);
+        }
+
+        .ui-settings-edge-slide-btn {
+          position: absolute;
+          right: 100%;
+          top: 50%;
+          transform: translateY(-50%);
+          z-index: 160;
+          pointer-events: auto;
+          width: 26px;
+          height: 64px;
+          background: var(--dropdown-bg, rgba(18, 18, 18, 0.94));
+          backdrop-filter: blur(12px);
+          -webkit-backdrop-filter: blur(12px);
+          border: 1px solid var(--dropdown-border, rgba(255, 255, 255, 0.15));
+          border-right: none;
+          border-radius: 12px 0 0 12px;
+          cursor: pointer;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          color: var(--text-primary, #ffffff);
+          box-shadow: -4px 0 16px rgba(0, 0, 0, 0.45);
+          outline: none;
+          padding: 0;
+          margin: 0;
+          margin-right: -1px;
+          transition: transform 0.28s cubic-bezier(0.16, 1, 0.3, 1), background 0.25s ease, box-shadow 0.28s ease, border-color 0.25s ease, opacity 0.3s ease !important;
+          will-change: transform, opacity;
+        }
+
+        /* Hover when CLOSED */
+        .ui-settings-slideout-drawer.is-closed .ui-settings-edge-slide-btn:hover {
+          transform: translateY(-50%) translateX(-5px) !important;
+          background: rgba(28, 30, 44, 0.98) !important;
+          border-color: rgba(255, 255, 255, 0.38) !important;
+          box-shadow: -6px 0 22px rgba(0, 0, 0, 0.65), 0 0 14px rgba(139, 92, 246, 0.25) !important;
           color: #ffffff !important;
           opacity: 1 !important;
         }
-        .ui-settings-edge-slide-btn:active, .radial-edge-slide-btn:active {
-          transform: translateY(-50%) translateX(-3px) scale(0.96) !important;
+
+        .ui-settings-slideout-drawer.is-closed .ui-settings-edge-slide-btn:hover .ui-settings-chevron-wrapper {
+          transform: translateX(-2px) !important;
+        }
+
+        /* Hover when OPEN */
+        .ui-settings-slideout-drawer.is-open .ui-settings-edge-slide-btn:hover {
+          transform: translateY(-50%) translateX(3px) !important;
+          background: rgba(28, 30, 44, 0.98) !important;
+          border-color: rgba(255, 255, 255, 0.38) !important;
+          box-shadow: -4px 0 18px rgba(0, 0, 0, 0.6) !important;
+          color: #ffffff !important;
+          opacity: 1 !important;
+        }
+
+        .ui-settings-slideout-drawer.is-open .ui-settings-edge-slide-btn:hover .ui-settings-chevron-wrapper {
+          transform: rotate(180deg) translateX(-2px) !important;
+        }
+
+        /* Active click press */
+        .ui-settings-slideout-drawer.is-closed .ui-settings-edge-slide-btn:active {
+          transform: translateY(-50%) translateX(-2px) scale(0.95) !important;
+        }
+
+        .ui-settings-slideout-drawer.is-open .ui-settings-edge-slide-btn:active {
+          transform: translateY(-50%) translateX(1px) scale(0.95) !important;
+        }
+
+        .ui-settings-chevron-wrapper {
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          transition: transform 0.38s cubic-bezier(0.16, 1, 0.3, 1) !important;
+          will-change: transform;
+        }
+
+        .ui-settings-slideout-drawer.is-open .ui-settings-chevron-wrapper {
+          transform: rotate(180deg);
+        }
+
+        .ui-settings-slideout-drawer.is-closed .ui-settings-chevron-wrapper {
+          transform: rotate(0deg);
+        }
+
+        /* Drawer Card */
+        .ui-settings-drawer-card {
+          position: relative;
+          pointer-events: auto;
+          overflow: visible;
+          background: var(--dropdown-bg, rgba(18, 18, 18, 0.96));
+          backdrop-filter: blur(16px);
+          -webkit-backdrop-filter: blur(16px);
+          border: 1px solid var(--dropdown-border, rgba(255, 255, 255, 0.12));
+          border-right: none;
+          border-radius: 16px 0 0 16px;
+          padding: 1.25rem 1rem;
+          display: flex;
+          flex-direction: column;
+          gap: 1rem;
+          font-family: sans-serif;
+          transition: width 0.32s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.35s ease, background 0.3s ease;
+        }
+
+        .ui-settings-slideout-drawer.is-closed .ui-settings-drawer-card {
+          box-shadow: none !important;
+        }
+
+        .ui-settings-slideout-drawer.is-open .ui-settings-drawer-card {
+          box-shadow: -10px 0 32px rgba(0, 0, 0, 0.65) !important;
+        }
+
+        .ui-settings-close-x-btn {
+          background: none;
+          border: none;
+          color: var(--text-muted, rgba(255, 255, 255, 0.6));
+          cursor: pointer;
+          padding: 4px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          border-radius: 6px;
+          transition: background 0.2s ease, color 0.2s ease;
+        }
+
+        .ui-settings-close-x-btn:hover {
+          background: rgba(255, 255, 255, 0.1);
+          color: #ffffff;
+        }
+
+        .no-animations .ui-settings-drawer-container,
+        .no-animations .ui-settings-edge-slide-btn,
+        .no-animations .ui-settings-chevron-wrapper,
+        .no-animations .ui-settings-drawer-backdrop,
+        .no-animations .ui-settings-drawer-card {
+          transition: none !important;
+          animation: none !important;
         }
 
         @keyframes scaleIn {

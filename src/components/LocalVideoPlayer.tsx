@@ -3,7 +3,7 @@ import {
   Play, Pause, RotateCcw, RotateCw, Cast, X, ArrowLeft, 
   MessageSquare, MessageSquareText, CircleGauge, Maximize, Minimize, MonitorPlay,
   Volume2, Volume1, VolumeX, AlertCircle, Lock, Unlock,
-  Layers, Type, Clock, Sliders, SkipForward, Ban, FastForward, Zap, Coffee, ChevronRight, ChevronLeft, Eye, Settings, Bookmark as BookmarkIcon, Activity, Terminal
+  Layers, Type, Clock, Sliders, SkipForward, Ban, FastForward, Zap, Coffee, ChevronRight, ChevronLeft, Eye, Settings, Bookmark as BookmarkIcon, Activity, Terminal, Sparkles, Sun
 } from 'lucide-react';
 import { Button } from './ui/button';
 import type { VideoItem, CustomAudioTrack, CustomSubtitleTrack, Bookmark } from '../types/media';
@@ -1986,6 +1986,14 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
   const [toneMappingMode, setToneMappingMode] = useState<ToneMappingMode>(() => {
     return isHdrOrX265Video(video) ? 'aces' : 'off';
   });
+
+  const cycleToneMapping = useCallback(() => {
+    setToneMappingMode(prev => {
+      const next: ToneMappingMode = prev === 'off' ? 'aces' : prev === 'aces' ? 'vibrant' : prev === 'vibrant' ? 'reinhard' : 'off';
+      triggerSwitchToast(`HDR Tone Mapping: ${next.toUpperCase()}`);
+      return next;
+    });
+  }, []);
 
   const [switchToast, setSwitchToast] = useState<{ text: string; visible: boolean; duration?: number }>({ text: '', visible: false });
   const switchToastTimeoutRef = useRef<any>(null);
@@ -4794,6 +4802,77 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
             <Lock size={22} />
           </button>
         );
+      case 'ambianceLighting':
+        return (
+          <button
+            key="ambianceLighting"
+            onClick={handleToggleAmbiance}
+            onMouseEnter={() => setHoveredSetting('ambianceLighting')}
+            onMouseLeave={() => setHoveredSetting(null)}
+            title={`Ambiance Glow: ${isAmbianceEnabled ? 'Enabled' : 'Disabled'}`}
+            className={`settings-icon-toggle ${isAmbianceEnabled ? 'active-blue' : ''}`}
+            style={{
+              background: isAmbianceEnabled ? 'rgba(59, 130, 246, 0.22)' : 'var(--border-subtle, rgba(255, 255, 255, 0.05))',
+              border: `1px solid ${isAmbianceEnabled ? 'rgba(59, 130, 246, 0.65)' : 'var(--border-color, rgba(255, 255, 255, 0.1))'}`,
+              color: isAmbianceEnabled ? '#60a5fa' : 'var(--text-secondary, rgba(255, 255, 255, 0.8))',
+              borderRadius: '12px',
+              padding: '8px',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              cursor: 'pointer',
+              transition: 'all 0.2s ease',
+              height: '54px',
+              width: '54px'
+            }}
+          >
+            <Sparkles size={22} />
+          </button>
+        );
+      case 'hdrToneMapping':
+        return (
+          <button
+            key="hdrToneMapping"
+            onClick={cycleToneMapping}
+            onMouseEnter={() => setHoveredSetting('hdrToneMapping')}
+            onMouseLeave={() => setHoveredSetting(null)}
+            title={`HDR Tone Mapping: ${toneMappingMode.toUpperCase()} (Click to cycle)`}
+            className={`settings-icon-toggle ${toneMappingMode !== 'off' ? 'active-yellow' : ''}`}
+            style={{
+              position: 'relative',
+              background: toneMappingMode !== 'off' ? 'rgba(245, 158, 11, 0.22)' : 'var(--border-subtle, rgba(255, 255, 255, 0.05))',
+              border: `1px solid ${toneMappingMode !== 'off' ? 'rgba(245, 158, 11, 0.65)' : 'var(--border-color, rgba(255, 255, 255, 0.1))'}`,
+              color: toneMappingMode !== 'off' ? '#fbbf24' : 'var(--text-secondary, rgba(255, 255, 255, 0.8))',
+              borderRadius: '12px',
+              padding: '8px',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              cursor: 'pointer',
+              transition: 'all 0.2s ease',
+              height: '54px',
+              width: '54px'
+            }}
+          >
+            <Sun size={22} />
+            {toneMappingMode !== 'off' && (
+              <span style={{
+                position: 'absolute',
+                top: '3px',
+                right: '3px',
+                fontSize: '8px',
+                fontWeight: 800,
+                background: '#f59e0b',
+                color: '#000',
+                borderRadius: '3px',
+                padding: '0 3px',
+                lineHeight: '11px'
+              }}>
+                {toneMappingMode === 'aces' ? 'ACES' : toneMappingMode === 'vibrant' ? 'VIB' : 'REIN'}
+              </span>
+            )}
+          </button>
+        );
       default:
         return null;
     }
@@ -6044,6 +6123,20 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
                   </div>
                 )}
 
+                {/* HDR / Tone Mapping */}
+                <button
+                  className={`control-btn-netflix control-btn-tonemap ${toneMappingMode !== 'off' ? 'active' : ''}`}
+                  onClick={cycleToneMapping}
+                  title={`HDR Tone Mapping: ${toneMappingMode.toUpperCase()} (Click to cycle ACES Filmic / Vibrant / Reinhard / Off)`}
+                >
+                  <Sparkles size={22} color={toneMappingMode !== 'off' ? '#fbbf24' : 'currentColor'} />
+                  {toneMappingMode !== 'off' && (
+                    <span className="netflix-speed-badge" style={{ background: '#f59e0b' }}>
+                      {toneMappingMode === 'aces' ? 'ACES' : toneMappingMode === 'vibrant' ? 'VIB' : 'REIN'}
+                    </span>
+                  )}
+                </button>
+
                 {/* Netflix-style Audio & Subtitles Icon Button & Popover */}
                 {!isUndetectedLocalMedia && (
                   <div 
@@ -6235,10 +6328,12 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
               >
                 {!isSettingsExpanded ? (
                   <>
+                    {renderSettingsButton('ambianceLighting')}
+                    {renderSettingsButton('hdrToneMapping')}
                     {(settingsOrder || [
                       'hideUIOverlays', 'hideVideoName', 'showPlayButton', 'showTimeDisplay', 'showPlayBar', 'showVolumeControl',
                       'showFullscreen', 'disableAnimations', 'pauseOnFocusChange', 'allowUiSkipping', 'blockSeekingCompletely', 'autoSkipIntroOutro', 'lockModeActive'
-                    ]).slice(0, 5).map((key) => renderSettingsButton(key))}
+                    ]).slice(0, 3).map((key) => renderSettingsButton(key))}
                     
                     {/* 6th item is the show more (uncollapse) button */}
                     <button
@@ -6265,6 +6360,8 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
                   </>
                 ) : (
                   <>
+                    {renderSettingsButton('ambianceLighting')}
+                    {renderSettingsButton('hdrToneMapping')}
                     {(settingsOrder || [
                       'hideUIOverlays', 'hideVideoName', 'showPlayButton', 'showTimeDisplay', 'showPlayBar', 'showVolumeControl',
                       'showFullscreen', 'disableAnimations', 'pauseOnFocusChange', 'allowUiSkipping', 'blockSeekingCompletely', 'autoSkipIntroOutro', 'lockModeActive'

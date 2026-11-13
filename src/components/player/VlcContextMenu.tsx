@@ -583,6 +583,7 @@ export const VlcContextMenu: React.FC<VlcContextMenuProps> = ({
           id: 'ambiance-lighting',
           label: <span><u>A</u>mbiance Glow</span>,
           icon: <Sparkles size={12} color="#000" />,
+          checked: isAmbianceEnabled,
           children: [
             {
               id: 'amb-toggle',
@@ -988,6 +989,11 @@ export const VlcContextMenu: React.FC<VlcContextMenuProps> = ({
               onClick={(e) => {
                 e.stopPropagation();
                 if (item.disabled) return;
+                if (hasChildren) {
+                  setActiveSubmenuPath(prev => 
+                    prev[depth] === item.id ? pathPrefix : itemPath
+                  );
+                }
                 if (item.onClick) {
                   item.onClick();
                 }

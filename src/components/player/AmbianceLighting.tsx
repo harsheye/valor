@@ -13,6 +13,7 @@ export interface AmbianceLightingProps {
  * High-performance ambient lighting canvas for video playback.
  * Renders a blurred, dynamically scaled color halo behind the active video element.
  * Throttles draw calls to ~30 FPS during playback and updates on pause/seek to conserve GPU/CPU.
+ * When disabled (isEnabled === false), completely unmounts from the DOM.
  */
 export const AmbianceLighting: React.FC<AmbianceLightingProps> = ({
   videoRef,
@@ -25,17 +26,10 @@ export const AmbianceLighting: React.FC<AmbianceLightingProps> = ({
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
   useEffect(() => {
+    if (!isEnabled) return;
+
     const canvas = canvasRef.current;
     if (!canvas) return;
-
-    if (!isEnabled) {
-      // Clear canvas when disabled
-      const ctx = canvas.getContext('2d');
-      if (ctx) {
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
-      }
-      return;
-    }
 
     let rafId: number | null = null;
     let isActive = true;
@@ -47,7 +41,7 @@ export const AmbianceLighting: React.FC<AmbianceLightingProps> = ({
       if (!video || !canvas) return;
       if (video.readyState < 2 || video.videoWidth === 0 || video.videoHeight === 0) return;
 
-      const ctx = canvas.getContext('2d', { alpha: false, desynchronized: true });
+      const ctx = canvas.getContext('2d', { alpha: true });
       if (!ctx) return;
 
       try {
@@ -106,6 +100,10 @@ export const AmbianceLighting: React.FC<AmbianceLightingProps> = ({
     };
   }, [isEnabled, videoRef]);
 
+  if (!isEnabled) {
+    return null;
+  }
+
   return (
     <canvas
       ref={canvasRef}
@@ -121,12 +119,12 @@ export const AmbianceLighting: React.FC<AmbianceLightingProps> = ({
         height: '100%',
         transform: 'translate(-50%, -50%) scale(1.18)',
         filter: `blur(${blur}px)`,
-        opacity: isEnabled ? opacity : 0,
+        opacity: opacity,
         pointerEvents: 'none',
         zIndex: 0,
-        display: isEnabled ? 'block' : 'none',
+        display: 'block',
         transition: 'opacity 0.35s ease, filter 0.25s ease',
-        willChange: isEnabled ? 'transform, filter, opacity' : 'auto',
+        willChange: 'transform, filter, opacity',
         ...style
       }}
     />
