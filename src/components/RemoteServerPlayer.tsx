@@ -2662,16 +2662,38 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
   const debouncedPrefetchRef = useRef<any>(null);
   const lastPrefetchTimeRef = useRef<number>(0);
   const lastPrefetchPlayheadRef = useRef<number>(-1);
+  const isPrefetchingRef = useRef<boolean>(false);
+  const prefetchRequestCountRef = useRef<number>(0);
+  const lastPrefetchHadResponseRef = useRef<boolean>(true);
+  const lastPrefetchAnchorTimeRef = useRef<number>(-1);
 
   const triggerPrefetch = useCallback(async (forced = false) => {
     if (!video.isRemote || !video.url) return;
+    if (isPrefetchingRef.current) return;
 
-    const currentPlayhead = videoRef.current ? videoRef.current.currentTime : currentTime;
-    const dur = durationRef.current || duration || 0;
+    // Rule: only allow a request if the last request received a response
+    if (!lastPrefetchHadResponseRef.current) {
+      return;
+    }
+
+    const currentPlayhead = videoRef.current ? videoRef.current.currentTime : latestTimeRef.current;
+    const dur = durationRef.current || 0;
+
+    // Reset budget when playhead advances significantly (>=30s) into a new window
+    if (lastPrefetchAnchorTimeRef.current === -1 || Math.abs(currentPlayhead - lastPrefetchAnchorTimeRef.current) >= 30) {
+      prefetchRequestCountRef.current = 0;
+      lastPrefetchAnchorTimeRef.current = currentPlayhead;
+    }
+
+    // Rule: only 3 requests are allowed to be sent per prefetch window/cycle
+    if (prefetchRequestCountRef.current >= 3) {
+      return;
+    }
+
     const now = Date.now();
 
-    // 1. Throttle requests: do not ping faster than once every 4 seconds unless explicitly forced
-    if (!forced && now - lastPrefetchTimeRef.current < 4000) {
+    // 1. Strict throttle: never ping faster than once every 3s even when forced, 6s when not forced
+    if (now - lastPrefetchTimeRef.current < (forced ? 3000 : 6000)) {
       return;
     }
 
@@ -2681,8 +2703,8 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
     const isPlaying = isPlayingRef.current;
 
     // While playing: range requests from <video> drive server sliding window automatically.
-    // Only ping if playhead advanced by >= 25s or cached ahead dropped below 60s.
-    if (!forced && isPlaying && cachedAhead >= 60 && playheadMoved < 25 && now - lastPrefetchTimeRef.current < 15000) {
+    // Only ping if playhead advanced by >= 30s or cached ahead dropped below 60s.
+    if (!forced && isPlaying && cachedAhead >= 60 && playheadMoved < 30 && now - lastPrefetchTimeRef.current < 15000) {
       return;
     }
 
@@ -2691,6 +2713,9 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
       return;
     }
 
+    isPrefetchingRef.current = true;
+    lastPrefetchHadResponseRef.current = false;
+    prefetchRequestCountRef.current += 1;
     lastPrefetchTimeRef.current = now;
     lastPrefetchPlayheadRef.current = currentPlayhead;
 
@@ -2711,6 +2736,17 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
 
       const prefetchUrl = `${apiBase}/api/proxy-media?prefetch=true&${params.toString()}`;
       const res = await fetch(prefetchUrl);
+      
+      // Response received from server
+      lastPrefetchHadResponseRef.current = true;
+
+      if (res.status === 429) {
+        // Rate limit encountered: cap budget and enforce cooldown
+        prefetchRequestCountRef.current = 3;
+        lastPrefetchTimeRef.current = now + 60000;
+        return;
+      }
+
       if (res.ok) {
         const ct = res.headers.get('content-type') || '';
         if (ct.includes('application/json')) {
@@ -2736,11 +2772,16 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
           const effectiveEnd = Math.max(nativeEnd, cachedBufferEndRef.current);
           setBufferedPercent(Math.min(100, (effectiveEnd / dur) * 100));
         }
+      } else {
+        prefetchRequestCountRef.current = 3;
       }
     } catch {
-      // network error ignored
+      // Network failure / connection aborted: last request did not receive a response
+      lastPrefetchHadResponseRef.current = false;
+    } finally {
+      isPrefetchingRef.current = false;
     }
-  }, [video.url, video.isRemote, (video as any).auth, duration, currentTime]);
+  }, [video.url, video.isRemote, (video as any).auth]);
 
   const queuePrefetchOnSeek = useCallback((targetTime: number) => {
     if (!video.isRemote || !video.url) return;
@@ -2750,6 +2791,9 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
     debouncedPrefetchRef.current = setTimeout(() => {
       const isAlreadyCached = targetTime <= cachedBufferEndRef.current && targetTime >= (videoRef.current?.currentTime ?? 0) - 30;
       if (!isAlreadyCached) {
+        prefetchRequestCountRef.current = 0;
+        lastPrefetchHadResponseRef.current = true;
+        lastPrefetchAnchorTimeRef.current = targetTime;
         triggerPrefetch(true);
       }
     }, 400);
@@ -2759,6 +2803,9 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
   useEffect(() => {
     if (!video.isRemote || !video.url) return;
 
+    prefetchRequestCountRef.current = 0;
+    lastPrefetchHadResponseRef.current = true;
+    lastPrefetchAnchorTimeRef.current = -1;
     let isDisposed = false;
 
     // Initial prefetch on load
@@ -2789,7 +2836,9 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
 
       prefetchTimerRef.current = setTimeout(async () => {
         if (!isDisposed) {
-          await triggerPrefetch(false);
+          if (prefetchRequestCountRef.current < 3 && lastPrefetchHadResponseRef.current) {
+            await triggerPrefetch(false);
+          }
           scheduleNext();
         }
       }, nextDelay);

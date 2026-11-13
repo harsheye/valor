@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { Check, Sparkles, Search, Download, Key, RefreshCw, Minus, Plus, PanelRightClose, PanelRightOpen, X } from 'lucide-react';
 import type { CustomAudioTrack, CustomSubtitleTrack } from '../types/media';
 import type { MediaStream } from '../services/ffmpeg';
@@ -123,8 +124,9 @@ export const AudioSubPopover: React.FC<AudioSubPopoverProps> = ({
     }
     const w = window.innerWidth;
     const h = window.innerHeight;
-    const mobile = isMobileDevice() || w <= 768 || h <= 520;
-    const landscape = w > h || h <= 520;
+    const minDim = Math.min(w, h);
+    const mobile = isMobileDevice() || minDim <= 600 || h <= 650 || w <= 900;
+    const landscape = w > h || h <= 600;
     return { isMobile: mobile, isLandscape: landscape, width: w, height: h };
   });
 
@@ -132,8 +134,9 @@ export const AudioSubPopover: React.FC<AudioSubPopoverProps> = ({
     const handleResize = () => {
       const w = window.innerWidth;
       const h = window.innerHeight;
-      const mobile = isMobileDevice() || w <= 768 || h <= 520;
-      const landscape = w > h || h <= 520;
+      const minDim = Math.min(w, h);
+      const mobile = isMobileDevice() || minDim <= 600 || h <= 650 || w <= 900;
+      const landscape = w > h || h <= 600;
       setDeviceState({ isMobile: mobile, isLandscape: landscape, width: w, height: h });
     };
 
@@ -147,6 +150,11 @@ export const AudioSubPopover: React.FC<AudioSubPopoverProps> = ({
 
   const isMobile = deviceState.isMobile;
   const isLandscape = deviceState.isLandscape;
+
+  const getPortalTarget = () => {
+    if (typeof document === 'undefined') return null;
+    return (document.fullscreenElement as HTMLElement) || document.body;
+  };
 
   const hasApiKey = Boolean(apiKeyVal.trim());
 
@@ -830,7 +838,7 @@ export const AudioSubPopover: React.FC<AudioSubPopoverProps> = ({
 
   // --- MOBILE RENDER: RESPONSIVE BOTTOM SHEET / LANDSCAPE MODAL ---
   if (isMobile) {
-    return (
+    const sheetContent = (
       <div
         className={`asp-sheet-backdrop ${isLandscape ? 'asp-sheet-backdrop-landscape' : ''}`}
         onClick={() => setShowAudioSubMenu(false)}
@@ -901,6 +909,9 @@ export const AudioSubPopover: React.FC<AudioSubPopoverProps> = ({
         </div>
       </div>
     );
+
+    const target = getPortalTarget();
+    return target ? createPortal(sheetContent, target) : sheetContent;
   }
 
   // --- DESKTOP RENDER: TWO-COLUMN CLAMPED POPOVER (Section 7) ---

@@ -1,0 +1,230 @@
+/* BookmarkPanel.css - Responsive Mobile & Desktop Styles */
+:root {
+  --bmp-accent: var(--accent-color, var(--player-accent, #e50914));
+  --bmp-accent-glow: var(--accent-glow, rgba(229, 9, 20, 0.25));
+  --bmp-bg: var(--dropdown-bg, var(--card-bg, rgba(16, 16, 20, 0.96)));
+  --bmp-border: var(--dropdown-border, var(--border-color, rgba(255, 255, 255, 0.12)));
+  --bmp-border-subtle: var(--border-subtle, rgba(255, 255, 255, 0.06));
+  --bmp-text: var(--dropdown-text, var(--text-primary, #ffffff));
+  --bmp-text-sec: var(--text-secondary, rgba(255, 255, 255, 0.7));
+  --bmp-text-muted: var(--text-muted, rgba(255, 255, 255, 0.45));
+  --bmp-surface: var(--surface, rgba(255, 255, 255, 0.05));
+  --bmp-surface-hover: var(--surface-hover, rgba(255, 255, 255, 0.09));
+}
+
+/* Mobile Fixed Backdrop */
+.bookmark-mobile-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.65);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  z-index: 99999;
+  display: flex;
+  animation: bmp-fade-in 0.2s ease-out;
+}
+
+/* Landscape Mode: Drawer sliding in from the right edge */
+.bookmark-mobile-backdrop.is-landscape {
+  justify-content: flex-end;
+  align-items: stretch;
+}
+
+.bookmark-mobile-panel.bookmark-mobile-landscape {
+  position: relative;
+  width: min(400px, 85vw);
+  height: 100%;
+  max-height: 100vh;
+  border-left: 1px solid var(--bmp-border);
+  border-top: none;
+  border-bottom: none;
+  border-right: none;
+  border-radius: 16px 0 0 16px;
+  background: var(--bmp-bg);
+  backdrop-filter: blur(25px);
+  -webkit-backdrop-filter: blur(25px);
+  box-shadow: -12px 0 40px rgba(0, 0, 0, 0.85), 0 0 1px 1px rgba(255, 255, 255, 0.05);
+  display: flex;
+  flex-direction: column;
+  padding-left: 14px;
+  padding-right: max(14px, env(safe-area-inset-right));
+  padding-top: max(10px, env(safe-area-inset-top));
+  padding-bottom: max(10px, env(safe-area-inset-bottom));
+  box-sizing: border-box;
+  animation: bmp-slide-left 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+  overflow: hidden;
+  color: var(--bmp-text);
+}
+
+/* Portrait Mode: Bottom Sheet */
+.bookmark-mobile-backdrop.is-portrait {
+  justify-content: flex-end;
+  flex-direction: column;
+}
+
+.bookmark-mobile-panel.bookmark-mobile-portrait {
+  position: relative;
+  width: 100%;
+  max-height: 80vh;
+  border-top: 1px solid var(--bmp-border);
+  border-left: none;
+  border-right: none;
+  border-bottom: none;
+  border-radius: 20px 20px 0 0;
+  background: var(--bmp-bg);
+  backdrop-filter: blur(25px);
+  -webkit-backdrop-filter: blur(25px);
+  box-shadow: 0 -10px 40px rgba(0, 0, 0, 0.8);
+  display: flex;
+  flex-direction: column;
+  padding-bottom: max(16px, env(safe-area-inset-bottom));
+  box-sizing: border-box;
+  animation: bmp-slide-up 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+  overflow: hidden;
+  color: var(--bmp-text);
+}
+
+.bookmark-sheet-handle {
+  width: 36px;
+  height: 4px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.25);
+  margin: 10px auto 4px;
+  flex-shrink: 0;
+}
+
+/* Header */
+.bookmark-panel-header {
+  padding: 12px 14px 10px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-bottom: 1px solid var(--bmp-border-subtle);
+  flex-shrink: 0;
+}
+
+.bookmark-panel-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.bookmark-panel-title h2 {
+  margin: 0;
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: var(--bmp-text);
+}
+
+.bookmark-panel-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.bookmark-new-btn {
+  background: var(--bmp-accent-glow);
+  color: var(--bmp-accent);
+  border: 1px solid var(--bmp-accent);
+  padding: 5px 12px;
+  border-radius: 16px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 28px;
+}
+.bookmark-new-btn:hover {
+  background: var(--bmp-accent);
+  color: #ffffff;
+}
+
+.bookmark-close-btn {
+  background: var(--bmp-surface);
+  border: 1px solid var(--bmp-border-subtle);
+  color: var(--bmp-text-sec);
+  cursor: pointer;
+  border-radius: 50%;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s;
+  flex-shrink: 0;
+}
+.bookmark-close-btn:hover {
+  background: var(--bmp-surface-hover);
+  color: var(--bmp-text);
+  border-color: var(--bmp-accent);
+}
+
+/* Scrollable Bookmark List */
+.bookmark-panel-list {
+  flex: 1;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  scrollbar-width: thin;
+}
+
+.bookmark-item {
+  background: var(--bmp-surface);
+  border: 1px solid var(--bmp-border-subtle);
+  border-radius: 10px;
+  padding: 10px 12px;
+  transition: all 0.2s;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.bookmark-item:hover,
+.bookmark-item:active {
+  background: var(--bmp-surface-hover);
+  border-color: var(--bmp-border);
+}
+
+/* Desktop Popover */
+.bookmarks-popover {
+  position: absolute;
+  bottom: 56px;
+  right: 0;
+  z-index: 150;
+  width: 360px;
+  max-width: calc(100vw - 32px);
+  max-height: min(380px, calc(100vh - 100px));
+  background: var(--bmp-bg);
+  backdrop-filter: blur(25px);
+  -webkit-backdrop-filter: blur(25px);
+  border: 1px solid var(--bmp-border);
+  border-radius: 12px;
+  box-shadow: 0 15px 40px rgba(0, 0, 0, 0.7);
+  display: flex;
+  flex-direction: column;
+  color: var(--bmp-text);
+  padding: 0;
+  overflow: hidden;
+  box-sizing: border-box;
+}
+
+@keyframes bmp-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes bmp-slide-left {
+  from { transform: translateX(100%); }
+  to { transform: translateX(0); }
+}
+
+@keyframes bmp-slide-up {
+  from { transform: translateY(100%); }
+  to { transform: translateY(0); }
+}

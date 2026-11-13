@@ -1,6 +1,9 @@
-import React, { useMemo, useRef, useEffect } from 'react';
+import React, { useMemo, useRef, useEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { Pencil, Trash, Play, Bookmark as BookmarkIcon, Heart, Clock, X } from 'lucide-react';
 import type { Bookmark } from '../types/media';
+import { isMobileDevice } from '../utils/screenOrientation';
+import './BookmarkPanel.css';
 
 interface BookmarkPanelProps {
   bookmarks: Bookmark[];
@@ -14,6 +17,44 @@ interface BookmarkPanelProps {
 export const BookmarkPanel: React.FC<BookmarkPanelProps> = ({ bookmarks, onJump, onEdit, onDelete, onAdd, onClose }) => {
   const panelRef = useRef<HTMLDivElement>(null);
 
+  const [deviceState, setDeviceState] = useState(() => {
+    if (typeof window === 'undefined') {
+      return { isMobile: false, isLandscape: false, width: 1200, height: 800 };
+    }
+    const w = window.innerWidth;
+    const h = window.innerHeight;
+    const minDim = Math.min(w, h);
+    const mobile = isMobileDevice() || minDim <= 600 || h <= 650 || w <= 900;
+    const landscape = w > h || h <= 600;
+    return { isMobile: mobile, isLandscape: landscape, width: w, height: h };
+  });
+
+  useEffect(() => {
+    const checkDevice = () => {
+      const w = window.innerWidth;
+      const h = window.innerHeight;
+      const minDim = Math.min(w, h);
+      const mobile = isMobileDevice() || minDim <= 600 || h <= 650 || w <= 900;
+      const landscape = w > h || h <= 600;
+      setDeviceState({ isMobile: mobile, isLandscape: landscape, width: w, height: h });
+    };
+
+    window.addEventListener('resize', checkDevice);
+    window.addEventListener('orientationchange', checkDevice);
+    return () => {
+      window.removeEventListener('resize', checkDevice);
+      window.removeEventListener('orientationchange', checkDevice);
+    };
+  }, []);
+
+  const isMobile = deviceState.isMobile;
+  const isLandscape = deviceState.isLandscape;
+
+  const getPortalTarget = () => {
+    if (typeof document === 'undefined') return null;
+    return (document.fullscreenElement as HTMLElement) || document.body;
+  };
+
   const sortedBookmarks = useMemo(() => {
     return [...bookmarks].sort((a, b) => a.time - b.time);
   }, [bookmarks]);
@@ -26,7 +67,9 @@ export const BookmarkPanel: React.FC<BookmarkPanelProps> = ({ bookmarks, onJump,
     return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
   };
 
+  // Desktop Repositioning
   useEffect(() => {
+    if (isMobile) return;
     const handleReposition = () => {
       const el = panelRef.current;
       if (!el) return;
@@ -51,211 +94,226 @@ export const BookmarkPanel: React.FC<BookmarkPanelProps> = ({ bookmarks, onJump,
       clearTimeout(timer);
       window.removeEventListener('resize', handleReposition);
     };
-  }, [bookmarks]);
+  }, [bookmarks, isMobile]);
 
+  // Shared Bookmark Item Renderer
+  const renderBookmarkList = () => (
+    <div className="bookmark-panel-list">
+      {sortedBookmarks.length === 0 ? (
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', minHeight: '140px', color: 'var(--bmp-text-muted)', textAlign: 'center', gap: '10px', padding: '16px' }}>
+          <BookmarkIcon size={40} strokeWidth={1.5} color="var(--bmp-text-muted)" />
+          <div>
+            <p style={{ margin: '0 0 4px', fontSize: '15px', color: 'var(--bmp-text-sec)', fontWeight: 600 }}>No bookmarks yet</p>
+            <span style={{ fontSize: '12px' }}>Save memorable moments while watching.</span>
+          </div>
+          <button 
+            type="button"
+            onClick={onAdd}
+            style={{ marginTop: '12px', background: 'var(--bmp-accent)', color: '#ffffff', border: 'none', padding: '8px 18px', borderRadius: '12px', fontSize: '13px', fontWeight: 600, cursor: 'pointer', transition: 'background 0.2s', boxShadow: '0 4px 12px var(--bmp-accent-glow)' }}
+          >
+            Create First Bookmark
+          </button>
+        </div>
+      ) : (
+        sortedBookmarks.map(bm => (
+          <div 
+            key={bm.id}
+            className="bookmark-item"
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '12px' }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', overflow: 'hidden' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <span style={{ fontSize: '14px', fontWeight: 600, color: 'var(--bmp-text)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                    {bm.category === 'Movie Scene' && '🎬 '}
+                    {bm.category === 'Action' && '💥 '}
+                    {bm.category === 'Funny' && '😂 '}
+                    {bm.category === 'Hot Scene' && '🔥 '}
+                    {bm.category === 'Outro' && '🏁 '}
+                    {bm.category === 'Intro' && '⏩ '}
+                    {(bm.category === 'Preview' || bm.category === 'Recap') && '⏱️ '}
+                    {bm.category === 'Nudity' && '🔞 '}
+                    {bm.category === 'Sex' && '❤️‍🔥 '}
+                    {bm.category === 'Gore' && '🩸 '}
+                    {bm.title || bm.label || 'Untitled Bookmark'}
+                  </span>
+                  {bm.favorite && <Heart size={14} fill="var(--bmp-accent)" color="var(--bmp-accent)" style={{ flexShrink: 0 }} />}
+                  {(() => {
+                    const createdBy = bm.createdBy;
+                    let label = 'Manual';
+                    let color = '#34d399'; // green
+                    let bg = 'rgba(52, 211, 153, 0.12)';
+                    
+                    if ((createdBy as string) === 'theintrodb' || (createdBy as string) === 'tidb' || bm.id.startsWith('introdb-') || bm.id.startsWith('api-')) {
+                      label = 'IntroDB';
+                      color = '#60a5fa'; // blue
+                      bg = 'rgba(96, 165, 250, 0.12)';
+                    } else if (createdBy === 'database' || createdBy === 'system' || bm.id.startsWith('bm-intro-') || bm.id.startsWith('bm-outro-')) {
+                      label = 'Database';
+                      color = '#c084fc'; // purple
+                      bg = 'rgba(192, 132, 252, 0.12)';
+                    } else if (createdBy === 'manual') {
+                      label = 'Manual';
+                      color = '#34d399';
+                      bg = 'rgba(52, 211, 153, 0.12)';
+                    }
+                    
+                    return (
+                      <span style={{ 
+                        fontSize: '9px', 
+                        fontWeight: 700, 
+                        textTransform: 'uppercase', 
+                        padding: '1px 5px', 
+                        borderRadius: '4px', 
+                        color, 
+                        background: bg,
+                        border: `1px solid ${color}22`,
+                        letterSpacing: '0.5px',
+                        display: 'inline-block',
+                        flexShrink: 0
+                      }}>
+                        {label}
+                      </span>
+                    );
+                  })()}
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '6px', color: 'var(--bmp-accent)', fontSize: '13px', fontWeight: 600 }}>
+                  <Clock size={12} />
+                  {formatTime(bm.time)}
+                  {bm.endTime ? ` → ${formatTime(bm.endTime)}` : ''}
+                </div>
+                {(bm.userName || bm.userTime) && (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--bmp-text-muted)', fontSize: '11px', marginTop: '2px' }}>
+                    {bm.userName && <span style={{ textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap', maxWidth: '120px' }}>👤 {bm.userName}</span>}
+                    {bm.userTime && <span>• 📅 {new Date(bm.userTime).toLocaleDateString()}</span>}
+                  </div>
+                )}
+              </div>
+              
+              <button 
+                type="button"
+                onClick={() => onJump(bm.time)}
+                style={{ background: '#ffffff', color: '#000000', border: 'none', width: '32px', height: '32px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', flexShrink: 0, transition: 'transform 0.2s' }}
+                title="Jump to time"
+              >
+                <Play size={14} fill="#000000" style={{ marginLeft: '2px' }} />
+              </button>
+            </div>
+
+            {bm.description && (
+              <div style={{ fontSize: '12px', color: 'var(--bmp-text-sec)', lineHeight: '1.4', background: 'rgba(0,0,0,0.25)', padding: '6px 10px', borderRadius: '6px', borderLeft: '2px solid var(--bmp-border)' }}>
+                {bm.description}
+              </div>
+            )}
+            
+            <div style={{ display: 'flex', gap: '8px', marginTop: '2px' }}>
+              <button 
+                type="button"
+                onClick={() => onEdit(bm)}
+                style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '5px', background: 'var(--bmp-surface)', border: '1px solid var(--bmp-border-subtle)', color: 'var(--bmp-text)', padding: '6px 8px', borderRadius: '6px', fontSize: '12px', fontWeight: 500, cursor: 'pointer', transition: 'background 0.2s' }}
+              >
+                <Pencil size={12} /> Edit
+              </button>
+              <button 
+                type="button"
+                onClick={() => onDelete(bm.id)}
+                style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '5px', background: 'rgba(239, 68, 68, 0.1)', border: '1px solid rgba(239, 68, 68, 0.2)', color: '#ef4444', padding: '6px 8px', borderRadius: '6px', fontSize: '12px', fontWeight: 500, cursor: 'pointer', transition: 'background 0.2s' }}
+              >
+                <Trash size={12} /> Delete
+              </button>
+            </div>
+          </div>
+        ))
+      )}
+    </div>
+  );
+
+  // --- MOBILE RENDER (Landscape Right Drawer or Portrait Bottom Sheet) ---
+  if (isMobile) {
+    const panelContent = (
+      <div 
+        className={`bookmark-mobile-backdrop ${isLandscape ? 'is-landscape' : 'is-portrait'}`}
+        onClick={onClose}
+        role="dialog"
+        aria-modal="true"
+        aria-label="Bookmarks"
+      >
+        <div 
+          ref={panelRef}
+          className={`bookmark-mobile-panel ${isLandscape ? 'bookmark-mobile-landscape' : 'bookmark-mobile-portrait'}`}
+          onClick={(e) => e.stopPropagation()}
+        >
+          {!isLandscape && <div className="bookmark-sheet-handle" />}
+          
+          <div className="bookmark-panel-header">
+            <div className="bookmark-panel-title">
+              <BookmarkIcon size={18} color="var(--bmp-accent)" />
+              <h2>Bookmarks ({bookmarks.length})</h2>
+            </div>
+            <div className="bookmark-panel-actions">
+              <button 
+                type="button"
+                onClick={onAdd}
+                className="bookmark-new-btn"
+                title="Create a bookmark"
+              >
+                + New
+              </button>
+              <button 
+                type="button"
+                onClick={onClose}
+                className="bookmark-close-btn"
+                title="Close"
+                aria-label="Close bookmarks panel"
+              >
+                <X size={15} />
+              </button>
+            </div>
+          </div>
+
+          {renderBookmarkList()}
+        </div>
+      </div>
+    );
+
+    const target = getPortalTarget();
+    return target ? createPortal(panelContent, target) : panelContent;
+  }
+
+  // --- DESKTOP RENDER: ANCHORED POPOVER ---
   return (
     <div 
       ref={panelRef}
       className="bookmarks-popover animate-fade-in"
       onClick={(e) => e.stopPropagation()}
-      style={{
-        position: 'absolute',
-        bottom: '50px',
-        right: '-16px',
-        zIndex: 150,
-        width: '360px',
-        maxWidth: 'calc(100vw - 32px)',
-        maxHeight: 'min(380px, calc(100vh - 120px))',
-        background: 'var(--dropdown-bg, rgba(18, 18, 18, 0.95))',
-        backdropFilter: 'blur(25px)',
-        WebkitBackdropFilter: 'blur(25px)',
-        border: '1px solid var(--dropdown-border, rgba(255, 255, 255, 0.12))',
-        borderRadius: '12px',
-        boxShadow: '0 15px 40px rgba(0,0,0,0.7)',
-        display: 'flex',
-        flexDirection: 'column',
-        color: 'var(--dropdown-text, white)',
-        padding: '0',
-        overflow: 'hidden',
-        boxSizing: 'border-box'
-      }}
     >
       {/* Hover bridge spacer to keep popover open when cursor moves from button to popover */}
       <div style={{ position: 'absolute', bottom: '-25px', left: 0, right: 0, height: '25px', background: 'transparent', pointerEvents: 'auto' }} />
-      <div style={{ padding: '14px 16px 12px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid var(--border-subtle, rgba(255,255,255,0.08))' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-          <BookmarkIcon size={18} color="var(--accent-color, #e50914)" />
-          <h2 style={{ margin: 0, fontSize: '1rem', fontWeight: 600 }}>Bookmarks</h2>
+      
+      <div className="bookmark-panel-header">
+        <div className="bookmark-panel-title">
+          <BookmarkIcon size={18} color="var(--bmp-accent)" />
+          <h2>Bookmarks ({bookmarks.length})</h2>
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+        <div className="bookmark-panel-actions">
           <button 
+            type="button"
             onClick={onAdd}
-            style={{ background: 'var(--accent-glow, rgba(229, 9, 20, 0.15))', color: 'var(--accent-color, #e50914)', border: 'none', padding: '4px 10px', borderRadius: '16px', fontSize: '12px', fontWeight: 600, cursor: 'pointer', transition: 'all 0.2s' }}
-            onMouseEnter={e => e.currentTarget.style.background = 'var(--accent-glow)'}
-            onMouseLeave={e => e.currentTarget.style.background = 'var(--accent-glow)'}
+            className="bookmark-new-btn"
           >
             + New
           </button>
           <button 
+            type="button"
             onClick={onClose}
-            style={{ background: 'none', border: 'none', color: 'var(--text-secondary, rgba(255,255,255,0.6))', cursor: 'pointer', padding: '4px', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'color 0.2s' }}
-            onMouseEnter={e => e.currentTarget.style.color = 'var(--text-primary)'}
-            onMouseLeave={e => e.currentTarget.style.color = 'var(--text-secondary)'}
+            className="bookmark-close-btn"
             title="Close Panel"
           >
-            <X size={16} />
+            <X size={15} />
           </button>
         </div>
       </div>
 
-      <div style={{ flex: 1, overflowY: 'auto', padding: '10px 14px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
-        {sortedBookmarks.length === 0 ? (
-          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', color: 'var(--text-muted, rgba(255,255,255,0.4))', textAlign: 'center', gap: '12px' }}>
-            <BookmarkIcon size={48} strokeWidth={1} />
-            <div>
-              <p style={{ margin: '0 0 8px', fontSize: '16px', color: 'var(--text-secondary, rgba(255,255,255,0.8))', fontWeight: 500 }}>No bookmarks yet</p>
-              <span style={{ fontSize: '13px' }}>Save memorable moments while watching.</span>
-            </div>
-            <button 
-              onClick={onAdd}
-              style={{ marginTop: '16px', background: 'var(--accent-color, #e50914)', color: 'var(--btn-text-color, white)', border: 'none', padding: '10px 20px', borderRadius: '12px', fontSize: '14px', fontWeight: 600, cursor: 'pointer', transition: 'background 0.2s', boxShadow: '0 4px 12px rgba(229, 9, 20, 0.3)' }}
-              onMouseEnter={e => e.currentTarget.style.background = 'var(--accent-hover, #f40b17)'}
-              onMouseLeave={e => e.currentTarget.style.background = 'var(--accent-color, #e50914)'}
-            >
-              Create First Bookmark
-            </button>
-          </div>
-        ) : (
-          sortedBookmarks.map(bm => (
-            <div 
-              key={bm.id}
-              style={{ 
-                background: 'var(--border-subtle, rgba(255,255,255,0.03))', 
-                border: '1px solid var(--border-subtle, rgba(255,255,255,0.05))', 
-                borderRadius: '10px', 
-                padding: '10px 12px',
-                transition: 'all 0.2s',
-                display: 'flex',
-                flexDirection: 'column',
-                gap: '8px'
-              }}
-              onMouseEnter={e => {
-                e.currentTarget.style.background = 'var(--surface-hover)';
-                e.currentTarget.style.borderColor = 'var(--border-color)';
-              }}
-              onMouseLeave={e => {
-                e.currentTarget.style.background = 'var(--border-subtle)';
-                e.currentTarget.style.borderColor = 'var(--border-subtle)';
-              }}
-            >
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '12px' }}>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', overflow: 'hidden' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                    <span style={{ fontSize: '15px', fontWeight: 600, color: 'var(--text-primary, white)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                      {bm.category === 'Movie Scene' && '🎬 '}
-                      {bm.category === 'Action' && '💥 '}
-                      {bm.category === 'Funny' && '😂 '}
-                      {bm.category === 'Hot Scene' && '🔥 '}
-                      {bm.category === 'Outro' && '🏁 '}
-                      {bm.category === 'Intro' && '⏩ '}
-                      {(bm.category === 'Preview' || bm.category === 'Recap') && '⏱️ '}
-                      {bm.category === 'Nudity' && '🔞 '}
-                      {bm.category === 'Sex' && '❤️‍🔥 '}
-                      {bm.category === 'Gore' && '🩸 '}
-                      {bm.title || bm.label || 'Untitled Bookmark'}
-                    </span>
-                    {bm.favorite && <Heart size={14} fill="var(--accent-color, #e50914)" color="var(--accent-color, #e50914)" style={{ flexShrink: 0 }} />}
-                    {(() => {
-                      const createdBy = bm.createdBy;
-                      let label = 'Manual';
-                      let color = '#34d399'; // green
-                      let bg = 'rgba(52, 211, 153, 0.12)';
-                      
-                      if ((createdBy as string) === 'theintrodb' || (createdBy as string) === 'tidb' || bm.id.startsWith('introdb-') || bm.id.startsWith('api-')) {
-                        label = 'IntroDB (In Our DB)';
-                        color = '#60a5fa'; // blue
-                        bg = 'rgba(96, 165, 250, 0.12)';
-                      } else if (createdBy === 'database' || createdBy === 'system' || bm.id.startsWith('bm-intro-') || bm.id.startsWith('bm-outro-')) {
-                        label = 'Our Database';
-                        color = '#c084fc'; // purple
-                        bg = 'rgba(192, 132, 252, 0.12)';
-                      } else if (createdBy === 'manual') {
-                        label = 'Manual';
-                        color = '#34d399';
-                        bg = 'rgba(52, 211, 153, 0.12)';
-                      }
-                      
-                      return (
-                        <span style={{ 
-                          fontSize: '9px', 
-                          fontWeight: 700, 
-                          textTransform: 'uppercase', 
-                          padding: '1px 5px', 
-                          borderRadius: '4px', 
-                          color, 
-                          background: bg,
-                          border: `1px solid ${color}22`,
-                          letterSpacing: '0.5px',
-                          display: 'inline-block',
-                          flexShrink: 0
-                        }}>
-                          {label}
-                        </span>
-                      );
-                    })()}
-                  </div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px', color: 'var(--accent-color, #e50914)', fontSize: '13px', fontWeight: 600 }}>
-                    <Clock size={12} />
-                    {formatTime(bm.time)}
-                    {bm.endTime ? ` → ${formatTime(bm.endTime)}` : ''}
-                  </div>
-                  {(bm.userName || bm.userTime) && (
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--text-muted, rgba(255,255,255,0.45))', fontSize: '11px', marginTop: '2px' }}>
-                      {bm.userName && <span style={{ textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap', maxWidth: '120px' }}>👤 {bm.userName}</span>}
-                      {bm.userTime && <span>• 📅 {new Date(bm.userTime).toLocaleDateString()}</span>}
-                    </div>
-                  )}
-                </div>
-                
-                <button 
-                  onClick={() => onJump(bm.time)}
-                  style={{ background: 'var(--text-primary, white)', color: 'var(--bg-primary, black)', border: 'none', width: '32px', height: '32px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', flexShrink: 0, transition: 'transform 0.2s' }}
-                  onMouseEnter={e => e.currentTarget.style.transform = 'scale(1.1)'}
-                  onMouseLeave={e => e.currentTarget.style.transform = 'scale(1)'}
-                  title="Jump to time"
-                >
-                  <Play size={14} fill="var(--bg-primary, black)" style={{ marginLeft: '2px' }} />
-                </button>
-              </div>
-
-              {bm.description && (
-                <div style={{ fontSize: '13px', color: 'var(--text-secondary, rgba(255,255,255,0.6))', lineHeight: '1.4', background: 'var(--border-subtle, rgba(0,0,0,0.2))', padding: '8px 12px', borderRadius: '8px', borderLeft: '2px solid var(--border-color, rgba(255,255,255,0.1))' }}>
-                  {bm.description}
-                </div>
-              )}
-              
-              <div style={{ display: 'flex', gap: '8px', marginTop: '4px' }}>
-                <button 
-                  onClick={() => onEdit(bm)}
-                  style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', background: 'var(--border-subtle, rgba(255,255,255,0.05))', border: 'none', color: 'var(--text-primary, white)', padding: '8px', borderRadius: '8px', fontSize: '12px', fontWeight: 500, cursor: 'pointer', transition: 'background 0.2s' }}
-                  onMouseEnter={e => e.currentTarget.style.background = 'var(--surface-hover)'}
-                  onMouseLeave={e => e.currentTarget.style.background = 'var(--border-subtle)'}
-                >
-                  <Pencil size={12} /> Edit
-                </button>
-                <button 
-                  onClick={() => onDelete(bm.id)}
-                  style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', background: 'var(--danger-glow, rgba(239, 68, 68, 0.1))', border: 'none', color: 'var(--danger, #ef4444)', padding: '8px', borderRadius: '8px', fontSize: '12px', fontWeight: 500, cursor: 'pointer', transition: 'background 0.2s' }}
-                  onMouseEnter={e => { e.currentTarget.style.background = 'var(--danger)'; e.currentTarget.style.color = 'white'; }}
-                  onMouseLeave={e => { e.currentTarget.style.background = 'var(--danger-glow, rgba(239, 68, 68, 0.1))'; e.currentTarget.style.color = 'var(--danger)'; }}
-                >
-                  <Trash size={12} /> Delete
-                </button>
-              </div>
-            </div>
-          ))
-        )}
-      </div>
+      {renderBookmarkList()}
     </div>
   );
 };
