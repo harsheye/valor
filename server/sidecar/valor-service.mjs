@@ -436,21 +436,7 @@ function triggerSlidingPrefetch(url, currentByte, totalSize, duration, auth) {
         }));
         return;
       }
-    const rawUrl = parsedUrl.searchParams.get('url');
-    if (!rawUrl) {
-      res.statusCode = 400;
-      res.setHeader('Content-Type', 'application/json');
-      res.end(JSON.stringify({ error: 'Missing url parameter' }));
-      return;
-    }
 
-    try {
-      activeStreams++;
-      const user = parsedUrl.searchParams.get('user');
-      const pass = parsedUrl.searchParams.get('pass');
-      const auth = user ? { username: user, password: pass || '' } : undefined;
-
-      const { totalSize, contentType } = await getMediaMetadata(rawUrl, auth);
       const rangeHeader = req.headers['range'];
 
       if (req.method === 'HEAD') {
