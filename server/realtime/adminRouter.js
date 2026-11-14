@@ -16,6 +16,7 @@ export async function handleAdminRealtimeRoutes(req, res, pathname, parsedUrl, c
     outboundWebhookManager.setDataStore(dataStore);
     securityManager.setDataStore(dataStore);
     auditLogger.setDataStore(dataStore);
+    analyticsAndAdminManager.setDataStore(dataStore);
   }
 
   // -------------------------------------------------------------
@@ -54,6 +55,14 @@ export async function handleAdminRealtimeRoutes(req, res, pathname, parsedUrl, c
 
     return tokenFromHeader || tokenFromAuth || tokenFromCookie || tokenFromQuery;
   };
+
+  // Public embed providers configuration lookup
+  if (pathname === '/api/system/embed-providers' && req.method === 'GET') {
+    res.statusCode = 200;
+    res.setHeader('Content-Type', 'application/json');
+    res.end(JSON.stringify(analyticsAndAdminManager.getEmbedProviders()));
+    return true;
+  }
 
   // -------------------------------------------------------------
   // 2. ADMIN LIVE STREAM (SSE Channel with topics & resume)
@@ -534,6 +543,31 @@ export async function handleAdminRealtimeRoutes(req, res, pathname, parsedUrl, c
       res.statusCode = 200;
       res.setHeader('Content-Type', 'application/json');
       res.end(JSON.stringify({ success: true, config: updated }));
+      return true;
+    }
+
+    // Embed Providers Configuration
+    if (pathname === '/api/admin/embed-providers' && req.method === 'GET') {
+      res.statusCode = 200;
+      res.setHeader('Content-Type', 'application/json');
+      res.end(JSON.stringify(analyticsAndAdminManager.getEmbedProviders()));
+      return true;
+    }
+
+    if (pathname === '/api/admin/embed-providers' && req.method === 'POST') {
+      const body = await getJsonBody(req);
+      const updated = analyticsAndAdminManager.saveEmbedProviders(body.providers || body, 'admin');
+      auditLogger.logAction({
+        actor: 'admin',
+        action: 'UPDATE_EMBED_PROVIDERS',
+        subjectType: 'system',
+        subjectId: 'embed-providers',
+        newValues: updated,
+        ip: cleanClientIp
+      });
+      res.statusCode = 200;
+      res.setHeader('Content-Type', 'application/json');
+      res.end(JSON.stringify({ success: true, providers: updated }));
       return true;
     }
 

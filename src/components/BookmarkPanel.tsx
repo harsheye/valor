@@ -233,6 +233,8 @@ export const BookmarkPanel: React.FC<BookmarkPanelProps> = ({ bookmarks, onJump,
       <div 
         className={`bookmark-mobile-backdrop ${isLandscape ? 'is-landscape' : 'is-portrait'}`}
         onClick={onClose}
+        onDoubleClick={(e) => e.stopPropagation()}
+        onPointerDown={(e) => e.stopPropagation()}
         role="dialog"
         aria-modal="true"
         aria-label="Bookmarks"
@@ -241,6 +243,8 @@ export const BookmarkPanel: React.FC<BookmarkPanelProps> = ({ bookmarks, onJump,
           ref={panelRef}
           className={`bookmark-mobile-panel ${isLandscape ? 'bookmark-mobile-landscape' : 'bookmark-mobile-portrait'}`}
           onClick={(e) => e.stopPropagation()}
+          onDoubleClick={(e) => e.stopPropagation()}
+          onPointerDown={(e) => e.stopPropagation()}
         >
           {!isLandscape && <div className="bookmark-sheet-handle" />}
           
@@ -285,6 +289,9 @@ export const BookmarkPanel: React.FC<BookmarkPanelProps> = ({ bookmarks, onJump,
       ref={panelRef}
       className="bookmarks-popover animate-fade-in"
       onClick={(e) => e.stopPropagation()}
+      onDoubleClick={(e) => e.stopPropagation()}
+      onPointerDown={(e) => e.stopPropagation()}
+      onMouseDown={(e) => e.stopPropagation()}
     >
       {/* Hover bridge spacer to keep popover open when cursor moves from button to popover */}
       <div style={{ position: 'absolute', bottom: '-25px', left: 0, right: 0, height: '25px', background: 'transparent', pointerEvents: 'auto' }} />

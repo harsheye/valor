@@ -67,6 +67,8 @@ interface VideoPlayerProps {
   toastDuration?: number;
   disableAnimations?: boolean;
   pauseOnFocusChange?: boolean;
+  focusOnClick?: boolean;
+  focusOnClickNoPause?: boolean;
   showPlayButton?: boolean;
   showTimeDisplay?: boolean;
   showPlayBar?: boolean;
@@ -187,6 +189,8 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
   toastDuration = 0.5,
   disableAnimations = false,
   pauseOnFocusChange = false,
+  focusOnClick = true,
+  focusOnClickNoPause = true,
   showPlayButton: propShowPlayButton = true,
   showTimeDisplay: propShowTimeDisplay = true,
   showPlayBar: propShowPlayBar = true,
@@ -235,6 +239,8 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
   }, [video.title, video.type]);
 
   const [isPlaying, setIsPlaying] = useState(false);
+  const isPlayingRef = useRef(false);
+  isPlayingRef.current = isPlaying;
   const [showPauseMetadataOverlay, setShowPauseMetadataOverlay] = useState(false);
   const showPauseMetadataOverlayRef = useRef(false);
   showPauseMetadataOverlayRef.current = showPauseMetadataOverlay;
@@ -721,6 +727,7 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
     lockModeActive: boolean;
     disableAnimations: boolean;
     pauseOnFocusChange: boolean;
+    focusOnClick: boolean;
   }
 
   const [playerSettings, setPlayerSettings] = useState<PlayerSettings>({
@@ -737,7 +744,8 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
     autoSkipSexScenes: autoSkipSexScenes !== false,
     lockModeActive: !!propLockModeActive,
     disableAnimations: !!disableAnimations,
-    pauseOnFocusChange: !!pauseOnFocusChange
+    pauseOnFocusChange: !!pauseOnFocusChange,
+    focusOnClick: focusOnClick !== false && focusOnClickNoPause !== false
   });
 
   const [vctOverlayEnabled, setVctOverlayEnabled] = useState(() => localStorage.getItem('vct_overlay_enabled') === 'true');
@@ -763,11 +771,21 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
       autoSkipSexScenes: autoSkipSexScenes !== false,
       lockModeActive: !!propLockModeActive,
       disableAnimations: !!disableAnimations,
-      pauseOnFocusChange: !!pauseOnFocusChange
+      pauseOnFocusChange: pauseOnFocusChange !== undefined ? !!pauseOnFocusChange : prev.pauseOnFocusChange,
+      focusOnClick: focusOnClick !== undefined ? (focusOnClick !== false && focusOnClickNoPause !== false) : prev.focusOnClick
     }));
-  }, [propHideUIOverlays, propHideVideoName, propShowPlayButton, propShowTimeDisplay, propShowPlayBar, propShowVolumeControl, propShowFullscreen, allowUiSkipping, blockSeekingCompletely, autoSkipIntroOutro, autoSkipSexScenes, propLockModeActive, disableAnimations, pauseOnFocusChange, isEmbed]);
+  }, [propHideUIOverlays, propHideVideoName, propShowPlayButton, propShowTimeDisplay, propShowPlayBar, propShowVolumeControl, propShowFullscreen, allowUiSkipping, blockSeekingCompletely, autoSkipIntroOutro, autoSkipSexScenes, propLockModeActive, disableAnimations, pauseOnFocusChange, isEmbed, focusOnClick, focusOnClickNoPause]);
 
   const updatePlayerSetting = (key: keyof typeof playerSettings, value: any) => {
+    if (key === 'pauseOnFocusChange') {
+      pauseOnFocusChangeRef.current = !!value;
+      if (playbackControllerRef.current) {
+        playbackControllerRef.current.pauseOnFocusChange = !!value;
+      }
+    }
+    if (key === 'focusOnClick') {
+      focusOnClickRef.current = !!value;
+    }
     setPlayerSettings(prev => {
       const next = { ...prev, [key]: value };
       if (key === 'blockSeekingCompletely' && value) {
@@ -853,13 +871,13 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
     }
 
     // Standard boolean toggles:
-    if (key === 'blockSeekingCompletely' || key === 'disableAnimations' || key === 'pauseOnFocusChange') {
+    if (key === 'blockSeekingCompletely' || key === 'disableAnimations') {
       const val = (playerSettings as any)[key];
       return val ? 'highlight-active-red' : 'highlight-active-blue';
     }
 
     // Positive options
-    if (key === 'allowUiSkipping' || key === 'autoSkipIntroOutro' || key === 'lockModeActive') {
+    if (key === 'allowUiSkipping' || key === 'autoSkipIntroOutro' || key === 'lockModeActive' || key === 'pauseOnFocusChange') {
       const val = (playerSettings as any)[key];
       return val ? 'highlight-active-blue' : 'highlight-active-red';
     }
@@ -4355,61 +4373,63 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
   }, [activeAudioStreamIndex]);
 
   // Sync focus loss auto-pause setting to the playback controller
+  const pauseOnFocusChangeRef = useRef(playerSettings.pauseOnFocusChange);
+  pauseOnFocusChangeRef.current = playerSettings.pauseOnFocusChange;
+
   useEffect(() => {
     if (playbackControllerRef.current) {
       playbackControllerRef.current.pauseOnFocusChange = playerSettings.pauseOnFocusChange;
     }
   }, [playerSettings.pauseOnFocusChange]);
 
-  const pauseOnFocusChangeRef = useRef(playerSettings.pauseOnFocusChange);
-  useEffect(() => {
-    pauseOnFocusChangeRef.current = playerSettings.pauseOnFocusChange;
-  }, [playerSettings.pauseOnFocusChange]);
-
-  // Pause/Resume on Window Focus changes if enabled (Fullscreen only)
+  // Pause/Resume on Window Focus / Visibility changes if enabled
   useEffect(() => {
     const handleFocusLoss = () => {
       if (!pauseOnFocusChangeRef.current || isLocked) return;
-      const isCurrentFullscreen = !!document.fullscreenElement || isFullscreen;
-      if (!isCurrentFullscreen) return;
-      if (videoRef.current && !videoRef.current.paused) {
+      const isCurrentlyPlaying = isPlayingRef.current || (videoRef.current && !videoRef.current.paused) || (playbackControllerRef.current?.state?.isPlaying ?? false);
+      if (isCurrentlyPlaying) {
         logger.player('Focus lost, auto-pausing video playback');
         if (playbackControllerRef.current) {
           playbackControllerRef.current.pause();
-        } else {
+        }
+        if (videoRef.current && !videoRef.current.paused) {
           videoRef.current.pause();
         }
         setIsPlaying(false);
+        isPlayingRef.current = false;
         wasPausedByFocusLossRef.current = true;
       }
     };
 
     const handleFocusGain = () => {
       if (!pauseOnFocusChangeRef.current || isLocked) return;
-      if (wasPausedByFocusLossRef.current && videoRef.current && videoRef.current.paused) {
+      if (wasPausedByFocusLossRef.current) {
         logger.player('Focus regained, auto-resuming video playback');
         const p = playbackControllerRef.current 
           ? playbackControllerRef.current.play() 
-          : videoRef.current.play();
-        p.then(() => setIsPlaying(true))
-         .catch(err => logger.player('Autoplay play error on focus gain:', err));
+          : videoRef.current?.play();
+        p?.then(() => {
+          setIsPlaying(true);
+          isPlayingRef.current = true;
+        }).catch(err => logger.player('Autoplay play error on focus gain:', err));
         wasPausedByFocusLossRef.current = false;
       }
     };
 
     const handleVisibilityChange = () => {
       if (!pauseOnFocusChangeRef.current || isLocked) return;
-      const isCurrentFullscreen = !!document.fullscreenElement || isFullscreen;
-      if (!isCurrentFullscreen) return;
       if (document.visibilityState === 'hidden') {
-        if (videoRef.current && !videoRef.current.paused) {
+        const isCurrentlyPlaying = isPlayingRef.current || (videoRef.current && !videoRef.current.paused) || (playbackControllerRef.current?.state?.isPlaying ?? false);
+        if (isCurrentlyPlaying) {
           logger.player('Tab hidden, auto-pausing video playback');
           if (playbackControllerRef.current) {
             playbackControllerRef.current.pause();
-          } else {
+          }
+          if (videoRef.current && !videoRef.current.paused) {
             videoRef.current.pause();
           }
           setIsPlaying(false);
+          isPlayingRef.current = false;
           wasPausedByFocusLossRef.current = true;
         }
       } else if (document.visibilityState === 'visible') {
@@ -4428,6 +4448,59 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
       document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
   }, [isFullscreen, isLocked]);
+
+  // Tab active and window focus state tracking for Focus-On-Click
+  const focusOnClickEffective = focusOnClick !== false && focusOnClickNoPause !== false && playerSettings.focusOnClick !== false;
+  const focusOnClickRef = useRef(focusOnClickEffective);
+  focusOnClickRef.current = focusOnClickEffective;
+
+  // Track if tab or window was inactive
+  const wasTabInactiveRef = useRef<boolean>(
+    typeof document !== 'undefined' ? (!document.hasFocus() || document.visibilityState === 'hidden') : false
+  );
+  const isActivatingInteractionRef = useRef<boolean>(false);
+
+  useEffect(() => {
+    const handleWinBlur = () => {
+      wasTabInactiveRef.current = true;
+    };
+    const handleVisChange = () => {
+      if (document.visibilityState === 'hidden') {
+        wasTabInactiveRef.current = true;
+      }
+    };
+    const handleCapturePointerDown = () => {
+      const isUnfocused = !document.hasFocus() || document.visibilityState === 'hidden';
+      if (isUnfocused || wasTabInactiveRef.current) {
+        isActivatingInteractionRef.current = true;
+      }
+    };
+
+    window.addEventListener('blur', handleWinBlur);
+    document.addEventListener('visibilitychange', handleVisChange);
+    window.addEventListener('pointerdown', handleCapturePointerDown, true);
+    window.addEventListener('mousedown', handleCapturePointerDown, true);
+
+    return () => {
+      window.removeEventListener('blur', handleWinBlur);
+      document.removeEventListener('visibilitychange', handleVisChange);
+      window.removeEventListener('pointerdown', handleCapturePointerDown, true);
+      window.removeEventListener('mousedown', handleCapturePointerDown, true);
+    };
+  }, []);
+
+  const isFocusClick = useCallback(() => {
+    if (!focusOnClickRef.current) return false;
+    const isInactive = !document.hasFocus() || document.visibilityState === 'hidden';
+    const isFocus = isInactive || wasTabInactiveRef.current || isActivatingInteractionRef.current;
+    if (isFocus) {
+      logger.player(`Focus click detected (inactive=${isInactive}, wasTabInactive=${wasTabInactiveRef.current}, activating=${isActivatingInteractionRef.current}) — preserving media playback state`);
+      wasTabInactiveRef.current = false;
+      isActivatingInteractionRef.current = false;
+      return true;
+    }
+    return false;
+  }, []);
 
   // Re-engage fullscreen on window focus if locked
   useEffect(() => {
@@ -4819,11 +4892,15 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
         return (
           <button
             key="pauseOnFocusChange"
-            onClick={() => updatePlayerSetting('pauseOnFocusChange', !playerSettings.pauseOnFocusChange)}
+            onClick={() => {
+              const nextVal = !playerSettings.pauseOnFocusChange;
+              updatePlayerSetting('pauseOnFocusChange', nextVal);
+              triggerSwitchToast(nextVal ? "Auto-pause on focus loss enabled" : "Auto-pause on focus loss disabled");
+            }}
             onMouseEnter={() => setHoveredSetting('pauseOnFocusChange')}
             onMouseLeave={() => setHoveredSetting(null)}
-            title="Disable Focus Loss Auto-Pause"
-            className={`settings-icon-toggle ${!playerSettings.pauseOnFocusChange ? 'active-red' : ''}`}
+            title={playerSettings.pauseOnFocusChange ? "Auto-Pause on Focus Loss: Enabled" : "Auto-Pause on Focus Loss: Disabled"}
+            className={`settings-icon-toggle ${playerSettings.pauseOnFocusChange ? 'active-blue' : 'active-red'}`}
           >
             <Coffee size={22} />
           </button>
@@ -4926,10 +5003,41 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
     const target = e.target as HTMLElement;
     if (target.closest('.player-settings-panel') || target.closest('.bookmarks-popover') || target.closest('.audio-sub-popover') || target.closest('.speed-popover-container')) return;
 
+    e.preventDefault();
+    if (showVolumeControlMode === 'disable') {
+      return;
+    }
+
     if (e.deltaY < 0) {
-      handleKeyDownRef.current?.(new KeyboardEvent('keydown', { key: 'ArrowUp' }));
+      setIsMuted(false);
+      if (volume < 1.0) {
+        setVolume(prev => {
+          const nextVol = Math.min(1.0, prev + 0.05);
+          triggerVolumeToast(nextVol, false, 100);
+          return nextVol;
+        });
+      } else {
+        setAudioBoost(prev => {
+          const nextBoost = Math.min(200, prev + 5);
+          triggerVolumeToast(1.0, false, nextBoost);
+          return nextBoost;
+        });
+      }
     } else if (e.deltaY > 0) {
-      handleKeyDownRef.current?.(new KeyboardEvent('keydown', { key: 'ArrowDown' }));
+      setIsMuted(false);
+      if (audioBoost > 100) {
+        setAudioBoost(prev => {
+          const nextBoost = Math.max(100, prev - 5);
+          triggerVolumeToast(1.0, false, nextBoost);
+          return nextBoost;
+        });
+      } else {
+        setVolume(prev => {
+          const nextVol = Math.max(0.0, prev - 0.05);
+          triggerVolumeToast(nextVol, false, 100);
+          return nextVol;
+        });
+      }
     }
   };
 
@@ -4945,6 +5053,10 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
       }}
       onClick={() => {
         if (showPauseMetadataOverlayRef.current) {
+          if (isFocusClick()) {
+            resetControlsTimeout();
+            return;
+          }
           showPauseMetadataOverlayRef.current = false;
           setShowPauseMetadataOverlay(false);
           togglePlay();
@@ -5006,6 +5118,11 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
         onDoubleClick={handlePlayerDoubleClick}
         onClick={(e) => {
           e.stopPropagation();
+          if (isFocusClick()) {
+            resetControlsTimeout();
+            return;
+          }
+
           if (showPauseMetadataOverlayRef.current) {
             showPauseMetadataOverlayRef.current = false;
             setShowPauseMetadataOverlay(false);
@@ -5154,14 +5271,21 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
               }
             }
           }}
-          onPlay={() => setIsPlaying(true)}
+          onPlay={() => {
+            setIsPlaying(true);
+            isPlayingRef.current = true;
+          }}
           onPause={() => {
             // If focus loss auto-pause is disabled and this pause was triggered by browser 
             // background tab throttling, ignore it — don't update UI state.
             if (!pauseOnFocusChangeRef.current && document.visibilityState === 'hidden') {
               return;
             }
+            if (pauseOnFocusChangeRef.current && (document.visibilityState === 'hidden' || !document.hasFocus())) {
+              wasPausedByFocusLossRef.current = true;
+            }
             setIsPlaying(false);
+            isPlayingRef.current = false;
             setIsBuffering(false);
             if (playbackControllerRef.current) {
               playbackControllerRef.current.pause();
@@ -5642,6 +5766,10 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
           onDoubleClick={handlePlayerDoubleClick}
           onClick={(e) => {
             e.stopPropagation();
+            if (isFocusClick()) {
+              resetControlsTimeout();
+              return;
+            }
             if (showPauseMetadataOverlayRef.current) {
               showPauseMetadataOverlayRef.current = false;
               setShowPauseMetadataOverlay(false);
@@ -5691,7 +5819,11 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
           
           <button 
             className={`hud-btn-clean play-pause-hud-clean ${getHighlightClass('showPlayButton')}`} 
-            onClick={(e) => { e.stopPropagation(); togglePlay(); }} 
+            onClick={(e) => { 
+              e.stopPropagation(); 
+              if (isFocusClick()) return;
+              togglePlay(); 
+            }} 
             title={isPlaying ? "Pause" : "Play"}
             style={{
               opacity: showPlayButtonMode === 'enable' ? 1 : 0.5,

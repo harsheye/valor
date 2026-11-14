@@ -100,6 +100,7 @@ import { LocalServicePage } from './pages/LocalServicePage';
 import { UnderConstructionPage } from './pages/UnderConstructionPage';
 import { NotFoundPage } from './pages/NotFoundPage';
 import { featureFlagService } from './services/featureFlags';
+import { DEFAULT_CACHE_SETTINGS, type CacheSettings } from './services/cache/cachePolicy';
 import { 
   initiateTraktPkceAuth, 
   exchangeTraktCodeForToken, 
@@ -331,6 +332,8 @@ const defaultSettings = {
   toastDuration: 4.0,
   disableAnimations: false,
   pauseOnFocusChange: false,
+  focusOnClick: true,
+  focusOnClickNoPause: true,
   showPlayButton: true,
   showTimeDisplay: true,
   showPlayBar: true,
@@ -395,7 +398,8 @@ const defaultSettings = {
     speed: true,
     pip: false,
     loop: false
-  }
+  },
+  cacheSettings: DEFAULT_CACHE_SETTINGS
 };
 
 function App() {
@@ -431,6 +435,10 @@ function App() {
             subSettings: {
               ...defaultSettings.subSettings,
               ...(parsed.subSettings && typeof parsed.subSettings === 'object' ? parsed.subSettings : {})
+            },
+            cacheSettings: {
+              ...defaultSettings.cacheSettings,
+              ...(parsed.cacheSettings && typeof parsed.cacheSettings === 'object' ? parsed.cacheSettings : {})
             }
           };
         }
@@ -919,7 +927,8 @@ function App() {
               userId: activeUserId,
               storageMode: 'localstorage',
               keybinds: { ...defaultSettings.keybinds, ...(parsed.keybinds || {}) },
-              subSettings: { ...defaultSettings.subSettings, ...(parsed.subSettings || {}) }
+              subSettings: { ...defaultSettings.subSettings, ...(parsed.subSettings || {}) },
+              cacheSettings: { ...defaultSettings.cacheSettings, ...(parsed.cacheSettings || {}) }
             };
             setSettings(loadedSettings);
           } catch {
@@ -977,7 +986,8 @@ function App() {
               userId: activeUserId,
               storageMode: 'file',
               keybinds: { ...defaultSettings.keybinds, ...(profileData.settings.keybinds || {}) },
-              subSettings: { ...defaultSettings.subSettings, ...(profileData.settings.subSettings || {}) }
+              subSettings: { ...defaultSettings.subSettings, ...(profileData.settings.subSettings || {}) },
+              cacheSettings: { ...defaultSettings.cacheSettings, ...(profileData.settings.cacheSettings || {}) }
             };
             setSettings(loadedSettings);
             settingsLoaded = true;
@@ -1029,7 +1039,8 @@ function App() {
                   userId: serverActiveUserId,
                   storageMode: 'file',
                   keybinds: { ...defaultSettings.keybinds, ...(profileData.settings.keybinds || {}) },
-                  subSettings: { ...defaultSettings.subSettings, ...(profileData.settings.subSettings || {}) }
+                  subSettings: { ...defaultSettings.subSettings, ...(profileData.settings.subSettings || {}) },
+                  cacheSettings: { ...defaultSettings.cacheSettings, ...(profileData.settings.cacheSettings || {}) }
                 };
                 setSettings(loadedSettings);
                 settingsLoaded = true;
@@ -1067,7 +1078,8 @@ function App() {
                       userId: userId,
                       storageMode: 'file',
                       keybinds: { ...defaultSettings.keybinds, ...(profileData.settings.keybinds || {}) },
-                      subSettings: { ...defaultSettings.subSettings, ...(profileData.settings.subSettings || {}) }
+                      subSettings: { ...defaultSettings.subSettings, ...(profileData.settings.subSettings || {}) },
+                      cacheSettings: { ...defaultSettings.cacheSettings, ...(profileData.settings.cacheSettings || {}) }
                     };
                     setSettings(loadedSettings);
                     settingsLoaded = true;
@@ -1090,7 +1102,8 @@ function App() {
                     userId: 'local',
                     storageMode: 'file',
                     keybinds: { ...defaultSettings.keybinds, ...(serverSettings.keybinds || {}) },
-                    subSettings: { ...defaultSettings.subSettings, ...(serverSettings.subSettings || {}) }
+                    subSettings: { ...defaultSettings.subSettings, ...(serverSettings.subSettings || {}) },
+                    cacheSettings: { ...defaultSettings.cacheSettings, ...(serverSettings.cacheSettings || {}) }
                   };
                   setSettings(loadedSettings);
                   settingsLoaded = true;
@@ -1130,7 +1143,8 @@ function App() {
               ...defaultSettings,
               ...parsed,
               keybinds: { ...defaultSettings.keybinds, ...(parsed.keybinds || {}) },
-              subSettings: { ...defaultSettings.subSettings, ...(parsed.subSettings || {}) }
+              subSettings: { ...defaultSettings.subSettings, ...(parsed.subSettings || {}) },
+              cacheSettings: { ...defaultSettings.cacheSettings, ...(parsed.cacheSettings || {}) }
             };
             setSettings(loadedSettings);
           } catch {}
@@ -3060,6 +3074,8 @@ function App() {
       toastDuration: settings.toastDuration,
       disableAnimations: settings.disableAnimations,
       pauseOnFocusChange: settings.pauseOnFocusChange,
+      focusOnClick: (settings as any).focusOnClick !== false && (settings as any).focusOnClickNoPause !== false,
+      focusOnClickNoPause: (settings as any).focusOnClickNoPause !== false && (settings as any).focusOnClick !== false,
       showPlayButton: settings.showPlayButton,
       showTimeDisplay: settings.showTimeDisplay,
       showPlayBar: settings.showPlayBar,
@@ -3082,6 +3098,18 @@ function App() {
       lockModeActive: settings.lockModeActive,
       settingsOrder: settings.settingsOrder,
       radialMenuConfig: settings.radialMenuConfig,
+      cacheSettings: settings.cacheSettings,
+      onUpdateCacheSettings: (newCacheSettings: Partial<CacheSettings>) => {
+        const updated = {
+          ...settings,
+          cacheSettings: {
+            ...settings.cacheSettings,
+            ...newCacheSettings
+          }
+        };
+        setSettings(updated);
+        saveSettingsToStorage(updated);
+      },
       onUpdateSubSettings: (newSubSettings: any) => {
         const updated = {
           ...settings,

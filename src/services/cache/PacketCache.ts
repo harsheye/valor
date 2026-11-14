@@ -13,6 +13,15 @@ export class PacketCache {
     private keepAhead = 120  // seconds to keep ahead currentTime
   ) {}
 
+  updateRetention(keepBehind: number, keepAhead: number): void {
+    this.keepBehind = Math.max(5, keepBehind);
+    this.keepAhead = Math.max(10, keepAhead);
+  }
+
+  getRetention(): { keepBehind: number; keepAhead: number } {
+    return { keepBehind: this.keepBehind, keepAhead: this.keepAhead };
+  }
+
   add(packet: AudioPacket, keyStartTime = packet.startTime): void {
     const key = Math.floor(keyStartTime / 10) * 10;
     this.cache.set(key, packet);

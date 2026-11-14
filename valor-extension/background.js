@@ -1,10 +1,13 @@
-// Background service worker for Valor Extension
+// Background service worker for Valor Extension v2.4
 
 chrome.runtime.onInstalled.addListener(() => {
-  // Set default settings if not already set
-  chrome.storage.sync.get(['valorUrl', 'extensionEnabled'], (result) => {
+  chrome.storage.sync.get(['valorUrl', 'extensionEnabled', 'embedMode'], (result) => {
     if (!result.valorUrl) {
-      chrome.storage.sync.set({ valorUrl: 'https://localhost/embed' });
+      chrome.storage.sync.set({ valorUrl: 'http://localhost:5173/embed' });
+    }
+    // Default to 'badge' (Play in Valor Toggle) instead of forcing auto-switch
+    if (result.embedMode === undefined) {
+      chrome.storage.sync.set({ embedMode: 'badge' });
     }
     if (result.extensionEnabled === undefined) {
       chrome.storage.sync.set({ extensionEnabled: true });
@@ -14,10 +17,25 @@ chrome.runtime.onInstalled.addListener(() => {
 
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   if (request.type === 'GET_CONFIG') {
-    chrome.storage.sync.get(['valorUrl', 'extensionEnabled'], (result) => {
+    chrome.storage.sync.get(['valorUrl', 'extensionEnabled', 'embedMode'], (result) => {
       sendResponse(result);
     });
-    return true; // Keep message channel open for async sendResponse
+    return true;
+  }
+
+  if (request.type === 'CHECK_PING') {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 2500);
+    fetch(request.url, { method: 'HEAD', signal: controller.signal })
+      .then((res) => {
+        clearTimeout(timer);
+        sendResponse({ ok: res.ok, status: res.status });
+      })
+      .catch((err) => {
+        clearTimeout(timer);
+        sendResponse({ ok: false, error: err.message });
+      });
+    return true;
   }
 
   if (request.type === 'PROXY_FETCH') {
@@ -30,7 +48,6 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 
         if (request.blob) {
           const buffer = await res.arrayBuffer();
-          // Convert arrayBuffer to base64 efficiently in chunks to avoid call stack limits
           let binary = '';
           const bytes = new Uint8Array(buffer);
           const chunkSize = 32768;

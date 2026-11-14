@@ -117,6 +117,10 @@ export class PlaybackController {
     return this.bufferManager;
   }
 
+  setCacheRetention(keepBehind: number, keepAhead: number): void {
+    this.bufferManager.setCacheRetention(keepBehind, keepAhead);
+  }
+
   hasAudioCoverage(startTime: number, endTime: number): boolean {
     if (this.state.activeStreamIndex === -1 || this.state.activeStreamIndex === null || typeof this.state.activeStreamIndex !== 'number') {
       return true;

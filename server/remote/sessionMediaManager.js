@@ -34,7 +34,10 @@ export class SessionMediaWorker {
     this.totalBlocks = 0;
     this.contentType = 'video/mp4';
     this.contentDisposition = null;
-    this.bitrateBytesPerSec = DEFAULT_BITRATE_BYTES_PER_SEC;
+    this.is4K = Boolean(options.is4K || /\b(4k|2160p|uhd|hdr10|hdr10\+|dovi|dv)\b/i.test(url));
+    this.forwardBufferSeconds = this.is4K ? 180 : FORWARD_BUFFER_SECONDS;
+    this.backwardBufferSeconds = this.is4K ? 45 : BACKWARD_BUFFER_SECONDS;
+    this.bitrateBytesPerSec = this.is4K ? (2500 * 1024) : DEFAULT_BITRATE_BYTES_PER_SEC;
 
     this.currentPlayheadByte = 0;
     this.lastActivityTime = Date.now();
@@ -114,7 +117,10 @@ export class SessionMediaWorker {
         } catch {}
 
         if (this.duration > 0) {
-          this.bitrateBytesPerSec = Math.max(200 * 1024, Math.ceil(this.totalSize / this.duration));
+          const calcBitrate = Math.ceil(this.totalSize / this.duration);
+          this.bitrateBytesPerSec = Math.max(this.is4K ? 1800 * 1024 : 200 * 1024, calcBitrate);
+        } else if (this.is4K) {
+          this.bitrateBytesPerSec = Math.max(this.bitrateBytesPerSec, 2500 * 1024);
         }
 
         this.isInitialized = true;
@@ -276,6 +282,32 @@ export class SessionMediaWorker {
   }
 
   /**
+   * Evicts cached 2MB blocks older than the 30-second backward sliding window (minKeepBlock).
+   * Block 0 is permanently retained because it contains the media container header (moov/ftyp).
+   * @param {number} minKeepBlock
+   */
+  pruneOldBlocks(minKeepBlock) {
+    if (minKeepBlock <= 1 || !fs.existsSync(this.cacheDir)) return;
+    try {
+      const files = fs.readdirSync(this.cacheDir);
+      for (const file of files) {
+        const match = file.match(/^blk_(\d+)\.bin$/);
+        if (match) {
+          const blockIdx = parseInt(match[1], 10);
+          // Keep block 0 (essential headers) and anything within/ahead of the backward window
+          if (blockIdx > 0 && blockIdx < minKeepBlock) {
+            try {
+              fs.unlinkSync(path.join(this.cacheDir, file));
+            } catch {}
+          }
+        }
+      }
+    } catch {
+      // Non-fatal directory read error
+    }
+  }
+
+  /**
    * Pre-buffers the 120-second forward sliding window in the background
    * and retains the 30-second backward sliding window, evicting blocks older than 30s behind.
    */
@@ -285,18 +317,18 @@ export class SessionMediaWorker {
 
     (async () => {
       try {
-        const forwardBytes = this.bitrateBytesPerSec * FORWARD_BUFFER_SECONDS;
+        const forwardBytes = this.bitrateBytesPerSec * this.forwardBufferSeconds;
         const forwardBlocks = Math.max(10, Math.ceil(forwardBytes / BLOCK_SIZE));
-        const backwardBytes = this.bitrateBytesPerSec * BACKWARD_BUFFER_SECONDS;
+        const backwardBytes = this.bitrateBytesPerSec * this.backwardBufferSeconds;
         const backwardBlocks = Math.max(2, Math.ceil(backwardBytes / BLOCK_SIZE));
 
-        // 1. Evict blocks older than BACKWARD_BUFFER_SECONDS (30s) behind current playhead (keeping block 0 for headers)
+        // 1. Evict blocks older than backwardBufferSeconds behind current playhead (keeping block 0 for headers)
         const curPlayheadBlock = Math.floor(this.currentPlayheadByte / BLOCK_SIZE);
         const minKeepBlock = Math.max(1, curPlayheadBlock - backwardBlocks);
         this.pruneOldBlocks(minKeepBlock);
 
         const failedBlocks = new Map();
-        const CONCURRENCY = 4;
+        const CONCURRENCY = this.is4K ? 6 : 4;
 
         while (!this.isDestroyed) {
           const curPlayheadBlock = Math.floor(this.currentPlayheadByte / BLOCK_SIZE);
@@ -360,9 +392,9 @@ export class SessionMediaWorker {
    */
   getCacheStatus(currentTime = 0) {
     const curBlock = Math.floor(this.currentPlayheadByte / BLOCK_SIZE);
-    const forwardBytes = this.bitrateBytesPerSec * FORWARD_BUFFER_SECONDS;
+    const forwardBytes = this.bitrateBytesPerSec * this.forwardBufferSeconds;
     const forwardBlocks = Math.max(10, Math.ceil(forwardBytes / BLOCK_SIZE));
-    const backwardBytes = this.bitrateBytesPerSec * BACKWARD_BUFFER_SECONDS;
+    const backwardBytes = this.bitrateBytesPerSec * this.backwardBufferSeconds;
     const backwardBlocks = Math.max(2, Math.ceil(backwardBytes / BLOCK_SIZE));
 
     let contiguousForwardBlocks = 0;
@@ -399,9 +431,10 @@ export class SessionMediaWorker {
       duration: effectiveDur,
       cachedUntilSeconds,
       cachedFromSeconds,
-      cachedAheadSeconds: Math.min(FORWARD_BUFFER_SECONDS, cachedAheadSec),
-      targetAheadSeconds: FORWARD_BUFFER_SECONDS,
-      targetBehindSeconds: BACKWARD_BUFFER_SECONDS,
+      cachedAheadSeconds: Math.min(this.forwardBufferSeconds, cachedAheadSec),
+      targetAheadSeconds: this.forwardBufferSeconds,
+      targetBehindSeconds: this.backwardBufferSeconds,
+      is4K: this.is4K,
       curBlock,
       totalBlocks: this.totalBlocks
     };
@@ -451,6 +484,16 @@ export class SessionMediaManager {
     let worker = this.workers.get(key);
 
     if (worker && !worker.isDestroyed) {
+      if (options.is4K && !worker.is4K) {
+        worker.is4K = true;
+        worker.forwardBufferSeconds = 180;
+        worker.backwardBufferSeconds = 45;
+        if (worker.duration > 0) {
+          worker.bitrateBytesPerSec = Math.max(1800 * 1024, Math.ceil(worker.totalSize / worker.duration));
+        } else {
+          worker.bitrateBytesPerSec = Math.max(worker.bitrateBytesPerSec, 2500 * 1024);
+        }
+      }
       if (options.auth && options.auth.username) {
         const authChanged = !worker.auth ||
           worker.auth.username !== options.auth.username ||
@@ -473,7 +516,8 @@ export class SessionMediaManager {
       worker = new SessionMediaWorker(sessionId, url, {
         cacheDir,
         auth: options.auth,
-        duration: options.duration
+        duration: options.duration,
+        is4K: options.is4K
       });
       this.workers.set(key, worker);
     }

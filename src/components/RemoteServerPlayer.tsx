@@ -33,9 +33,10 @@ import { logger } from '../utils/logger';
 import { saveMediaTimestamp, getMediaTimestamp } from '../utils/mediaTimestampStorage';
 import { isWasmSupported } from '../utils/wasmCheck';
 import { sidecarService } from '../services/remote/sidecarService';
-import { createRemoteSession } from '../services/remote/remoteSessionClient';
+import { createRemoteSession, switchRemoteAudio } from '../services/remote/remoteSessionClient';
 import { LocalServicePage } from '../pages/LocalServicePage';
 import { findPreferredStream, getSavedMediaPreferences, getPreferredAudioStreamIndex, getLanguageDisplayLabel } from '../utils/languageMatcher';
+import { getEffectiveCacheConfig, subscribeNetworkChanges, getNetworkProfile, detectMediaProfile, type CacheSettings, type NetworkProfile, type MediaProfile } from '../services/cache/cachePolicy';
 
 const getAudioBoostMultiplier = (boostPercent: number): number => {
   if (boostPercent <= 100) return 1.0;
@@ -122,6 +123,8 @@ export interface VideoPlayerProps {
   toastDuration?: number;
   disableAnimations?: boolean;
   pauseOnFocusChange?: boolean;
+  focusOnClick?: boolean;
+  focusOnClickNoPause?: boolean;
   showPlayButton?: boolean;
   showTimeDisplay?: boolean;
   showPlayBar?: boolean;
@@ -158,10 +161,32 @@ export interface VideoPlayerProps {
   audioOnly?: boolean;
   subFileOnly?: boolean;
   allowSubUpload?: boolean;
+  cacheSettings?: CacheSettings;
+  onUpdateCacheSettings?: (settings: Partial<CacheSettings>) => void;
 }
 
 import { remoteProbeCache, inFlightRemoteProbes } from '../utils/remoteProbeCache';
 export { remoteProbeCache, inFlightRemoteProbes };
+
+export const normalizeKey = (k?: string | null): string => {
+  if (!k) return '';
+  const trimmed = k.trim();
+  if (k === ' ' || trimmed === '' || trimmed.toLowerCase() === 'space' || trimmed.toLowerCase() === 'spacebar') return ' ';
+  const lower = trimmed.toLowerCase();
+  if (lower === 'esc') return 'escape';
+  if (lower === 'left' || lower === 'arrowleft' || lower === '←') return 'arrowleft';
+  if (lower === 'right' || lower === 'arrowright' || lower === '→') return 'arrowright';
+  if (lower === 'up' || lower === 'arrowup' || lower === '↑') return 'arrowup';
+  if (lower === 'down' || lower === 'arrowdown' || lower === '↓') return 'arrowdown';
+  if (lower === 'del') return 'delete';
+  return lower;
+};
+
+const canPlayCodecNatively = (codec?: string): boolean => {
+  if (!codec) return false;
+  const c = codec.toLowerCase();
+  return c.includes('aac') || c.includes('mp4a') || c.includes('mp3') || c.includes('opus') || c.includes('flac') || c.includes('vorbis');
+};
 
 export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({ 
   video: rawVideo, 
@@ -178,6 +203,8 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
   toastDuration = 0.5,
   disableAnimations = false,
   pauseOnFocusChange = false,
+  focusOnClick = true,
+  focusOnClickNoPause = true,
   showPlayButton: propShowPlayButton = true,
   showTimeDisplay: propShowTimeDisplay = true,
   showPlayBar: propShowPlayBar = true,
@@ -205,7 +232,9 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
   uiHideTimeout = 1.5,
   onReassociate,
   onSwitchMode,
-  isCinema
+  isCinema,
+  cacheSettings,
+  onUpdateCacheSettings
 }) => {
   const island = usePlayerIsland();
   const isFile = (obj: any): obj is File => obj instanceof File || (obj && typeof obj.size === 'number' && typeof obj.slice === 'function');
@@ -213,6 +242,22 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
     ...rawVideo,
     file: isFile(rawVideo.file) ? rawVideo.file : undefined
   }), [rawVideo]);
+
+  const rawMediaProfile = useMemo(() => detectMediaProfile(video), [video]);
+  const [probedMediaProfile, setProbedMediaProfile] = useState<MediaProfile | null>(null);
+  const activeMediaProfile = probedMediaProfile || rawMediaProfile;
+
+  const [liveNetworkProfile, setLiveNetworkProfile] = useState<NetworkProfile>(() => getNetworkProfile());
+
+  useEffect(() => {
+    return subscribeNetworkChanges((prof) => {
+      setLiveNetworkProfile(prof);
+    });
+  }, []);
+
+  const effectiveCacheConfig = useMemo(() => {
+    return getEffectiveCacheConfig(cacheSettings, liveNetworkProfile, activeMediaProfile);
+  }, [cacheSettings, liveNetworkProfile, activeMediaProfile]);
 
   const currentVideoItemRef = useRef(video);
   currentVideoItemRef.current = video;
@@ -604,6 +649,7 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
     lockModeActive: boolean;
     disableAnimations: boolean;
     pauseOnFocusChange: boolean;
+    focusOnClick: boolean;
   }
 
   const [playerSettings, setPlayerSettings] = useState<PlayerSettings>({
@@ -620,7 +666,8 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
     autoSkipSexScenes: autoSkipSexScenes !== false,
     lockModeActive: !!propLockModeActive,
     disableAnimations: !!disableAnimations,
-    pauseOnFocusChange: !!pauseOnFocusChange
+    pauseOnFocusChange: !!pauseOnFocusChange,
+    focusOnClick: focusOnClick !== false && focusOnClickNoPause !== false
   });
 
   const [vctOverlayEnabled, setVctOverlayEnabled] = useState(() => localStorage.getItem('vct_overlay_enabled') === 'true');
@@ -646,11 +693,21 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
       autoSkipSexScenes: autoSkipSexScenes !== false,
       lockModeActive: !!propLockModeActive,
       disableAnimations: !!disableAnimations,
-      pauseOnFocusChange: !!pauseOnFocusChange
+      pauseOnFocusChange: pauseOnFocusChange !== undefined ? !!pauseOnFocusChange : prev.pauseOnFocusChange,
+      focusOnClick: focusOnClick !== undefined ? (focusOnClick !== false && focusOnClickNoPause !== false) : prev.focusOnClick
     }));
-  }, [propHideUIOverlays, propHideVideoName, propShowPlayButton, propShowTimeDisplay, propShowPlayBar, propShowVolumeControl, propShowFullscreen, allowUiSkipping, blockSeekingCompletely, autoSkipIntroOutro, autoSkipSexScenes, propLockModeActive, disableAnimations, pauseOnFocusChange]);
+  }, [propHideUIOverlays, propHideVideoName, propShowPlayButton, propShowTimeDisplay, propShowPlayBar, propShowVolumeControl, propShowFullscreen, allowUiSkipping, blockSeekingCompletely, autoSkipIntroOutro, autoSkipSexScenes, propLockModeActive, disableAnimations, pauseOnFocusChange, focusOnClick, focusOnClickNoPause]);
 
   const updatePlayerSetting = (key: keyof typeof playerSettings, value: any) => {
+    if (key === 'pauseOnFocusChange') {
+      pauseOnFocusChangeRef.current = !!value;
+      if (playbackControllerRef.current) {
+        playbackControllerRef.current.pauseOnFocusChange = !!value;
+      }
+    }
+    if (key === 'focusOnClick') {
+      focusOnClickRef.current = !!value;
+    }
     setPlayerSettings(prev => {
       const next = { ...prev, [key]: value };
       if (key === 'blockSeekingCompletely' && value) {
@@ -735,13 +792,13 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
     }
 
     // Standard boolean toggles:
-    if (key === 'blockSeekingCompletely' || key === 'disableAnimations' || key === 'pauseOnFocusChange') {
+    if (key === 'blockSeekingCompletely' || key === 'disableAnimations') {
       const val = (playerSettings as any)[key];
       return val ? 'highlight-active-red' : 'highlight-active-blue';
     }
 
     // Positive options
-    if (key === 'allowUiSkipping' || key === 'autoSkipIntroOutro' || key === 'lockModeActive') {
+    if (key === 'allowUiSkipping' || key === 'autoSkipIntroOutro' || key === 'lockModeActive' || key === 'pauseOnFocusChange') {
       const val = (playerSettings as any)[key];
       return val ? 'highlight-active-blue' : 'highlight-active-red';
     }
@@ -1762,16 +1819,29 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
 
   const isX265OrHdr = useMemo(() => isHdrOrX265Video(video), [video]);
   const [toneMappingMode, setToneMappingMode] = useState<ToneMappingMode>(() => {
+    try {
+      const saved = localStorage.getItem('valor_tone_mapping_mode');
+      if (saved && ['off', 'aces', 'vibrant', 'reinhard'].includes(saved)) {
+        return saved as ToneMappingMode;
+      }
+    } catch {}
     return isHdrOrX265Video(video) ? 'aces' : 'off';
   });
 
-  const cycleToneMapping = () => {
+  const handleSetToneMapping = useCallback((mode: ToneMappingMode) => {
+    setToneMappingMode(mode);
+    try { localStorage.setItem('valor_tone_mapping_mode', mode); } catch {}
+    triggerSwitchToast(`HDR Tone Mapping: ${mode === 'off' ? 'OFF' : mode.toUpperCase()}`);
+  }, [triggerSwitchToast]);
+
+  const cycleToneMapping = useCallback(() => {
     setToneMappingMode(prev => {
       const next: ToneMappingMode = prev === 'off' ? 'aces' : prev === 'aces' ? 'vibrant' : prev === 'vibrant' ? 'reinhard' : 'off';
+      try { localStorage.setItem('valor_tone_mapping_mode', next); } catch {}
       triggerSwitchToast(`HDR Tone Mapping: ${next.toUpperCase()}`);
       return next;
     });
-  };
+  }, [triggerSwitchToast]);
 
   useEffect(() => {
     const unsub = sidecarService.subscribe((status) => {
@@ -1871,6 +1941,7 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
         if (hasAltAudio && playbackControllerRef.current) {
           playbackControllerRef.current.seek(targetTime).catch(console.error);
         }
+        seekRemoteAudioRef.current?.(targetTime);
         queuePrefetchOnSeekRef.current?.(targetTime);
         onUpdateVideoRef.current((prev: any) => ({
           ...prev,
@@ -1927,6 +1998,9 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
     if (creds?.username) {
       proxyUrl += `&user=${encodeURIComponent(creds.username)}`;
       if (creds.password) proxyUrl += `&pass=${encodeURIComponent(creds.password)}`;
+    }
+    if (activeMediaProfile.is4K) {
+      proxyUrl += '&is4k=1';
     }
     return proxyUrl;
   }, [video, isSidecarActive]);
@@ -2004,6 +2078,13 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
           if (probeData.videoStreams) probeData.videoStreams.forEach((v: any) => allStreams.push({ ...v, type: 'video' }));
           if (probeData.audioStreams) probeData.audioStreams.forEach((a: any) => allStreams.push({ ...a, type: 'audio' }));
           if (probeData.subtitleStreams) probeData.subtitleStreams.forEach((s: any) => allStreams.push({ ...s, type: 'subtitle' }));
+
+          // Identify media characteristics (resolution, 4K, HDR, codecs) and dynamically slide windows
+          const detected = detectMediaProfile({ ...currentVideoItemRef.current, ...probeData });
+          setProbedMediaProfile(detected);
+          if (detected.is4K) {
+            logger.player(`[MediaIdentifier] 4K UHD stream identified (${detected.label}). Automatically sliding buffer windows.`);
+          }
 
           // Save to module-level cache
           remoteProbeCache.set(targetUrl, {
@@ -2266,7 +2347,9 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
     lastTime: number;
   }>({ direction: 'forward', totalSeconds: 0, count: 0, lastTime: 0 });
 
-  const audioRef = useRef<HTMLAudioElement>(null);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const lastAudioStartTimeRef = useRef<number>(0);
+  const seekRemoteAudioRef = useRef<((targetTime: number) => void) | null>(null);
   const playbackControllerRef = useRef<PlaybackController | null>(null);
   const prevDestroyPromiseRef = useRef<Promise<void>>(Promise.resolve());
   const containerRef = useRef<HTMLDivElement>(null);
@@ -2351,12 +2434,12 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
   useEffect(() => {
     if (video.isRemote) {
       const byteSource = new HttpByteSource(video.url);
-      cachedSourceRef.current = new CachedByteSource(byteSource, 4 * 1024 * 1024, 16); // 4MB chunks, cache size 16 (64MB)
+      cachedSourceRef.current = new CachedByteSource(byteSource, effectiveCacheConfig.chunkSizeBytes, effectiveCacheConfig.cacheLimit, effectiveCacheConfig.lookbehindChunks, effectiveCacheConfig.lookaheadChunks);
     } else if (video.type === 'local') {
       const byteSource = activeFile
         ? new FileByteSource(activeFile instanceof File ? activeFile : new File([activeFile], (activeFile as any)?.name || 'video.mp4'))
         : new HttpByteSource(video.url);
-      cachedSourceRef.current = new CachedByteSource(byteSource, 4 * 1024 * 1024, 16); // 4MB chunks, cache size 16 (64MB)
+      cachedSourceRef.current = new CachedByteSource(byteSource, effectiveCacheConfig.chunkSizeBytes, effectiveCacheConfig.cacheLimit, effectiveCacheConfig.lookbehindChunks, effectiveCacheConfig.lookaheadChunks);
     } else {
       cachedSourceRef.current = null;
     }
@@ -2374,7 +2457,25 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
         clearTimeout(subDebounceTimeoutRef.current);
       }
     };
-  }, [video.url, video.isRemote, video.file, video.type, activeFile]);
+  }, [video.url, video.isRemote, video.file, video.type, activeFile, effectiveCacheConfig.chunkSizeBytes, effectiveCacheConfig.cacheLimit]);
+
+  // Dynamically adapt active cache chunk limits and buffer retention when network / hardware condition changes
+  useEffect(() => {
+    if (cachedSourceRef.current) {
+      cachedSourceRef.current.updateLimits(
+        effectiveCacheConfig.chunkSizeBytes,
+        effectiveCacheConfig.cacheLimit,
+        effectiveCacheConfig.lookbehindChunks,
+        effectiveCacheConfig.lookaheadChunks
+      );
+    }
+    if (playbackControllerRef.current) {
+      playbackControllerRef.current.setCacheRetention(
+        effectiveCacheConfig.keepBehindSeconds,
+        effectiveCacheConfig.keepAheadSeconds
+      );
+    }
+  }, [effectiveCacheConfig]);
 
   const getByteOffsetForTime = (seekMap: { time: number; offset: number }[], time: number): number => {
     if (!seekMap || seekMap.length === 0) return 0;
@@ -2645,10 +2746,15 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
       videoRef.current.muted = hasAlternateAudio ? true : isMuted;
     }
 
+    if (audioRef.current) {
+      audioRef.current.volume = Math.min(1.0, Math.max(0, isMuted ? 0 : volume));
+      audioRef.current.muted = isMuted;
+    }
+
     if (playbackControllerRef.current) {
       playbackControllerRef.current.setVolume(volume, isMuted);
     }
-  }, [volume, isMuted, saveVolume, activeAudioStreamIndex]);
+  }, [volume, isMuted, saveVolume, activeAudioStreamIndex, selectedAudioTrack]);
 
   // Reset audio boost to normal (100) if volume drops below 1.0
   useEffect(() => {
@@ -2732,6 +2838,9 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
       if (creds?.username) {
         params.set('user', creds.username);
         if (creds.password) params.set('pass', creds.password);
+      }
+      if (activeMediaProfile.is4K) {
+        params.set('is4k', '1');
       }
 
       const prefetchUrl = `${apiBase}/api/proxy-media?prefetch=true&${params.toString()}`;
@@ -3067,9 +3176,94 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
     return { startOffset, endOffset, offsetTime };
   };
 
+  const stopRemoteAudioStream = useCallback(() => {
+    if (syncEngineRef.current) {
+      syncEngineRef.current.destroy();
+      syncEngineRef.current = null;
+    }
+    if (audioRef.current) {
+      audioRef.current.pause();
+      audioRef.current.removeAttribute('src');
+      audioRef.current.load();
+    }
+    if (videoRef.current) {
+      videoRef.current.muted = isMuted;
+      videoRef.current.volume = isMuted ? 0 : Math.min(1.0, Math.max(0, volume));
+    }
+  }, [isMuted, volume]);
+
+  const loadRemoteAudioStream = useCallback(async (streamIndex: number, time?: number) => {
+    if (!video.isRemote && video.type !== 'url') return;
+    try {
+      const apiBase = sidecarService.getRemoteApiBase();
+      const creds = (video as any).auth || getSavedCredentials(video.url);
+      const playhead = time !== undefined ? time : (videoRef.current ? videoRef.current.currentTime : currentTime);
+      const startSec = Math.floor(playhead);
+      lastAudioStartTimeRef.current = startSec;
+
+      const params = new URLSearchParams({
+        url: video.url,
+        streamIndex: String(streamIndex),
+        startTime: String(startSec)
+      });
+      if (creds?.username) {
+        params.set('user', creds.username);
+        if (creds.password) {
+          params.set('pass', creds.password);
+        }
+      }
+
+      const audioUrl = `${apiBase}/api/remote/audio-stream?${params.toString()}`;
+
+      if (syncEngineRef.current) {
+        syncEngineRef.current.destroy();
+        syncEngineRef.current = null;
+      }
+
+      if (audioRef.current && videoRef.current) {
+        audioRef.current.src = audioUrl;
+        audioRef.current.playbackRate = videoRef.current.playbackRate || playbackRate;
+        audioRef.current.volume = Math.min(1.0, Math.max(0, isMuted ? 0 : volume));
+        audioRef.current.muted = isMuted;
+
+        const syncEngine = new AudioSyncEngine(videoRef.current, audioRef.current, startSec);
+        syncEngineRef.current = syncEngine;
+
+        videoRef.current.muted = true;
+
+        if (!videoRef.current.paused) {
+          audioRef.current.play().catch(e => {
+            if (e.name !== 'AbortError') console.warn('[RemoteServerPlayer] Audio play failed:', e);
+          });
+        }
+      }
+
+      if (video.url && video.url.includes('/api/remote/session/')) {
+        const match = video.url.match(/\/api\/remote\/session\/([^/]+)/);
+        if (match) {
+          switchRemoteAudio(match[1], streamIndex, startSec).catch(console.error);
+        }
+      }
+    } catch (err) {
+      console.error('[RemoteServerPlayer] Failed to load remote audio stream:', err);
+    }
+  }, [video.url, video.isRemote, video.type, (video as any).auth, volume, isMuted, playbackRate, currentTime]);
+
+  const seekRemoteAudio = useCallback((targetTime: number) => {
+    if (activeAudioStreamIndex !== null && (video.isRemote || video.type === 'url')) {
+      if (Math.abs(targetTime - lastAudioStartTimeRef.current) > 4) {
+        loadRemoteAudioStream(activeAudioStreamIndex, targetTime);
+      }
+    }
+  }, [activeAudioStreamIndex, video.isRemote, video.type, loadRemoteAudioStream]);
+
+  seekRemoteAudioRef.current = seekRemoteAudio;
+
   // Audio/subtitle segment chunk loading on demand
   const loadAudioChunk = async (time: number, streamIndex: number, codec: string, isSeek = false) => {
-    // Legacy Blob-based audio loading is disabled. Audio playback is handled entirely by PlaybackController via Web Audio API.
+    if (video.isRemote || video.type === 'url') {
+      await loadRemoteAudioStream(streamIndex, time);
+    }
   };
 
   const loadSubtitleChunk = async (time: number, streamIndex: number) => {
@@ -3183,8 +3377,8 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
 
       const cachedSource = cachedSourceRef.current || (
         activeFile
-          ? new CachedByteSource(new FileByteSource(activeFile instanceof File ? activeFile : new File([activeFile], (activeFile as any)?.name || 'video.mp4')), 4 * 1024 * 1024, 16)
-          : new CachedByteSource(new HttpByteSource(video.url), 4 * 1024 * 1024, 16)
+          ? new CachedByteSource(new FileByteSource(activeFile instanceof File ? activeFile : new File([activeFile], (activeFile as any)?.name || 'video.mp4')), effectiveCacheConfig.chunkSizeBytes, effectiveCacheConfig.cacheLimit)
+          : new CachedByteSource(new HttpByteSource(video.url), effectiveCacheConfig.chunkSizeBytes, effectiveCacheConfig.cacheLimit)
       );
 
       let offsetTime = time;
@@ -3569,6 +3763,10 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
       }
     }
 
+    if (activeAudioStreamIndex !== null && (video.isRemote || video.type === 'url')) {
+      seekRemoteAudio(newTime);
+    }
+
     const containerType = (video.containerType || '').toLowerCase();
     const isMkv = containerType.includes('mkv') || containerType.includes('matroska') || (video.format || '').toLowerCase().includes('mkv') || (video.format || '').toLowerCase().includes('matroska');
 
@@ -3598,12 +3796,12 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
 
   // On-the-fly selection handlers for embedded streams selected in-player using container-direct chunk reading
   const handleSelectEmbeddedAudio = async (streamIndex: number, codec: string, language?: string, skipLoad = false, title?: string, skipNotification = false) => {
-    if (!isWasmSupported()) {
+    if (!video.isRemote && video.type !== 'url' && !isWasmSupported()) {
       triggerSwitchToast('WebAssembly unavailable on this browser. Client stream demuxing disabled.');
       return;
     }
-    // Guard: if this stream is already active, don't restart the engine
-    if (activeAudioStreamIndex === streamIndex && selectedAudioTrack?.streamIndex === streamIndex && selectedAudioTrack?.url) {
+    // Guard: if this stream is already active and syncEngine is alive, don't restart
+    if (activeAudioStreamIndex === streamIndex && selectedAudioTrack?.streamIndex === streamIndex && syncEngineRef.current) {
       return;
     }
     if (audioDebounceTimeoutRef.current) {
@@ -3636,7 +3834,12 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
     }
     syncAudioRef(null, streamIndex);
     if (!skipLoad) {
-      await loadAudioChunk(currentTime, streamIndex, codec, false);
+      if (video.isRemote || video.type === 'url') {
+        const playhead = videoRef.current ? videoRef.current.currentTime : currentTime;
+        await loadRemoteAudioStream(streamIndex, playhead);
+      } else {
+        await loadAudioChunk(currentTime, streamIndex, codec, false);
+      }
     }
   };
 
@@ -3645,8 +3848,8 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
       triggerSwitchToast('WebAssembly unavailable on this browser. Embedded subtitle extraction disabled.');
       return;
     }
-    // Guard: if this stream is already active and loaded, don't restart
-    if (activeSubStreamIndex === streamIndex && selectedSubTrack?.streamIndex === streamIndex && selectedSubTrack.cues.length > 0) {
+    // Guard: if this stream is already active, don't restart or re-notify
+    if (activeSubStreamIndex === streamIndex && selectedSubTrack?.streamIndex === streamIndex) {
       return;
     }
     if (subDebounceTimeoutRef.current) {
@@ -3664,7 +3867,7 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
       streamIndex,
       format: /ass|ssa/i.test(codec) ? 'ass' : (/webvtt/i.test(codec) ? 'vtt' : 'srt')
     });
-    if (!skipNotification && !showAudioSubMenu) {
+    if (!skipNotification && !showAudioSubMenu && !isBuffering) {
       island.notify({
         type: 'subtitle',
         language: language || null,
@@ -3777,13 +3980,6 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
       setIsBuffering(false);
     }
 
-    island.notify({
-      type: 'seek',
-      delta: -seconds,
-      time: targetTime,
-      duration
-    });
-
     // Immediate native seek for zero-latency frame transition
     videoRef.current.currentTime = targetTime;
     setCurrentTime(targetTime);
@@ -3791,6 +3987,7 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
     if (hasAltAudio && playbackControllerRef.current) {
       playbackControllerRef.current.seek(targetTime).catch(console.error);
     }
+    seekRemoteAudio(targetTime);
     queuePrefetchOnSeekRef.current?.(targetTime);
 
     setConsecutiveSkipInfo({ direction: 'rewind', totalSeconds: acc.totalSeconds, count: acc.count });
@@ -3839,13 +4036,6 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
       setIsBuffering(false);
     }
 
-    island.notify({
-      type: 'seek',
-      delta: seconds,
-      time: targetTime,
-      duration: maxDuration
-    });
-
     // Immediate native seek for zero-latency frame transition
     videoRef.current.currentTime = targetTime;
     setCurrentTime(targetTime);
@@ -3853,6 +4043,7 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
     if (hasAltAudio && playbackControllerRef.current) {
       playbackControllerRef.current.seek(targetTime).catch(console.error);
     }
+    seekRemoteAudio(targetTime);
     queuePrefetchOnSeekRef.current?.(targetTime);
 
     setConsecutiveSkipInfo({ direction: 'forward', totalSeconds: acc.totalSeconds, count: acc.count });
@@ -3872,6 +4063,15 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
 
   const handlePlayerDoubleClick = (e: React.MouseEvent<HTMLElement>) => {
     if (isLocked || showPlayBarMode === 'disable' || uiConfig.blockSeekingCompletely) return;
+    const target = e.target as HTMLElement | null;
+    if (target && target.closest(
+      '.bookmarks-popover, .bookmark-mobile-panel, .bookmark-mobile-backdrop, .bookmark-dialog-box, .bookmark-dialog-overlay, ' +
+      '.audio-sub-popover, .asp-pop, .asp-sheet, .asp-sheet-backdrop, ' +
+      '.ui-settings-slideout-drawer, .ui-settings-drawer-card, .ui-settings-drawer-backdrop, .ui-settings-unified-handle, ' +
+      '.popover-wrapper, .vlc-context-menu, .marking-hud-button-controls, button, input, select, textarea, [role="dialog"], [role="menu"]'
+    )) {
+      return;
+    }
     if (showPauseMetadataOverlayRef.current) {
       showPauseMetadataOverlayRef.current = false;
       setShowPauseMetadataOverlay(false);
@@ -3922,6 +4122,7 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
       if (hasAltAudio && playbackControllerRef.current) {
         playbackControllerRef.current.seek(seekTime).catch(console.error);
       }
+      seekRemoteAudio(seekTime);
       queuePrefetchOnSeekRef.current?.(seekTime);
       resetControlsTimeout();
       if (previewVideoRef.current) {
@@ -4113,10 +4314,7 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
 
   // Helper to compile audio options
   const getAudioOptions = () => {
-    const list: any[] = [];
-    if (audioStreams.length === 0 && audioTracks.length === 0) {
-      list.push({ type: 'original', name: 'Original', track: null });
-    }
+    const list: any[] = [{ type: 'original', name: 'Original', track: null }];
     audioStreams.forEach((s) => {
       const label = getLangLabel(s.language, `Track #${s.index}`);
       list.push({
@@ -4178,8 +4376,14 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
     
     if (targetIdx !== -1) {
       playbackControllerRef.current?.switchAudioTrack(targetIdx);
+      if (video.isRemote || video.type === 'url') {
+        loadRemoteAudioStream(targetIdx);
+      }
     } else {
       playbackControllerRef.current?.switchAudioTrack(null);
+      if (video.isRemote || video.type === 'url') {
+        stopRemoteAudioStream();
+      }
     }
     if (playbackControllerRef.current) {
       playbackControllerRef.current.setVolume(volume, isMuted);
@@ -4301,6 +4505,7 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
     if (nextOpt.type === 'original') {
       setSelectedAudioTrack(null);
       setActiveAudioStreamIndex(null);
+      stopRemoteAudioStream();
       setIsKeyInitiated(false);
       island.notify({ type: 'audio', language: 'und', index: 0, title: 'Default Audio' });
     } else if (nextOpt.type === 'embedded') {
@@ -4355,8 +4560,9 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
       resetControlsTimeout();
     }
 
-    // Load keybind settings
-    const saved = localStorage.getItem('valor_settings');
+    // Load keybind settings with userId support
+    const settingsKey = userId && userId !== 'local' ? `valor_settings_${userId}` : 'valor_settings';
+    const saved = localStorage.getItem(settingsKey) || localStorage.getItem('valor_settings');
     const defaultKeybinds = {
       playPause: ' ',
       rewind: 'ArrowLeft',
@@ -4379,15 +4585,24 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
       ...(parsed.keybinds || {})
     };
 
-    const lockControlsKey = (keybinds.lockControls || 'w').toLowerCase();
-    const openSettingsKey = (keybinds.openSettings || 'delete').toLowerCase();
-    const addBookmarkKey = (keybinds.addBookmark || 't').toLowerCase();
-    const toggleMuteKey = (keybinds.toggleMute || 'm').toLowerCase();
-    const audioBoostKey = (keybinds.audioBoost || 'n').toLowerCase();
-    const frameStepKey = (keybinds.frameStep || 'e').toLowerCase();
-    const screenshotKey = (keybinds.screenshot || 's').toLowerCase();
+    const normPressed = normalizeKey(e.key);
+    const normCode = normalizeKey(e.code);
+    const matchesKey = (targetKey: string) => {
+      if (!targetKey) return false;
+      const normTarget = normalizeKey(targetKey);
+      if (!normTarget) return false;
+      return normPressed === normTarget || (normCode !== '' && normCode === normTarget);
+    };
 
-    if (pressedKey === openSettingsKey) {
+    const lockControlsKey = keybinds.lockControls || 'w';
+    const openSettingsKey = keybinds.openSettings || 'delete';
+    const addBookmarkKey = keybinds.addBookmark || 't';
+    const toggleMuteKey = keybinds.toggleMute || 'm';
+    const audioBoostKey = keybinds.audioBoost || 'n';
+    const frameStepKey = keybinds.frameStep || 'e';
+    const screenshotKey = keybinds.screenshot || 's';
+
+    if (matchesKey(openSettingsKey)) {
       e.preventDefault();
       if (isLocked) {
         triggerSwitchToast("Controls are Locked");
@@ -4403,7 +4618,7 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
       return;
     }
 
-    if (pressedKey === addBookmarkKey) {
+    if (matchesKey(addBookmarkKey)) {
       e.preventDefault();
       if (isUndetectedLocalMedia) {
         return;
@@ -4446,7 +4661,7 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
       return;
     }
     
-    if (pressedKey === lockControlsKey) {
+    if (matchesKey(lockControlsKey)) {
       e.preventDefault();
       e.stopPropagation();
       setIsLocked(prev => {
@@ -4466,8 +4681,8 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
 
     if (isLocked) {
       const isVolumeKey = pressedKey === 'arrowup' || pressedKey === 'arrowdown';
-      const isBoostKey = pressedKey === audioBoostKey;
-      const isScreenshotKey = pressedKey === screenshotKey;
+      const isBoostKey = matchesKey(audioBoostKey);
+      const isScreenshotKey = matchesKey(screenshotKey);
       const isSkipKey = pressedKey === 'c';
       if (!isVolumeKey && !isBoostKey && !isScreenshotKey && !isSkipKey) {
         e.preventDefault();
@@ -4476,22 +4691,22 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
         return;
       }
     }
-    const playPauseKey = (keybinds.playPause || ' ').toLowerCase();
-    const rewindKey = (keybinds.rewind || 'arrowleft').toLowerCase();
-    const forwardKey = (keybinds.forward || 'arrowright').toLowerCase();
-    const fullscreenKey = (keybinds.fullscreen || 'f').toLowerCase();
-    const exitKey = (keybinds.exit || 'escape').toLowerCase();
-    const nextSubKey = (keybinds.nextSubtitle || 'b').toLowerCase();
-    const nextAudioKey = (keybinds.nextAudio || 'v').toLowerCase();
+    const playPauseKey = keybinds.playPause || ' ';
+    const rewindKey = keybinds.rewind || 'arrowleft';
+    const forwardKey = keybinds.forward || 'arrowright';
+    const fullscreenKey = keybinds.fullscreen || 'f';
+    const exitKey = keybinds.exit || 'escape';
+    const nextSubKey = keybinds.nextSubtitle || 'b';
+    const nextAudioKey = keybinds.nextAudio || 'v';
 
-    if (pressedKey === fullscreenKey) {
+    if (matchesKey(fullscreenKey)) {
       e.preventDefault();
       if (showFullscreenMode === 'disable') {
         triggerSwitchToast('Fullscreen hotkey is disabled');
         return;
       }
       toggleFullscreen();
-    } else if (pressedKey === exitKey) {
+    } else if (matchesKey(exitKey)) {
       e.preventDefault();
       if (isPseudoFullscreen) {
         setIsPseudoFullscreen(false);
@@ -4506,14 +4721,14 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
       } else {
         handleExit();
       }
-    } else if (pressedKey === playPauseKey) {
+    } else if (matchesKey(playPauseKey)) {
       e.preventDefault();
       if (showPlayButtonMode === 'disable') {
         triggerSwitchToast('Playback hotkeys are disabled');
         return;
       }
       togglePlay();
-    } else if (pressedKey === rewindKey) {
+    } else if (matchesKey(rewindKey)) {
       e.preventDefault();
       if (showPlayBarMode === 'disable') {
         triggerSwitchToast('Seeking hotkeys are disabled');
@@ -4526,7 +4741,7 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
       if (videoRef.current) {
         handleRewind();
       }
-    } else if (pressedKey === forwardKey) {
+    } else if (matchesKey(forwardKey)) {
       e.preventDefault();
       if (showPlayBarMode === 'disable') {
         triggerSwitchToast('Seeking hotkeys are disabled');
@@ -4566,13 +4781,13 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
           triggerSwitchToast(`Skipped ${bm.label || bm.title || bm.category || 'Scene'}`);
         }
       }
-    } else if (pressedKey === nextSubKey) {
+    } else if (matchesKey(nextSubKey)) {
       e.preventDefault();
       cycleSubtitles();
-    } else if (pressedKey === nextAudioKey) {
+    } else if (matchesKey(nextAudioKey)) {
       e.preventDefault();
       cycleAudio();
-    } else if (pressedKey === toggleMuteKey) {
+    } else if (matchesKey(toggleMuteKey)) {
       e.preventDefault();
       if (showVolumeControlMode === 'disable') {
         triggerSwitchToast('Volume hotkeys are disabled');
@@ -4583,14 +4798,14 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
         triggerVolumeToast(volume, nextMuted);
         return nextMuted;
       });
-    } else if (pressedKey === audioBoostKey) {
+    } else if (matchesKey(audioBoostKey)) {
       e.preventDefault();
       let nextBoost = 100;
       if (audioBoost === 100) nextBoost = 150;
       else if (audioBoost === 150) nextBoost = 200;
       else nextBoost = 100;
       handleSetAudioBoost(nextBoost);
-    } else if (pressedKey === frameStepKey) {
+    } else if (matchesKey(frameStepKey)) {
       e.preventDefault();
       if (videoRef.current) {
         if (!videoRef.current.paused) {
@@ -4601,7 +4816,7 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
         videoRef.current.currentTime = Math.min(videoRef.current.duration || 0, videoRef.current.currentTime + frameTime);
         triggerSwitchToast('Frame Step (+0.04s)');
       }
-    } else if (pressedKey === screenshotKey) {
+    } else if (matchesKey(screenshotKey)) {
       e.preventDefault();
       if (videoRef.current) {
         try {
@@ -4626,6 +4841,19 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
           triggerSwitchToast('Screenshot capture blocked by security policy');
         }
       }
+    } else if (pressedKey === 'g') {
+      e.preventDefault();
+      setTimelineOnlyMode(prev => {
+        const next = !prev;
+        triggerSwitchToast(next ? 'Timeline Only (VLC Mode)' : 'Standard Controls');
+        return next;
+      });
+    } else if (pressedKey === 'a') {
+      e.preventDefault();
+      handleToggleAmbiance();
+    } else if (pressedKey === 'h') {
+      e.preventDefault();
+      cycleToneMapping();
     } else if (pressedKey === 'arrowup') {
       e.preventDefault();
       if (showVolumeControlMode === 'disable') {
@@ -4699,10 +4927,11 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
 
       if (pressedKey) {
         // Only intercept if the clicked mouse button is bound to a hotkey
-        const saved = localStorage.getItem('valor_settings');
+        const settingsKey = userId && userId !== 'local' ? `valor_settings_${userId}` : 'valor_settings';
+        const saved = localStorage.getItem(settingsKey) || localStorage.getItem('valor_settings');
         const parsed = saved ? JSON.parse(saved) : {};
         const keybinds = parsed.keybinds || {};
-        const isBound = Object.values(keybinds).some(v => (v as string).toLowerCase() === pressedKey);
+        const isBound = Object.values(keybinds).some(v => normalizeKey(v as string) === pressedKey);
         
         if (isBound) {
           e.preventDefault();
@@ -4725,10 +4954,27 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
     };
   }, []);
 
-  // Reset seek state when video url changes
+  // Reset seek state and stop remote audio when video url changes
   useEffect(() => {
     hasSeekedRef.current = false;
-  }, [video.url]);
+    stopRemoteAudioStream();
+    setActiveAudioStreamIndex(null);
+    setSelectedAudioTrack(null);
+  }, [video.url, stopRemoteAudioStream]);
+
+  // Clean up AudioSyncEngine and audio element on unmount
+  useEffect(() => {
+    return () => {
+      if (syncEngineRef.current) {
+        syncEngineRef.current.destroy();
+        syncEngineRef.current = null;
+      }
+      if (audioRef.current) {
+        audioRef.current.pause();
+        audioRef.current.removeAttribute('src');
+      }
+    };
+  }, []);
 
   // PlaybackController lifecycle hook
   useEffect(() => {
@@ -4756,6 +5002,16 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
     // Remote streams are transcoded and proxied by backend; play directly without WASM FFmpeg overhead
     if (video.isRemote || video.type === 'url') {
       if (videoRef.current) {
+        // If we have an existing targetResume location, seek first before starting playback
+        const storedTime = getMediaTimestamp(video);
+        const targetResume = (video.currentTime && video.currentTime > 0) ? video.currentTime : storedTime;
+        if (targetResume > 0 && !hasSeekedRef.current) {
+          videoRef.current.currentTime = targetResume;
+          setCurrentTime(targetResume);
+          latestTimeRef.current = targetResume;
+          hasSeekedRef.current = true;
+        }
+
         videoRef.current.play()
           .then(() => {
             setIsPlaying(true);
@@ -4807,6 +5063,7 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
         const ffmpegMgr = new FFmpegManager(video.id);
         const demuxMgr = new DemuxManager(ffmpegMgr, fileOrSource);
         controller = new PlaybackController(ffmpegMgr, demuxMgr, video.seekMap);
+        controller.setCacheRetention(effectiveCacheConfig.keepBehindSeconds, effectiveCacheConfig.keepAheadSeconds);
         controller.pauseOnFocusChange = playerSettings.pauseOnFocusChange;
         controller.setAudioBoost(audioBoost);
         playbackControllerRef.current = controller;
@@ -4874,64 +5131,63 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
   }, [activeAudioStreamIndex]);
 
   // Sync focus loss auto-pause setting to the playback controller
+  const pauseOnFocusChangeRef = useRef(playerSettings.pauseOnFocusChange);
+  pauseOnFocusChangeRef.current = playerSettings.pauseOnFocusChange;
+
   useEffect(() => {
     if (playbackControllerRef.current) {
       playbackControllerRef.current.pauseOnFocusChange = playerSettings.pauseOnFocusChange;
     }
   }, [playerSettings.pauseOnFocusChange]);
 
-  const pauseOnFocusChangeRef = useRef(playerSettings.pauseOnFocusChange);
-  useEffect(() => {
-    pauseOnFocusChangeRef.current = playerSettings.pauseOnFocusChange;
-  }, [playerSettings.pauseOnFocusChange]);
-
-  // Pause/Resume on Window Focus changes if enabled (Fullscreen only)
+  // Pause/Resume on Window Focus / Visibility changes if enabled
   useEffect(() => {
     const handleFocusLoss = () => {
-
       if (!pauseOnFocusChangeRef.current || isLocked) return;
-      const isCurrentFullscreen = !!document.fullscreenElement || isFullscreen;
-      if (!isCurrentFullscreen) return;
-      if (videoRef.current && !videoRef.current.paused) {
+      const isCurrentlyPlaying = isPlayingRef.current || (videoRef.current && !videoRef.current.paused) || (playbackControllerRef.current?.state?.isPlaying ?? false);
+      if (isCurrentlyPlaying) {
         logger.player('Focus lost, auto-pausing video playback');
         if (playbackControllerRef.current) {
           playbackControllerRef.current.pause();
-        } else {
+        }
+        if (videoRef.current && !videoRef.current.paused) {
           videoRef.current.pause();
         }
         setIsPlaying(false);
+        isPlayingRef.current = false;
         wasPausedByFocusLossRef.current = true;
       }
     };
 
     const handleFocusGain = () => {
-
       if (!pauseOnFocusChangeRef.current || isLocked) return;
-      if (wasPausedByFocusLossRef.current && videoRef.current && videoRef.current.paused) {
+      if (wasPausedByFocusLossRef.current) {
         logger.player('Focus regained, auto-resuming video playback');
         const p = playbackControllerRef.current 
           ? playbackControllerRef.current.play() 
-          : videoRef.current.play();
-        p.then(() => setIsPlaying(true))
-         .catch(err => logger.player('Autoplay play error on focus gain:', err));
+          : videoRef.current?.play();
+        p?.then(() => {
+          setIsPlaying(true);
+          isPlayingRef.current = true;
+        }).catch(err => logger.player('Autoplay play error on focus gain:', err));
         wasPausedByFocusLossRef.current = false;
       }
     };
 
     const handleVisibilityChange = () => {
-
       if (!pauseOnFocusChangeRef.current || isLocked) return;
-      const isCurrentFullscreen = !!document.fullscreenElement || isFullscreen;
-      if (!isCurrentFullscreen) return;
       if (document.visibilityState === 'hidden') {
-        if (videoRef.current && !videoRef.current.paused) {
+        const isCurrentlyPlaying = isPlayingRef.current || (videoRef.current && !videoRef.current.paused) || (playbackControllerRef.current?.state?.isPlaying ?? false);
+        if (isCurrentlyPlaying) {
           logger.player('Tab hidden, auto-pausing video playback');
           if (playbackControllerRef.current) {
             playbackControllerRef.current.pause();
-          } else {
+          }
+          if (videoRef.current && !videoRef.current.paused) {
             videoRef.current.pause();
           }
           setIsPlaying(false);
+          isPlayingRef.current = false;
           wasPausedByFocusLossRef.current = true;
         }
       } else if (document.visibilityState === 'visible') {
@@ -4950,6 +5206,59 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
       document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
   }, [isFullscreen, isLocked]);
+
+  // Tab active and window focus state tracking for Focus-On-Click
+  const focusOnClickEffective = focusOnClick !== false && focusOnClickNoPause !== false && playerSettings.focusOnClick !== false;
+  const focusOnClickRef = useRef(focusOnClickEffective);
+  focusOnClickRef.current = focusOnClickEffective;
+
+  // Track if tab or window was inactive
+  const wasTabInactiveRef = useRef<boolean>(
+    typeof document !== 'undefined' ? (!document.hasFocus() || document.visibilityState === 'hidden') : false
+  );
+  const isActivatingInteractionRef = useRef<boolean>(false);
+
+  useEffect(() => {
+    const handleWinBlur = () => {
+      wasTabInactiveRef.current = true;
+    };
+    const handleVisChange = () => {
+      if (document.visibilityState === 'hidden') {
+        wasTabInactiveRef.current = true;
+      }
+    };
+    const handleCapturePointerDown = () => {
+      const isUnfocused = !document.hasFocus() || document.visibilityState === 'hidden';
+      if (isUnfocused || wasTabInactiveRef.current) {
+        isActivatingInteractionRef.current = true;
+      }
+    };
+
+    window.addEventListener('blur', handleWinBlur);
+    document.addEventListener('visibilitychange', handleVisChange);
+    window.addEventListener('pointerdown', handleCapturePointerDown, true);
+    window.addEventListener('mousedown', handleCapturePointerDown, true);
+
+    return () => {
+      window.removeEventListener('blur', handleWinBlur);
+      document.removeEventListener('visibilitychange', handleVisChange);
+      window.removeEventListener('pointerdown', handleCapturePointerDown, true);
+      window.removeEventListener('mousedown', handleCapturePointerDown, true);
+    };
+  }, []);
+
+  const isFocusClick = useCallback(() => {
+    if (!focusOnClickRef.current) return false;
+    const isInactive = !document.hasFocus() || document.visibilityState === 'hidden';
+    const isFocus = isInactive || wasTabInactiveRef.current || isActivatingInteractionRef.current;
+    if (isFocus) {
+      logger.player(`Focus click detected (inactive=${isInactive}, wasTabInactive=${wasTabInactiveRef.current}, activating=${isActivatingInteractionRef.current}) — preserving media playback state`);
+      wasTabInactiveRef.current = false;
+      isActivatingInteractionRef.current = false;
+      return true;
+    }
+    return false;
+  }, []);
 
   // Re-engage fullscreen on window focus if locked
   useEffect(() => {
@@ -5107,7 +5416,7 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
             if (stream) {
               audioSelected = true;
               logger.player(`Auto-selecting audio track: ${stream.language || stream.title}`);
-              handleSelectEmbeddedAudio(stream.index, stream.codec, stream.language, false, stream.title);
+              handleSelectEmbeddedAudio(stream.index, stream.codec, stream.language, false, stream.title, true);
             }
           }
 
@@ -5115,7 +5424,7 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
           if (!audioSelected && !selectedAudioTrack && audioStreams.length > 0) {
             const firstAudio = audioStreams[0];
             logger.player(`Auto-selecting first audio track: ${firstAudio.language || firstAudio.title || 'unknown'} (${firstAudio.codec})`);
-            handleSelectEmbeddedAudio(firstAudio.index, firstAudio.codec, firstAudio.language, false, firstAudio.title);
+            handleSelectEmbeddedAudio(firstAudio.index, firstAudio.codec, firstAudio.language, false, firstAudio.title, true);
           }
         } else {
           // Fewer than 2 audio tracks (< 2): halt/suspend audio parser, use HTML5 audio natively
@@ -5131,12 +5440,12 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
           logger.player(`Media has ${audioStreams.length} audio track(s) (< 2). Audio parser suspended; using native HTML5 audio.`);
         }
 
-        // Auto-select subtitle stream
+        // Auto-select subtitle stream (silent in background without dynamic island flash)
         if (targetSub !== 'Off' && !selectedSubTrack) {
           const stream = findPreferredStream(subtitleStreams, targetSub, 'subtitle');
           if (stream) {
             logger.player(`Auto-selecting subtitle track: ${stream.language || stream.title}`);
-            handleSelectEmbeddedSubtitle(stream.index, stream.codec, stream.language);
+            handleSelectEmbeddedSubtitle(stream.index, stream.codec, stream.language, false, true);
           }
         }
       } catch (err) {
@@ -5346,11 +5655,15 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
         return (
           <button
             key="pauseOnFocusChange"
-            onClick={() => updatePlayerSetting('pauseOnFocusChange', !playerSettings.pauseOnFocusChange)}
+            onClick={() => {
+              const nextVal = !playerSettings.pauseOnFocusChange;
+              updatePlayerSetting('pauseOnFocusChange', nextVal);
+              triggerSwitchToast(nextVal ? "Auto-pause on focus loss enabled" : "Auto-pause on focus loss disabled");
+            }}
             onMouseEnter={() => setHoveredSetting('pauseOnFocusChange')}
             onMouseLeave={() => setHoveredSetting(null)}
-            title="Disable Focus Loss Auto-Pause"
-            className={`settings-icon-toggle ${!playerSettings.pauseOnFocusChange ? 'active-red' : ''}`}
+            title={playerSettings.pauseOnFocusChange ? "Auto-Pause on Focus Loss: Enabled" : "Auto-Pause on Focus Loss: Disabled"}
+            className={`settings-icon-toggle ${playerSettings.pauseOnFocusChange ? 'active-blue' : 'active-red'}`}
           >
             <Coffee size={22} />
           </button>
@@ -5525,10 +5838,41 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
     const target = e.target as HTMLElement;
     if (target.closest('.player-settings-panel') || target.closest('.bookmarks-popover') || target.closest('.audio-sub-popover') || target.closest('.speed-popover-container')) return;
 
+    e.preventDefault();
+    if (showVolumeControlMode === 'disable') {
+      return;
+    }
+
     if (e.deltaY < 0) {
-      handleKeyDownRef.current?.(new KeyboardEvent('keydown', { key: 'ArrowUp' }));
+      setIsMuted(false);
+      if (volume < 1.0) {
+        setVolume(prev => {
+          const nextVol = Math.min(1.0, prev + 0.05);
+          triggerVolumeToast(nextVol, false, 100);
+          return nextVol;
+        });
+      } else {
+        setAudioBoost(prev => {
+          const nextBoost = Math.min(200, prev + 5);
+          triggerVolumeToast(1.0, false, nextBoost);
+          return nextBoost;
+        });
+      }
     } else if (e.deltaY > 0) {
-      handleKeyDownRef.current?.(new KeyboardEvent('keydown', { key: 'ArrowDown' }));
+      setIsMuted(false);
+      if (audioBoost > 100) {
+        setAudioBoost(prev => {
+          const nextBoost = Math.max(100, prev - 5);
+          triggerVolumeToast(1.0, false, nextBoost);
+          return nextBoost;
+        });
+      } else {
+        setVolume(prev => {
+          const nextVol = Math.max(0.0, prev - 0.05);
+          triggerVolumeToast(nextVol, false, 100);
+          return nextVol;
+        });
+      }
     }
   };
 
@@ -5545,7 +5889,17 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
       onMouseLeave={() => {
         if (!isScrubbing) setShowControls(false);
       }}
-      onClick={() => {
+      onClick={(e) => {
+        const target = e.target as HTMLElement | null;
+        if (target && target.closest(
+          '.bookmarks-popover, .bookmark-mobile-panel, .bookmark-mobile-backdrop, .bookmark-dialog-box, .bookmark-dialog-overlay, ' +
+          '.audio-sub-popover, .asp-pop, .asp-sheet, .asp-sheet-backdrop, ' +
+          '.ui-settings-slideout-drawer, .ui-settings-drawer-card, .ui-settings-drawer-backdrop, .ui-settings-unified-handle, ' +
+          '.popover-wrapper, .vlc-context-menu, .marking-hud-button-controls, button, input, select, textarea, [role="dialog"], [role="menu"]'
+        )) {
+          return;
+        }
+
         if (vlcContextMenuState.visible || (Date.now() - vlcContextMenuClosedTimestampRef.current < 350)) {
           if (vlcContextMenuState.visible) {
             setVlcContextMenuState({ visible: false, x: 0, y: 0 });
@@ -5553,7 +5907,16 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
           return;
         }
 
+        if (isFocusClick()) {
+          resetControlsTimeout();
+          return;
+        }
+
         if (showPauseMetadataOverlayRef.current) {
+          if (isFocusClick()) {
+            resetControlsTimeout();
+            return;
+          }
           showPauseMetadataOverlayRef.current = false;
           setShowPauseMetadataOverlay(false);
           togglePlay();
@@ -5565,7 +5928,7 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
       onContextMenu={(e) => {
         e.preventDefault();
         if (!hideUIOverlays) {
-          setVlcContextMenuState(prev => prev.visible ? { visible: false, x: 0, y: 0 } : { visible: true, x: e.clientX, y: e.clientY });
+          setVlcContextMenuState({ visible: true, x: e.clientX, y: e.clientY });
         }
       }}
     >
@@ -5689,6 +6052,22 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
         onDoubleClick={handlePlayerDoubleClick}
         onClick={(e) => {
           e.stopPropagation();
+
+          const target = e.target as HTMLElement | null;
+          if (target && target.closest(
+            '.bookmarks-popover, .bookmark-mobile-panel, .bookmark-mobile-backdrop, .bookmark-dialog-box, .bookmark-dialog-overlay, ' +
+            '.audio-sub-popover, .asp-pop, .asp-sheet, .asp-sheet-backdrop, ' +
+            '.ui-settings-slideout-drawer, .ui-settings-drawer-card, .ui-settings-drawer-backdrop, .ui-settings-unified-handle, ' +
+            '.popover-wrapper, .vlc-context-menu, .marking-hud-button-controls, button, input, select, textarea, [role="dialog"], [role="menu"]'
+          )) {
+            return;
+          }
+
+          if (isFocusClick()) {
+            resetControlsTimeout();
+            return;
+          }
+
           if (showPauseMetadataOverlayRef.current) {
             showPauseMetadataOverlayRef.current = false;
             setShowPauseMetadataOverlay(false);
@@ -5719,7 +6098,7 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
         onContextMenu={(e) => {
           e.preventDefault();
           e.stopPropagation();
-          setVlcContextMenuState(prev => prev.visible ? { visible: false, x: 0, y: 0 } : { visible: true, x: e.clientX, y: e.clientY });
+          setVlcContextMenuState({ visible: true, x: e.clientX, y: e.clientY });
         }}
       >
         <AmbianceLighting
@@ -5739,7 +6118,7 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
           style={{
             position: 'relative',
             zIndex: 1,
-            ...(toneMappingMode !== 'off' ? { filter: getToneMappingCssFilter(toneMappingMode) } : {}),
+            filter: toneMappingMode !== 'off' ? getToneMappingCssFilter(toneMappingMode) : undefined,
             objectFit: aspectRatio === 'cover' ? 'cover' : (aspectRatio === '16:9' || aspectRatio === '4:3' ? 'fill' : 'contain'),
             aspectRatio: aspectRatio === '16:9' ? '16/9' : (aspectRatio === '4:3' ? '4/3' : undefined)
           }}
@@ -5785,6 +6164,12 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
 
                 const now = Date.now();
                 if (now - lastStorageSaveTimeRef.current > 1500 && time > 0) {
+                  // Guard: do not overwrite a previously stored location with near-zero times if resume seek hasn't completed
+                  const storedTime = getMediaTimestamp(video);
+                  const targetResume = (video.currentTime && video.currentTime > 0) ? video.currentTime : storedTime;
+                  if (!hasSeekedRef.current && targetResume > 5 && time < 3) {
+                    return;
+                  }
                   lastStorageSaveTimeRef.current = now;
                   saveMediaTimestamp(video, time, durationRef.current || videoRef.current.duration, video.title);
                 }
@@ -5803,7 +6188,11 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
             if (!pauseOnFocusChangeRef.current && document.visibilityState === 'hidden') {
               return;
             }
+            if (pauseOnFocusChangeRef.current && (document.visibilityState === 'hidden' || !document.hasFocus())) {
+              wasPausedByFocusLossRef.current = true;
+            }
             setIsPlaying(false);
+            isPlayingRef.current = false;
             isPlayingRef.current = false;
             isWaitingForSyncRef.current = false;
             setIsBuffering(false);
@@ -5843,6 +6232,17 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
             setIsBuffering(false);
             isWaitingForSyncRef.current = false;
             seekTargetRef.current = null;
+            if (!hasSeekedRef.current && videoRef.current) {
+              const videoDuration = videoRef.current.duration;
+              const storedTime = getMediaTimestamp(video, videoDuration);
+              const targetResume = (video.currentTime && video.currentTime > 0) ? video.currentTime : storedTime;
+              if (targetResume > 0 && videoDuration - targetResume > 3) {
+                videoRef.current.currentTime = targetResume;
+                setCurrentTime(targetResume);
+                latestTimeRef.current = targetResume;
+                hasSeekedRef.current = true;
+              }
+            }
             if (isPlayingRef.current && videoRef.current && videoRef.current.paused) {
               videoRef.current.play().catch(() => {});
             }
@@ -5906,6 +6306,11 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
           }}
           playsInline
         />
+        <audio
+          ref={audioRef}
+          style={{ display: 'none' }}
+          preload="auto"
+        />
       </div>
 
       {false && activeSubtitleStartOffset}
@@ -5921,6 +6326,29 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
           settings={subSettings} 
           controlsVisible={controlsVisible}
         />
+      )}
+
+      {/* Side Skip Indicator (Left: Rewind / Right: Forward) */}
+      {consecutiveSkipInfo && (
+        <div 
+          className={`player-side-skip player-side-skip-${consecutiveSkipInfo.direction}`}
+        >
+          <div 
+            key={`${consecutiveSkipInfo.direction}-${consecutiveSkipInfo.count}`}
+            className="player-side-skip-badge"
+          >
+            <div className="player-side-skip-icon-wrap">
+              {consecutiveSkipInfo.direction === 'rewind' ? (
+                <RotateCcw size={30} strokeWidth={2.4} className="player-side-skip-icon anim-spin-rewind" />
+              ) : (
+                <RotateCw size={30} strokeWidth={2.4} className="player-side-skip-icon anim-spin-forward" />
+              )}
+            </div>
+            <span className="player-side-skip-text">
+              {consecutiveSkipInfo.direction === 'rewind' ? `-${consecutiveSkipInfo.totalSeconds}s` : `+${consecutiveSkipInfo.totalSeconds}s`}
+            </span>
+          </div>
+        </div>
       )}
 
       {/* Paused Metadata Overlay Card (Appears after 10s of continuous pause in Netflix style) */}
@@ -5965,7 +6393,7 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
           onContextMenu={(e) => {
             e.preventDefault();
             e.stopPropagation();
-            setVlcContextMenuState(prev => prev.visible ? { visible: false, x: 0, y: 0 } : { visible: true, x: e.clientX, y: e.clientY });
+            setVlcContextMenuState({ visible: true, x: e.clientX, y: e.clientY });
           }}
           style={{
             position: 'absolute',
@@ -6364,7 +6792,10 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
                 {/* Play / Pause Button */}
                 <button 
                   className="control-btn-netflix control-btn-play-pause-bottom" 
-                  onClick={togglePlay} 
+                  onClick={() => {
+                    if (isFocusClick()) return;
+                    togglePlay();
+                  }} 
                   title={isPlaying ? "Pause (Space)" : "Play (Space)"}
                 >
                   {isPlaying ? (
@@ -6495,8 +6926,11 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
                     title={`Recording (${formatTime(markingStartTime)} - ${formatTime(currentTime)}) - Click to finish mark`}
                     aria-label="Recording scene - click to finish mark"
                   >
-                    <span className="marking-rec-dot" />
-                    <span className="marking-rec-text">Recording</span>
+                    <div className="marking-rec-icon-wrapper">
+                      <span className="marking-rec-outer-ring" />
+                      <span className="marking-rec-inner-dot" />
+                    </div>
+                    <span className="marking-rec-text">REC ({formatTime(Math.abs(currentTime - markingStartTime))})</span>
                   </button>
                 )}
                 
@@ -6677,10 +7111,12 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
         </div>
       )}
 
-      {/* UI Settings Modal Drawer with Integrated Smooth Edge Handle */}
+      {/* UI Settings Slideout Drawer with Unified Seamless Edge Handle */}
       {!hideUIOverlays && (
         <div 
           className={`ui-settings-slideout-drawer ${showSettingsPanel ? 'is-open' : 'is-closed'}`}
+          onDoubleClick={(e) => e.stopPropagation()}
+          onPointerDown={(e) => e.stopPropagation()}
         >
           {/* Backdrop when open: click anywhere outside to smoothly close */}
           <div 
@@ -6690,55 +7126,61 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
               setShowSettingsPanel(false);
               setIsSettingsExpanded(false);
             }}
+            onDoubleClick={(e) => e.stopPropagation()}
+            onPointerDown={(e) => e.stopPropagation()}
           />
 
           <div 
-            className="ui-settings-drawer-container"
+            className="ui-settings-drawer-card" 
+            onClick={(e) => e.stopPropagation()}
+            onDoubleClick={(e) => e.stopPropagation()}
+            onPointerDown={(e) => e.stopPropagation()}
+            style={{
+              width: isSettingsExpanded ? '280px' : '154px',
+            }}
           >
-            {/* The single integrated slide-out / collapse handle attached to the left edge of the modal */}
+            {/* The single, unified handle attached seamlessly to the card */}
             <button
-              className="ui-settings-edge-slide-btn"
+              className="ui-settings-unified-handle"
               onClick={(e) => {
                 e.stopPropagation();
                 e.preventDefault();
-                setShowSettingsPanel(prev => {
-                  const next = !prev;
-                  if (!next) setIsSettingsExpanded(false);
-                  return next;
-                });
+                setShowSettingsPanel(prev => !prev);
+                if (showSettingsPanel) setIsSettingsExpanded(false);
               }}
+              onDoubleClick={(e) => e.stopPropagation()}
+              onPointerDown={(e) => e.stopPropagation()}
               title={showSettingsPanel ? "Collapse UI Settings (Del)" : "Slide in UI Settings (Del)"}
-              aria-label={showSettingsPanel ? "Collapse UI Settings" : "Slide in UI Settings"}
+              aria-label="Toggle UI Settings"
               style={{
-                opacity: showSettingsPanel ? 1 : (showControls ? 0.95 : 0.35)
+                opacity: showSettingsPanel ? 1 : (showControls ? 0.95 : 0.4)
               }}
             >
-              <div className="ui-settings-chevron-wrapper">
+              <div 
+                className="ui-settings-chevron-wrapper"
+                style={{
+                  transform: showSettingsPanel ? 'rotate(180deg)' : 'rotate(0deg)',
+                  transition: 'transform 0.35s cubic-bezier(0.16, 1, 0.3, 1)'
+                }}
+              >
                 <ChevronLeft size={18} />
               </div>
             </button>
 
-            <div 
-              className="ui-settings-drawer-card" 
-              onClick={(e) => e.stopPropagation()}
-              style={{
-                width: isSettingsExpanded ? '280px' : '154px',
-              }}
-            >
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%' }}>
-                <h3 style={{ margin: 0, fontSize: '1rem', fontWeight: 600, color: 'var(--text-primary, #ffffff)' }}>UI Settings</h3>
-                <button
-                  className="ui-settings-close-x-btn"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setShowSettingsPanel(false);
-                    setIsSettingsExpanded(false);
-                  }}
-                  title="Close UI Settings"
-                >
-                  <X size={16} />
-                </button>
-              </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%' }}>
+              <h3 style={{ margin: 0, fontSize: '1rem', fontWeight: 600, color: 'var(--text-primary, #ffffff)' }}>UI Settings</h3>
+              <button
+                className="ui-settings-close-x-btn"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setShowSettingsPanel(false);
+                  setIsSettingsExpanded(false);
+                }}
+                title="Close UI Settings"
+              >
+                <X size={16} />
+              </button>
+            </div>
             
             <div 
               style={{
@@ -6843,7 +7285,6 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
             </div>
           </div>
         </div>
-      </div>
       )}
 
 
@@ -6909,14 +7350,10 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
             transition: 'bottom 0.3s cubic-bezier(0.4, 0, 0.2, 1)'
           }}
         >
-          <span style={{
-            display: 'inline-block',
-            width: '8px',
-            height: '8px',
-            borderRadius: '50%',
-            background: '#fff',
-            animation: 'flashDot 1s infinite'
-          }} />
+          <div className="marking-rec-icon-wrapper" style={{ width: '16px', height: '16px' }}>
+            <span className="marking-rec-outer-ring" />
+            <span className="marking-rec-inner-dot" style={{ width: '7px', height: '7px' }} />
+          </div>
           <span>Marking... tap to end ({formatTime(markingStartTime)} - {formatTime(currentTime)})</span>
         </button>
       )}
@@ -7414,26 +7851,22 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
         /* UI Settings Slideout Drawer & Edge Handle Tab */
         .ui-settings-slideout-drawer {
           position: absolute;
-          top: 0;
-          bottom: 0;
-          right: 0;
+          inset: 0;
           z-index: 150;
-          display: flex;
-          align-items: center;
-          justify-content: flex-end;
           pointer-events: none;
+          overflow: hidden;
         }
 
         .ui-settings-drawer-backdrop {
           position: absolute;
           inset: 0;
           z-index: 140;
-          background: rgba(0, 0, 0, 0.4);
-          backdrop-filter: blur(2px);
-          -webkit-backdrop-filter: blur(2px);
+          background: rgba(0, 0, 0, 0.45);
+          backdrop-filter: blur(3px);
+          -webkit-backdrop-filter: blur(3px);
           opacity: 0;
           pointer-events: none;
-          transition: opacity 0.35s cubic-bezier(0.16, 1, 0.3, 1);
+          transition: opacity 0.32s cubic-bezier(0.16, 1, 0.3, 1);
         }
 
         .ui-settings-slideout-drawer.is-open .ui-settings-drawer-backdrop {
@@ -7441,38 +7874,64 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
           pointer-events: auto;
         }
 
-        .ui-settings-drawer-container {
-          position: relative;
+        /* Drawer Card */
+        .ui-settings-drawer-card {
+          position: absolute;
+          right: 0;
+          top: 50%;
+          z-index: 155;
+          pointer-events: auto;
+          overflow: visible !important;
+          background: var(--dropdown-bg, rgba(18, 18, 18, 0.96));
+          backdrop-filter: blur(16px);
+          -webkit-backdrop-filter: blur(16px);
+          border: 1px solid var(--dropdown-border, rgba(255, 255, 255, 0.12));
+          border-right: none !important;
+          border-top-right-radius: 0 !important;
+          border-bottom-right-radius: 0 !important;
+          border-top-left-radius: 16px !important;
+          border-bottom-left-radius: 16px !important;
+          padding: 1.25rem 1rem;
           display: flex;
-          align-items: center;
-          transition: transform 0.38s cubic-bezier(0.16, 1, 0.3, 1);
-          pointer-events: none;
+          flex-direction: column;
+          gap: 1rem;
+          font-family: sans-serif;
+          box-sizing: border-box !important;
+          box-shadow: -10px 0 32px rgba(0, 0, 0, 0.65);
+          transition: transform 0.35s cubic-bezier(0.16, 1, 0.3, 1), width 0.32s cubic-bezier(0.16, 1, 0.3, 1), background 0.3s ease;
           will-change: transform;
         }
 
-        .ui-settings-slideout-drawer.is-closed .ui-settings-drawer-container {
-          transform: translateX(100%);
+        /* When closed: card translates completely offscreen to the right by 100% of its width;
+           its attached handle lands precisely and seamlessly flush against the right screen bezel */
+        .ui-settings-slideout-drawer.is-closed .ui-settings-drawer-card {
+          transform: translateY(-50%) translateX(100%);
+          box-shadow: none !important;
         }
 
-        .ui-settings-slideout-drawer.is-open .ui-settings-drawer-container {
-          transform: translateX(0);
+        /* When open: smoothly glides fully into view */
+        .ui-settings-slideout-drawer.is-open .ui-settings-drawer-card {
+          transform: translateY(-50%) translateX(0);
         }
 
-        .ui-settings-edge-slide-btn {
+        /* Unified Handle: attached seamlessly to the left boundary of the card (right: 100%) */
+        .ui-settings-unified-handle {
           position: absolute;
           right: 100%;
           top: 50%;
           transform: translateY(-50%);
-          z-index: 160;
           pointer-events: auto;
-          width: 26px;
+          width: 28px;
           height: 64px;
           background: var(--dropdown-bg, rgba(18, 18, 18, 0.94));
           backdrop-filter: blur(12px);
           -webkit-backdrop-filter: blur(12px);
           border: 1px solid var(--dropdown-border, rgba(255, 255, 255, 0.15));
-          border-right: none;
-          border-radius: 12px 0 0 12px;
+          border-right: none !important;
+          border-top-right-radius: 0 !important;
+          border-bottom-right-radius: 0 !important;
+          border-top-left-radius: 12px !important;
+          border-bottom-left-radius: 12px !important;
           cursor: pointer;
           display: flex;
           align-items: center;
@@ -7482,89 +7941,45 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
           outline: none;
           padding: 0;
           margin: 0;
-          margin-right: -1px;
-          transition: transform 0.28s cubic-bezier(0.16, 1, 0.3, 1), background 0.25s ease, box-shadow 0.28s ease, border-color 0.25s ease, opacity 0.3s ease !important;
-          will-change: transform, opacity;
+          margin-right: -1px; /* 1px bleed guarantees zero subpixel gap on any display scaling */
+          z-index: 160;
+          box-sizing: border-box !important;
+          transition: width 0.22s cubic-bezier(0.16, 1, 0.3, 1), background 0.2s ease, box-shadow 0.25s ease, border-color 0.2s ease, opacity 0.25s ease !important;
         }
 
-        /* Hover when CLOSED */
-        .ui-settings-slideout-drawer.is-closed .ui-settings-edge-slide-btn:hover {
-          transform: translateY(-50%) translateX(-5px) !important;
+        /* Premium Inward Expansion on Hover when Closed (right edge stays 100% sealed to the screen border) */
+        .ui-settings-slideout-drawer.is-closed .ui-settings-unified-handle:hover {
+          width: 38px !important;
           background: rgba(28, 30, 44, 0.98) !important;
-          border-color: rgba(255, 255, 255, 0.38) !important;
-          box-shadow: -6px 0 22px rgba(0, 0, 0, 0.65), 0 0 14px rgba(139, 92, 246, 0.25) !important;
+          border-color: rgba(255, 255, 255, 0.45) !important;
+          box-shadow: -6px 0 24px rgba(0, 0, 0, 0.7), 0 0 16px rgba(229, 9, 20, 0.35) !important;
           color: #ffffff !important;
           opacity: 1 !important;
         }
 
-        .ui-settings-slideout-drawer.is-closed .ui-settings-edge-slide-btn:hover .ui-settings-chevron-wrapper {
-          transform: translateX(-2px) !important;
+        .ui-settings-slideout-drawer.is-closed .ui-settings-unified-handle:hover .ui-settings-chevron-wrapper {
+          transform: translateX(-4px) !important;
         }
 
-        /* Hover when OPEN */
-        .ui-settings-slideout-drawer.is-open .ui-settings-edge-slide-btn:hover {
-          transform: translateY(-50%) translateX(3px) !important;
+        /* Hover when open */
+        .ui-settings-slideout-drawer.is-open .ui-settings-unified-handle:hover {
           background: rgba(28, 30, 44, 0.98) !important;
-          border-color: rgba(255, 255, 255, 0.38) !important;
-          box-shadow: -4px 0 18px rgba(0, 0, 0, 0.6) !important;
+          border-color: rgba(255, 255, 255, 0.45) !important;
+          box-shadow: -6px 0 24px rgba(0, 0, 0, 0.65), 0 0 16px rgba(229, 9, 20, 0.3) !important;
           color: #ffffff !important;
           opacity: 1 !important;
         }
 
-        .ui-settings-slideout-drawer.is-open .ui-settings-edge-slide-btn:hover .ui-settings-chevron-wrapper {
-          transform: rotate(180deg) translateX(-2px) !important;
-        }
-
-        /* Active click press */
-        .ui-settings-slideout-drawer.is-closed .ui-settings-edge-slide-btn:active {
-          transform: translateY(-50%) translateX(-2px) scale(0.95) !important;
-        }
-
-        .ui-settings-slideout-drawer.is-open .ui-settings-edge-slide-btn:active {
-          transform: translateY(-50%) translateX(1px) scale(0.95) !important;
+        .ui-settings-slideout-drawer.is-open .ui-settings-unified-handle:hover .ui-settings-chevron-wrapper {
+          transform: rotate(180deg) translateX(-3px) !important;
         }
 
         .ui-settings-chevron-wrapper {
           display: flex;
           align-items: center;
           justify-content: center;
-          transition: transform 0.38s cubic-bezier(0.16, 1, 0.3, 1) !important;
+          transition: transform 0.35s cubic-bezier(0.16, 1, 0.3, 1) !important;
           will-change: transform;
-        }
-
-        .ui-settings-slideout-drawer.is-open .ui-settings-chevron-wrapper {
-          transform: rotate(180deg);
-        }
-
-        .ui-settings-slideout-drawer.is-closed .ui-settings-chevron-wrapper {
-          transform: rotate(0deg);
-        }
-
-        /* Drawer Card */
-        .ui-settings-drawer-card {
-          position: relative;
-          pointer-events: auto;
-          overflow: visible;
-          background: var(--dropdown-bg, rgba(18, 18, 18, 0.96));
-          backdrop-filter: blur(16px);
-          -webkit-backdrop-filter: blur(16px);
-          border: 1px solid var(--dropdown-border, rgba(255, 255, 255, 0.12));
-          border-right: none;
-          border-radius: 16px 0 0 16px;
-          padding: 1.25rem 1rem;
-          display: flex;
-          flex-direction: column;
-          gap: 1rem;
-          font-family: sans-serif;
-          transition: width 0.32s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.35s ease, background 0.3s ease;
-        }
-
-        .ui-settings-slideout-drawer.is-closed .ui-settings-drawer-card {
-          box-shadow: none !important;
-        }
-
-        .ui-settings-slideout-drawer.is-open .ui-settings-drawer-card {
-          box-shadow: -10px 0 32px rgba(0, 0, 0, 0.65) !important;
         }
 
         .ui-settings-close-x-btn {
@@ -7587,7 +8002,9 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
 
         .no-animations .ui-settings-drawer-container,
         .no-animations .ui-settings-edge-slide-btn,
+        .no-animations .ui-settings-modal-collapse-btn,
         .no-animations .ui-settings-chevron-wrapper,
+        .no-animations .ui-settings-collapse-chevron-wrapper,
         .no-animations .ui-settings-drawer-backdrop,
         .no-animations .ui-settings-drawer-card {
           transition: none !important;
@@ -8285,7 +8702,8 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
           }
         }
         @media (min-width: 1025px) {
-          .control-btn-settings {
+          .control-btn-settings,
+          .control-btn-tonemap {
             display: none !important;
           }
         }
@@ -9232,8 +9650,8 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
           cursor: pointer;
           display: flex;
           align-items: center;
-          justifyContent: center;
-          box-shadow: 0 0 10px rgba(229, 9, 20, 0.6);
+          justify-content: center;
+          box-shadow: 0 0 12px rgba(229, 9, 20, 0.65);
           animation: pulseMarking 1.5s infinite alternate;
           transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
           overflow: hidden;
@@ -9241,6 +9659,35 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
           outline: none;
           margin-right: calc(6px * var(--player-ui-scale, 1));
           box-sizing: border-box;
+        }
+        .marking-rec-icon-wrapper {
+          position: relative;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          width: calc(18px * var(--player-ui-scale, 1));
+          height: calc(18px * var(--player-ui-scale, 1));
+          flex-shrink: 0;
+        }
+        .marking-rec-outer-ring {
+          position: absolute;
+          inset: 0;
+          border-radius: 50%;
+          border: 2px solid #ffffff;
+          opacity: 0.85;
+          animation: recRingPulse 1.4s cubic-bezier(0.24, 0, 0.38, 1) infinite;
+        }
+        .marking-rec-inner-dot {
+          width: calc(8px * var(--player-ui-scale, 1));
+          height: calc(8px * var(--player-ui-scale, 1));
+          border-radius: 50%;
+          background: #ffffff;
+          box-shadow: 0 0 6px #ffffff;
+        }
+        @keyframes recRingPulse {
+          0% { transform: scale(0.85); opacity: 0.9; }
+          50% { transform: scale(1.18); opacity: 0.35; }
+          100% { transform: scale(0.85); opacity: 0.9; }
         }
         .marking-rec-dot {
           display: inline-block;
@@ -9268,13 +9715,109 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
           width: auto;
           min-width: 0;
           border-radius: 20px;
-          padding: 0 calc(10px * var(--player-ui-scale, 1));
+          padding: 0 calc(12px * var(--player-ui-scale, 1));
           background: #f40b17;
         }
         .marking-hud-button-controls:hover .marking-rec-text {
-          max-width: 100px;
+          max-width: 140px;
           opacity: 1;
-          margin-left: calc(6px * var(--player-ui-scale, 1));
+          margin-left: calc(8px * var(--player-ui-scale, 1));
+        }
+
+        /* Side Skip Indicator (Left: Rewind / Right: Forward) */
+        .player-side-skip {
+          position: absolute;
+          top: 0;
+          bottom: 0;
+          width: 28%;
+          min-width: 160px;
+          max-width: 340px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          pointer-events: none;
+          z-index: 55;
+        }
+        .player-side-skip-left {
+          left: 0;
+        }
+        .player-side-skip-right {
+          right: 0;
+        }
+        .player-side-skip-badge {
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          justify-content: center;
+          gap: 8px;
+          padding: 16px 26px;
+          border-radius: 9999px;
+          background: rgba(15, 17, 23, 0.78);
+          border: 1px solid rgba(255, 255, 255, 0.16);
+          backdrop-filter: blur(14px);
+          -webkit-backdrop-filter: blur(14px);
+          box-shadow: 0 10px 30px rgba(0, 0, 0, 0.55), 0 0 20px rgba(229, 9, 20, 0.2);
+          color: #ffffff;
+          animation: sideSkipPopFade 0.85s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+          user-select: none;
+        }
+        .player-side-skip-icon-wrap {
+          display: flex;
+          align-items: center;
+          justify-content: center;
+        }
+        .player-side-skip-icon {
+          color: #ffffff;
+          filter: drop-shadow(0 2px 6px rgba(0, 0, 0, 0.6));
+        }
+        .player-side-skip-text {
+          font-size: 1.15rem;
+          font-weight: 700;
+          letter-spacing: 0.03em;
+          font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+          color: #ffffff;
+          text-shadow: 0 2px 8px rgba(0, 0, 0, 0.7);
+        }
+
+        @keyframes sideSkipPopFade {
+          0% {
+            transform: scale(0.7);
+            opacity: 0;
+          }
+          20% {
+            transform: scale(1.08);
+            opacity: 1;
+          }
+          30% {
+            transform: scale(1.0);
+            opacity: 1;
+          }
+          75% {
+            transform: scale(1.0);
+            opacity: 1;
+          }
+          100% {
+            transform: scale(0.92);
+            opacity: 0;
+          }
+        }
+
+        .anim-spin-rewind {
+          animation: skipIconPulseRewind 0.4s ease-out;
+        }
+        .anim-spin-forward {
+          animation: skipIconPulseForward 0.4s ease-out;
+        }
+
+        @keyframes skipIconPulseRewind {
+          0% { transform: rotate(0deg) scale(0.85); }
+          50% { transform: rotate(-25deg) scale(1.15); }
+          100% { transform: rotate(0deg) scale(1); }
+        }
+        @keyframes skipIconPulseForward {
+          0% { transform: rotate(0deg) scale(0.85); }
+          50% { transform: rotate(25deg) scale(1.15); }
+          100% { transform: rotate(0deg) scale(1); }
         }
       `}</style>
 
@@ -9287,7 +9830,10 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
         <VlcContextMenu
           x={vlcContextMenuState.x}
           y={vlcContextMenuState.y}
-          onClose={() => setVlcContextMenuState({ visible: false, x: 0, y: 0 })}
+          onClose={() => {
+            vlcContextMenuClosedTimestampRef.current = Date.now();
+            setVlcContextMenuState({ visible: false, x: 0, y: 0 });
+          }}
           onOpenFile={() => {}}
           onOpenNetworkStream={() => {}}
           onAddToPlaylist={() => {}}
@@ -9312,7 +9858,7 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
           audioTracks={audioTracks}
           selectedAudioTrack={selectedAudioTrack}
           onSelectAudioStream={handleSelectEmbeddedAudio}
-          onSelectAudioTrack={setSelectedAudioTrack}
+          onSelectAudioTrack={handleSelectAudioTrack}
           volume={volume}
           isMuted={isMuted}
           onIncreaseVolume={() => {
@@ -9345,7 +9891,7 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
           subtitleTracks={subtitleTracks}
           selectedSubTrack={selectedSubTrack}
           onSelectSubStream={handleSelectEmbeddedSubtitle}
-          onSelectSubTrack={setSelectedSubTrack}
+          onSelectSubTrack={handleSelectSubTrack}
           onAddSubtitleFile={() => customSubInputRef.current?.click()}
           onOpenSubtitleSettings={() => {
             onUpdateSubSettings({ ...subSettings, showStyleColumn: true });
@@ -9380,7 +9926,7 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
             triggerSwitchToast(`Aspect Ratio: ${labels[ratio] || ratio}`);
           }}
           toneMappingMode={toneMappingMode}
-          onSetToneMappingMode={(m) => setToneMappingMode(m as ToneMappingMode)}
+          onSetToneMappingMode={(m) => handleSetToneMapping(m as ToneMappingMode)}
           isAmbianceEnabled={isAmbianceEnabled}
           onToggleAmbiance={handleToggleAmbiance}
           ambianceBlur={ambianceBlur}
@@ -9449,7 +9995,7 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
 
             // 3. Re-initialize cached byte source with newly authenticated credentials
             const freshByteSource = new HttpByteSource(video.url);
-            cachedSourceRef.current = new CachedByteSource(freshByteSource, 4 * 1024 * 1024, 16);
+            cachedSourceRef.current = new CachedByteSource(freshByteSource, effectiveCacheConfig.chunkSizeBytes, effectiveCacheConfig.cacheLimit, effectiveCacheConfig.lookbehindChunks, effectiveCacheConfig.lookaheadChunks);
 
             // 4. Reload the video element with authenticated proxied stream
             const newProxyUrl = getProxiedVideoUrl(video.url);
@@ -9538,110 +10084,6 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
             <LocalServicePage onClose={() => setShowCompanionModal(false)} />
           </div>
         </div>
-      )}
-      {vlcContextMenuState.visible && (
-        <VlcContextMenu
-          x={vlcContextMenuState.x}
-          y={vlcContextMenuState.y}
-          onClose={() => setVlcContextMenuState({ visible: false, x: 0, y: 0 })}
-          isPlaying={isPlaying}
-          onPlayPause={togglePlay}
-          onStop={() => {
-            if (videoRef.current) {
-              videoRef.current.pause();
-              videoRef.current.currentTime = 0;
-              setCurrentTime(0);
-            }
-          }}
-          onPrevious={handleRewind}
-          onNext={handleForward}
-          onJumpForward={handleForward}
-          onJumpBackward={handleRewind}
-          playbackRate={playbackRate}
-          onSetPlaybackRate={setPlaybackRate}
-          audioStreams={audioStreams}
-          audioTracks={audioTracks}
-          selectedAudioTrack={selectedAudioTrack}
-          onSelectAudioStream={handleSelectEmbeddedAudio}
-          onSelectAudioTrack={setSelectedAudioTrack}
-          volume={volume}
-          isMuted={isMuted}
-          onIncreaseVolume={() => {
-            setIsMuted(false);
-            setVolume(prev => {
-              const nextVol = Math.min(1.0, prev + 0.05);
-              triggerVolumeToast(nextVol, false, 100);
-              return nextVol;
-            });
-          }}
-          onDecreaseVolume={() => {
-            setIsMuted(false);
-            setVolume(prev => {
-              const nextVol = Math.max(0.0, prev - 0.05);
-              triggerVolumeToast(nextVol, false, 100);
-              return nextVol;
-            });
-          }}
-          onToggleMute={() => {
-            setIsMuted(prev => {
-              const nextMuted = !prev;
-              triggerVolumeToast(volume, nextMuted);
-              return nextMuted;
-            });
-          }}
-          isFullscreen={isFullscreen || isPseudoFullscreen}
-          onToggleFullscreen={toggleFullscreen}
-          onTakeSnapshot={handleTakeSnapshot}
-          subtitleStreams={subtitleStreams}
-          subtitleTracks={subtitleTracks}
-          selectedSubTrack={selectedSubTrack}
-          onSelectSubStream={handleSelectEmbeddedSubtitle}
-          onSelectSubTrack={setSelectedSubTrack}
-          onAddSubtitleFile={() => customSubInputRef.current?.click()}
-          onOpenSubtitleSettings={() => {
-            onUpdateSubSettings({ ...subSettings, showStyleColumn: true });
-            setShowAudioSubMenu(true);
-          }}
-          onOpenSubtitleTranscript={() => {
-            onUpdateSubSettings({ ...subSettings, showViewColumn: true });
-            setShowAudioSubMenu(true);
-          }}
-          isTimelineOnly={timelineOnlyMode}
-          onToggleTimelineOnly={() => {
-            setTimelineOnlyMode(prev => {
-              const next = !prev;
-              triggerSwitchToast(next ? 'Timeline Only (VLC Mode)' : 'Standard Controls');
-              return next;
-            });
-          }}
-          aspectRatio={aspectRatio}
-          onSetAspectRatio={(ratio) => {
-            setAspectRatio(ratio);
-            triggerSwitchToast(`Aspect Ratio: ${ratio === 'default' ? 'Default Fit' : ratio.toUpperCase()}`);
-          }}
-          onOpenSettings={() => setShowSettingsPanel(true)}
-          onOpenAudioSubMenu={() => setShowAudioSubMenu(true)}
-          bookmarks={bookmarks}
-          onSeekToBookmark={(t) => {
-            if (videoRef.current) videoRef.current.currentTime = t;
-            setCurrentTime(t);
-          }}
-          onAddBookmark={() => {
-            if (videoRef.current) {
-              setEditingBookmark({
-                id: '',
-                time: Math.round(videoRef.current.currentTime),
-                title: '',
-                label: '',
-                category: 'Default',
-                description: '',
-                createdAt: '',
-                updatedAt: ''
-              });
-              setShowAddDialog(true);
-            }
-          }}
-        />
       )}
     </div>
   );

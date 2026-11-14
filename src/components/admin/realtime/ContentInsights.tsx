@@ -92,28 +92,36 @@ export const ContentInsights: React.FC<ContentInsightsProps> = ({ insights }) =>
             </tr>
           </thead>
           <tbody>
-            {topTitles.map((t, idx) => (
-              <tr key={idx} style={{ borderBottom: '1px solid var(--border, #262D39)' }}>
-                <td style={{ padding: '10px', fontWeight: 600, color: 'var(--text-1, #E4E8EE)' }}>
-                  <span style={{ color: 'var(--accent, #8CA9EE)', marginRight: '8px' }}>#{idx + 1}</span>
-                  {t.title}
-                </td>
-                <td style={{ padding: '10px', color: 'var(--text-2, #A9B2C0)' }}>
-                  {t.watchTimeHours.toLocaleString()} hrs
-                </td>
-                <td style={{ padding: '10px', color: 'var(--text-2, #A9B2C0)' }}>
-                  {t.uniqueViewers.toLocaleString()}
-                </td>
-                <td style={{ padding: '10px', textAlign: 'right' }}>
-                  <span style={{
-                    color: t.completionRatePct > 85 ? 'var(--success, #86CDA6)' : 'var(--accent, #8CA9EE)',
-                    fontWeight: 700
-                  }}>
-                    {t.completionRatePct}%
-                  </span>
+            {topTitles.length === 0 ? (
+              <tr>
+                <td colSpan={4} style={{ padding: '28px 10px', textAlign: 'center', color: 'var(--text-3, #8F99AA)' }}>
+                  No playback history recorded yet. As users watch movies and episodes, title engagement will be charted here.
                 </td>
               </tr>
-            ))}
+            ) : (
+              topTitles.map((t, idx) => (
+                <tr key={idx} style={{ borderBottom: '1px solid var(--border, #262D39)' }}>
+                  <td style={{ padding: '10px', fontWeight: 600, color: 'var(--text-1, #E4E8EE)' }}>
+                    <span style={{ color: 'var(--accent, #8CA9EE)', marginRight: '8px' }}>#{idx + 1}</span>
+                    {t.title}
+                  </td>
+                  <td style={{ padding: '10px', color: 'var(--text-2, #A9B2C0)' }}>
+                    {t.watchTimeHours.toLocaleString()} hrs
+                  </td>
+                  <td style={{ padding: '10px', color: 'var(--text-2, #A9B2C0)' }}>
+                    {t.uniqueViewers.toLocaleString()}
+                  </td>
+                  <td style={{ padding: '10px', textAlign: 'right' }}>
+                    <span style={{
+                      color: t.completionRatePct > 85 ? 'var(--success, #86CDA6)' : 'var(--accent, #8CA9EE)',
+                      fontWeight: 700
+                    }}>
+                      {t.completionRatePct}%
+                    </span>
+                  </td>
+                </tr>
+              ))
+            )}
           </tbody>
         </table>
       </div>
@@ -149,7 +157,14 @@ export const ContentInsights: React.FC<ContentInsightsProps> = ({ insights }) =>
               </tr>
             </thead>
             <tbody>
-              {retentionCohorts.map(c => {
+              {retentionCohorts.length === 0 ? (
+                <tr>
+                  <td colSpan={7} style={{ padding: '24px 12px', textAlign: 'center', color: 'var(--text-3, #8F99AA)' }}>
+                    Retention cohorts will populate after 7+ days of multi-session viewer telemetry.
+                  </td>
+                </tr>
+              ) : (
+                retentionCohorts.map(c => {
                 const getCellColor = (val: number | null) => {
                   if (val === null) return 'transparent';
                   if (val >= 60) return 'rgba(134, 205, 166, 0.3)';
@@ -177,7 +192,7 @@ export const ContentInsights: React.FC<ContentInsightsProps> = ({ insights }) =>
                     ))}
                   </tr>
                 );
-              })}
+              }))}
             </tbody>
           </table>
         </div>

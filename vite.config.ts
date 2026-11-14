@@ -99,6 +99,10 @@ export default defineConfig(({ mode }): any => {
         '/api': {
           target: process.env.PORT_BACKEND ? `http://127.0.0.1:${process.env.PORT_BACKEND}` : 'http://127.0.0.1:50001',
           changeOrigin: true,
+        },
+        '/admin/stream': {
+          target: process.env.PORT_BACKEND ? `http://127.0.0.1:${process.env.PORT_BACKEND}` : 'http://127.0.0.1:50001',
+          changeOrigin: true,
         }
       }
     },

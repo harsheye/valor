@@ -325,6 +325,17 @@ export const PlayerIsland: React.FC<PlayerIslandProps> = ({
       const prevNotif = currentNotifRef.current;
       const prevStage = stageRef.current;
 
+      // Deduplicate subtitle/audio notifications for the exact same track
+      if (
+        (notif.type === 'subtitle' || notif.type === 'audio') &&
+        prevNotif?.type === notif.type &&
+        (prevNotif as any).index === (notif as any).index &&
+        (prevNotif as any).language === (notif as any).language &&
+        (prevStage === 'open' || prevStage === 'circle')
+      ) {
+        return;
+      }
+
       // Rule: Same-type volume updates update in place with no re-animation; restarts 1.6s timer
       if (
         notif.type === 'volume' &&

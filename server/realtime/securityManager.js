@@ -16,48 +16,41 @@ export class SecurityManager {
     this.adminIpAllowlist = new Set(['127.0.0.1', '::1', 'localhost']);
     this.dataStore = null;
 
-    this.initDefaultBlockList();
     this.initSampleAdminSessions();
   }
 
   setDataStore(ds) {
     this.dataStore = ds;
+    this.syncBlockListFromDb();
+  }
+
+  syncBlockListFromDb() {
+    if (!this.dataStore) return;
+    try {
+      if (this.dataStore.sqliteDb) {
+        const rows = this.dataStore.sqliteDb.prepare(`SELECT * FROM blocked_ips`).all();
+        if (Array.isArray(rows)) {
+          for (const r of rows) {
+            const id = `blk_ip_${r.ip.replace(/[^a-zA-Z0-9]/g, '_')}`;
+            if (!this.blockList.has(id)) {
+              this.blockList.set(id, {
+                id,
+                type: 'ip',
+                value: r.ip,
+                reason: r.reason || 'Blocked by administrator',
+                expiresAt: null,
+                createdBy: 'admin',
+                createdAt: r.created_at || new Date().toISOString()
+              });
+            }
+          }
+        }
+      }
+    } catch {}
   }
 
   initDefaultBlockList() {
-    const defaults = [
-      {
-        id: 'blk_1',
-        type: 'ip',
-        value: '198.51.100.42',
-        reason: 'Automated vulnerability scanner brute-force',
-        expiresAt: new Date(Date.now() + 7 * 86400000).toISOString(),
-        createdBy: 'system:auto-shield',
-        createdAt: new Date(Date.now() - 3600000).toISOString()
-      },
-      {
-        id: 'blk_2',
-        type: 'cidr',
-        value: '203.0.113.0/24',
-        reason: 'Known malicious scraper botnet range',
-        expiresAt: null, // permanent
-        createdBy: 'admin',
-        createdAt: new Date(Date.now() - 86400000).toISOString()
-      },
-      {
-        id: 'blk_3',
-        type: 'device_id',
-        value: 'dev_suspicious_bot_8492',
-        reason: 'Simultaneous multi-stream account scraping',
-        expiresAt: new Date(Date.now() + 30 * 86400000).toISOString(),
-        createdBy: 'admin',
-        createdAt: new Date(Date.now() - 7200000).toISOString()
-      }
-    ];
-
-    for (const b of defaults) {
-      this.blockList.set(b.id, b);
-    }
+    // Start with a clean, unpolluted real blocklist
   }
 
   initSampleAdminSessions() {

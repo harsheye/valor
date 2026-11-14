@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 
 export type ConnectionState = 'live' | 'reconnecting' | 'offline';
 
@@ -41,13 +41,27 @@ export function useAdminRealtime({
   const slowPollTimerRef = useRef<any>(null);
   const seenEventIdsRef = useRef<Set<string>>(new Set());
   const lastEventIdRef = useRef<string | null>(null);
+  const connectStreamRef = useRef<() => void>(() => {});
 
-  // Sync ref
+  // Keep latest callback references so callbacks changing don't trigger reconnect loops
+  const onEventRef = useRef(onEvent);
+  onEventRef.current = onEvent;
+  const onBatchEventsRef = useRef(onBatchEvents);
+  onBatchEventsRef.current = onBatchEvents;
+  const onSyncMissedRef = useRef(onSyncMissed);
+  onSyncMissedRef.current = onSyncMissed;
+
+  // Normalized topics string key to prevent array identity change loops
+  const topicsKey = useMemo(() => {
+    return (topics || ['*']).slice().sort().join(',');
+  }, [topics]);
+
+  // Sync lastEventId ref
   useEffect(() => {
     lastEventIdRef.current = lastEventId;
   }, [lastEventId]);
 
-  // Heartbeat watchdog: if no activity for 35s, reconnect
+  // Heartbeat watchdog: if no activity for 40s, reconnect
   const resetHeartbeatWatchdog = useCallback(() => {
     if (heartbeatWatchdogRef.current) clearTimeout(heartbeatWatchdogRef.current);
     heartbeatWatchdogRef.current = setTimeout(() => {
@@ -55,15 +69,16 @@ export function useAdminRealtime({
         eventSourceRef.current.close();
         handleConnectionFailure();
       }
-    }, 35000);
+    }, 40000);
   }, []);
 
   const handleConnectionFailure = useCallback(() => {
     setConnectionState('reconnecting');
     setReconnectAttempt(prev => {
       const nextAttempt = prev + 1;
-      const delayMs = Math.min(1000 * Math.pow(1.8, nextAttempt - 1), 30000);
-      const delaySec = Math.round(delayMs / 1000);
+      // Exponential backoff: minimum 2s, maximum 30s
+      const delayMs = Math.min(2000 * Math.pow(1.5, Math.max(0, nextAttempt - 1)), 30000);
+      const delaySec = Math.max(1, Math.round(delayMs / 1000));
       setNextRetrySeconds(delaySec);
 
       if (countdownTimerRef.current) clearInterval(countdownTimerRef.current);
@@ -71,12 +86,14 @@ export function useAdminRealtime({
       countdownTimerRef.current = setInterval(() => {
         remaining -= 1;
         setNextRetrySeconds(Math.max(remaining, 0));
-        if (remaining <= 0) clearInterval(countdownTimerRef.current);
+        if (remaining <= 0 && countdownTimerRef.current) {
+          clearInterval(countdownTimerRef.current);
+        }
       }, 1000);
 
       if (retryTimerRef.current) clearTimeout(retryTimerRef.current);
       retryTimerRef.current = setTimeout(() => {
-        connectStream();
+        connectStreamRef.current();
       }, delayMs);
 
       return nextAttempt;
@@ -84,16 +101,19 @@ export function useAdminRealtime({
   }, []);
 
   const connectStream = useCallback(() => {
-    if (!token) return;
+    if (!token) {
+      setConnectionState('offline');
+      return;
+    }
 
     if (eventSourceRef.current) {
       try { eventSourceRef.current.close(); } catch {}
       eventSourceRef.current = null;
     }
 
-    const topicsQuery = topics.join(',');
     const currentLastId = lastEventIdRef.current;
-    let url = `/admin/stream?topics=${encodeURIComponent(topicsQuery)}&token=${encodeURIComponent(token)}`;
+    // Route via /api/admin/stream which matches the Vite /api proxy and backend router
+    let url = `/api/admin/stream?topics=${encodeURIComponent(topicsKey)}&token=${encodeURIComponent(token)}`;
     if (currentLastId) {
       url += `&lastEventId=${encodeURIComponent(currentLastId)}`;
     }
@@ -121,7 +141,7 @@ export function useAdminRealtime({
           const syncData = JSON.parse(e.data);
           if (syncData.replayedCount > 0) {
             setMissedEventsApplied(syncData.replayedCount);
-            if (onSyncMissed) onSyncMissed(syncData.replayedCount);
+            if (onSyncMissedRef.current) onSyncMissedRef.current(syncData.replayedCount);
           }
         } catch {}
       });
@@ -137,7 +157,6 @@ export function useAdminRealtime({
               if (ev?.id && !seenEventIdsRef.current.has(ev.id)) {
                 seenEventIdsRef.current.add(ev.id);
                 if (seenEventIdsRef.current.size > 5000) {
-                  // Keep set bounded
                   const it = seenEventIdsRef.current.values();
                   for (let i = 0; i < 1000; i++) seenEventIdsRef.current.delete(it.next().value!);
                 }
@@ -145,8 +164,8 @@ export function useAdminRealtime({
                 setLastEventId(ev.id);
               }
             }
-            if (freshEvents.length > 0 && onBatchEvents) {
-              onBatchEvents(freshEvents);
+            if (freshEvents.length > 0 && onBatchEventsRef.current) {
+              onBatchEventsRef.current(freshEvents);
             }
           }
         } catch {}
@@ -162,21 +181,27 @@ export function useAdminRealtime({
             if (seenEventIdsRef.current.has(envelope.id)) return; // Dedupe
             seenEventIdsRef.current.add(envelope.id);
             setLastEventId(envelope.id);
-            if (onEvent) onEvent(envelope);
+            if (onEventRef.current) onEventRef.current(envelope);
           }
         } catch {}
       };
 
       es.onerror = () => {
-        es.close();
+        if (eventSourceRef.current) {
+          eventSourceRef.current.close();
+          eventSourceRef.current = null;
+        }
         handleConnectionFailure();
       };
-    } catch (err) {
+    } catch {
       handleConnectionFailure();
     }
-  }, [token, topics, onEvent, onBatchEvents, onSyncMissed, resetHeartbeatWatchdog, handleConnectionFailure]);
+  }, [token, topicsKey, resetHeartbeatWatchdog, handleConnectionFailure]);
 
-  // Initial connect
+  // Keep ref up to date
+  connectStreamRef.current = connectStream;
+
+  // Connect only when token or topicsKey changes
   useEffect(() => {
     if (!token) {
       setConnectionState('offline');
@@ -194,7 +219,7 @@ export function useAdminRealtime({
       if (heartbeatWatchdogRef.current) clearTimeout(heartbeatWatchdogRef.current);
       if (slowPollTimerRef.current) clearInterval(slowPollTimerRef.current);
     };
-  }, [token, connectStream]);
+  }, [token, topicsKey, connectStream]);
 
   // Offline slow poll fallback (every 30s)
   useEffect(() => {

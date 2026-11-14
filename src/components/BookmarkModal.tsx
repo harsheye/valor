@@ -159,6 +159,8 @@ export const BookmarkModal: React.FC<BookmarkModalProps> = ({
     <div 
       className="bookmark-dialog-overlay custom-overlay-anim" 
       onClick={onClose}
+      onDoubleClick={(e) => e.stopPropagation()}
+      onPointerDown={(e) => e.stopPropagation()}
       style={{
         position: 'fixed',
         top: 0,
@@ -219,6 +221,9 @@ export const BookmarkModal: React.FC<BookmarkModalProps> = ({
       <div 
         className="bookmark-dialog-box custom-box-anim" 
         onClick={(e) => e.stopPropagation()}
+        onDoubleClick={(e) => e.stopPropagation()}
+        onPointerDown={(e) => e.stopPropagation()}
+        onMouseDown={(e) => e.stopPropagation()}
         style={{
           background: 'var(--card-bg, #141414)',
           border: '1px solid var(--border-color, rgba(255, 255, 255, 0.12))',

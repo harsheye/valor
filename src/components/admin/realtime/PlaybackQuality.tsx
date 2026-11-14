@@ -20,6 +20,7 @@ export const PlaybackQuality: React.FC<PlaybackQualityProps> = ({ metrics }) => 
   const [activeGroup, setActiveGroup] = useState<'title' | 'device' | 'region'>('title');
 
   const { summary, byTitle, byDevice, byRegion } = metrics;
+  const activeRows = (activeGroup === 'title' ? byTitle : (activeGroup === 'device' ? byDevice : byRegion)) || [];
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
@@ -157,70 +158,78 @@ export const PlaybackQuality: React.FC<PlaybackQualityProps> = ({ metrics }) => 
             </tr>
           </thead>
           <tbody>
-            {(activeGroup === 'title' ? byTitle : (activeGroup === 'device' ? byDevice : byRegion)).map((row: any, idx: number) => {
-              const label = row.title || row.device || row.region;
-              const isWorst = row.isWorst;
+            {activeRows.length === 0 ? (
+              <tr>
+                <td colSpan={6} style={{ padding: '32px 14px', textAlign: 'center', color: 'var(--text-3, #8F99AA)' }}>
+                  No active playback stream sessions to benchmark for this dimension.
+                </td>
+              </tr>
+            ) : (
+              activeRows.map((row: any, idx: number) => {
+                const label = row.title || row.device || row.region;
+                const isWorst = row.isWorst;
 
-              return (
-                <tr
-                  key={idx}
-                  style={{
-                    borderBottom: '1px solid var(--border, #262D39)',
-                    background: isWorst ? 'rgba(236, 143, 149, 0.06)' : 'transparent'
-                  }}
-                >
-                  <td style={{ padding: '12px 14px', fontWeight: 600, color: 'var(--text-1, #E4E8EE)' }}>
-                    {label}
-                  </td>
-                  <td style={{ padding: '12px 14px', color: row.startupMs > 700 ? 'var(--warning, #E3BD7A)' : 'var(--text-2, #A9B2C0)' }}>
-                    {row.startupMs} ms
-                  </td>
-                  <td style={{ padding: '12px 14px', color: row.bufferingPct > 0.4 ? 'var(--danger, #EC8F95)' : 'var(--text-2, #A9B2C0)' }}>
-                    {row.bufferingPct}%
-                  </td>
-                  <td style={{ padding: '12px 14px', color: 'var(--text-2, #A9B2C0)' }}>
-                    {row.bitrateKbps ? `${(row.bitrateKbps / 1000).toFixed(1)} Mbps` : 'Adaptive'}
-                  </td>
-                  <td style={{ padding: '12px 14px', color: row.errorRate > 1.0 ? 'var(--danger, #EC8F95)' : 'var(--success, #86CDA6)', fontWeight: 600 }}>
-                    {row.errorRate}%
-                  </td>
-                  <td style={{ padding: '12px 14px', textAlign: 'right' }}>
-                    {isWorst ? (
-                      <span style={{
-                        display: 'inline-flex',
-                        alignItems: 'center',
-                        gap: '4px',
-                        background: 'rgba(236, 143, 149, 0.15)',
-                        color: 'var(--danger, #EC8F95)',
-                        border: '1px solid var(--danger, #EC8F95)',
-                        padding: '2px 8px',
-                        borderRadius: '999px',
-                        fontSize: '0.72rem',
-                        fontWeight: 700
-                      }}>
-                        <AlertTriangle size={12} />
-                        Worst Offender
-                      </span>
-                    ) : (
-                      <span style={{
-                        display: 'inline-flex',
-                        alignItems: 'center',
-                        gap: '4px',
-                        background: 'rgba(134, 205, 166, 0.12)',
-                        color: 'var(--success, #86CDA6)',
-                        padding: '2px 8px',
-                        borderRadius: '999px',
-                        fontSize: '0.72rem',
-                        fontWeight: 600
-                      }}>
-                        <CheckCircle2 size={12} />
-                        Optimal
-                      </span>
-                    )}
-                  </td>
-                </tr>
-              );
-            })}
+                return (
+                  <tr
+                    key={idx}
+                    style={{
+                      borderBottom: '1px solid var(--border, #262D39)',
+                      background: isWorst ? 'rgba(236, 143, 149, 0.06)' : 'transparent'
+                    }}
+                  >
+                    <td style={{ padding: '12px 14px', fontWeight: 600, color: 'var(--text-1, #E4E8EE)' }}>
+                      {label}
+                    </td>
+                    <td style={{ padding: '12px 14px', color: row.startupMs > 700 ? 'var(--warning, #E3BD7A)' : 'var(--text-2, #A9B2C0)' }}>
+                      {row.startupMs} ms
+                    </td>
+                    <td style={{ padding: '12px 14px', color: row.bufferingPct > 0.4 ? 'var(--danger, #EC8F95)' : 'var(--text-2, #A9B2C0)' }}>
+                      {row.bufferingPct}%
+                    </td>
+                    <td style={{ padding: '12px 14px', color: 'var(--text-2, #A9B2C0)' }}>
+                      {row.bitrateKbps ? `${(row.bitrateKbps / 1000).toFixed(1)} Mbps` : 'Adaptive'}
+                    </td>
+                    <td style={{ padding: '12px 14px', color: row.errorRate > 1.0 ? 'var(--danger, #EC8F95)' : 'var(--success, #86CDA6)', fontWeight: 600 }}>
+                      {row.errorRate}%
+                    </td>
+                    <td style={{ padding: '12px 14px', textAlign: 'right' }}>
+                      {isWorst ? (
+                        <span style={{
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '4px',
+                          background: 'rgba(236, 143, 149, 0.15)',
+                          color: 'var(--danger, #EC8F95)',
+                          border: '1px solid var(--danger, #EC8F95)',
+                          padding: '2px 8px',
+                          borderRadius: '999px',
+                          fontSize: '0.72rem',
+                          fontWeight: 700
+                        }}>
+                          <AlertTriangle size={12} />
+                          Worst Offender
+                        </span>
+                      ) : (
+                        <span style={{
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '4px',
+                          background: 'rgba(134, 205, 166, 0.12)',
+                          color: 'var(--success, #86CDA6)',
+                          padding: '2px 8px',
+                          borderRadius: '999px',
+                          fontSize: '0.72rem',
+                          fontWeight: 600
+                        }}>
+                          <CheckCircle2 size={12} />
+                          Optimal
+                        </span>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })
+            )}
           </tbody>
         </table>
       </div>

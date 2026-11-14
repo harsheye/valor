@@ -1,7 +1,9 @@
+import { OnlineStreamAdBanner } from './OnlineStreamAdBanner';
+import { getEmbedProviders, buildEmbedUrl, fetchEmbedProvidersFromServer, getProviderDisplayName } from '../services/embedProviders';
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { 
   Play, Pause, RotateCcw, RotateCw, X, 
-  Maximize, Minimize, Volume2, Volume1, VolumeX, Lock, Unlock,
+  Maximize, Minimize, Volume2, Volume1, VolumeX,
   Sliders, SkipForward, Ban, Eye, Settings, Bookmark as BookmarkIcon, List, Server, Cpu
 } from 'lucide-react';
 import type { VideoItem, Bookmark } from '../types/media';
@@ -82,7 +84,7 @@ export const OnlineVideoPlayer: React.FC<OnlineVideoPlayerProps> = ({
   const [isFullscreen, setIsFullscreen] = useState(false);
   
   // Streaming servers & details
-  const [server, setServer] = useState<'videasy' | 'vidking'>('videasy');
+  const [server, setServer] = useState<string>('videasy');
   const [currentSeason, setCurrentSeason] = useState(video.season || 1);
   const [currentEpisode, setCurrentEpisode] = useState(video.episode || 1);
   const [tvMetadata, setTvMetadata] = useState<{ seasonsCount: number; episodesPerSeason: { [seasonNum: number]: number } } | null>(null);
@@ -95,7 +97,43 @@ export const OnlineVideoPlayer: React.FC<OnlineVideoPlayerProps> = ({
   const [showAddDialog, setShowAddDialog] = useState(false);
   const [editingBookmark, setEditingBookmark] = useState<Bookmark | undefined>(undefined);
   const [markingStartTime, setMarkingStartTime] = useState<number | null>(null);
-  const [isLocked, setIsLocked] = useState(false);
+  // Lock mode removed per user request
+  const topRightControlsRef = useRef<HTMLDivElement>(null);
+  const [controlsHovered, setControlsHovered] = useState(false);
+  const [controlsOpacity, setControlsOpacity] = useState(0.1);
+
+  // Proximity-based opacity for top-right controls (Server selector & Close button)
+  // Base resting opacity is strictly 0.1 (10%), scaling up to 1.0 as the mouse nears the controls
+  useEffect(() => {
+    const handleProximityMouseMove = (e: MouseEvent) => {
+      if (controlsHovered) {
+        setControlsOpacity(1.0);
+        return;
+      }
+      const el = topRightControlsRef.current;
+      if (!el) return;
+
+      const rect = el.getBoundingClientRect();
+      const centerX = rect.left + rect.width / 2;
+      const centerY = rect.top + rect.height / 2;
+      const distance = Math.hypot(e.clientX - centerX, e.clientY - centerY);
+
+      const maxDistance = 350; // Distance in px where fading starts
+      if (distance >= maxDistance) {
+        setControlsOpacity(0.1);
+      } else {
+        const proximity = 1 - (distance / maxDistance);
+        // Smooth ease curve from 0.1 up to 1.0
+        const calculated = 0.1 + 0.9 * Math.pow(proximity, 1.2);
+        setControlsOpacity(Math.min(1.0, Math.max(0.1, Number(calculated.toFixed(3)))));
+      }
+    };
+
+    window.addEventListener('mousemove', handleProximityMouseMove, { passive: true });
+    return () => {
+      window.removeEventListener('mousemove', handleProximityMouseMove);
+    };
+  }, [controlsHovered]);
   
   // Native control mode (pointer events auto)
   const [interactWithNative, setInteractWithNative] = useState(false);
@@ -543,7 +581,6 @@ export const OnlineVideoPlayer: React.FC<OnlineVideoPlayerProps> = ({
 
   // Auto-hide controls handler
   const handleMouseMove = () => {
-    if (isLocked) return;
     setShowControls(true);
     if (controlsTimeoutRef.current) clearTimeout(controlsTimeoutRef.current);
     
@@ -558,7 +595,7 @@ export const OnlineVideoPlayer: React.FC<OnlineVideoPlayerProps> = ({
   // Keyboard Hotkeys listener
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (isLocked || showAddDialog || showSettingsPanel) return;
+      if (showAddDialog || showSettingsPanel) return;
 
       const activeTag = document.activeElement?.tagName.toLowerCase();
       if (activeTag === 'input' || activeTag === 'textarea' || activeTag === 'select') return;
@@ -612,7 +649,7 @@ export const OnlineVideoPlayer: React.FC<OnlineVideoPlayerProps> = ({
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isLocked, isPlaying, volume, isMuted, showAddDialog, showSettingsPanel, interactWithNative, sendIframeCommand]);
+  }, [isPlaying, volume, isMuted, showAddDialog, showSettingsPanel, interactWithNative, sendIframeCommand]);
 
   // Listen to postMessage player events from iframe
   useEffect(() => {
@@ -668,26 +705,7 @@ export const OnlineVideoPlayer: React.FC<OnlineVideoPlayerProps> = ({
 
   // Construct URL for streaming server iframe
   const getEmbedUrl = () => {
-    const id = video.type === 'online_anime' ? video.anilistId : video.tmdbId;
-    const startProgress = video.currentTime && Math.floor(video.currentTime) > 10 ? `?progress=${Math.floor(video.currentTime)}` : '';
-    
-    if (server === 'videasy') {
-      const colorParam = startProgress ? '&color=8B5CF6' : '?color=8B5CF6';
-      if (video.type === 'online_movie') {
-        return `https://player.videasy.net/movie/${id}${startProgress}${colorParam}`;
-      } else if (video.type === 'online_tv') {
-        return `https://player.videasy.net/tv/${id}/${currentSeason}/${currentEpisode}${startProgress}${colorParam}&nextEpisode=true&episodeSelector=true`;
-      } else {
-        return `https://player.videasy.net/anime/${id}/${currentEpisode}${startProgress}${colorParam}`;
-      }
-    } else {
-      const colorParam = startProgress ? '&color=e50914' : '?color=e50914';
-      if (video.type === 'online_movie') {
-        return `https://www.vidking.net/embed/movie/${id}${startProgress}${colorParam}&autoPlay=true`;
-      } else {
-        return `https://www.vidking.net/embed/tv/${id}/${currentSeason}/${currentEpisode}${startProgress}${colorParam}&nextEpisode=true&episodeSelector=true`;
-      }
-    }
+    return buildEmbedUrl(server, video, currentTime, currentSeason, currentEpisode);
   };
 
   // Skip auto-marked scenes
@@ -721,7 +739,6 @@ export const OnlineVideoPlayer: React.FC<OnlineVideoPlayerProps> = ({
 
   // Playback control functions
   const togglePlay = () => {
-    if (isLocked) return;
     if (isPlaying) {
       sendIframeCommand('pause');
       setIsPlaying(false);
@@ -732,7 +749,7 @@ export const OnlineVideoPlayer: React.FC<OnlineVideoPlayerProps> = ({
   };
 
   const seekDelta = (secs: number) => {
-    if (isLocked || blockSeekingCompletely) return;
+    if (blockSeekingCompletely) return;
     const target = Math.max(0, Math.min(duration, currentTime + secs));
     sendIframeCommand('seek', target);
     setCurrentTime(target);
@@ -740,14 +757,13 @@ export const OnlineVideoPlayer: React.FC<OnlineVideoPlayerProps> = ({
   };
 
   const handleSliderChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (isLocked || blockSeekingCompletely) return;
+    if (blockSeekingCompletely) return;
     const target = Number(e.target.value);
     sendIframeCommand('seek', target);
     setCurrentTime(target);
   };
 
   const adjustVolume = (delta: number) => {
-    if (isLocked) return;
     const val = Math.max(0, Math.min(1.0, volume + delta));
     setVolume(val);
     localStorage.setItem('valor_player_volume', String(val));
@@ -759,7 +775,6 @@ export const OnlineVideoPlayer: React.FC<OnlineVideoPlayerProps> = ({
   };
 
   const toggleMute = () => {
-    if (isLocked) return;
     setIsMuted(prev => {
       const next = !prev;
       island.notify({ type: 'volume', value: volume, muted: next });
@@ -768,7 +783,6 @@ export const OnlineVideoPlayer: React.FC<OnlineVideoPlayerProps> = ({
   };
 
   const toggleFullscreen = () => {
-    if (isLocked) return;
     if (!document.fullscreenElement) {
       playerContainerRef.current?.requestFullscreen().then(() => setIsFullscreen(true));
     } else {
@@ -866,112 +880,87 @@ export const OnlineVideoPlayer: React.FC<OnlineVideoPlayerProps> = ({
   return (
     <div 
       ref={playerContainerRef}
-      className={`local-player-container ${isLocked ? 'is-locked' : ''}`}
+      className="local-player-container"
       onMouseMove={handleMouseMove}
       onWheel={handleWheel}
       onMouseLeave={() => !interactWithNative && setShowControls(false)}
       style={{ background: 'black', fontFamily: 'Outfit, sans-serif' }}
     >
       <PlayerIsland />
-      {/* Standalone Lock Button (Top-Left) — Always accessible to lock & unlock */}
-      <button
-        onClick={() => {
-          const next = !isLocked;
-          setIsLocked(next);
-          addToast(next ? 'UI Locked' : 'UI Unlocked');
+      {/* Top Right Controls: Hazard Icon (Ad Notice), Source Selector & Exit Button — Proximity Fade */}
+      <div 
+        ref={topRightControlsRef}
+        className="top-right-online-controls"
+        style={{ 
+          position: 'fixed', 
+          top: '20px', 
+          right: '20px', 
+          zIndex: 2200, 
+          display: 'flex', 
+          alignItems: 'center', 
+          gap: '10px', 
+          pointerEvents: 'auto',
+          opacity: controlsOpacity,
+          transition: 'opacity 0.15s ease-out'
         }}
-        style={{
-          position: 'fixed',
-          top: '20px',
-          left: '20px',
-          zIndex: 2200,
-          width: '38px',
-          height: '38px',
-          borderRadius: '50%',
-          background: isLocked ? 'rgba(229, 9, 20, 0.4)' : 'rgba(10, 10, 15, 0.85)',
-          backdropFilter: 'blur(15px)',
-          WebkitBackdropFilter: 'blur(15px)',
-          border: `1px solid ${isLocked ? '#e50914' : 'rgba(255, 255, 255, 0.15)'}`,
-          color: isLocked ? '#ff4d4d' : 'rgba(255, 255, 255, 0.85)',
-          cursor: 'pointer',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          boxShadow: isLocked ? '0 0 16px rgba(229, 9, 20, 0.6)' : '0 4px 20px rgba(0,0,0,0.5)',
-          transition: 'all 0.2s ease',
-          pointerEvents: 'auto'
-        }}
-        title={isLocked ? 'Locked (Click to Unlock)' : 'Lock UI'}
+        onMouseEnter={() => setControlsHovered(true)}
+        onMouseLeave={() => setControlsHovered(false)}
       >
-        {isLocked ? <Lock size={18} /> : <Unlock size={18} />}
-      </button>
+        {/* Simple Hazard Icon for Ad Notice & Shortcuts */}
+        <OnlineStreamAdBanner />
 
-      {/* Screen interaction blocker when in Lock mode */}
-      {isLocked && (
-        <div 
-          style={{ 
-            position: 'fixed', 
-            inset: 0, 
-            zIndex: 2100, 
-            pointerEvents: 'auto', 
-            cursor: 'not-allowed',
-            background: 'transparent'
-          }} 
+        {/* Source Selector Dropdown */}
+        <CustomSelect
+          value={server}
+          onChange={(val) => setServer(val)}
+          options={getEmbedProviders().filter(p => p.enabled).map((p, idx) => ({ 
+            value: p.id, 
+            label: getProviderDisplayName(p, idx) 
+          }))}
+          hideSearch={true}
+          width="115px"
         />
-      )}
 
-      {/* Source Selector & Cross (Exit) Button — ONLY VISIBLE WHEN NOT LOCKED */}
-      {!isLocked && (
-        <div style={{ position: 'fixed', top: '20px', right: '20px', zIndex: 2200, display: 'flex', alignItems: 'center', gap: '10px', pointerEvents: 'auto' }}>
-          {/* Source Selector Dropdown */}
-          <CustomSelect
-            value={server}
-            onChange={(val) => setServer(val as 'videasy' | 'vidking')}
-            options={[
-              { value: 'videasy', label: 'Source 1' },
-              { value: 'vidking', label: 'Source 2' }
-            ]}
-            hideSearch={true}
-            width="125px"
-          />
-
-          {/* Cross (Exit) Button */}
-          <button 
-            onClick={onBack}
-            style={{
-              width: '36px',
-              height: '36px',
-              borderRadius: '50%',
-              background: 'rgba(10, 10, 15, 0.85)',
-              backdropFilter: 'blur(15px)',
-              WebkitBackdropFilter: 'blur(15px)',
-              border: '1px solid rgba(255, 255, 255, 0.15)',
-              color: 'rgba(255, 255, 255, 0.85)',
-              cursor: 'pointer',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              boxShadow: '0 4px 20px rgba(0,0,0,0.5)',
-              transition: 'all 0.2s ease'
-            }}
-            onMouseEnter={(e) => {
-              e.currentTarget.style.color = '#fff';
-              e.currentTarget.style.background = '#e50914';
-              e.currentTarget.style.borderColor = '#e50914';
-            }}
-            onMouseLeave={(e) => {
-              e.currentTarget.style.color = 'rgba(255, 255, 255, 0.85)';
-              e.currentTarget.style.background = 'rgba(10, 10, 15, 0.85)';
-              e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.15)';
-            }}
-            title="Exit Player"
-          >
-            <X size={18} />
-          </button>
-        </div>
-      )}
+        {/* Cross (Exit) Button */}
+        <button 
+          onClick={onBack}
+          style={{
+            width: '36px',
+            height: '36px',
+            borderRadius: '50%',
+            background: 'rgba(10, 10, 15, 0.85)',
+            backdropFilter: 'blur(15px)',
+            WebkitBackdropFilter: 'blur(15px)',
+            border: '1px solid rgba(255, 255, 255, 0.15)',
+            color: 'rgba(255, 255, 255, 0.85)',
+            cursor: 'pointer',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            boxShadow: '0 4px 20px rgba(0,0,0,0.5)',
+            transition: 'all 0.2s ease'
+          }}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.color = '#fff';
+            e.currentTarget.style.background = '#e50914';
+            e.currentTarget.style.borderColor = '#e50914';
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.color = 'rgba(255, 255, 255, 0.85)';
+            e.currentTarget.style.background = 'rgba(10, 10, 15, 0.85)';
+            e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.15)';
+          }}
+          title="Exit Player"
+        >
+          <X size={18} />
+        </button>
+      </div>
 
       <style>{`
+        .top-right-online-controls:hover,
+        .top-right-online-controls:focus-within {
+          opacity: 1 !important;
+        }
         .local-player-container {
           position: fixed;
           inset: 0;
@@ -1334,7 +1323,7 @@ export const OnlineVideoPlayer: React.FC<OnlineVideoPlayerProps> = ({
           style={{ width: '100%', height: '100%', border: 'none' }}
           allowFullScreen
           allow="autoplay; encrypted-media; fullscreen; picture-in-picture"
-          {...{ credentialless: "true" }}
+
         />
       </div>
 

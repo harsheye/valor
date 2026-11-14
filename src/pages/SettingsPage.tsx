@@ -21,11 +21,23 @@ import {
 import { 
   User, Plus, RefreshCw, Copy, Check, RotateCcw, 
   RotateCcw as RestoreIcon, ChevronRight, ArrowLeft, Radio,
-  Clock, Captions, Volume2, LayoutGrid, Monitor, Cloud, Download, Upload, Trash2, ShieldAlert
+  Clock, Captions, Volume2, LayoutGrid, Monitor, Cloud, Download, Upload, Trash2, ShieldAlert,
+  Wifi, Cpu, Gauge, Smartphone, HardDrive, ShieldCheck, Zap
 } from 'lucide-react';
 import { PlayerLoader } from '../components/player/PlayerLoader';
 import { sidecarService } from '../services/remote/sidecarService';
 import { featureFlagService } from '../services/featureFlags';
+import { 
+  getEffectiveCacheConfig, 
+  getNetworkProfile, 
+  getHardwareProfile, 
+  subscribeNetworkChanges, 
+  type CacheSettings, 
+  type NetworkProfile, 
+  type DeviceHardwareProfile, 
+  DEFAULT_CACHE_SETTINGS 
+} from '../services/cache/cachePolicy';
+import { clearRemoteProbeCache } from '../utils/remoteProbeCache';
 import { 
   initiateTraktPkceAuth, 
   generateTraktDeviceCode, 
@@ -146,6 +158,10 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
       case 'loader':
       case 'loading-animation':
         return 'loading-animation';
+      case 'cache':
+      case 'network':
+      case 'network-cache':
+        return 'network-cache';
       case 'companion':
       case 'local-engine':
         return featureFlagService.isFeatureEnabled('localEngine') ? 'local-engine' : 'general';
@@ -196,6 +212,48 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
     const interval = setInterval(fetchUpdateStatus, 15000);
     return () => clearInterval(interval);
   }, [fetchUpdateStatus]);
+
+  // Network & Hardware Telemetry + Adaptive Cache Config
+  const [liveNetworkProfile, setLiveNetworkProfile] = useState<NetworkProfile>(() => getNetworkProfile());
+  const hardwareProfile: DeviceHardwareProfile = useMemo(() => getHardwareProfile(), []);
+
+  useEffect(() => {
+    return subscribeNetworkChanges((prof) => {
+      setLiveNetworkProfile(prof);
+    });
+  }, []);
+
+  const currentCacheSettings: CacheSettings = useMemo(() => ({
+    ...DEFAULT_CACHE_SETTINGS,
+    ...(settings.cacheSettings || {}),
+  }), [settings.cacheSettings]);
+
+  const liveComputedCache = useMemo(() => {
+    return getEffectiveCacheConfig(currentCacheSettings, liveNetworkProfile);
+  }, [currentCacheSettings, liveNetworkProfile]);
+
+  const updateCacheSetting = <K extends keyof CacheSettings>(key: K, value: CacheSettings[K]) => {
+    const updatedCache: CacheSettings = {
+      ...currentCacheSettings,
+      [key]: value,
+    };
+    const updatedSettings = {
+      ...settings,
+      cacheSettings: updatedCache,
+    };
+    setSettings(updatedSettings);
+    saveSettingsToStorage(updatedSettings);
+    triggerAutosaveToast('Cache configuration saved');
+  };
+
+  const handleClearPlayerCache = () => {
+    try {
+      clearRemoteProbeCache();
+      triggerAutosaveToast('Player & remote byte caches purged');
+    } catch {
+      triggerAutosaveToast('Failed to purge caches');
+    }
+  };
 
   const handleCheckUpdate = async () => {
     setCheckingUpdate(true);
@@ -431,6 +489,8 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
       showFullscreen: true,
       disableAnimations: false,
       pauseOnFocusChange: false,
+      focusOnClick: true,
+      focusOnClickNoPause: true,
       allowUiSkipping: true,
       blockSeekingCompletely: false,
       getOverlayDataFromTmdb: true,
@@ -586,6 +646,17 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
               <button
                 type="button"
                 className="mobile-settings-row-btn"
+                onClick={() => { setMobileDetail('network-cache'); setActiveSection('network-cache'); }}
+              >
+                <div className="mobile-settings-row-text">
+                  <span className="mobile-settings-row-title">Cache & Network</span>
+                  <span className="mobile-settings-row-desc">{liveComputedCache.networkSummary} · {liveComputedCache.maxCapMb} MB cap</span>
+                </div>
+                <ChevronRight size={18} className="mobile-settings-chevron" />
+              </button>
+              <button
+                type="button"
+                className="mobile-settings-row-btn"
                 onClick={() => { setMobileDetail('loading-animation'); setActiveSection('loading-animation'); }}
               >
                 <div className="mobile-settings-row-text">
@@ -614,6 +685,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                mobileDetail === 'player-controls' ? 'Player controls' :
                mobileDetail === 'profile-storage' ? 'Profile & storage' :
                mobileDetail === 'connected-services' ? 'Connected services' :
+               mobileDetail === 'network-cache' ? 'Cache & Network' :
                mobileDetail === 'loading-animation' ? 'Loading animation' : 'Settings'}
             </h2>
           </div>
@@ -989,7 +1061,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                 )}
 
                 {/* 1.7 Behaviour Card */}
-                {matchesSearch('behaviour', 'animations', 'windows', 'intros', 'sex', 'nudity') && (
+                {matchesSearch('behaviour', 'animations', 'windows', 'intros', 'sex', 'nudity', 'focus', 'click', 'tab', 'active', 'pause', 'auto-pause', 'auto pause', 'loss') && (
                   <div id="card-behaviour">
                     <SettingsCard
                       title="Behaviour"
@@ -1008,13 +1080,28 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                       />
 
                       <SettingRow
-                        title="Pause when I switch windows"
-                        description="Pauses if you leave this tab or window."
+                        title="Auto-pause on focus loss"
+                        description="Automatically pause video playback when switching tabs or unfocusing the window."
                         control={
                           <Switch
                             checked={!!settings.pauseOnFocusChange}
                             onChange={(v) => updateSetting('pauseOnFocusChange', v)}
                             aria-label="Pause when window loses focus"
+                          />
+                        }
+                      />
+
+                      <SettingRow
+                        title="Focus on click (Don't pause media)"
+                        description="Clicking an inactive tab or window focuses it without pausing or toggling playback."
+                        control={
+                          <Switch
+                            checked={settings.focusOnClick !== false && (settings as any).focusOnClickNoPause !== false}
+                            onChange={(v) => {
+                              updateSetting('focusOnClick', v);
+                              updateSetting('focusOnClickNoPause', v);
+                            }}
+                            aria-label="Don't pause media on focus click"
                           />
                         }
                       />
@@ -2504,6 +2591,382 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                   </button>
                 </div>
               </SettingsCard>
+            )}
+
+            {/* ─── 10. CACHE & NETWORK SECTION ─── */}
+            {(isSearching ? matchesSearch('cache', 'network', 'wifi', 'ethernet', 'mobile data', 'cellular', 'metered', 'ram', 'cpu', 'buffer', 'device') : activeSection === 'network-cache') && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}>
+                {/* Real-time Telemetry Card */}
+                <SettingsCard
+                  title="Network & device telemetry"
+                  description="Live detection of connection type, data metering, CPU cores, RAM, and platform"
+                  badge={
+                    <span className="service-status-pill">
+                      {liveComputedCache.isMetered ? 'Metered / Low Data' : (liveComputedCache.networkType === 'cellular' ? 'Cellular Active' : 'High Speed')}
+                    </span>
+                  }
+                  headerAction={
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                      <span style={{ fontSize: '0.75rem', color: 'var(--text-3)' }}>Cap ceiling:</span>
+                      <span style={{ fontSize: '0.75rem', fontWeight: 700, color: 'var(--accent, #3b82f6)' }}>64 MB</span>
+                    </div>
+                  }
+                >
+                  <div
+                    style={{
+                      display: 'grid',
+                      gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
+                      gap: 'var(--space-3)',
+                      marginBottom: 'var(--space-3)',
+                    }}
+                  >
+                    {/* 1. Connection */}
+                    <div
+                      style={{
+                        padding: '12px 14px',
+                        background: 'var(--surface-2)',
+                        border: '1px solid var(--border)',
+                        borderRadius: 'var(--radius-sm)',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '12px',
+                      }}
+                    >
+                      <div
+                        style={{
+                          width: '36px',
+                          height: '36px',
+                          borderRadius: '8px',
+                          background: 'rgba(59, 130, 246, 0.12)',
+                          color: '#3b82f6',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          flexShrink: 0,
+                        }}
+                      >
+                        <Wifi size={18} />
+                      </div>
+                      <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}>
+                        <span style={{ fontSize: '0.75rem', color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Connection</span>
+                        <span style={{ fontSize: '0.9rem', fontWeight: 600, color: 'var(--text-1)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                          {liveNetworkProfile.type === 'cellular' ? 'Mobile Data' : (liveNetworkProfile.type === 'ethernet' ? 'Ethernet' : 'Wi-Fi')}
+                        </span>
+                        <span style={{ fontSize: '0.72rem', color: liveNetworkProfile.isMetered ? '#f59e0b' : 'var(--text-3)' }}>
+                          {liveNetworkProfile.isMetered ? 'Metered / Data Saver' : 'Unmetered'}
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* 2. Platform */}
+                    <div
+                      style={{
+                        padding: '12px 14px',
+                        background: 'var(--surface-2)',
+                        border: '1px solid var(--border)',
+                        borderRadius: 'var(--radius-sm)',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '12px',
+                      }}
+                    >
+                      <div
+                        style={{
+                          width: '36px',
+                          height: '36px',
+                          borderRadius: '8px',
+                          background: 'rgba(16, 185, 129, 0.12)',
+                          color: '#10b981',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          flexShrink: 0,
+                        }}
+                      >
+                        {hardwareProfile.isMobile ? <Smartphone size={18} /> : <Monitor size={18} />}
+                      </div>
+                      <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}>
+                        <span style={{ fontSize: '0.75rem', color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Device Platform</span>
+                        <span style={{ fontSize: '0.9rem', fontWeight: 600, color: 'var(--text-1)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                          {hardwareProfile.platform === 'ios' ? 'Apple iOS' : (hardwareProfile.platform === 'android' ? 'Android' : 'Desktop PC / Laptop')}
+                        </span>
+                        <span style={{ fontSize: '0.72rem', color: 'var(--text-3)' }}>
+                          {hardwareProfile.isMobile ? 'Mobile memory envelope' : 'Desktop OS'}
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* 3. Hardware measured */}
+                    <div
+                      style={{
+                        padding: '12px 14px',
+                        background: 'var(--surface-2)',
+                        border: '1px solid var(--border)',
+                        borderRadius: 'var(--radius-sm)',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '12px',
+                      }}
+                    >
+                      <div
+                        style={{
+                          width: '36px',
+                          height: '36px',
+                          borderRadius: '8px',
+                          background: 'rgba(168, 85, 247, 0.12)',
+                          color: '#a855f7',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          flexShrink: 0,
+                        }}
+                      >
+                        <Cpu size={18} />
+                      </div>
+                      <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}>
+                        <span style={{ fontSize: '0.75rem', color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Measured Hardware</span>
+                        <span style={{ fontSize: '0.9rem', fontWeight: 600, color: 'var(--text-1)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                          {hardwareProfile.cpuCores} CPU Cores
+                        </span>
+                        <span style={{ fontSize: '0.72rem', color: 'var(--text-3)' }}>
+                          {hardwareProfile.ramGb ? `~${hardwareProfile.ramGb} GB RAM` : (hardwareProfile.heapLimitMb ? `${hardwareProfile.heapLimitMb} MB Heap` : 'Standard RAM')}
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* 4. Active Cache Cap */}
+                    <div
+                      style={{
+                        padding: '12px 14px',
+                        background: 'var(--surface-2)',
+                        border: '1px solid var(--border)',
+                        borderRadius: 'var(--radius-sm)',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '12px',
+                      }}
+                    >
+                      <div
+                        style={{
+                          width: '36px',
+                          height: '36px',
+                          borderRadius: '8px',
+                          background: 'rgba(239, 68, 68, 0.12)',
+                          color: '#ef4444',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          flexShrink: 0,
+                        }}
+                      >
+                        <Gauge size={18} />
+                      </div>
+                      <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}>
+                        <span style={{ fontSize: '0.75rem', color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Active Cache Cap</span>
+                        <span style={{ fontSize: '0.9rem', fontWeight: 700, color: 'var(--text-1)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                          {liveComputedCache.maxCapMb} MB
+                        </span>
+                        <span style={{ fontSize: '0.72rem', color: 'var(--text-3)' }}>
+                          {liveComputedCache.cacheLimit} chunks × {liveComputedCache.chunkSizeMb} MB
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Active Policy Summary Box */}
+                  <div
+                    style={{
+                      padding: '12px 16px',
+                      background: 'rgba(59, 130, 246, 0.06)',
+                      border: '1px solid rgba(59, 130, 246, 0.2)',
+                      borderRadius: 'var(--radius-sm)',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: '4px',
+                    }}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <Zap size={14} style={{ color: '#3b82f6' }} />
+                      <span style={{ fontSize: '0.8rem', fontWeight: 600, color: '#3b82f6' }}>
+                        Active Remote Player Cache Strategy
+                      </span>
+                    </div>
+                    <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--text-2)', lineHeight: 1.45 }}>
+                      {liveComputedCache.reason}
+                    </p>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '12px', marginTop: '4px', fontSize: '0.74rem', color: 'var(--text-3)' }}>
+                      <span>Retention: <strong>{liveComputedCache.keepBehindSeconds}s</strong> behind · <strong>{liveComputedCache.keepAheadSeconds}s</strong> ahead</span>
+                      <span>·</span>
+                      <span>HLS Buffer: <strong>{liveComputedCache.hlsBackBufferSeconds}s</strong> back · <strong>{liveComputedCache.hlsMaxBufferLength}s</strong> max</span>
+                    </div>
+                  </div>
+                </SettingsCard>
+
+                {/* Adaptive Tuning Controls */}
+                <SettingsCard
+                  title="Adaptive tuning & connection overrides"
+                  description="Configure how Valor scales cache based on Wi-Fi, Ethernet, Mobile data, and metered states"
+                >
+                  <SettingRow
+                    title="Dynamic adaptive caching"
+                    description="Automatically throttle cache size on mobile cellular data or metered connections. Maximum cap is 64 MB on fast unmetered Wi-Fi/Ethernet."
+                    control={
+                      <Switch
+                        checked={currentCacheSettings.adaptiveCaching}
+                        onChange={(checked) => updateCacheSetting('adaptiveCaching', checked)}
+                      />
+                    }
+                  />
+
+                  <SettingRow
+                    title="Network profile mode"
+                    description="Auto-detect Wi-Fi vs Ethernet vs Cellular vs Metered, or force a specific mode for testing."
+                    control={
+                      <Select
+                        value={currentCacheSettings.networkPreference}
+                        onChange={(val) => updateCacheSetting('networkPreference', val as any)}
+                        options={[
+                          { value: 'auto', label: `Auto-detect (${liveNetworkProfile.type.toUpperCase()}${liveNetworkProfile.isMetered ? ' · Metered' : ''})` },
+                          { value: 'wifi', label: 'Force Wi-Fi (High speed)' },
+                          { value: 'ethernet', label: 'Force Ethernet (High speed)' },
+                          { value: 'cellular', label: `Force Mobile Data (${currentCacheSettings.cellularCacheCapMB} MB cap)` },
+                          { value: 'metered', label: `Force Metered / Data Saver (${currentCacheSettings.meteredCacheCapMB} MB cap)` },
+                        ]}
+                      />
+                    }
+                  />
+
+                  <SettingRow
+                    title="Device platform profile"
+                    description="Auto-detect platform or manually select Desktop PC/Laptop, Apple iOS, or Android."
+                    control={
+                      <Select
+                        value={currentCacheSettings.devicePreference}
+                        onChange={(val) => updateCacheSetting('devicePreference', val as any)}
+                        options={[
+                          { value: 'auto', label: `Auto-detect (${hardwareProfile.label})` },
+                          { value: 'pc', label: 'Desktop PC / Laptop' },
+                          { value: 'ios', label: 'Apple iOS Device' },
+                          { value: 'android', label: 'Android Device' },
+                        ]}
+                      />
+                    }
+                  />
+                </SettingsCard>
+
+                {/* Cache Budgets & Caps */}
+                <SettingsCard
+                  title="Cache caps & budgets"
+                  description="Customize cache ceilings for different networks (baseline maximum cap is 64 MB)"
+                >
+                  <SettingRow
+                    title="Maximum cache cap (Ceiling)"
+                    description="The highest cache capacity allowed. Baseline cap is 64 MB (16 chunks × 4 MB)."
+                    control={
+                      <Select
+                        value={currentCacheSettings.maxCacheCapMB}
+                        onChange={(val) => updateCacheSetting('maxCacheCapMB', Number(val))}
+                        options={[
+                          { value: 16, label: '16 MB (4 chunks × 4 MB)' },
+                          { value: 32, label: '32 MB (8 chunks × 4 MB)' },
+                          { value: 48, label: '48 MB (12 chunks × 4 MB)' },
+                          { value: 64, label: '64 MB (16 chunks × 4 MB - Maximum)' },
+                        ]}
+                      />
+                    }
+                  />
+
+                  <SettingRow
+                    title="Cellular data cache cap"
+                    description="Target cache size when playing remote streams over mobile cellular data."
+                    control={
+                      <Select
+                        value={currentCacheSettings.cellularCacheCapMB}
+                        onChange={(val) => updateCacheSetting('cellularCacheCapMB', Number(val))}
+                        options={[
+                          { value: 8, label: '8 MB (4 chunks × 2 MB)' },
+                          { value: 12, label: '12 MB (6 chunks × 2 MB)' },
+                          { value: 16, label: '16 MB (8 chunks × 2 MB - Default)' },
+                          { value: 20, label: '20 MB (10 chunks × 2 MB)' },
+                          { value: 24, label: '24 MB (12 chunks × 2 MB)' },
+                        ]}
+                      />
+                    }
+                  />
+
+                  <SettingRow
+                    title="Metered connection cache cap"
+                    description="Reduced cache size when Data Saver / metered connection is active to prevent overages."
+                    control={
+                      <Select
+                        value={currentCacheSettings.meteredCacheCapMB}
+                        onChange={(val) => updateCacheSetting('meteredCacheCapMB', Number(val))}
+                        options={[
+                          { value: 4, label: '4 MB (2 chunks × 2 MB)' },
+                          { value: 8, label: '8 MB (4 chunks × 2 MB - Default)' },
+                          { value: 12, label: '12 MB (6 chunks × 2 MB)' },
+                          { value: 16, label: '16 MB (8 chunks × 2 MB)' },
+                        ]}
+                      />
+                    }
+                  />
+
+                  <SettingRow
+                    title="Low hardware & mobile cache cap"
+                    description="Cache size for iOS/Android mobile devices or PCs with low RAM or CPU."
+                    control={
+                      <Select
+                        value={currentCacheSettings.lowHardwareCacheCapMB}
+                        onChange={(val) => updateCacheSetting('lowHardwareCacheCapMB', Number(val))}
+                        options={[
+                          { value: 12, label: '12 MB (6 chunks × 2 MB)' },
+                          { value: 16, label: '16 MB (8 chunks × 2 MB)' },
+                          { value: 24, label: '24 MB (12 chunks × 2 MB - Default)' },
+                          { value: 32, label: '32 MB (16 chunks × 2 MB)' },
+                        ]}
+                      />
+                    }
+                  />
+                </SettingsCard>
+
+                {/* Cache Maintenance & Purge */}
+                <SettingsCard
+                  title="Cache maintenance"
+                  description="Purge player byte caches, remote stream buffers, and probe caches without removing videos or history"
+                >
+                  <div
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      padding: 'var(--space-3) var(--space-4)',
+                      background: 'var(--surface-2)',
+                      borderRadius: 'var(--radius-sm)',
+                      border: '1px solid var(--border)',
+                      gap: '16px',
+                    }}
+                  >
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                      <span style={{ fontSize: '0.875rem', fontWeight: 600, color: 'var(--text-1)' }}>
+                        In-memory stream chunks & probe metadata
+                      </span>
+                      <span style={{ fontSize: '0.775rem', color: 'var(--text-3)' }}>
+                        Frees active WebAssembly and HTTP range memory without affecting library data
+                      </span>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={handleClearPlayerCache}
+                      className="settings-btn-secondary"
+                      style={{ padding: '8px 14px', flexShrink: 0, display: 'flex', alignItems: 'center', gap: '6px' }}
+                    >
+                      <Trash2 size={14} />
+                      <span>Purge caches now</span>
+                    </button>
+                  </div>
+                </SettingsCard>
+              </div>
             )}
 
             {/* Search No Results State */}

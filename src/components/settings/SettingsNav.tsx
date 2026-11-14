@@ -1,7 +1,7 @@
 import React from 'react';
 import { 
   Sun, Captions, Pause, Keyboard, LayoutGrid, 
-  Database, Link2, Loader2, Zap 
+  Database, Link2, Loader2, Zap, Wifi 
 } from 'lucide-react';
 import { featureFlagService } from '../../services/featureFlags';
 
@@ -14,7 +14,8 @@ export type SettingsSectionId =
   | 'profile-storage'
   | 'connected-services'
   | 'loading-animation'
-  | 'local-engine';
+  | 'local-engine'
+  | 'network-cache';
 
 export interface NavGroup {
   title?: string;
@@ -86,6 +87,12 @@ export const SETTINGS_NAV_GROUPS: NavGroup[] = [
   {
     title: 'Advanced',
     items: [
+      {
+        id: 'network-cache',
+        name: 'Cache & Network',
+        hint: 'Connection, RAM, device tuning',
+        icon: <Wifi size={18} />,
+      },
       {
         id: 'loading-animation',
         name: 'Loading animation',

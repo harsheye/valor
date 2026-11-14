@@ -21,7 +21,7 @@ export const HUD_ALL_CONTROLS: Record<string, { name: string; icon: React.ReactN
   showVolumeControl: { name: 'Volume control', icon: <Volume2 size={14} /> },
   showFullscreen: { name: 'Fullscreen toggle', icon: <Maximize size={14} /> },
   disableAnimations: { name: 'Disable animations', icon: <Zap size={14} /> },
-  pauseOnFocusChange: { name: 'Disable auto-pause', icon: <Coffee size={14} /> },
+  pauseOnFocusChange: { name: 'Auto-pause on focus loss', icon: <Coffee size={14} /> },
   allowUiSkipping: { name: 'Skip buttons', icon: <SkipForward size={14} /> },
   blockSeekingCompletely: { name: 'Block seeking', icon: <Ban size={14} /> },
   autoSkipIntroOutro: { name: 'Auto-skip intro/outro', icon: <FastForward size={14} /> },

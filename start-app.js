@@ -140,7 +140,10 @@ try { db.exec(`ALTER TABLE profiles ADD COLUMN password TEXT;`); } catch(e){}
 // Populate accounts table from existing profiles for backward compatibility
 try {
   const existingProfilesWithPasswords = db.prepare('SELECT username, password FROM profiles WHERE username IS NOT NULL AND password IS NOT NULL').all();
-  const insertAccount = db.prepare('INSERT OR IGNORE INTO accounts (username, password) VALUES (?, ?)');
+  const tableInfo = db.prepare("PRAGMA table_info(accounts)").all();
+  const colNames = tableInfo.map(c => c.name.toLowerCase());
+  const passCol = colNames.includes('password_hash') ? 'password_hash' : 'password';
+  const insertAccount = db.prepare(`INSERT OR IGNORE INTO accounts (username, ${passCol}) VALUES (?, ?)`);
   for (const p of existingProfilesWithPasswords) {
     insertAccount.run(p.username, p.password);
   }
@@ -1041,6 +1044,8 @@ const backendServer = http.createServer(async (req, res) => {
         const duration = durationStr ? parseFloat(durationStr) : 0;
         const currentTimeStr = parsedUrl.searchParams.get('currentTime');
         const currentTime = currentTimeStr ? parseFloat(currentTimeStr) : 0;
+        const is4kStr = parsedUrl.searchParams.get('is4k');
+        const is4K = is4kStr === '1' || is4kStr === 'true';
 
         let sessionId = parsedUrl.searchParams.get('sessionId');
         if (!sessionId) {
@@ -1048,7 +1053,7 @@ const backendServer = http.createServer(async (req, res) => {
           sessionId = `sess_${crypto.createHash('md5').update(`${clientIp}_${rawTargetUrl}`).digest('hex').slice(0, 8)}`;
         }
 
-        const worker = sessionMediaManager.getOrCreateWorker(sessionId, rawTargetUrl, { auth, duration });
+        const worker = sessionMediaManager.getOrCreateWorker(sessionId, rawTargetUrl, { auth, duration, is4K });
 
         if (isPrefetch) {
           const status = await worker.prefetchWindow(currentTime, duration);
@@ -1748,7 +1753,7 @@ const backendServer = http.createServer(async (req, res) => {
       }
 
       // Admin Third-Party API Health & Connectivity Check
-      if (pathname === '/api/admin/third-party/ping' && req.method === 'GET') {
+      if (pathname === '/api/admin/third-party/ping' && (req.method === 'GET' || req.method === 'POST')) {
         const checkProvider = async (name, url, options = {}) => {
           const t0 = Date.now();
           try {
@@ -1785,7 +1790,10 @@ const backendServer = http.createServer(async (req, res) => {
               'trakt-api-version': '2'
             }
           }),
-          checkProvider('TheMovieDB (Metadata & Posters)', 'https://api.themoviedb.org/3/configuration')
+          checkProvider('TheMovieDB (Metadata & Posters)', 'https://api.themoviedb.org/3/configuration'),
+          checkProvider('OpenSubtitles REST API', 'https://api.opensubtitles.com/api/v1/infos/user', {
+            headers: { 'User-Agent': 'Valor Player' }
+          })
         ]).then(results => {
           res.statusCode = 200;
           res.setHeader('Content-Type', 'application/json');

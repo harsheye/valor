@@ -102,7 +102,10 @@ try {
 }
 try {
   const existingProfilesWithPasswords = db.prepare("SELECT username, password FROM profiles WHERE username IS NOT NULL AND password IS NOT NULL").all();
-  const insertAccount = db.prepare("INSERT OR IGNORE INTO accounts (username, password) VALUES (?, ?)");
+  const tableInfo = db.prepare("PRAGMA table_info(accounts)").all();
+  const colNames = tableInfo.map((c) => c.name.toLowerCase());
+  const passCol = colNames.includes("password_hash") ? "password_hash" : "password";
+  const insertAccount = db.prepare(`INSERT OR IGNORE INTO accounts (username, ${passCol}) VALUES (?, ?)`);
   for (const p of existingProfilesWithPasswords) {
     insertAccount.run(p.username, p.password);
   }

@@ -436,11 +436,15 @@ export class CachedByteSource implements ByteSource {
   private inFlight: Map<number, Promise<Uint8Array>> = new Map();
   private lruList: number[] = [];
   private activeChunks: Map<number, number> = new Map();
+  private lookbehindChunks = 3;
+  private lookaheadChunks = 10;
 
-  constructor(source: ByteSource, chunkSize = 1024 * 1024, cacheLimit = 8) {
+  constructor(source: ByteSource, chunkSize = 4 * 1024 * 1024, cacheLimit = 16, lookbehindChunks = 3, lookaheadChunks = 10) {
     this.source = source;
     this.chunkSize = chunkSize;
     this.cacheLimit = cacheLimit;
+    this.lookbehindChunks = lookbehindChunks;
+    this.lookaheadChunks = lookaheadChunks;
   }
 
   async getSize(): Promise<number> {
@@ -545,7 +549,7 @@ export class CachedByteSource implements ByteSource {
       // Evict the oldest chunk that is outside this window and not active.
       const evictIndex = this.lruList.findIndex(idx => {
         if (this.activeChunks.has(idx)) return false;
-        const inRange = idx >= current - 3 && idx <= current + 10;
+        const inRange = idx >= current - this.lookbehindChunks && idx <= current + this.lookaheadChunks;
         return !inRange;
       });
 
@@ -564,6 +568,45 @@ export class CachedByteSource implements ByteSource {
         this.cache.delete(oldest);
       }
     }
+  }
+
+  getStats(): { cachedChunks: number; totalBytes: number; chunkSize: number; cacheLimit: number; maxBytes: number } {
+    let totalBytes = 0;
+    for (const chunk of this.cache.values()) {
+      totalBytes += chunk.byteLength;
+    }
+    return {
+      cachedChunks: this.cache.size,
+      totalBytes,
+      chunkSize: this.chunkSize,
+      cacheLimit: this.cacheLimit,
+      maxBytes: this.chunkSize * this.cacheLimit,
+    };
+  }
+
+  updateLimits(chunkSize: number, cacheLimit: number, lookbehindChunks = 3, lookaheadChunks = 10): void {
+    this.chunkSize = Math.max(512 * 1024, chunkSize);
+    this.cacheLimit = Math.max(2, cacheLimit);
+    this.lookbehindChunks = Math.max(1, lookbehindChunks);
+    this.lookaheadChunks = Math.max(2, lookaheadChunks);
+
+    // Evict excess chunks if current cache exceeds new limit
+    while (this.cache.size > this.cacheLimit) {
+      const oldestEvictIndex = this.lruList.findIndex(idx => !this.activeChunks.has(idx));
+      if (oldestEvictIndex !== -1) {
+        const oldest = this.lruList[oldestEvictIndex];
+        this.lruList.splice(oldestEvictIndex, 1);
+        this.cache.delete(oldest);
+      } else {
+        break;
+      }
+    }
+  }
+
+  clear(): void {
+    this.cache.clear();
+    this.lruList = [];
+    this.inFlight.clear();
   }
 }
 

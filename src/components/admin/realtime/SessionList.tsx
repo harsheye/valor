@@ -115,7 +115,22 @@ export const SessionList: React.FC<SessionListProps> = ({
         gridTemplateColumns: 'repeat(auto-fill, minmax(340px, 1fr))',
         gap: '16px'
       }}>
-        {sessions.map(s => {
+        {sessions.length === 0 ? (
+          <div style={{
+            gridColumn: '1 / -1',
+            background: 'var(--surface-1, #151A21)',
+            border: '1px solid var(--border, #262D39)',
+            borderRadius: 'var(--radius-md, 12px)',
+            padding: '3rem 1.5rem',
+            textAlign: 'center',
+            color: 'var(--text-3, #8F99AA)'
+          }}>
+            <Radio size={28} style={{ opacity: 0.3, marginBottom: '8px' }} />
+            <h4 style={{ margin: '0 0 4px', color: 'var(--text-1, #E4E8EE)', fontSize: '0.95rem' }}>No Active Streaming Sessions</h4>
+            <p style={{ margin: 0, fontSize: '0.8rem' }}>When users play video streams through Valor, their live sessions and playback telemetry will appear here in real time.</p>
+          </div>
+        ) : (
+          sessions.map(s => {
           const progressPct = s.durationSeconds > 0 ? (s.positionSeconds / s.durationSeconds) * 100 : 0;
 
           return (
@@ -246,7 +261,7 @@ export const SessionList: React.FC<SessionListProps> = ({
               </div>
             </div>
           );
-        })}
+        }))}
       </div>
 
       {/* Send In-Stream Message Modal */}

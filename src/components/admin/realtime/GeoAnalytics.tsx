@@ -102,26 +102,32 @@ export const GeoAnalytics: React.FC<GeoAnalyticsProps> = ({ geoStats }) => {
           </div>
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-            {countries.map(c => {
-              const val = metricMode === 'visitors' ? c.visitors : c.bandwidthGb;
-              const barPct = (val / maxVal) * 100;
-              const formatted = metricMode === 'visitors' ? `${c.visitors.toLocaleString()} visitors` : `${c.bandwidthGb.toLocaleString()} GB`;
+            {countries.length === 0 ? (
+              <div style={{ textAlign: 'center', padding: '24px 0', color: 'var(--text-3, #8F99AA)', fontSize: '0.8rem' }}>
+                No external geographic origins recorded yet.
+              </div>
+            ) : (
+              countries.map(c => {
+                const val = metricMode === 'visitors' ? c.visitors : c.bandwidthGb;
+                const barPct = (val / maxVal) * 100;
+                const formatted = metricMode === 'visitors' ? `${c.visitors.toLocaleString()} visitors` : `${c.bandwidthGb.toLocaleString()} GB`;
 
-              return (
-                <div key={c.code} style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.82rem' }}>
-                    <span style={{ fontWeight: 600, color: 'var(--text-1, #E4E8EE)' }}>
-                      <span style={{ color: 'var(--accent, #8CA9EE)', marginRight: '6px' }}>{c.code}</span>
-                      {c.country}
-                    </span>
-                    <span style={{ color: 'var(--text-2, #A9B2C0)' }}>{formatted} ({c.sharePct}%)</span>
+                return (
+                  <div key={c.code} style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.82rem' }}>
+                      <span style={{ fontWeight: 600, color: 'var(--text-1, #E4E8EE)' }}>
+                        <span style={{ color: 'var(--accent, #8CA9EE)', marginRight: '6px' }}>{c.code}</span>
+                        {c.country}
+                      </span>
+                      <span style={{ color: 'var(--text-2, #A9B2C0)' }}>{formatted} ({c.sharePct}%)</span>
+                    </div>
+                    <div style={{ height: '6px', background: 'var(--surface-3, #232B36)', borderRadius: '3px', overflow: 'hidden' }}>
+                      <div style={{ width: `${barPct}%`, height: '100%', background: 'var(--accent, #8CA9EE)' }} />
+                    </div>
                   </div>
-                  <div style={{ height: '6px', background: 'var(--surface-3, #232B36)', borderRadius: '3px', overflow: 'hidden' }}>
-                    <div style={{ width: `${barPct}%`, height: '100%', background: 'var(--accent, #8CA9EE)' }} />
-                  </div>
-                </div>
-              );
-            })}
+                );
+              })
+            )}
           </div>
         </div>
 
@@ -143,29 +149,35 @@ export const GeoAnalytics: React.FC<GeoAnalyticsProps> = ({ geoStats }) => {
           </div>
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-            {cities.map(c => {
-              const formatted = metricMode === 'visitors' ? `${c.visitors.toLocaleString()} visitors` : `${c.bandwidthGb.toLocaleString()} GB`;
-              return (
-                <div
-                  key={c.city}
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'space-between',
-                    padding: '8px 12px',
-                    background: 'var(--surface-2, #1B212A)',
-                    borderRadius: 'var(--radius-sm, 6px)',
-                    fontSize: '0.82rem'
-                  }}
-                >
-                  <div style={{ display: 'flex', flexDirection: 'column' }}>
-                    <span style={{ fontWeight: 600, color: 'var(--text-1, #E4E8EE)' }}>{c.city}</span>
-                    <span style={{ fontSize: '0.72rem', color: 'var(--text-3, #8F99AA)' }}>{c.country}</span>
+            {cities.length === 0 ? (
+              <div style={{ textAlign: 'center', padding: '24px 0', color: 'var(--text-3, #8F99AA)', fontSize: '0.8rem' }}>
+                No metropolitan city telemetry recorded yet.
+              </div>
+            ) : (
+              cities.map(c => {
+                const formatted = metricMode === 'visitors' ? `${c.visitors.toLocaleString()} visitors` : `${c.bandwidthGb.toLocaleString()} GB`;
+                return (
+                  <div
+                    key={c.city}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      padding: '8px 12px',
+                      background: 'var(--surface-2, #1B212A)',
+                      borderRadius: 'var(--radius-sm, 6px)',
+                      fontSize: '0.82rem'
+                    }}
+                  >
+                    <div style={{ display: 'flex', flexDirection: 'column' }}>
+                      <span style={{ fontWeight: 600, color: 'var(--text-1, #E4E8EE)' }}>{c.city}</span>
+                      <span style={{ fontSize: '0.72rem', color: 'var(--text-3, #8F99AA)' }}>{c.country}</span>
+                    </div>
+                    <span style={{ fontWeight: 600, color: 'var(--text-1, #E4E8EE)' }}>{formatted}</span>
                   </div>
-                  <span style={{ fontWeight: 600, color: 'var(--text-1, #E4E8EE)' }}>{formatted}</span>
-                </div>
-              );
-            })}
+                );
+              })
+            )}
           </div>
         </div>
       </div>

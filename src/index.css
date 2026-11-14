@@ -23,10 +23,8 @@ body {
 }
 
 .player-container,
-.video-wrapper,
-video,
-.native-video-el {
-  filter: brightness(1) !important;
+.video-wrapper {
+  filter: brightness(1);
 }
 
 /* Accessible focus visible on all interactive elements */

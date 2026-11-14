@@ -62,6 +62,7 @@ import { OpenSessionsTab } from '../components/admin/OpenSessionsTab';
 import { WebhooksTab } from '../components/admin/WebhooksTab';
 import { DeviceDetailModal } from '../components/admin/DeviceDetailModal';
 import { SaaSTrendCharts } from '../components/admin/SaaSTrendCharts';
+import { EmbedProvidersTab } from '../components/admin/EmbedProvidersTab';
 
 // Real-Time Event Portal Components
 import { useAdminRealtime, type RealtimeEnvelope } from '../components/admin/realtime/useAdminRealtime';
@@ -82,6 +83,7 @@ import { MaintenanceBroadcast } from '../components/admin/realtime/MaintenanceBr
 import { DataRetention } from '../components/admin/realtime/DataRetention';
 import { ThirdPartyMonitor } from '../components/admin/realtime/ThirdPartyMonitor';
 import { TrafficTools } from '../components/admin/realtime/TrafficTools';
+import { LiveChart } from '../components/admin/realtime/LiveChart';
 import { InboundWebhookModal } from '../components/admin/realtime/InboundWebhookModal';
 import { AdminDashboardSkeleton } from '../components/admin/realtime/AdminSkeletons';
 
@@ -415,7 +417,7 @@ export const AdminDashboard: React.FC = () => {
 
   // Tab & Data State
   const [activeTab, setActiveTab] = useState<
-    'overview' | 'devices' | 'sessions' | 'traffic' | 'webhooks' | 'thirdparty' | 'users' |
+    'overview' | 'devices' | 'sessions' | 'traffic' | 'webhooks' | 'thirdparty' | 'embeds' | 'users' |
     'alerts' | 'security' | 'playback' | 'content' | 'geo' | 'errors' | 'infra' | 'audit' | 'system'
   >('overview');
   const [overview, setOverview] = useState<AdminOverview | null>(null);
@@ -958,6 +960,11 @@ export const AdminDashboard: React.FC = () => {
     setBufferedTraffic([]);
   }, [bufferedTraffic]);
 
+  const realtimeTopics = useMemo(() => ['*'], []);
+  const handleBatchRealtimeEvents = useCallback((batch: RealtimeEnvelope[]) => {
+    batch.forEach(handleRealtimeEvent);
+  }, [handleRealtimeEvent]);
+
   const {
     connectionState,
     reconnectAttempt,
@@ -967,11 +974,9 @@ export const AdminDashboard: React.FC = () => {
     manualReconnect
   } = useAdminRealtime({
     token: isAuthenticated ? adminToken : null,
-    topics: ['*'],
+    topics: realtimeTopics,
     onEvent: handleRealtimeEvent,
-    onBatchEvents: (batch) => {
-      batch.forEach(handleRealtimeEvent);
-    }
+    onBatchEvents: handleBatchRealtimeEvents
   });
 
   // Handler: Save Alert Rule
@@ -1716,6 +1721,68 @@ export const AdminDashboard: React.FC = () => {
     return maxVal > 0 ? maxVal : 1;
   }, [analytics]);
 
+  // LiveChart data feeds for the Overview Dashboard
+  const liveTrafficChartData = useMemo(() => {
+    if (!activeTimelineData || activeTimelineData.length === 0) {
+      return [
+        { label: '00:00', requests: 0, bandwidthKb: 0, thirdParty: 0 },
+        { label: '06:00', requests: 0, bandwidthKb: 0, thirdParty: 0 },
+        { label: '12:00', requests: 0, bandwidthKb: 0, thirdParty: 0 },
+        { label: '18:00', requests: 0, bandwidthKb: 0, thirdParty: 0 },
+        { label: '23:59', requests: 0, bandwidthKb: 0, thirdParty: 0 }
+      ];
+    }
+    return activeTimelineData.map(item => ({
+      label: item.label || '00:00',
+      requests: item.requests || 0,
+      bandwidthKb: Math.round((item.bytes || 0) / 1024),
+      thirdParty: item.thirdPartyRequests || 0
+    }));
+  }, [activeTimelineData]);
+
+  const trafficChartSeries = useMemo(() => [
+    { key: 'requests', label: 'HTTP Transactions', colorVar: '#38bdf8', unit: 'req' },
+    { key: 'bandwidthKb', label: 'Bandwidth Volume', colorVar: '#c084fc', unit: 'KB' },
+    { key: 'thirdParty', label: '3rd Party API Calls', colorVar: '#ec4899', unit: 'req' }
+  ], []);
+
+  const systemHealthChartData = useMemo(() => {
+    if (!trafficLogs || trafficLogs.length === 0) {
+      return [
+        { label: '10m ago', latency: 0, p95Latency: 0, errorRate: 0 },
+        { label: '8m ago', latency: 0, p95Latency: 0, errorRate: 0 },
+        { label: '6m ago', latency: 0, p95Latency: 0, errorRate: 0 },
+        { label: '4m ago', latency: 0, p95Latency: 0, errorRate: 0 },
+        { label: '2m ago', latency: 0, p95Latency: 0, errorRate: 0 },
+        { label: 'Now', latency: 0, p95Latency: 0, errorRate: 0 }
+      ];
+    }
+    const sliceCount = 6;
+    const sliceSize = Math.max(1, Math.ceil(trafficLogs.length / sliceCount));
+    const slices = [];
+    for (let i = sliceCount - 1; i >= 0; i--) {
+      const sliceLogs = trafficLogs.slice(i * sliceSize, (i + 1) * sliceSize);
+      const lats = sliceLogs.map(l => l.latencyMs || (l as any).durationMs || 15).sort((a, b) => a - b);
+      const avgLat = lats.length > 0 ? Math.round(lats.reduce((a, b) => a + b, 0) / lats.length) : 0;
+      const p95Lat = lats.length > 0 ? lats[Math.floor(lats.length * 0.95)] || avgLat : avgLat;
+      const errors = sliceLogs.filter(l => (l.statusCode || 200) >= 400).length;
+      const errRate = sliceLogs.length > 0 ? Math.round((errors / sliceLogs.length) * 100) : 0;
+      slices.push({
+        label: i === 0 ? 'Now' : `${i * 2}m ago`,
+        latency: avgLat,
+        p95Latency: p95Lat,
+        errorRate: errRate
+      });
+    }
+    return slices;
+  }, [trafficLogs]);
+
+  const healthChartSeries = useMemo(() => [
+    { key: 'latency', label: 'Average Latency', colorVar: '#10b981', unit: 'ms' },
+    { key: 'p95Latency', label: 'P95 Latency', colorVar: '#f59e0b', unit: 'ms' },
+    { key: 'errorRate', label: 'Error Rate', colorVar: '#ef4444', unit: '%' }
+  ], []);
+
   // Loading state while checking token
   if (isAuthenticated === null) {
     return (
@@ -1954,6 +2021,7 @@ export const AdminDashboard: React.FC = () => {
     { id: 'infra', label: 'Infrastructure Health', icon: Server, group: 'PLATFORM OPERATIONS' },
 
     { id: 'thirdparty', label: '3rd Party APIs', icon: Zap, group: 'SYSTEM & INTEGRATIONS' },
+    { id: 'embeds', label: 'Online Streams & Embeds', icon: Film, group: 'SYSTEM & INTEGRATIONS' },
     { id: 'webhooks', label: 'Webhooks & Outbound', icon: Send, group: 'SYSTEM & INTEGRATIONS' },
     { id: 'users', label: 'Registered Accounts', icon: Database, group: 'SYSTEM & INTEGRATIONS' },
     { id: 'audit', label: 'Audit Log Trail', icon: Shield, group: 'SYSTEM & INTEGRATIONS' },
@@ -1982,7 +2050,6 @@ export const AdminDashboard: React.FC = () => {
         onNavigateTab={t => setActiveTab(t as any)}
         devices={devicesList}
         sessions={overview?.activeUsers || []}
-        onTriggerSeed={handleTriggerSeed}
         onSignOutEverywhere={handleSignOutEverywhere}
       />
 
@@ -2033,7 +2100,7 @@ export const AdminDashboard: React.FC = () => {
               Valor Portal
             </h2>
             <span style={{ fontSize: '0.7rem', color: 'var(--text-3, #8F99AA)', fontWeight: 600, letterSpacing: '0.04em' }}>
-              REAL-TIME ADMIN v2.0
+              REAL-TIME ADMIN CONSOLE
             </span>
           </div>
         </div>
@@ -2194,27 +2261,6 @@ export const AdminDashboard: React.FC = () => {
               }}>
                 Ctrl+K
               </kbd>
-            </button>
-
-            {/* Quick Demo Seed Wave Button */}
-            <button
-              onClick={handleTriggerSeed}
-              title="Emit realistic wave of demo events into the live bus"
-              style={{
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: '5px',
-                background: 'var(--accent-soft, rgba(140, 169, 238, 0.14))',
-                border: '1px solid var(--accent, #8CA9EE)',
-                color: 'var(--accent, #8CA9EE)',
-                padding: '5px 10px',
-                borderRadius: 'var(--radius-sm, 6px)',
-                fontSize: '0.76rem',
-                fontWeight: 600,
-                cursor: 'pointer'
-              }}
-            >
-              <span>⚡ Seed Wave</span>
             </button>
 
             {/* Inbound Webhooks API Modal Trigger */}
@@ -3024,6 +3070,35 @@ export const AdminDashboard: React.FC = () => {
             </div>
           </div>
 
+          {/* Live Telemetry & System Health Performance Graphs */}
+          <div style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(auto-fit, minmax(460px, 1fr))',
+            gap: '1.25rem'
+          }}>
+            <LiveChart
+              title="Real-Time Traffic & Bandwidth Velocity Stream"
+              series={trafficChartSeries}
+              data={liveTrafficChartData}
+              height={220}
+              selectedRange={activityTimeframe === 'day' ? '24h' : activityTimeframe === 'week' ? '7d' : activityTimeframe === 'month' ? '30d' : 'Live'}
+              rangeOptions={['Live', '24h', '7d', '30d']}
+              onRangeChange={(r) => {
+                if (r === 'Live' || r === '24h') handleTimeframeChange('day');
+                else if (r === '7d') handleTimeframeChange('week');
+                else if (r === '30d') handleTimeframeChange('month');
+              }}
+            />
+
+            <LiveChart
+              title="Upstream Latency & Error Rate Performance"
+              series={healthChartSeries}
+              data={systemHealthChartData}
+              height={220}
+              showNowMarker={true}
+            />
+          </div>
+
           {/* SaaS Trend Charts (Area Graph, Top Geographies, Platform Breakdown, Status Codes) */}
           <SaaSTrendCharts 
             activityData={activeTimelineData || []}
@@ -3542,1100 +3617,18 @@ export const AdminDashboard: React.FC = () => {
       )}
 
       {/* ========================================================================= */}
-      {/* ========================================================================= */}
-      {/* TAB 3: LIVE TRAFFIC FEED (ADVANCED FILTERING & INTERCEPTION) */}
+      {/* TAB: LIVE TRAFFIC FEED & REAL-TIME INSPECTOR */}
       {/* ========================================================================= */}
       {activeTab === 'traffic' && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-          {/* View Mode Segmented Switch */}
-          <div style={{
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            background: 'var(--surface-1, #151A21)',
-            padding: '10px 16px',
-            borderRadius: 'var(--radius-md, 12px)',
-            border: '1px solid var(--border, #262D39)'
-          }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-              <span style={{ fontSize: '0.82rem', fontWeight: 600, color: 'var(--text-2, #A9B2C0)' }}>
-                Traffic View Mode:
-              </span>
-              <div style={{ display: 'flex', gap: '4px', background: 'var(--surface-2, #1B212A)', padding: '3px', borderRadius: 'var(--radius-sm, 6px)' }}>
-                <button
-                  onClick={() => setTrafficViewMode('inspector')}
-                  style={{
-                    padding: '4px 12px',
-                    borderRadius: '4px',
-                    fontSize: '0.76rem',
-                    fontWeight: 600,
-                    border: 'none',
-                    cursor: 'pointer',
-                    background: trafficViewMode === 'inspector' ? 'var(--accent, #8CA9EE)' : 'transparent',
-                    color: trafficViewMode === 'inspector' ? 'var(--on-accent, #0C1424)' : 'var(--text-3, #8F99AA)'
-                  }}
-                >
-                  ⚡ Real-Time Inspector (v2)
-                </button>
-                <button
-                  onClick={() => setTrafficViewMode('classic')}
-                  style={{
-                    padding: '4px 12px',
-                    borderRadius: '4px',
-                    fontSize: '0.76rem',
-                    fontWeight: 600,
-                    border: 'none',
-                    cursor: 'pointer',
-                    background: trafficViewMode === 'classic' ? 'var(--accent, #8CA9EE)' : 'transparent',
-                    color: trafficViewMode === 'classic' ? 'var(--on-accent, #0C1424)' : 'var(--text-3, #8F99AA)'
-                  }}
-                >
-                  Classic Feed (v1)
-                </button>
-              </div>
-            </div>
-
-            <div style={{ fontSize: '0.76rem', color: 'var(--text-3, #8F99AA)' }}>
-              {trafficLogs.length} events loaded • {bufferedTraffic.length} buffered
-            </div>
-          </div>
-
-          {trafficViewMode === 'inspector' ? (
-            <TrafficTools
-              logs={normalizedTrafficRows}
-              isPaused={isStreamPaused}
-              bufferedCount={bufferedTraffic.length}
-              onTogglePause={() => setIsStreamPaused(p => !p)}
-              onApplyBuffer={flushBufferedEvents}
-              onCopy={handleCopy}
-            />
-          ) : (
-            <div style={{
-              backgroundColor: 'var(--surface, #1e293b)',
-              border: '1px solid var(--border-color, rgba(255, 255, 255, 0.08))',
-              borderRadius: '12px',
-              overflow: 'hidden'
-            }}>
-          {/* Header & Controls Bar */}
-          <div style={{
-            padding: '1.15rem 1.5rem',
-            borderBottom: '1px solid var(--border-color, rgba(255, 255, 255, 0.08))',
-            display: 'flex',
-            flexDirection: 'column',
-            gap: '12px'
-          }}>
-            {/* Top row: Title and Stats */}
-            <div style={{
-              display: 'flex',
-              justifyContent: 'space-between',
-              alignItems: 'center',
-              flexWrap: 'wrap',
-              gap: '12px'
-            }}>
-              <div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                  <h3 style={{ margin: 0, fontSize: '1.05rem', fontWeight: 600 }}>Reverse-Proxy Traffic Stream</h3>
-                  <span style={{
-                    padding: '2px 8px',
-                    borderRadius: '12px',
-                    backgroundColor: 'rgba(56, 189, 248, 0.1)',
-                    border: '1px solid rgba(56, 189, 248, 0.25)',
-                    color: 'var(--accent-color, #38bdf8)',
-                    fontSize: '0.72rem',
-                    fontWeight: 600
-                  }}>
-                    {filteredTraffic.length} shown / {trafficLogs.length} total
-                    {trafficLogs.length > filteredTraffic.length && (
-                      <span style={{ opacity: 0.8, marginLeft: '4px' }}>
-                        ({trafficLogs.length - filteredTraffic.length} filtered)
-                      </span>
-                    )}
-                  </span>
-                </div>
-                <p style={{ margin: '3px 0 0', color: 'var(--text-muted, #94a3b8)', fontSize: '0.75rem' }}>
-                  Live interception log of HTTP requests, status codes, latency, and client details
-                </p>
-              </div>
-
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                {isFiltersCustomized && (
-                  <button
-                    onClick={handleResetFilters}
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '5px',
-                      backgroundColor: 'rgba(239, 68, 68, 0.12)',
-                      border: '1px solid rgba(239, 68, 68, 0.25)',
-                      color: '#f87171',
-                      borderRadius: '6px',
-                      padding: '5px 10px',
-                      cursor: 'pointer',
-                      fontSize: '0.72rem',
-                      fontWeight: 600,
-                      transition: 'all 0.15s ease'
-                    }}
-                    title="Reset all filters to default"
-                  >
-                    <RotateCcw size={12} />
-                    Reset All Filters
-                  </button>
-                )}
-
-                <button
-                  onClick={() => setShowAdvancedFilters(prev => !prev)}
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '6px',
-                    backgroundColor: showAdvancedFilters ? 'rgba(56, 189, 248, 0.15)' : 'rgba(255, 255, 255, 0.05)',
-                    border: showAdvancedFilters ? '1px solid var(--accent-color, #38bdf8)' : '1px solid var(--border-color, rgba(255, 255, 255, 0.1))',
-                    color: showAdvancedFilters ? 'var(--accent-color, #38bdf8)' : 'var(--text-primary)',
-                    borderRadius: '6px',
-                    padding: '5px 12px',
-                    cursor: 'pointer',
-                    fontSize: '0.75rem',
-                    fontWeight: 600,
-                    transition: 'all 0.15s ease'
-                  }}
-                >
-                  <SlidersHorizontal size={13} />
-                  <span>Advanced Filters</span>
-                  {filterMode === 'exclude' && (
-                    <span style={{
-                      backgroundColor: '#f59e0b',
-                      color: '#000',
-                      borderRadius: '3px',
-                      padding: '1px 4px',
-                      fontSize: '0.62rem',
-                      fontWeight: 700
-                    }}>
-                      EXCLUDE
-                    </span>
-                  )}
-                  {showAdvancedFilters ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
-                </button>
-              </div>
-            </div>
-
-            {/* Quick Presets Strip */}
-            <div style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: '6px',
-              flexWrap: 'wrap',
-              paddingBottom: '8px',
-              borderBottom: '1px solid rgba(255, 255, 255, 0.05)'
-            }}>
-              <span style={{ fontSize: '0.68rem', color: 'var(--text-muted, #94a3b8)', fontWeight: 700, textTransform: 'uppercase', marginRight: '4px' }}>
-                Presets:
-              </span>
-              {[
-                { id: 'all', label: 'All Traffic' },
-                { id: '3rdparty', label: '⚡ 3rd Party (VLR/Trakt)', color: '#ec4899' },
-                { id: 'errors', label: '⚠️ Errors (4xx/5xx)', color: '#f87171' },
-                { id: 'slow', label: '⏱️ Slow (>200ms)', color: '#fbbf24' },
-                { id: 'stream', label: '🎬 Media Streams', color: '#c084fc' },
-                { id: 'today', label: '📅 Today Only', color: '#38bdf8' }
-              ].map(p => {
-                const isActive = activeQuickPreset === p.id;
-                return (
-                  <button
-                    key={p.id}
-                    onClick={() => applyQuickPreset(p.id as any)}
-                    style={{
-                      padding: '4px 10px',
-                      borderRadius: '6px',
-                      fontSize: '0.72rem',
-                      fontWeight: isActive ? 700 : 500,
-                      backgroundColor: isActive 
-                        ? (p.color ? `${p.color}25` : 'rgba(56, 189, 248, 0.2)')
-                        : 'rgba(255, 255, 255, 0.04)',
-                      border: isActive 
-                        ? (p.color ? `1px solid ${p.color}60` : '1px solid rgba(56, 189, 248, 0.4)')
-                        : '1px solid var(--border-color, rgba(255, 255, 255, 0.06))',
-                      color: isActive ? (p.color || '#38bdf8') : 'var(--text-muted, #94a3b8)',
-                      cursor: 'pointer',
-                      transition: 'all 0.15s ease'
-                    }}
-                  >
-                    {p.label}
-                  </button>
-                );
-              })}
-            </div>
-
-            {/* Granular Filters & Scoping Strip */}
-            <div style={{
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-              gap: '10px',
-              flexWrap: 'wrap',
-              paddingTop: '2px'
-            }}>
-              {/* Selectors Row */}
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-                {/* Provider Filter */}
-                <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                  <select
-                    value={selectedProvider}
-                    onChange={e => {
-                      setSelectedProvider(e.target.value);
-                      setActiveQuickPreset('all');
-                    }}
-                    style={{
-                      backgroundColor: selectedProvider !== 'all' ? 'rgba(236, 72, 153, 0.15)' : 'rgba(0, 0, 0, 0.25)',
-                      border: selectedProvider !== 'all' ? '1px solid rgba(236, 72, 153, 0.4)' : '1px solid var(--border-color, rgba(255, 255, 255, 0.12))',
-                      color: selectedProvider !== 'all' ? '#ec4899' : 'var(--text-primary)',
-                      borderRadius: '6px',
-                      padding: '5px 8px',
-                      fontSize: '0.74rem',
-                      fontWeight: selectedProvider !== 'all' ? 700 : 500,
-                      outline: 'none',
-                      cursor: 'pointer'
-                    }}
-                    title="Filter by third-party upstream provider"
-                  >
-                    <option value="all">🌐 All Providers</option>
-                    <option value="vlr">⚡ VLR.gg (Esports Scraper)</option>
-                    <option value="trakt">📺 Trakt.tv (Sync)</option>
-                    <option value="tmdb">🎬 TheMovieDB (Posters)</option>
-                    <option value="opensubtitles">💬 OpenSubtitles</option>
-                  </select>
-                </div>
-
-                {/* Date Filter & Custom Day */}
-                <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
-                  <select
-                    value={trafficDateFilter}
-                    onChange={e => {
-                      setTrafficDateFilter(e.target.value as any);
-                      setActiveQuickPreset('all');
-                    }}
-                    style={{
-                      backgroundColor: trafficDateFilter !== 'all' ? 'rgba(56, 189, 248, 0.15)' : 'rgba(0, 0, 0, 0.25)',
-                      border: trafficDateFilter !== 'all' ? '1px solid rgba(56, 189, 248, 0.4)' : '1px solid var(--border-color, rgba(255, 255, 255, 0.12))',
-                      color: trafficDateFilter !== 'all' ? '#38bdf8' : 'var(--text-primary)',
-                      borderRadius: '6px',
-                      padding: '5px 8px',
-                      fontSize: '0.74rem',
-                      fontWeight: trafficDateFilter !== 'all' ? 700 : 500,
-                      outline: 'none',
-                      cursor: 'pointer'
-                    }}
-                    title="Filter database traffic by day"
-                  >
-                    <option value="all">📅 All Dates</option>
-                    <option value="today">📅 Today</option>
-                    <option value="yesterday">📅 Yesterday</option>
-                    <option value="custom">📅 Specific Day...</option>
-                  </select>
-
-                  {trafficDateFilter === 'custom' && (
-                    <input
-                      type="date"
-                      value={trafficCustomDate}
-                      onChange={e => setTrafficCustomDate(e.target.value)}
-                      style={{
-                        backgroundColor: 'rgba(0, 0, 0, 0.3)',
-                        border: '1px solid rgba(56, 189, 248, 0.4)',
-                        color: '#38bdf8',
-                        borderRadius: '6px',
-                        padding: '4px 6px',
-                        fontSize: '0.74rem',
-                        outline: 'none',
-                        cursor: 'pointer'
-                      }}
-                      title="Select specific calendar day to query"
-                    />
-                  )}
-                </div>
-
-                {/* Latency Filter */}
-                <select
-                  value={selectedLatencyFilter}
-                  onChange={e => {
-                    setSelectedLatencyFilter(e.target.value as any);
-                    setActiveQuickPreset('all');
-                  }}
-                  style={{
-                    backgroundColor: selectedLatencyFilter !== 'all' ? 'rgba(245, 158, 11, 0.15)' : 'rgba(0, 0, 0, 0.25)',
-                    border: selectedLatencyFilter !== 'all' ? '1px solid rgba(245, 158, 11, 0.4)' : '1px solid var(--border-color, rgba(255, 255, 255, 0.12))',
-                    color: selectedLatencyFilter !== 'all' ? '#fbbf24' : 'var(--text-primary)',
-                    borderRadius: '6px',
-                    padding: '5px 8px',
-                    fontSize: '0.74rem',
-                    fontWeight: selectedLatencyFilter !== 'all' ? 700 : 500,
-                    outline: 'none',
-                    cursor: 'pointer'
-                  }}
-                  title="Filter by response latency"
-                >
-                  <option value="all">⏱️ All Latencies</option>
-                  <option value="fast">⚡ Fast (&lt; 50ms)</option>
-                  <option value="normal">⏱️ Normal (50 - 200ms)</option>
-                  <option value="slow">🐢 Slow (200 - 1000ms)</option>
-                  <option value="veryslow">⚠️ Very Slow (&gt; 1000ms)</option>
-                </select>
-
-                {/* Device Filter */}
-                <select
-                  value={selectedDeviceFilter}
-                  onChange={e => setSelectedDeviceFilter(e.target.value)}
-                  style={{
-                    backgroundColor: selectedDeviceFilter !== 'all' ? 'rgba(168, 85, 247, 0.15)' : 'rgba(0, 0, 0, 0.25)',
-                    border: selectedDeviceFilter !== 'all' ? '1px solid rgba(168, 85, 247, 0.4)' : '1px solid var(--border-color, rgba(255, 255, 255, 0.12))',
-                    color: selectedDeviceFilter !== 'all' ? '#c084fc' : 'var(--text-primary)',
-                    borderRadius: '6px',
-                    padding: '5px 8px',
-                    fontSize: '0.74rem',
-                    fontWeight: selectedDeviceFilter !== 'all' ? 700 : 500,
-                    outline: 'none',
-                    cursor: 'pointer'
-                  }}
-                  title="Filter by client device type"
-                >
-                  <option value="all">📱 All Devices</option>
-                  <option value="Desktop">💻 Desktop</option>
-                  <option value="Mobile">📱 Mobile</option>
-                  <option value="Tablet">📟 Tablet</option>
-                </select>
-
-                {/* Sort Order */}
-                <select
-                  value={trafficSortOrder}
-                  onChange={e => setTrafficSortOrder(e.target.value as any)}
-                  style={{
-                    backgroundColor: 'rgba(0, 0, 0, 0.25)',
-                    border: '1px solid var(--border-color, rgba(255, 255, 255, 0.12))',
-                    color: 'var(--text-muted, #94a3b8)',
-                    borderRadius: '6px',
-                    padding: '5px 8px',
-                    fontSize: '0.74rem',
-                    outline: 'none',
-                    cursor: 'pointer'
-                  }}
-                  title="Order results by criteria"
-                >
-                  <option value="newest">Sort: Newest First</option>
-                  <option value="oldest">Sort: Oldest First</option>
-                  <option value="slowest">Sort: Slowest Latency</option>
-                  <option value="fastest">Sort: Fastest Latency</option>
-                  <option value="largest">Sort: Largest Payload</option>
-                </select>
-
-                {/* Limit selector */}
-                <select
-                  value={trafficLimit}
-                  onChange={e => setTrafficLimit(Number(e.target.value))}
-                  style={{
-                    backgroundColor: 'rgba(0, 0, 0, 0.25)',
-                    border: '1px solid var(--border-color, rgba(255, 255, 255, 0.12))',
-                    color: 'var(--text-muted, #94a3b8)',
-                    borderRadius: '6px',
-                    padding: '5px 8px',
-                    fontSize: '0.74rem',
-                    outline: 'none',
-                    cursor: 'pointer'
-                  }}
-                  title="Rows fetched from database"
-                >
-                  <option value={50}>50 rows</option>
-                  <option value={150}>150 rows</option>
-                  <option value={300}>300 rows</option>
-                  <option value={500}>500 rows</option>
-                  <option value={1000}>1000 rows</option>
-                </select>
-              </div>
-
-              {/* Quick noise reduction toggles */}
-              <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
-                {/* Hide Heartbeats */}
-                <button
-                  onClick={() => setHideHeartbeat(prev => !prev)}
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '4px',
-                    backgroundColor: hideHeartbeat ? 'rgba(34, 197, 94, 0.12)' : 'rgba(255, 255, 255, 0.04)',
-                    border: hideHeartbeat ? '1px solid rgba(34, 197, 94, 0.35)' : '1px solid var(--border-color, rgba(255, 255, 255, 0.08))',
-                    color: hideHeartbeat ? '#4ade80' : 'var(--text-muted, #94a3b8)',
-                    borderRadius: '6px',
-                    padding: '4px 8px',
-                    cursor: 'pointer',
-                    fontSize: '0.71rem',
-                    fontWeight: 600,
-                    transition: 'all 0.15s ease'
-                  }}
-                  title="Hide telemetry polling from /api/heartbeat"
-                >
-                  {hideHeartbeat ? <Check size={10} strokeWidth={3} /> : <span style={{ width: '10px', height: '10px', borderRadius: '50%', border: '1px solid currentColor', display: 'inline-block' }} />}
-                  Heartbeats
-                </button>
-
-                {/* Hide Logs */}
-                <button
-                  onClick={() => setHideLog(prev => !prev)}
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '4px',
-                    backgroundColor: hideLog ? 'rgba(34, 197, 94, 0.12)' : 'rgba(255, 255, 255, 0.04)',
-                    border: hideLog ? '1px solid rgba(34, 197, 94, 0.35)' : '1px solid var(--border-color, rgba(255, 255, 255, 0.08))',
-                    color: hideLog ? '#4ade80' : 'var(--text-muted, #94a3b8)',
-                    borderRadius: '6px',
-                    padding: '4px 8px',
-                    cursor: 'pointer',
-                    fontSize: '0.71rem',
-                    fontWeight: 600,
-                    transition: 'all 0.15s ease'
-                  }}
-                  title="Hide client event logs from /api/log"
-                >
-                  {hideLog ? <Check size={10} strokeWidth={3} /> : <span style={{ width: '10px', height: '10px', borderRadius: '50%', border: '1px solid currentColor', display: 'inline-block' }} />}
-                  Logs
-                </button>
-
-                {/* Errors Only */}
-                <button
-                  onClick={() => setErrorsOnly(prev => !prev)}
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '4px',
-                    backgroundColor: errorsOnly ? 'rgba(239, 68, 68, 0.16)' : 'rgba(255, 255, 255, 0.04)',
-                    border: errorsOnly ? '1px solid rgba(239, 68, 68, 0.4)' : '1px solid var(--border-color, rgba(255, 255, 255, 0.08))',
-                    color: errorsOnly ? '#f87171' : 'var(--text-muted, #94a3b8)',
-                    borderRadius: '6px',
-                    padding: '4px 8px',
-                    cursor: 'pointer',
-                    fontSize: '0.71rem',
-                    fontWeight: 600,
-                    transition: 'all 0.15s ease'
-                  }}
-                  title="Show only 4xx and 5xx responses"
-                >
-                  <AlertTriangle size={11} />
-                  Errors
-                </button>
-
-                {/* Slow Only */}
-                <button
-                  onClick={() => setSlowOnly(prev => !prev)}
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '4px',
-                    backgroundColor: slowOnly ? 'rgba(245, 158, 11, 0.16)' : 'rgba(255, 255, 255, 0.04)',
-                    border: slowOnly ? '1px solid rgba(245, 158, 11, 0.4)' : '1px solid var(--border-color, rgba(255, 255, 255, 0.08))',
-                    color: slowOnly ? '#fbbf24' : 'var(--text-muted, #94a3b8)',
-                    borderRadius: '6px',
-                    padding: '4px 8px',
-                    cursor: 'pointer',
-                    fontSize: '0.71rem',
-                    fontWeight: 600,
-                    transition: 'all 0.15s ease'
-                  }}
-                  title="Show requests taking longer than 200ms"
-                >
-                  <Clock size={11} />
-                  Slow (&gt;200ms)
-                </button>
-              </div>
-
-              {/* Search with Negation */}
-              <div style={{ position: 'relative', minWidth: '220px', flex: '1 1 220px', maxWidth: '340px' }}>
-                <input
-                  type="text"
-                  placeholder="Search path, IP, method... (!word to exclude)"
-                  value={trafficSearchQuery}
-                  onChange={e => setTrafficSearchQuery(e.target.value)}
-                  style={{
-                    width: '100%',
-                    padding: '6px 28px 6px 28px',
-                    borderRadius: '6px',
-                    border: '1px solid var(--border-color, rgba(255, 255, 255, 0.12))',
-                    backgroundColor: 'rgba(0, 0, 0, 0.25)',
-                    color: 'var(--text-primary)',
-                    fontSize: '0.75rem',
-                    outline: 'none',
-                    boxSizing: 'border-box'
-                  }}
-                />
-                <Search size={13} color="var(--text-muted, #94a3b8)" style={{ position: 'absolute', left: '9px', top: '50%', transform: 'translateY(-50%)' }} />
-                {trafficSearchQuery && (
-                  <button
-                    onClick={() => setTrafficSearchQuery('')}
-                    style={{
-                      position: 'absolute',
-                      right: '6px',
-                      top: '50%',
-                      transform: 'translateY(-50%)',
-                      background: 'none',
-                      border: 'none',
-                      padding: '2px',
-                      cursor: 'pointer',
-                      color: 'var(--text-muted, #94a3b8)'
-                    }}
-                    title="Clear search"
-                  >
-                    <X size={13} />
-                  </button>
-                )}
-              </div>
-            </div>
-
-            {/* Expandable Advanced Filters Drawer */}
-            {showAdvancedFilters && (
-              <div style={{
-                marginTop: '6px',
-                padding: '1rem 1.15rem',
-                backgroundColor: 'rgba(0, 0, 0, 0.25)',
-                border: '1px solid var(--border-color, rgba(255, 255, 255, 0.08))',
-                borderRadius: '8px',
-                display: 'flex',
-                flexDirection: 'column',
-                gap: '12px'
-              }}>
-                {/* Mode Selector: Include vs Exclude */}
-                <div style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'space-between',
-                  flexWrap: 'wrap',
-                  gap: '8px',
-                  paddingBottom: '10px',
-                  borderBottom: '1px solid rgba(255, 255, 255, 0.06)'
-                }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                    <span style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-muted, #94a3b8)' }}>
-                      Filtering Behavior:
-                    </span>
-                    <div style={{
-                      display: 'flex',
-                      backgroundColor: 'rgba(255, 255, 255, 0.05)',
-                      borderRadius: '6px',
-                      padding: '2px',
-                      border: '1px solid var(--border-color, rgba(255, 255, 255, 0.08))'
-                    }}>
-                      <button
-                        onClick={() => toggleFilterMode('include')}
-                        style={{
-                          backgroundColor: filterMode === 'include' ? 'var(--accent-color, #38bdf8)' : 'transparent',
-                          color: filterMode === 'include' ? '#000' : 'var(--text-muted, #94a3b8)',
-                          border: 'none',
-                          borderRadius: '4px',
-                          padding: '4px 10px',
-                          fontSize: '0.72rem',
-                          fontWeight: 700,
-                          cursor: 'pointer',
-                          transition: 'all 0.15s ease'
-                        }}
-                      >
-                        Show Selected (Include)
-                      </button>
-                      <button
-                        onClick={() => toggleFilterMode('exclude')}
-                        style={{
-                          backgroundColor: filterMode === 'exclude' ? '#f59e0b' : 'transparent',
-                          color: filterMode === 'exclude' ? '#000' : 'var(--text-muted, #94a3b8)',
-                          border: 'none',
-                          borderRadius: '4px',
-                          padding: '4px 10px',
-                          fontSize: '0.72rem',
-                          fontWeight: 700,
-                          cursor: 'pointer',
-                          transition: 'all 0.15s ease'
-                        }}
-                      >
-                        Show Unselected / Hide Selected (Exclude)
-                      </button>
-                    </div>
-                  </div>
-
-                  <span style={{ fontSize: '0.7rem', color: 'var(--text-muted, #94a3b8)', fontStyle: 'italic' }}>
-                    {filterMode === 'include' 
-                      ? '✓ Showing requests matching selected methods, status codes, and categories' 
-                      : '⊘ Hiding selected items (showing unselected traffic)'}
-                  </span>
-                </div>
-
-                {/* HTTP Methods Group */}
-                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
-                  <div style={{ width: '130px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                    <span style={{ fontSize: '0.74rem', fontWeight: 600, color: 'var(--text-muted, #94a3b8)' }}>Methods:</span>
-                    <div style={{ display: 'flex', gap: '4px' }}>
-                      <button
-                        onClick={selectAllMethods}
-                        style={{ background: 'none', border: 'none', color: 'var(--accent-color, #38bdf8)', fontSize: '0.66rem', cursor: 'pointer', padding: '0 2px' }}
-                      >
-                        All
-                      </button>
-                      <span style={{ color: 'rgba(255, 255, 255, 0.2)', fontSize: '0.66rem' }}>|</span>
-                      <button
-                        onClick={clearAllMethods}
-                        style={{ background: 'none', border: 'none', color: 'var(--text-muted, #94a3b8)', fontSize: '0.66rem', cursor: 'pointer', padding: '0 2px' }}
-                      >
-                        None
-                      </button>
-                    </div>
-                  </div>
-
-                  <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
-                    {ALL_METHODS.map(m => {
-                      const isSelected = selectedMethods.includes(m);
-                      return (
-                        <button
-                          key={m}
-                          onClick={() => toggleMethod(m)}
-                          style={{
-                            display: 'flex',
-                            alignItems: 'center',
-                            gap: '4px',
-                            backgroundColor: isSelected 
-                              ? (filterMode === 'include' ? 'rgba(56, 189, 248, 0.2)' : 'rgba(245, 158, 11, 0.2)')
-                              : 'rgba(255, 255, 255, 0.03)',
-                            border: isSelected 
-                              ? (filterMode === 'include' ? '1px solid rgba(56, 189, 248, 0.4)' : '1px solid rgba(245, 158, 11, 0.4)')
-                              : '1px solid var(--border-color, rgba(255, 255, 255, 0.06))',
-                            color: isSelected 
-                              ? (filterMode === 'include' ? '#38bdf8' : '#fbbf24')
-                              : 'var(--text-muted, #94a3b8)',
-                            borderRadius: '5px',
-                            padding: '3px 8px',
-                            fontSize: '0.72rem',
-                            fontWeight: 700,
-                            cursor: 'pointer',
-                            transition: 'all 0.15s ease'
-                          }}
-                        >
-                          {isSelected && (filterMode === 'include' ? <Check size={10} strokeWidth={3} /> : <X size={10} strokeWidth={3} />)}
-                          {m}
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-
-                {/* Status Codes Group */}
-                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
-                  <div style={{ width: '130px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                    <span style={{ fontSize: '0.74rem', fontWeight: 600, color: 'var(--text-muted, #94a3b8)' }}>Status:</span>
-                    <div style={{ display: 'flex', gap: '4px' }}>
-                      <button
-                        onClick={selectAllStatusGroups}
-                        style={{ background: 'none', border: 'none', color: 'var(--accent-color, #38bdf8)', fontSize: '0.66rem', cursor: 'pointer', padding: '0 2px' }}
-                      >
-                        All
-                      </button>
-                      <span style={{ color: 'rgba(255, 255, 255, 0.2)', fontSize: '0.66rem' }}>|</span>
-                      <button
-                        onClick={clearAllStatusGroups}
-                        style={{ background: 'none', border: 'none', color: 'var(--text-muted, #94a3b8)', fontSize: '0.66rem', cursor: 'pointer', padding: '0 2px' }}
-                      >
-                        None
-                      </button>
-                    </div>
-                  </div>
-
-                  <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
-                    {ALL_STATUS_GROUPS.map(sg => {
-                      const isSelected = selectedStatusGroups.includes(sg.id);
-                      return (
-                        <button
-                          key={sg.id}
-                          onClick={() => toggleStatusGroup(sg.id)}
-                          style={{
-                            display: 'flex',
-                            alignItems: 'center',
-                            gap: '4px',
-                            backgroundColor: isSelected ? sg.bg : 'rgba(255, 255, 255, 0.03)',
-                            border: isSelected ? `1px solid ${sg.color}55` : '1px solid var(--border-color, rgba(255, 255, 255, 0.06))',
-                            color: isSelected ? sg.color : 'var(--text-muted, #94a3b8)',
-                            borderRadius: '5px',
-                            padding: '3px 8px',
-                            fontSize: '0.72rem',
-                            fontWeight: 600,
-                            cursor: 'pointer',
-                            transition: 'all 0.15s ease'
-                          }}
-                        >
-                          {isSelected && (filterMode === 'include' ? <Check size={10} strokeWidth={3} /> : <X size={10} strokeWidth={3} />)}
-                          {sg.label}
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-
-                {/* Resource Categories Group */}
-                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
-                  <div style={{ width: '130px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                    <span style={{ fontSize: '0.74rem', fontWeight: 600, color: 'var(--text-muted, #94a3b8)' }}>Category:</span>
-                    <div style={{ display: 'flex', gap: '4px' }}>
-                      <button
-                        onClick={selectAllCategories}
-                        style={{ background: 'none', border: 'none', color: 'var(--accent-color, #38bdf8)', fontSize: '0.66rem', cursor: 'pointer', padding: '0 2px' }}
-                      >
-                        All
-                      </button>
-                      <span style={{ color: 'rgba(255, 255, 255, 0.2)', fontSize: '0.66rem' }}>|</span>
-                      <button
-                        onClick={clearAllCategories}
-                        style={{ background: 'none', border: 'none', color: 'var(--text-muted, #94a3b8)', fontSize: '0.66rem', cursor: 'pointer', padding: '0 2px' }}
-                      >
-                        None
-                      </button>
-                    </div>
-                  </div>
-
-                  <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
-                    {ALL_CATEGORIES.map(cat => {
-                      const isSelected = selectedCategories.includes(cat.id);
-                      return (
-                        <button
-                          key={cat.id}
-                          onClick={() => toggleCategory(cat.id)}
-                          style={{
-                            display: 'flex',
-                            alignItems: 'center',
-                            gap: '4px',
-                            backgroundColor: isSelected 
-                              ? (filterMode === 'include' ? 'rgba(56, 189, 248, 0.16)' : 'rgba(245, 158, 11, 0.16)')
-                              : 'rgba(255, 255, 255, 0.03)',
-                            border: isSelected 
-                              ? (filterMode === 'include' ? '1px solid rgba(56, 189, 248, 0.35)' : '1px solid rgba(245, 158, 11, 0.35)')
-                              : '1px solid var(--border-color, rgba(255, 255, 255, 0.06))',
-                            color: isSelected 
-                              ? (filterMode === 'include' ? '#38bdf8' : '#fbbf24')
-                              : 'var(--text-muted, #94a3b8)',
-                            borderRadius: '5px',
-                            padding: '3px 8px',
-                            fontSize: '0.72rem',
-                            fontWeight: 600,
-                            cursor: 'pointer',
-                            transition: 'all 0.15s ease'
-                          }}
-                        >
-                          {isSelected && (filterMode === 'include' ? <Check size={10} strokeWidth={3} /> : <X size={10} strokeWidth={3} />)}
-                          {cat.label}
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-              </div>
-            )}
-          </div>
-
-          {/* Traffic Table */}
-          <div style={{ overflowX: 'auto', maxHeight: '720px', overflowY: 'auto' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.8rem' }}>
-              <thead style={{ position: 'sticky', top: 0, backgroundColor: 'var(--surface, #1e293b)', zIndex: 2 }}>
-                <tr style={{
-                  color: 'var(--text-muted, #94a3b8)',
-                  borderBottom: '1px solid var(--border-color, rgba(255, 255, 255, 0.06))',
-                  fontSize: '0.7rem',
-                  textTransform: 'uppercase',
-                  letterSpacing: '0.04em'
-                }}>
-                  <th style={{ padding: '9px 12px' }}>Time</th>
-                  <th style={{ padding: '9px 12px' }}>Method</th>
-                  <th style={{ padding: '9px 12px' }}>Status</th>
-                  <th style={{ padding: '9px 12px' }}>Type</th>
-                  <th style={{ padding: '9px 12px' }}>Path</th>
-                  <th style={{ padding: '9px 12px' }}>Latency</th>
-                  <th style={{ padding: '9px 12px' }}>Bytes</th>
-                  <th style={{ padding: '9px 12px' }}>Client</th>
-                  <th style={{ padding: '9px 12px', textAlign: 'center' }}>Details</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filteredTraffic && filteredTraffic.length > 0 ? (
-                  filteredTraffic.map((log) => {
-                    const isError = log.statusCode >= 400;
-                    const method = (log.method || 'GET').toUpperCase();
-                    const methodColor = 
-                      method === 'GET' ? '#38bdf8' : 
-                      method === 'POST' ? '#a855f7' : 
-                      method === 'OPTIONS' ? '#f59e0b' : 
-                      method === 'DELETE' ? '#ef4444' : '#34d399';
-
-                    const category = categorizePath(log.path);
-                    const categoryColor = 
-                      category === 'api' ? '#38bdf8' : 
-                      category === 'stream' ? '#c084fc' : 
-                      category === 'static' ? '#94a3b8' : '#fbbf24';
-
-                    const timeStr = typeof log.timestamp === 'number' 
-                      ? new Date(log.timestamp).toLocaleTimeString() 
-                      : String(log.timestamp).slice(11, 19);
-
-                    const isSlow = (log.latencyMs || 0) > 300;
-
-                    return (
-                      <tr key={log.id || Math.random()} style={{
-                        borderBottom: '1px solid var(--border-color, rgba(255, 255, 255, 0.03))',
-                        fontFamily: 'monospace',
-                        fontSize: '0.75rem',
-                        backgroundColor: isError ? 'rgba(239, 68, 68, 0.03)' : 'transparent'
-                      }}>
-                        <td style={{ padding: '7px 12px', color: 'var(--text-muted, #94a3b8)', whiteSpace: 'nowrap' }}>
-                          {timeStr}
-                        </td>
-                        <td style={{ padding: '7px 12px' }}>
-                          <span style={{
-                            padding: '2px 5px',
-                            borderRadius: '3px',
-                            backgroundColor: `${methodColor}18`,
-                            color: methodColor,
-                            fontWeight: 700
-                          }}>
-                            {method}
-                          </span>
-                        </td>
-                        <td style={{ padding: '7px 12px' }}>
-                          <span style={{
-                            padding: '2px 5px',
-                            borderRadius: '3px',
-                            backgroundColor: isError ? 'rgba(239, 68, 68, 0.18)' : 'rgba(34, 197, 94, 0.18)',
-                            color: isError ? '#f87171' : '#4ade80',
-                            fontWeight: 600
-                          }}>
-                            {log.statusCode}
-                          </span>
-                        </td>
-                        <td style={{ padding: '7px 12px' }}>
-                          {isThirdPartyPath(log.path) ? (
-                            <span style={{
-                              padding: '2px 6px',
-                              borderRadius: '4px',
-                              backgroundColor: 'rgba(236, 72, 153, 0.18)',
-                              border: '1px solid rgba(236, 72, 153, 0.4)',
-                              color: '#ec4899',
-                              fontSize: '0.66rem',
-                              fontWeight: 700,
-                              whiteSpace: 'nowrap'
-                            }}>
-                              ⚡ {getThirdPartyService(log.path)}
-                            </span>
-                          ) : (
-                            <span style={{
-                              padding: '1px 5px',
-                              borderRadius: '3px',
-                              backgroundColor: `${categoryColor}15`,
-                              color: categoryColor,
-                              fontSize: '0.66rem',
-                              fontWeight: 600,
-                              textTransform: 'uppercase'
-                            }}>
-                              {category}
-                            </span>
-                          )}
-                        </td>
-                        <td style={{ padding: '7px 12px', color: 'var(--text-primary)', wordBreak: 'break-all' }}>
-                          {log.path}
-                        </td>
-                        <td style={{ padding: '7px 12px', whiteSpace: 'nowrap' }}>
-                          {(log.latencyMs || 0) > 1000 ? (
-                            <span style={{ color: '#f87171', fontWeight: 700, display: 'inline-flex', alignItems: 'center', gap: '3px' }}>
-                              <span>{Math.round(log.latencyMs)} ms</span>
-                              <span style={{ fontSize: '0.62rem', backgroundColor: 'rgba(239, 68, 68, 0.2)', padding: '1px 3px', borderRadius: '3px' }}>SLOW</span>
-                            </span>
-                          ) : (log.latencyMs || 0) > 200 ? (
-                            <span style={{ color: '#fbbf24', fontWeight: 600 }}>{Math.round(log.latencyMs)} ms</span>
-                          ) : (
-                            <span style={{ color: '#94a3b8' }}>{Math.round(log.latencyMs || 0)} ms</span>
-                          )}
-                        </td>
-                        <td style={{ padding: '7px 12px', color: '#c084fc', whiteSpace: 'nowrap' }}>
-                          {formatBytes(log.bytes || 0)}
-                        </td>
-                        <td style={{ padding: '7px 12px', color: 'var(--text-muted, #94a3b8)', whiteSpace: 'nowrap' }}>
-                          <span style={{ color: 'var(--text-primary)', fontWeight: 500 }}>{log.ip || '—'}</span>
-                          {log.device && (
-                            <span style={{
-                              marginLeft: '6px',
-                              padding: '1px 4px',
-                              borderRadius: '3px',
-                              backgroundColor: log.device === 'Desktop' ? 'rgba(255, 255, 255, 0.05)' : 'rgba(168, 85, 247, 0.12)',
-                              color: log.device === 'Desktop' ? 'var(--text-muted, #94a3b8)' : '#c084fc',
-                              fontSize: '0.64rem',
-                              fontWeight: 600
-                            }}>
-                              {log.device}
-                            </span>
-                          )}
-                          {log.browser && <span style={{ marginLeft: '4px', opacity: 0.75, fontSize: '0.72rem' }}>({log.browser})</span>}
-                        </td>
-                        <td style={{ padding: '7px 12px', textAlign: 'center' }}>
-                          <button
-                            onClick={() => setSelectedLogDetail(log)}
-                            style={{
-                              background: 'none',
-                              border: 'none',
-                              color: 'var(--accent-color, #38bdf8)',
-                              cursor: 'pointer',
-                              padding: '2px 6px',
-                              borderRadius: '4px'
-                            }}
-                            title="Inspect Request Details"
-                          >
-                            <Info size={14} />
-                          </button>
-                        </td>
-                      </tr>
-                    );
-                  })
-                ) : (
-                  <tr>
-                    <td colSpan={9} style={{ padding: '3rem 1rem', textAlign: 'center', color: 'var(--text-muted, #94a3b8)' }}>
-                      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px' }}>
-                        <Filter size={24} style={{ opacity: 0.4 }} />
-                        <span style={{ fontWeight: 600 }}>No requests match the active filter criteria.</span>
-                        <span style={{ fontSize: '0.74rem' }}>
-                          Try clearing search terms or toggling "Hide Heartbeats" / "Hide Logs" / methods.
-                        </span>
-                        {isFiltersCustomized && (
-                          <button
-                            onClick={handleResetFilters}
-                            style={{
-                              marginTop: '6px',
-                              backgroundColor: 'rgba(56, 189, 248, 0.1)',
-                              border: '1px solid rgba(56, 189, 248, 0.3)',
-                              color: 'var(--accent-color, #38bdf8)',
-                              borderRadius: '6px',
-                              padding: '5px 12px',
-                              fontSize: '0.74rem',
-                              fontWeight: 600,
-                              cursor: 'pointer'
-                            }}
-                          >
-                            Reset All Filters
-                          </button>
-                        )}
-                      </div>
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-
-          {/* Request Details Modal */}
-          {selectedLogDetail && (
-            <div style={{
-              position: 'fixed',
-              top: 0,
-              left: 0,
-              right: 0,
-              bottom: 0,
-              backgroundColor: 'rgba(0, 0, 0, 0.75)',
-              backdropFilter: 'blur(4px)',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              zIndex: 9999,
-              padding: '1rem'
-            }}>
-              <div style={{
-                width: '100%',
-                maxWidth: '600px',
-                backgroundColor: 'var(--surface, #1e293b)',
-                border: '1px solid var(--border-color, rgba(255, 255, 255, 0.15))',
-                borderRadius: '12px',
-                padding: '1.5rem',
-                boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.5)',
-                color: 'var(--text-primary)'
-              }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                    <span style={{
-                      padding: '2px 6px',
-                      borderRadius: '4px',
-                      backgroundColor: 'rgba(56, 189, 248, 0.15)',
-                      color: 'var(--accent-color, #38bdf8)',
-                      fontWeight: 700,
-                      fontSize: '0.75rem'
-                    }}>
-                      {selectedLogDetail.method}
-                    </span>
-                    <h4 style={{ margin: 0, fontSize: '1rem', fontWeight: 600 }}>Request Inspection</h4>
-                  </div>
-                  <button
-                    onClick={() => setSelectedLogDetail(null)}
-                    style={{
-                      background: 'none',
-                      border: 'none',
-                      color: 'var(--text-muted, #94a3b8)',
-                      cursor: 'pointer',
-                      padding: '4px'
-                    }}
-                  >
-                    <X size={18} />
-                  </button>
-                </div>
-
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', fontSize: '0.8rem', fontFamily: 'monospace' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', borderBottom: '1px solid rgba(255, 255, 255, 0.05)' }}>
-                    <span style={{ color: 'var(--text-muted, #94a3b8)' }}>Path:</span>
-                    <span style={{ wordBreak: 'break-all', textAlign: 'right', fontWeight: 600 }}>{selectedLogDetail.path}</span>
-                  </div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', borderBottom: '1px solid rgba(255, 255, 255, 0.05)' }}>
-                    <span style={{ color: 'var(--text-muted, #94a3b8)' }}>Status:</span>
-                    <span style={{ color: selectedLogDetail.statusCode >= 400 ? '#f87171' : '#4ade80', fontWeight: 700 }}>
-                      {selectedLogDetail.statusCode}
-                    </span>
-                  </div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', borderBottom: '1px solid rgba(255, 255, 255, 0.05)' }}>
-                    <span style={{ color: 'var(--text-muted, #94a3b8)' }}>Latency:</span>
-                    <span>{Math.round(selectedLogDetail.latencyMs || 0)} ms</span>
-                  </div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', borderBottom: '1px solid rgba(255, 255, 255, 0.05)' }}>
-                    <span style={{ color: 'var(--text-muted, #94a3b8)' }}>Data Transferred:</span>
-                    <span style={{ color: '#c084fc' }}>{formatBytes(selectedLogDetail.bytes || 0)}</span>
-                  </div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', borderBottom: '1px solid rgba(255, 255, 255, 0.05)' }}>
-                    <span style={{ color: 'var(--text-muted, #94a3b8)' }}>Client IP:</span>
-                    <span>{selectedLogDetail.ip}</span>
-                  </div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', borderBottom: '1px solid rgba(255, 255, 255, 0.05)' }}>
-                    <span style={{ color: 'var(--text-muted, #94a3b8)' }}>Browser & OS:</span>
-                    <span>{selectedLogDetail.browser} / {selectedLogDetail.os} ({selectedLogDetail.device || 'Desktop'})</span>
-                  </div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', borderBottom: '1px solid rgba(255, 255, 255, 0.05)' }}>
-                    <span style={{ color: 'var(--text-muted, #94a3b8)' }}>User ID:</span>
-                    <span>{selectedLogDetail.userId || 'Guest'}</span>
-                  </div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0' }}>
-                    <span style={{ color: 'var(--text-muted, #94a3b8)' }}>Timestamp:</span>
-                    <span>{typeof selectedLogDetail.timestamp === 'number' ? new Date(selectedLogDetail.timestamp).toISOString() : String(selectedLogDetail.timestamp)}</span>
-                  </div>
-                </div>
-
-                <div style={{ marginTop: '1.25rem', display: 'flex', justifyContent: 'flex-end' }}>
-                  <button
-                    onClick={() => setSelectedLogDetail(null)}
-                    style={{
-                      backgroundColor: 'rgba(255, 255, 255, 0.08)',
-                      border: '1px solid var(--border-color, rgba(255, 255, 255, 0.1))',
-                      color: 'var(--text-primary)',
-                      borderRadius: '6px',
-                      padding: '6px 16px',
-                      fontSize: '0.75rem',
-                      fontWeight: 600,
-                      cursor: 'pointer'
-                    }}
-                  >
-                    Close
-                  </button>
-                </div>
-              </div>
-            </div>
-          )}
-            </div>
-          )}
+          <TrafficTools
+            logs={normalizedTrafficRows}
+            isPaused={isStreamPaused}
+            bufferedCount={bufferedTraffic.length}
+            onTogglePause={() => setIsStreamPaused(p => !p)}
+            onApplyBuffer={flushBufferedEvents}
+            onCopy={handleCopy}
+          />
         </div>
       )}
 
@@ -4847,6 +3840,14 @@ export const AdminDashboard: React.FC = () => {
       {/* ========================================================================= */}
       {/* TAB: MAINTENANCE & POLICY */}
       {/* ========================================================================= */}
+            {/* TAB: ONLINE STREAMS & EMBEDS */}
+      {activeTab === 'embeds' && (
+        <EmbedProvidersTab
+          onNotify={(msg) => showToast(msg)}
+          token={adminToken || undefined}
+        />
+      )}
+
       {activeTab === 'system' && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
           <MaintenanceBroadcast

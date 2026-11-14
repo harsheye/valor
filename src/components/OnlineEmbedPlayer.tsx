@@ -1,7 +1,10 @@
+import { OnlineStreamAdBanner } from './OnlineStreamAdBanner';
 import React, { useState, useEffect, useRef } from 'react';
 import { X, Server, Bookmark, List, Play } from 'lucide-react';
+import { CustomSelect } from './CustomSelect';
 import { PlayerIsland } from './player';
 import { useAutoLandscape } from '../utils/screenOrientation';
+import { getEmbedProviders, buildEmbedUrl, fetchEmbedProvidersFromServer, getProviderDisplayName } from '../services/embedProviders';
 import type { VideoItem } from '../types/media';
 
 interface OnlineEmbedPlayerProps {
@@ -22,7 +25,40 @@ export const OnlineEmbedPlayer: React.FC<OnlineEmbedPlayerProps> = ({
   tmdbApiKey
 }) => {
   useAutoLandscape(true);
-  const [server, setServer] = useState<'videasy' | 'vidking'>('videasy');
+  const [server, setServer] = useState<string>('videasy');
+  const topRightControlsRef = useRef<HTMLDivElement>(null);
+  const [controlsHovered, setControlsHovered] = useState(false);
+  const [controlsOpacity, setControlsOpacity] = useState(0.1);
+
+  useEffect(() => {
+    const handleProximityMouseMove = (e: MouseEvent) => {
+      if (controlsHovered) {
+        setControlsOpacity(1.0);
+        return;
+      }
+      const el = topRightControlsRef.current;
+      if (!el) return;
+
+      const rect = el.getBoundingClientRect();
+      const centerX = rect.left + rect.width / 2;
+      const centerY = rect.top + rect.height / 2;
+      const distance = Math.hypot(e.clientX - centerX, e.clientY - centerY);
+
+      const maxDistance = 350;
+      if (distance >= maxDistance) {
+        setControlsOpacity(0.1);
+      } else {
+        const proximity = 1 - (distance / maxDistance);
+        const calculated = 0.1 + 0.9 * Math.pow(proximity, 1.2);
+        setControlsOpacity(Math.min(1.0, Math.max(0.1, Number(calculated.toFixed(3)))));
+      }
+    };
+
+    window.addEventListener('mousemove', handleProximityMouseMove, { passive: true });
+    return () => {
+      window.removeEventListener('mousemove', handleProximityMouseMove);
+    };
+  }, [controlsHovered]);
   const [currentTime, setCurrentTime] = useState(video.currentTime || 0);
   const [duration, setDuration] = useState(0);
   
@@ -166,28 +202,7 @@ export const OnlineEmbedPlayer: React.FC<OnlineEmbedPlayerProps> = ({
 
   // Construct Player URL
   const getEmbedUrl = () => {
-    const id = video.type === 'online_anime' ? video.anilistId : video.tmdbId;
-    const startProgress = video.currentTime && Math.floor(video.currentTime) > 10 ? `?progress=${Math.floor(video.currentTime)}` : '';
-    
-    if (server === 'videasy') {
-      const colorParam = startProgress ? '&color=8B5CF6' : '?color=8B5CF6';
-      
-      if (video.type === 'online_movie') {
-        return `https://player.videasy.net/movie/${id}${startProgress}${colorParam}`;
-      } else if (video.type === 'online_tv') {
-        return `https://player.videasy.net/tv/${id}/${currentSeason}/${currentEpisode}${startProgress}${colorParam}&nextEpisode=true&episodeSelector=true`;
-      } else { // online_anime
-        return `https://player.videasy.net/anime/${id}/${currentEpisode}${startProgress}${colorParam}`;
-      }
-    } else { // vidking
-      const colorParam = startProgress ? '&color=e50914' : '?color=e50914';
-      
-      if (video.type === 'online_movie') {
-        return `https://www.vidking.net/embed/movie/${id}${startProgress}${colorParam}&autoPlay=true`;
-      } else { // online_tv
-        return `https://www.vidking.net/embed/tv/${id}/${currentSeason}/${currentEpisode}${startProgress}${colorParam}&nextEpisode=true&episodeSelector=true`;
-      }
-    }
+    return buildEmbedUrl(server, video, currentTime, currentSeason, currentEpisode);
   };
 
   const handleEpisodeChange = (epNum: number) => {
@@ -213,15 +228,66 @@ export const OnlineEmbedPlayer: React.FC<OnlineEmbedPlayerProps> = ({
       <PlayerIsland />
       {/* Top Header Bar Overlay - ONLY X Close Button */}
       <header className="online-player-header" style={{ background: 'transparent', justifyContent: 'flex-end', padding: '16px 20px', zIndex: 100 }}>
-        <div className="header-right" style={{ display: 'flex', alignItems: 'center', gap: '10px', marginLeft: 'auto' }}>
+        <div 
+          ref={topRightControlsRef}
+          className="header-right" 
+          style={{ 
+            display: 'flex', 
+            alignItems: 'center', 
+            gap: '10px', 
+            marginLeft: 'auto',
+            opacity: controlsOpacity,
+            transition: 'opacity 0.15s ease-out'
+          }}
+          onMouseEnter={() => setControlsHovered(true)}
+          onMouseLeave={() => setControlsHovered(false)}
+        >
+          {/* Simple Hazard Icon for Ad Notice & Shortcuts */}
+          <OnlineStreamAdBanner />
+
+          {/* Source Selector Dropdown */}
+          <CustomSelect
+            value={server}
+            onChange={(val) => setServer(val)}
+            options={getEmbedProviders().filter(p => p.enabled).map((p, idx) => ({ 
+              value: p.id, 
+              label: getProviderDisplayName(p, idx) 
+            }))}
+            hideSearch={true}
+            width="115px"
+          />
+
           {/* Close Player X Button */}
           <button 
             className="header-close-btn" 
             onClick={onClose} 
             title="Exit Player"
-            style={{ background: 'rgba(0,0,0,0.6)', border: '1px solid rgba(255,255,255,0.15)', borderRadius: '8px', width: '32px', height: '32px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', cursor: 'pointer' }}
+            style={{ 
+              background: 'rgba(10, 10, 15, 0.85)', 
+              border: '1px solid rgba(255,255,255,0.15)', 
+              borderRadius: '50%', 
+              width: '36px', 
+              height: '36px', 
+              display: 'flex', 
+              alignItems: 'center', 
+              justifyContent: 'center', 
+              color: 'rgba(255, 255, 255, 0.85)', 
+              cursor: 'pointer',
+              boxShadow: '0 4px 20px rgba(0,0,0,0.5)',
+              transition: 'all 0.2s ease'
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.color = '#fff';
+              e.currentTarget.style.background = '#e50914';
+              e.currentTarget.style.borderColor = '#e50914';
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.color = 'rgba(255, 255, 255, 0.85)';
+              e.currentTarget.style.background = 'rgba(10, 10, 15, 0.85)';
+              e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.15)';
+            }}
           >
-            <X size={20} />
+            <X size={18} />
           </button>
         </div>
       </header>
@@ -235,7 +301,7 @@ export const OnlineEmbedPlayer: React.FC<OnlineEmbedPlayerProps> = ({
           allowFullScreen
           frameBorder="0"
           allow="autoplay; encrypted-media; fullscreen; picture-in-picture"
-          {...{ credentialless: "true" }}
+
         ></iframe>
       </main>
 

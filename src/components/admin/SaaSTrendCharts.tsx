@@ -92,10 +92,10 @@ export const SaaSTrendCharts: React.FC<SaaSTrendChartsProps> = ({
 
   const dataPoints = activityData && activityData.length > 0 ? activityData : [
     { label: '00:00', requests: 0, activeUsers: 0, bytes: 0 },
-    { label: '06:00', requests: 5, activeUsers: 1, bytes: 120 },
-    { label: '12:00', requests: 18, activeUsers: 3, bytes: 450 },
-    { label: '18:00', requests: 12, activeUsers: 2, bytes: 310 },
-    { label: '23:00', requests: 4, activeUsers: 1, bytes: 90 }
+    { label: '06:00', requests: 0, activeUsers: 0, bytes: 0 },
+    { label: '12:00', requests: 0, activeUsers: 0, bytes: 0 },
+    { label: '18:00', requests: 0, activeUsers: 0, bytes: 0 },
+    { label: '23:59', requests: 0, activeUsers: 0, bytes: 0 }
   ];
 
   const maxRequests = Math.max(...dataPoints.map(d => d.requests || 0), 10);

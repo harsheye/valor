@@ -347,6 +347,14 @@ export const EmbedPlayerPage: React.FC = () => {
           break;
         case 'RELOAD':
           setIsReloading(true);
+          setVideo((prev) => {
+            if (!prev) return prev;
+            const savedTime = getMediaTimestamp(prev);
+            return {
+              ...prev,
+              currentTime: savedTime > 0 ? savedTime : prev.currentTime
+            };
+          });
           break;
         case 'UPDATE_CONFIG':
           if (cmd.payload.controls) setControls(prev => ({ ...prev, ...cmd.payload.controls }));
@@ -382,7 +390,7 @@ export const EmbedPlayerPage: React.FC = () => {
   useEffect(() => {
     const handleUnload = () => {
       if (video?.url && typeof video.currentTime === 'number') {
-        saveMediaTimestamp(video.url, video.currentTime, Number(video.duration) || 0, video.title);
+        saveMediaTimestamp(video, video.currentTime, Number(video.duration) || 0, video.title);
       }
     };
     window.addEventListener('beforeunload', handleUnload);
@@ -419,7 +427,7 @@ export const EmbedPlayerPage: React.FC = () => {
         saveEmbedSubtitles(newVideo, newVideo.subtitleTracks);
       }
       if (newVideo?.url && typeof newVideo.currentTime === 'number') {
-        saveMediaTimestamp(newVideo.url, newVideo.currentTime, Number(newVideo.duration) || 0, newVideo.title);
+        saveMediaTimestamp(newVideo, newVideo.currentTime, Number(newVideo.duration) || 0, newVideo.title);
       }
       if (
         newVideo.currentTime === prev.currentTime &&
@@ -674,6 +682,15 @@ export const EmbedPlayerPage: React.FC = () => {
       
       <RemoteVideoPlayer
         isEmbed={true}
+        pauseOnFocusChange={embedSettings?.pauseOnFocusChange ?? false}
+        focusOnClick={embedSettings?.focusOnClick !== false && embedSettings?.focusOnClickNoPause !== false}
+        focusOnClickNoPause={embedSettings?.focusOnClickNoPause !== false && embedSettings?.focusOnClick !== false}
+        onUpdateSettings={(updated) => {
+          try {
+            const current = JSON.parse(localStorage.getItem('valor_settings') || '{}');
+            localStorage.setItem('valor_settings', JSON.stringify({ ...current, ...updated }));
+          } catch {}
+        }}
         uiHideTimeout={5}
         isCinema={(video as any)?.isCinema}
         video={video}
@@ -699,6 +716,7 @@ export const EmbedPlayerPage: React.FC = () => {
         subSettings={subSettings}
         onUpdateSubSettings={handleUpdateSubSettings}
         openSubtitlesApiKey={embedSettings.openSubtitlesApiKey || ''}
+        cacheSettings={embedSettings?.cacheSettings}
       />
       {/* Explicit Reloading Loader */}
       {isReloading && (

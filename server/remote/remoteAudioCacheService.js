@@ -106,8 +106,11 @@ export class RemoteAudioCacheService {
       '-reconnect_at_eof', '1',
       '-reconnect_streamed', '1',
       '-reconnect_delay_max', '5',
-          '-rw_timeout', '10000000',
+          '-rw_timeout', '30000000',
           '-headers', headerLines,
+          '-analyzeduration', '2000000',
+          '-probesize', '2000000',
+          '-discard:v', 'all',
       ...(parsedStart > 0 ? ['-ss', parsedStart.toFixed(3)] : []),
       '-i', targetUrlStr,
       '-map', `0:${sIdx}`,
@@ -194,8 +197,11 @@ export class RemoteAudioCacheService {
           '-reconnect_at_eof', '1',
           '-reconnect_streamed', '1',
           '-reconnect_delay_max', '5',
-          '-rw_timeout', '10000000',
+          '-rw_timeout', '30000000',
           '-headers', headerLines,
+          '-analyzeduration', '2000000',
+          '-probesize', '2000000',
+          '-discard:v', 'all',
           '-ss', parsedStart.toFixed(3),
           '-accurate_seek',
           '-i', targetUrlStr,
@@ -214,7 +220,7 @@ export class RemoteAudioCacheService {
 
       return new Promise((resolve, reject) => {
         const child = spawn(ffmpegInstaller.path, args, { stdio: ['ignore', 'pipe', 'pipe'] });
-        const killTimer = setTimeout(() => { try { child.kill('SIGKILL'); } catch {} }, 15000);
+        const killTimer = setTimeout(() => { try { child.kill('SIGKILL'); } catch {} }, 35000);
         const chunks = [];
         let stderr = '';
 
@@ -321,8 +327,11 @@ export class RemoteAudioCacheService {
       '-reconnect_at_eof', '1',
       '-reconnect_streamed', '1',
       '-reconnect_delay_max', '5',
-      '-rw_timeout', '10000000',
+      '-rw_timeout', '30000000',
       '-headers', headerLines,
+      '-analyzeduration', '2000000',
+      '-probesize', '2000000',
+      '-discard:v', 'all',
       '-i', targetUrlStr,
       '-map', `0:${sIdx}`,
       '-vn',

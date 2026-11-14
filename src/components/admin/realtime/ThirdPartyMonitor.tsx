@@ -54,7 +54,7 @@ export const ThirdPartyMonitor: React.FC<ThirdPartyMonitorProps> = ({
       keyRotationDays: 88
     },
     {
-      name: 'OpenSubtitles REST API v2',
+      name: 'OpenSubtitles REST API',
       status: 'online',
       statusCode: 200,
       latencyMs: 110,

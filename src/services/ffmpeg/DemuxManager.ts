@@ -3,6 +3,8 @@ import { logger } from '../../utils/logger';
 import type { ByteSource } from '../local/localByteSource';
 import { FFmpegManager } from './FFmpegManager';
 import type { ProbeResult, MediaStreamInfo } from '../pipeline/MediaPipeline';
+import { sidecarService } from '../remote/sidecarService';
+import { getSavedCredentials } from '../remote/mediaAuthStore';
 
 export class DemuxManager {
   private mountedPath: string | null = null;
@@ -160,6 +162,39 @@ export class DemuxManager {
     const mountedInputPath = await this.getMountedInputPath(ff);
     const tempOutFile = `slice_${streamIndex}_${startTime}.wav`;
     const isRemoteSource = !this.isFile(this.videoFileOrSource);
+    if (isRemoteSource) {
+      const source = this.videoFileOrSource as ByteSource;
+      const rawUrl = (source as any)?.url;
+      if (typeof rawUrl === 'string' && (rawUrl.startsWith('http://') || rawUrl.startsWith('https://'))) {
+        try {
+          const apiBase = sidecarService.getRemoteApiBase();
+          const creds = getSavedCredentials(rawUrl);
+          const params = new URLSearchParams({
+            url: rawUrl,
+            streamIndex: streamIndex.toString(),
+            startTime: startTime.toFixed(3),
+            duration: duration.toFixed(3)
+          });
+          if (creds?.username) {
+            params.set('user', creds.username);
+            if (creds.password) params.set('pass', creds.password);
+          }
+          const packetUrl = `${apiBase}/api/remote/audio-packet?${params.toString()}`;
+          const response = await fetch(packetUrl, { signal });
+          if (response.ok) {
+            const buf = await response.arrayBuffer();
+            if (buf.byteLength > 44) {
+              logger.buffer(`[DemuxManager] Direct remote audio packet delivered for ${startTime}s (${buf.byteLength} bytes)`);
+              return new Uint8Array(buf);
+            }
+          }
+        } catch (apiErr: any) {
+          if (signal?.aborted) throw apiErr;
+          logger.ffmpegWarning(`[DemuxManager] Remote audio packet API failed, falling back to client WASM slicing:`, apiErr?.message || apiErr);
+        }
+      }
+    }
+
     const inputPath = isRemoteSource
       ? `remote_input_${this.uniqueId}_${streamIndex}_${Math.floor(startTime * 1000)}_${Math.random().toString(36).substring(2, 7)}.mkv`
       : mountedInputPath;

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useLayoutEffect } from 'react';
+import React, { useState, useEffect, useRef, useLayoutEffect, useCallback } from 'react';
 import { 
   Play, Pause, Square, SkipBack, SkipForward, Camera,
   Volume2, VolumeX, LogOut, ChevronRight, Check,
@@ -83,12 +83,14 @@ interface MenuItemData {
   onClick?: () => void;
   children?: MenuItemData[];
   isDivider?: boolean;
+  closeOnClick?: boolean;
 }
 
 // Submenu container with smart viewport detection (flips upside and leftside)
 const SubmenuContainer: React.FC<{
   children: React.ReactNode;
-}> = ({ children }) => {
+  onMouseEnter?: () => void;
+}> = ({ children, onMouseEnter }) => {
   const containerRef = useRef<HTMLDivElement>(null);
 
   useLayoutEffect(() => {
@@ -140,6 +142,7 @@ const SubmenuContainer: React.FC<{
     <div
       ref={containerRef}
       className="vlc-submenu-container"
+      onMouseEnter={onMouseEnter}
       style={{
         position: 'absolute',
         left: '100%',
@@ -211,25 +214,96 @@ export const VlcContextMenu: React.FC<VlcContextMenuProps> = ({
 }) => {
   const [activeSubmenuPath, setActiveSubmenuPath] = useState<string[]>([]);
   const menuRef = useRef<HTMLDivElement>(null);
+  const hoverTimerRef = useRef<any>(null);
   const [coords, setCoords] = useState({ x, y });
 
-  // Close on outside click or ESC
+  // Read config setting for click-off behavior (defaults to true)
+  const getClickOffConfig = useCallback((): boolean => {
+    try {
+      const saved = localStorage.getItem('valor_settings');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed.clickOffToHide !== undefined) return Boolean(parsed.clickOffToHide);
+        if (parsed.closeOnClickOutside !== undefined) return Boolean(parsed.closeOnClickOutside);
+        if (parsed.clickOff !== undefined) return Boolean(parsed.clickOff);
+      }
+    } catch {}
+    return true;
+  }, []);
+
+  // Robust containment check covering root menu AND all submenu containers/items
+  const isInsideMenuTree = useCallback((target: Node | null): boolean => {
+    if (!target) return false;
+    if (menuRef.current && menuRef.current.contains(target)) return true;
+    if (target instanceof Element) {
+      if (target.closest('.vlc-context-menu, .vlc-submenu-container, .vlc-menu-item, .vlc-menu-list')) {
+        return true;
+      }
+    }
+    return false;
+  }, []);
+
+  // Cleanup hover timer on unmount
   useEffect(() => {
-    const handleMouseDown = (e: MouseEvent) => {
-      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+    return () => {
+      if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current);
+    };
+  }, []);
+
+  // Close on outside click (capture phase, consuming event), window blur, or ESC
+  useEffect(() => {
+    const handleCapturePointerDown = (e: MouseEvent | PointerEvent) => {
+      // Allow right-click to pass through so onContextMenu can open/reposition the menu at the new location
+      if (e.button === 2) {
+        return;
+      }
+      if (!isInsideMenuTree(e.target as Node)) {
+        if (getClickOffConfig()) {
+          e.preventDefault();
+          e.stopPropagation();
+          e.stopImmediatePropagation?.();
+          onClose();
+        }
+      }
+    };
+
+    const handleCaptureClick = (e: MouseEvent) => {
+      if (e.button === 2) return;
+      if (!isInsideMenuTree(e.target as Node)) {
+        if (getClickOffConfig()) {
+          e.preventDefault();
+          e.stopPropagation();
+          e.stopImmediatePropagation?.();
+        }
+      }
+    };
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        e.stopPropagation();
         onClose();
       }
     };
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
+
+    const handleWindowBlur = () => {
+      onClose();
     };
-    document.addEventListener('mousedown', handleMouseDown, true);
-    document.addEventListener('keydown', handleKeyDown, true);
+
+    window.addEventListener('pointerdown', handleCapturePointerDown, true);
+    window.addEventListener('mousedown', handleCapturePointerDown, true);
+    window.addEventListener('click', handleCaptureClick, true);
+    window.addEventListener('keydown', handleKeyDown, true);
+    window.addEventListener('blur', handleWindowBlur);
+
     return () => {
-      document.removeEventListener('mousedown', handleMouseDown, true);
-      document.removeEventListener('keydown', handleKeyDown, true);
+      window.removeEventListener('pointerdown', handleCapturePointerDown, true);
+      window.removeEventListener('mousedown', handleCapturePointerDown, true);
+      window.removeEventListener('click', handleCaptureClick, true);
+      window.removeEventListener('keydown', handleKeyDown, true);
+      window.removeEventListener('blur', handleWindowBlur);
     };
-  }, [onClose]);
+  }, [onClose, isInsideMenuTree, getClickOffConfig]);
 
   // Adjust root menu coords if it overflows window
   useLayoutEffect(() => {
@@ -255,30 +329,30 @@ export const VlcContextMenu: React.FC<VlcContextMenuProps> = ({
       id: 'audio-default',
       label: 'Original (Default)',
       isRadio: true,
+      closeOnClick: false,
       checked: selectedAudioTrack === null,
       onClick: () => {
         onSelectAudioTrack?.(null);
-        onClose();
       }
     },
     ...audioStreams.map((s, idx) => ({
       id: `audio-stream-${s.index}`,
       label: `Track ${idx + 1} - [${(s.language || 'und').toUpperCase()}]`,
       isRadio: true,
+      closeOnClick: false,
       checked: selectedAudioTrack?.streamIndex === s.index,
       onClick: () => {
         onSelectAudioStream?.(s.index, s.codec, s.language);
-        onClose();
       }
     })),
     ...audioTracks.map((t) => ({
       id: `audio-custom-${t.id}`,
       label: t.name,
       isRadio: true,
+      closeOnClick: false,
       checked: selectedAudioTrack?.id === t.id,
       onClick: () => {
         onSelectAudioTrack?.(t);
-        onClose();
       }
     }))
   ];
@@ -289,30 +363,30 @@ export const VlcContextMenu: React.FC<VlcContextMenuProps> = ({
       id: 'sub-disable',
       label: 'Disable',
       isRadio: true,
+      closeOnClick: false,
       checked: selectedSubTrack === null,
       onClick: () => {
         onSelectSubTrack?.(null);
-        onClose();
       }
     },
     ...subtitleStreams.map((s, idx) => ({
       id: `sub-stream-${s.index}`,
       label: `Track ${idx + 1} - [${(s.language || 'und').toUpperCase()}]`,
       isRadio: true,
+      closeOnClick: false,
       checked: selectedSubTrack?.streamIndex === s.index,
       onClick: () => {
         onSelectSubStream?.(s.index, s.codec, s.language);
-        onClose();
       }
     })),
     ...subtitleTracks.map((t) => ({
       id: `sub-custom-${t.id}`,
       label: t.name,
       isRadio: true,
+      closeOnClick: false,
       checked: selectedSubTrack?.id === t.id,
       onClick: () => {
         onSelectSubTrack?.(t);
-        onClose();
       }
     }))
   ];
@@ -334,7 +408,6 @@ export const VlcContextMenu: React.FC<VlcContextMenuProps> = ({
       label: `${bm.title || bm.label || `Bookmark ${idx + 1}`} (${Math.floor(bm.time / 60)}:${String(Math.floor(bm.time % 60)).padStart(2, '0')})`,
       onClick: () => {
         onSeekToBookmark?.(bm.time);
-        onClose();
       }
     }))
   ];
@@ -420,7 +493,6 @@ export const VlcContextMenu: React.FC<VlcContextMenuProps> = ({
       icon: isPlaying ? <Pause size={12} fill="#000" /> : <Play size={12} fill="#000" />,
       onClick: () => {
         onPlayPause();
-        onClose();
       }
     },
     {
@@ -429,7 +501,6 @@ export const VlcContextMenu: React.FC<VlcContextMenuProps> = ({
       icon: <Square size={11} fill="#555" color="#555" />,
       onClick: () => {
         onStop();
-        onClose();
       }
     },
     {
@@ -438,7 +509,6 @@ export const VlcContextMenu: React.FC<VlcContextMenuProps> = ({
       icon: <SkipBack size={12} fill="#000" />,
       onClick: () => {
         onPrevious();
-        onClose();
       }
     },
     {
@@ -447,7 +517,6 @@ export const VlcContextMenu: React.FC<VlcContextMenuProps> = ({
       icon: <SkipForward size={12} fill="#000" />,
       onClick: () => {
         onNext();
-        onClose();
       }
     },
     {
@@ -457,7 +526,6 @@ export const VlcContextMenu: React.FC<VlcContextMenuProps> = ({
       icon: <Camera size={12} color="#000" />,
       onClick: () => {
         onTakeSnapshot();
-        onClose();
       }
     },
     { id: 'div-1', isDivider: true, label: '' },
@@ -475,6 +543,7 @@ export const VlcContextMenu: React.FC<VlcContextMenuProps> = ({
           id: 'vol-up',
           label: 'Increase Volume (+5%)',
           shortcut: '↑',
+          closeOnClick: false,
           icon: <Volume2 size={13} color="#555" />,
           onClick: () => onIncreaseVolume()
         },
@@ -482,6 +551,7 @@ export const VlcContextMenu: React.FC<VlcContextMenuProps> = ({
           id: 'vol-down',
           label: 'Decrease Volume (-5%)',
           shortcut: '↓',
+          closeOnClick: false,
           icon: <Volume2 size={13} color="#555" />,
           onClick: () => onDecreaseVolume()
         },
@@ -489,6 +559,7 @@ export const VlcContextMenu: React.FC<VlcContextMenuProps> = ({
           id: 'vol-mute',
           label: <span><u>M</u>ute</span>,
           shortcut: 'M',
+          closeOnClick: false,
           icon: isMuted ? <VolumeX size={13} color="#e50914" /> : <Volume2 size={13} color="#555" />,
           checked: isMuted,
           onClick: () => onToggleMute()
@@ -503,10 +574,10 @@ export const VlcContextMenu: React.FC<VlcContextMenuProps> = ({
           id: 'fullscreen',
           label: <span><u>F</u>ullscreen</span>,
           shortcut: 'F',
+          closeOnClick: false,
           checked: isFullscreen,
           onClick: () => {
             onToggleFullscreen();
-            onClose();
           }
         },
         {
@@ -518,64 +589,73 @@ export const VlcContextMenu: React.FC<VlcContextMenuProps> = ({
               id: 'ar-def', 
               label: 'Default (Fit)', 
               isRadio: true, 
+              closeOnClick: false,
               checked: !aspectRatio || aspectRatio === 'default',
-              onClick: () => { onSetAspectRatio?.('default'); onClose(); }
+              onClick: () => { onSetAspectRatio?.('default'); }
             },
             { 
               id: 'ar-stretch', 
               label: 'Stretch to Screen (0% Detail Lost)', 
               isRadio: true, 
+              closeOnClick: false,
               checked: aspectRatio === 'stretch',
-              onClick: () => { onSetAspectRatio?.('stretch'); onClose(); }
+              onClick: () => { onSetAspectRatio?.('stretch'); }
             },
             { 
               id: 'ar-149', 
               label: 'Smart Crop (14:9 - Minimal Loss)', 
               isRadio: true, 
+              closeOnClick: false,
               checked: aspectRatio === '14:9',
-              onClick: () => { onSetAspectRatio?.('14:9'); onClose(); }
+              onClick: () => { onSetAspectRatio?.('14:9'); }
             },
             { 
               id: 'ar-1610', 
               label: '16:10 Minimal Crop', 
               isRadio: true, 
+              closeOnClick: false,
               checked: aspectRatio === '16:10',
-              onClick: () => { onSetAspectRatio?.('16:10'); onClose(); }
+              onClick: () => { onSetAspectRatio?.('16:10'); }
             },
             { 
               id: 'ar-169', 
               label: '16:9 Widescreen', 
               isRadio: true, 
+              closeOnClick: false,
               checked: aspectRatio === '16:9',
-              onClick: () => { onSetAspectRatio?.('16:9'); onClose(); }
+              onClick: () => { onSetAspectRatio?.('16:9'); }
             },
             { 
               id: 'ar-185', 
               label: '1.85:1 Cinema', 
               isRadio: true, 
+              closeOnClick: false,
               checked: aspectRatio === '1.85:1',
-              onClick: () => { onSetAspectRatio?.('1.85:1'); onClose(); }
+              onClick: () => { onSetAspectRatio?.('1.85:1'); }
             },
             { 
               id: 'ar-219', 
               label: '21:9 Ultrawide Cinema', 
               isRadio: true, 
+              closeOnClick: false,
               checked: aspectRatio === '21:9',
-              onClick: () => { onSetAspectRatio?.('21:9'); onClose(); }
+              onClick: () => { onSetAspectRatio?.('21:9'); }
             },
             { 
               id: 'ar-cover', 
               label: 'Fill / Crop Screen (Full Zoom)', 
               isRadio: true, 
+              closeOnClick: false,
               checked: aspectRatio === 'cover',
-              onClick: () => { onSetAspectRatio?.('cover'); onClose(); }
+              onClick: () => { onSetAspectRatio?.('cover'); }
             },
             { 
               id: 'ar-43', 
               label: '4:3 Standard', 
               isRadio: true, 
+              closeOnClick: false,
               checked: aspectRatio === '4:3',
-              onClick: () => { onSetAspectRatio?.('4:3'); onClose(); }
+              onClick: () => { onSetAspectRatio?.('4:3'); }
             }
           ]
         },
@@ -584,14 +664,17 @@ export const VlcContextMenu: React.FC<VlcContextMenuProps> = ({
           label: <span><u>A</u>mbiance Glow</span>,
           icon: <Sparkles size={12} color="#000" />,
           checked: isAmbianceEnabled,
+          onClick: () => {
+            onToggleAmbiance?.();
+          },
           children: [
             {
               id: 'amb-toggle',
-              label: 'Ambiance Glow',
+              label: isAmbianceEnabled ? 'Turn Off Ambiance Glow' : 'Turn On Ambiance Glow',
               checked: isAmbianceEnabled,
+              closeOnClick: false,
               onClick: () => {
                 onToggleAmbiance?.();
-                onClose();
               }
             },
             { id: 'amb-div-1', isDivider: true, label: '' },
@@ -604,60 +687,60 @@ export const VlcContextMenu: React.FC<VlcContextMenuProps> = ({
                   id: 'blur-16',
                   label: '16px (Light)',
                   isRadio: true,
+                  closeOnClick: false,
                   checked: isAmbianceEnabled && ambianceBlur === 16,
                   onClick: () => {
                     onSetAmbianceBlur?.(16);
-                    onClose();
                   }
                 },
                 {
                   id: 'blur-32',
                   label: '32px (Subtle)',
                   isRadio: true,
+                  closeOnClick: false,
                   checked: isAmbianceEnabled && ambianceBlur === 32,
                   onClick: () => {
                     onSetAmbianceBlur?.(32);
-                    onClose();
                   }
                 },
                 {
                   id: 'blur-54',
                   label: '54px (Default)',
                   isRadio: true,
+                  closeOnClick: false,
                   checked: isAmbianceEnabled && ambianceBlur === 54,
                   onClick: () => {
                     onSetAmbianceBlur?.(54);
-                    onClose();
                   }
                 },
                 {
                   id: 'blur-75',
                   label: '75px (Soft)',
                   isRadio: true,
+                  closeOnClick: false,
                   checked: isAmbianceEnabled && ambianceBlur === 75,
                   onClick: () => {
                     onSetAmbianceBlur?.(75);
-                    onClose();
                   }
                 },
                 {
                   id: 'blur-100',
                   label: '100px (Strong)',
                   isRadio: true,
+                  closeOnClick: false,
                   checked: isAmbianceEnabled && ambianceBlur === 100,
                   onClick: () => {
                     onSetAmbianceBlur?.(100);
-                    onClose();
                   }
                 },
                 {
                   id: 'blur-140',
                   label: '140px (Max)',
                   isRadio: true,
+                  closeOnClick: false,
                   checked: isAmbianceEnabled && ambianceBlur === 140,
                   onClick: () => {
                     onSetAmbianceBlur?.(140);
-                    onClose();
                   }
                 }
               ]
@@ -671,40 +754,40 @@ export const VlcContextMenu: React.FC<VlcContextMenuProps> = ({
                   id: 'op-40',
                   label: '40% (Soft)',
                   isRadio: true,
+                  closeOnClick: false,
                   checked: isAmbianceEnabled && ambianceOpacity === 0.4,
                   onClick: () => {
                     onSetAmbianceOpacity?.(0.4);
-                    onClose();
                   }
                 },
                 {
                   id: 'op-70',
                   label: '70% (Default)',
                   isRadio: true,
+                  closeOnClick: false,
                   checked: isAmbianceEnabled && ambianceOpacity === 0.7,
                   onClick: () => {
                     onSetAmbianceOpacity?.(0.7);
-                    onClose();
                   }
                 },
                 {
                   id: 'op-90',
                   label: '90% (Vivid)',
                   isRadio: true,
+                  closeOnClick: false,
                   checked: isAmbianceEnabled && ambianceOpacity === 0.9,
                   onClick: () => {
                     onSetAmbianceOpacity?.(0.9);
-                    onClose();
                   }
                 },
                 {
                   id: 'op-100',
                   label: '100% (Max)',
                   isRadio: true,
+                  closeOnClick: false,
                   checked: isAmbianceEnabled && ambianceOpacity === 1.0,
                   onClick: () => {
                     onSetAmbianceOpacity?.(1.0);
-                    onClose();
                   }
                 }
               ]
@@ -721,40 +804,40 @@ export const VlcContextMenu: React.FC<VlcContextMenuProps> = ({
               id: 'hdr-off',
               label: 'Off',
               isRadio: true,
+              closeOnClick: false,
               checked: !toneMappingMode || toneMappingMode === 'off',
               onClick: () => {
                 onSetToneMappingMode?.('off');
-                onClose();
               }
             },
             {
               id: 'hdr-aces',
               label: 'ACES Filmic',
               isRadio: true,
+              closeOnClick: false,
               checked: toneMappingMode === 'aces',
               onClick: () => {
                 onSetToneMappingMode?.('aces');
-                onClose();
               }
             },
             {
               id: 'hdr-vibrant',
               label: 'Vibrant',
               isRadio: true,
+              closeOnClick: false,
               checked: toneMappingMode === 'vibrant',
               onClick: () => {
                 onSetToneMappingMode?.('vibrant');
-                onClose();
               }
             },
             {
               id: 'hdr-reinhard',
               label: 'Reinhard',
               isRadio: true,
+              closeOnClick: false,
               checked: toneMappingMode === 'reinhard',
               onClick: () => {
                 onSetToneMappingMode?.('reinhard');
-                onClose();
               }
             }
           ]
@@ -814,6 +897,7 @@ export const VlcContextMenu: React.FC<VlcContextMenuProps> = ({
               id: 'spd-20',
               label: '2.0x (Double)',
               isRadio: true,
+              closeOnClick: false,
               checked: playbackRate === 2.0,
               onClick: () => onSetPlaybackRate(2.0)
             },
@@ -821,6 +905,7 @@ export const VlcContextMenu: React.FC<VlcContextMenuProps> = ({
               id: 'spd-15',
               label: '1.5x (Fast)',
               isRadio: true,
+              closeOnClick: false,
               checked: playbackRate === 1.5,
               onClick: () => onSetPlaybackRate(1.5)
             },
@@ -828,6 +913,7 @@ export const VlcContextMenu: React.FC<VlcContextMenuProps> = ({
               id: 'spd-125',
               label: '1.25x (Faster)',
               isRadio: true,
+              closeOnClick: false,
               checked: playbackRate === 1.25,
               onClick: () => onSetPlaybackRate(1.25)
             },
@@ -835,6 +921,7 @@ export const VlcContextMenu: React.FC<VlcContextMenuProps> = ({
               id: 'spd-normal',
               label: '1.0x (Normal)',
               isRadio: true,
+              closeOnClick: false,
               checked: playbackRate === 1.0,
               onClick: () => onSetPlaybackRate(1.0)
             },
@@ -842,6 +929,7 @@ export const VlcContextMenu: React.FC<VlcContextMenuProps> = ({
               id: 'spd-075',
               label: '0.75x (Slower)',
               isRadio: true,
+              closeOnClick: false,
               checked: playbackRate === 0.75,
               onClick: () => onSetPlaybackRate(0.75)
             },
@@ -849,6 +937,7 @@ export const VlcContextMenu: React.FC<VlcContextMenuProps> = ({
               id: 'spd-05',
               label: '0.5x (Half)',
               isRadio: true,
+              closeOnClick: false,
               checked: playbackRate === 0.5,
               onClick: () => onSetPlaybackRate(0.5)
             }
@@ -861,7 +950,6 @@ export const VlcContextMenu: React.FC<VlcContextMenuProps> = ({
           shortcut: '→',
           onClick: () => {
             onJumpForward();
-            onClose();
           }
         },
         {
@@ -870,7 +958,6 @@ export const VlcContextMenu: React.FC<VlcContextMenuProps> = ({
           shortcut: '←',
           onClick: () => {
             onJumpBackward();
-            onClose();
           }
         }
       ]
@@ -884,30 +971,30 @@ export const VlcContextMenu: React.FC<VlcContextMenuProps> = ({
           id: 'view-timeline-only',
           label: 'Timeline Only (VLC Mode)',
           shortcut: 'G',
+          closeOnClick: false,
           checked: isTimelineOnly,
           onClick: () => {
             onToggleTimelineOnly?.();
-            onClose();
           }
         },
         {
           id: 'view-ambiance-toggle',
           label: 'Ambiance Glow',
           shortcut: 'A',
+          closeOnClick: false,
           checked: isAmbianceEnabled,
           onClick: () => {
             onToggleAmbiance?.();
-            onClose();
           }
         },
         {
           id: 'view-fullscreen',
           label: 'Fullscreen Interface',
           shortcut: 'F',
+          closeOnClick: false,
           checked: isFullscreen,
           onClick: () => {
             onToggleFullscreen();
-            onClose();
           }
         },
         {
@@ -915,7 +1002,6 @@ export const VlcContextMenu: React.FC<VlcContextMenuProps> = ({
           label: 'Audio & Subtitle Menu',
           onClick: () => {
             onOpenAudioSubMenu();
-            onClose();
           }
         }
       ]
@@ -980,22 +1066,44 @@ export const VlcContextMenu: React.FC<VlcContextMenuProps> = ({
               key={item.id}
               className={`vlc-menu-item ${item.disabled ? 'disabled' : ''} ${isSubmenuOpen ? 'active' : ''}`}
               onMouseEnter={() => {
-                if (hasChildren) {
-                  setActiveSubmenuPath(itemPath);
-                } else {
-                  setActiveSubmenuPath(pathPrefix);
+                if (hoverTimerRef.current) {
+                  clearTimeout(hoverTimerRef.current);
                 }
+                hoverTimerRef.current = setTimeout(() => {
+                  if (hasChildren) {
+                    setActiveSubmenuPath(itemPath);
+                  } else {
+                    setActiveSubmenuPath(pathPrefix);
+                  }
+                }, 180);
               }}
               onClick={(e) => {
                 e.stopPropagation();
                 if (item.disabled) return;
+                
+                if (hoverTimerRef.current) {
+                  clearTimeout(hoverTimerRef.current);
+                }
+
+                // If item has children, toggle or open submenu and DO NOT close context menu
                 if (hasChildren) {
                   setActiveSubmenuPath(prev => 
                     prev[depth] === item.id ? pathPrefix : itemPath
                   );
+                  if (item.onClick) {
+                    item.onClick();
+                  }
+                  return;
                 }
+
+                // Leaf item: run action
                 if (item.onClick) {
                   item.onClick();
+                }
+
+                // Close menu unless closeOnClick is explicitly false (e.g. toggles, radios)
+                if (item.closeOnClick !== false) {
+                  onClose();
                 }
               }}
             >
@@ -1028,7 +1136,13 @@ export const VlcContextMenu: React.FC<VlcContextMenuProps> = ({
 
               {/* Smart Viewport-aware Submenu */}
               {hasChildren && isSubmenuOpen && (
-                <SubmenuContainer>
+                <SubmenuContainer
+                  onMouseEnter={() => {
+                    if (hoverTimerRef.current) {
+                      clearTimeout(hoverTimerRef.current);
+                    }
+                  }}
+                >
                   {renderMenuItems(item.children!, itemPath)}
                 </SubmenuContainer>
               )}
@@ -1040,17 +1154,54 @@ export const VlcContextMenu: React.FC<VlcContextMenuProps> = ({
   };
 
   return (
-    <div
-      ref={menuRef}
-      className="vlc-context-menu"
-      style={{
-        position: 'fixed',
-        left: `${coords.x}px`,
-        top: `${coords.y}px`,
-        zIndex: 999999,
-        overflow: 'visible'
-      }}
-      onClick={(e) => e.stopPropagation()}
+    <>
+      {/* Full-screen transparent backdrop to catch and consume outside clicks without touching underlying video */}
+      <div
+        className="vlc-context-menu-backdrop"
+        style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          width: '100vw',
+          height: '100vh',
+          zIndex: 999998,
+          background: 'transparent',
+          cursor: 'default'
+        }}
+        onPointerDown={(e) => {
+          if (e.button === 2) return;
+          if (getClickOffConfig()) {
+            e.preventDefault();
+            e.stopPropagation();
+            onClose();
+          }
+        }}
+        onMouseDown={(e) => {
+          if (e.button === 2) return;
+          if (getClickOffConfig()) {
+            e.preventDefault();
+            e.stopPropagation();
+          }
+        }}
+        onClick={(e) => {
+          if (e.button === 2) return;
+          if (getClickOffConfig()) {
+            e.preventDefault();
+            e.stopPropagation();
+          }
+        }}
+      />
+      <div
+        ref={menuRef}
+        className="vlc-context-menu"
+        style={{
+          position: 'fixed',
+          left: `${coords.x}px`,
+          top: `${coords.y}px`,
+          zIndex: 999999,
+          overflow: 'visible'
+        }}
+        onClick={(e) => e.stopPropagation()}
       onContextMenu={(e) => e.preventDefault()}
     >
       {renderMenuItems(menuData)}
@@ -1202,5 +1353,6 @@ export const VlcContextMenu: React.FC<VlcContextMenuProps> = ({
         }
       `}</style>
     </div>
+    </>
   );
 };

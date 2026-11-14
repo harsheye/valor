@@ -15,3 +15,8 @@ export interface CachedProbeData {
 
 export const remoteProbeCache = new Map<string, CachedProbeData>();
 export const inFlightRemoteProbes = new Map<string, Promise<boolean>>();
+
+export function clearRemoteProbeCache(): void {
+  remoteProbeCache.clear();
+  inFlightRemoteProbes.clear();
+}

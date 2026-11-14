@@ -842,6 +842,8 @@ export const AudioSubPopover: React.FC<AudioSubPopoverProps> = ({
       <div
         className={`asp-sheet-backdrop ${isLandscape ? 'asp-sheet-backdrop-landscape' : ''}`}
         onClick={() => setShowAudioSubMenu(false)}
+        onDoubleClick={(e) => e.stopPropagation()}
+        onPointerDown={(e) => e.stopPropagation()}
         role="dialog"
         aria-modal="true"
         aria-label="Audio and Subtitle Settings"
@@ -849,6 +851,8 @@ export const AudioSubPopover: React.FC<AudioSubPopoverProps> = ({
         <div
           className={`asp-sheet ${isLandscape ? 'asp-sheet-landscape' : ''}`}
           onClick={(e) => e.stopPropagation()}
+          onDoubleClick={(e) => e.stopPropagation()}
+          onPointerDown={(e) => e.stopPropagation()}
           onWheel={(e) => e.stopPropagation()}
         >
           {!isLandscape && <div className="asp-sheet-handle" />}
@@ -919,6 +923,10 @@ export const AudioSubPopover: React.FC<AudioSubPopoverProps> = ({
     <div
       ref={popoverRef}
       className={`asp-pop audio-sub-popover audio-sub-popover-center animate-fade-in ${isFolded ? 'is-folded' : ''}`}
+      onClick={(e) => e.stopPropagation()}
+      onDoubleClick={(e) => e.stopPropagation()}
+      onPointerDown={(e) => e.stopPropagation()}
+      onMouseDown={(e) => e.stopPropagation()}
       onWheel={(e) => {
         e.stopPropagation();
       }}

@@ -26,6 +26,10 @@ export class BufferManager {
     return this.packetCache;
   }
 
+  setCacheRetention(keepBehind: number, keepAhead: number): void {
+    this.packetCache.updateRetention(keepBehind, keepAhead);
+  }
+
   getSubtitleCache(): Map<string, any[]> {
     return this.subtitleCache;
   }
