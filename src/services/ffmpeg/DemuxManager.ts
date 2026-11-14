@@ -248,7 +248,6 @@ export class DemuxManager {
             '-ss', seekSeconds.toString(),
             '-accurate_seek',
             '-i', inputPath,
-            '-ss', '0',
             '-t', duration.toString(),
             '-map', `0:${streamIndex}`,
             '-vn',
@@ -262,7 +261,25 @@ export class DemuxManager {
 
           logger.ffmpeg(`[FFmpeg Command] ffmpeg ${args.join(' ')}`);
           const startTimeMs = performance.now();
-          const code = await ff.exec(args);
+          let code = await ff.exec(args);
+          if (code !== 0) {
+            logger.ffmpegWarning(`[DemuxManager] Primary map 0:${streamIndex} exited with ${code}; retrying with audio map 0:a:0`);
+            const fallbackArgs = [
+              '-ss', seekSeconds.toString(),
+              '-accurate_seek',
+              '-i', inputPath,
+              '-t', duration.toString(),
+              '-map', '0:a:0',
+              '-vn',
+              '-avoid_negative_ts', 'make_zero',
+              '-acodec', 'pcm_s16le',
+              '-ac', '2',
+              '-ar', '44100',
+              '-f', 'wav',
+              tempOutFile
+            ];
+            code = await ff.exec(fallbackArgs);
+          }
           const durationMs = performance.now() - startTimeMs;
           logger.ffmpeg(`[FFmpeg Status] Exit code: ${code}, Duration: ${durationMs.toFixed(2)}ms`);
           if (code !== 0) {
@@ -274,9 +291,9 @@ export class DemuxManager {
         };
 
         let outputData = await runSlice(ffmpegSeekTime);
-        if (isRemoteSource && outputData.byteLength <= 512 && ffmpegSeekTime > 0) {
+        if (outputData.byteLength <= 512 && ffmpegSeekTime > 0) {
           logger.ffmpegWarning(
-            `[DemuxManager] WASM audio slice was empty at seek ${ffmpegSeekTime}s; retrying from start of byte window.`
+            `[DemuxManager] WASM audio slice was empty at seek ${ffmpegSeekTime}s; retrying from 0.`
           );
           try {
             await ff.deleteFile(tempOutFile);

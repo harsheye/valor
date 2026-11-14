@@ -266,6 +266,15 @@ export function detectMediaPlatform(itemData: any, isTV: boolean): {
   return { platform: isTV ? 'SERIES' : 'FILM', platformBg: '#e50914', platformTextColor: '#ffffff' };
 }
 
+export const isBrowserPlayableAudioCodec = (codec?: string): boolean => {
+  if (!codec) return true;
+  const c = codec.toLowerCase().trim();
+  if (/ac-?3|eac-?3|ec-?3|dts|truehd|mlp|atmos|dca/i.test(c)) {
+    return false;
+  }
+  return true;
+};
+
 export const normalizeKey = (k?: string | null): string => {
   if (!k) return '';
   const trimmed = k.trim();
@@ -1848,8 +1857,12 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
     const prefs = getSavedMediaPreferences();
     const streams = video.streams || [];
     const audioStreams = streams.filter((s: any) => s.type === 'audio');
-    if (audioStreams.length < 2) return null;
-    return getPreferredAudioStreamIndex(streams, prefs.defaultAudio);
+    if (audioStreams.length === 0) return null;
+    const isNonNative = audioStreams.some((s: any) => !isBrowserPlayableAudioCodec(s.codec));
+    if (audioStreams.length >= 2 || isNonNative) {
+      return getPreferredAudioStreamIndex(streams, prefs.defaultAudio);
+    }
+    return null;
   });
   const [activeSubStreamIndex, setActiveSubStreamIndex] = useState<number | null>(null);
   const [playbackError, setPlaybackError] = useState<string | null>(null);
@@ -2549,8 +2562,10 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
     const hasAlternateAudio = activeAudioStreamIndex !== null || selectedAudioTrack !== null;
 
     if (videoRef.current) {
-      videoRef.current.volume = hasAlternateAudio ? 0 : volume;
-      videoRef.current.muted = hasAlternateAudio ? true : isMuted;
+      videoRef.current.volume = volume;
+      if (!playbackControllerRef.current || activeAudioStreamIndex === null) {
+        videoRef.current.muted = isMuted;
+      }
     }
 
     if (playbackControllerRef.current) {
@@ -4317,8 +4332,11 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
         });
 
         try {
-          const audioTracksCount = (video.streams || []).filter((s: any) => s.type === 'audio').length;
-          const targetAudioIndex = audioTracksCount >= 2 ? activeAudioStreamIndex : null;
+          const audioTracks = (video.streams || []).filter((s: any) => s.type === 'audio');
+          const isNonNativeAudio = audioTracks.some((s: any) => !isBrowserPlayableAudioCodec(s.codec));
+          const targetAudioIndex = (audioTracks.length >= 2 || isNonNativeAudio)
+            ? (activeAudioStreamIndex ?? audioTracks[0]?.index ?? null)
+            : activeAudioStreamIndex;
           await controller.initialize(videoRef.current, targetAudioIndex);
         } catch (err) {
           console.warn(`[LocalVideoPlayer] PlaybackController init failed:`, err);
@@ -4638,8 +4656,9 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
         const targetAudio = settings.defaultAudio || 'ENG';
         const targetSub = settings.defaultSub || 'ENG';
 
-        // Auto-select audio stream ONLY if media has 2 or more audio tracks
-        if (audioStreams.length >= 2) {
+        // Auto-select audio stream if media has 2+ audio tracks OR if the audio track is non-native (e.g. AC3/EAC3/DTS)
+        const isSingleTrackNonNative = audioStreams.length === 1 && !isBrowserPlayableAudioCodec(audioStreams[0]?.codec);
+        if (audioStreams.length >= 2 || isSingleTrackNonNative) {
           let audioSelected = false;
           if (targetAudio !== 'Original' && !selectedAudioTrack) {
             const stream = findPreferredStream(audioStreams, targetAudio, 'audio');
@@ -4650,14 +4669,14 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
             }
           }
 
-          // Always auto-select the first audio track when available (for both local and remote) if no preferred track matched
+          // Always auto-select the first audio track when available if no preferred track matched
           if (!audioSelected && !selectedAudioTrack && audioStreams.length > 0) {
             const firstAudio = audioStreams[0];
             logger.player(`Auto-selecting first audio track: ${firstAudio.language || firstAudio.title || 'unknown'} (${firstAudio.codec})`);
             handleSelectEmbeddedAudio(firstAudio.index, firstAudio.codec, firstAudio.language, false, firstAudio.title, true);
           }
-        } else {
-          // Fewer than 2 audio tracks (< 2): halt/suspend audio parser, use HTML5 audio natively
+        } else if (audioStreams.length === 1 && isBrowserPlayableAudioCodec(audioStreams[0]?.codec) && !selectedAudioTrack) {
+          // Single natively playable track (e.g. AAC/MP3): use HTML5 native audio
           setActiveAudioStreamIndex(null);
           setSelectedAudioTrack(null);
           if (playbackControllerRef.current) {
@@ -4667,9 +4686,8 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
             videoRef.current.muted = isMuted;
             videoRef.current.volume = volume;
           }
-          logger.player(`Media has ${audioStreams.length} audio track(s) (< 2). Audio parser suspended; using native HTML5 audio.`);
+          logger.player(`Media has 1 native audio track (${audioStreams[0]?.codec}). Using native HTML5 audio.`);
         }
-
         // Auto-select subtitle stream
         if (targetSub !== 'Off' && !selectedSubTrack) {
           const stream = findPreferredStream(subtitleStreams, targetSub, 'subtitle');

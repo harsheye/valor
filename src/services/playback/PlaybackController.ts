@@ -149,11 +149,67 @@ export class PlaybackController {
     return this.videoEl ? this.videoEl.currentTime : 0;
   }
 
+  private bindVideoListeners(): void {
+    if (!this.videoEl || this.listenersBound) return;
+    this.videoEl.addEventListener('timeupdate', this.onTimeUpdate);
+    this.videoEl.addEventListener('play', this.onPlayEvent);
+    this.videoEl.addEventListener('pause', this.onPauseEvent);
+    this.videoEl.addEventListener('waiting', this.onWaitingEvent);
+    this.videoEl.addEventListener('playing', this.onPlayingEvent);
+    this.videoEl.addEventListener('seeking', this.onSeekingEvent);
+    this.videoEl.addEventListener('seeked', this.onSeekedEvent);
+    this.videoEl.addEventListener('ratechange', this.onRateChangeEvent);
+    this.listenersBound = true;
+    logger.playback(`controller=${this.instanceId} video listeners ready`);
+  }
+
+  private workersLoadPromise: Promise<boolean> | null = null;
+
+  private async ensureWorkersLoaded(): Promise<boolean> {
+    if (this.ff && this.decodeWorkers.length > 0) return true;
+    if (this.workersLoadPromise) return this.workersLoadPromise;
+
+    this.workersLoadPromise = (async () => {
+      try {
+        this.ff = await this.ffmpegMgr.load();
+        if (this.session.abortController.signal.aborted) return false;
+
+        await this.demuxMgr.getMountedInputPath(this.ff);
+        if (this.session.abortController.signal.aborted) return false;
+
+        this.decodeWorkers = [{ ff: this.ff, manager: this.ffmpegMgr, demux: this.demuxMgr, reader: this.packetReader }];
+        for (let index = 1; index < FFMPEG_WORKER_COUNT; index++) {
+          try {
+            const manager = this.ffmpegMgr.createSibling();
+            const ff = await manager.load();
+            const demux = this.demuxMgr.createSibling(manager);
+            await demux.getMountedInputPath(ff);
+            this.decodeWorkers.push({ ff, manager, demux, reader: new PacketReader(demux, this.audioCtx) });
+            logger.scheduler(`decode worker ${index + 1}/${FFMPEG_WORKER_COUNT} ready`);
+          } catch (err) {
+            logger.warn(`Unable to start extra decode worker; continuing with ${this.decodeWorkers.length}:`, err);
+          }
+        }
+        return true;
+      } catch (err) {
+        logger.error(`[PlaybackController-${this.instanceId}] Failed to load FFmpeg decode workers:`, err);
+        return false;
+      } finally {
+        this.workersLoadPromise = null;
+      }
+    })();
+
+    return this.workersLoadPromise;
+  }
+
   async initialize(videoEl: HTMLVideoElement, streamIndex: number | null): Promise<void> {
     this.videoEl = videoEl;
     this.state.activeStreamIndex = typeof streamIndex === 'number' ? streamIndex : -1;
     this.videoEl.muted = false; // Preserve native audio until the first WASM chunk is ready.
     this.bufferManager.resetFailures();
+
+    // Always bind video element listeners so controller can monitor playback state and transitions
+    this.bindVideoListeners();
 
     if (this.state.activeStreamIndex < 0) {
       logger.playback('controller=' + this.instanceId + ' initialized for native video audio.');
@@ -164,68 +220,30 @@ export class PlaybackController {
     const generation = this.startNewPlaybackGeneration('initialize');
     logger.playback(`controller=${this.instanceId} initializing audio track ${this.state.activeStreamIndex}`);
 
-    this.ff = await this.ffmpegMgr.load();
-    if (this.session.abortController.signal.aborted || generation !== this.session.playbackGeneration) {
-      logger.playback(`[PlaybackController-${this.instanceId}] Init aborted during ffmpeg load.`);
+    const loaded = await this.ensureWorkersLoaded();
+    if (!loaded || this.session.abortController.signal.aborted || generation !== this.session.playbackGeneration) {
+      logger.playback(`[PlaybackController-${this.instanceId}] Init aborted during workers load.`);
       return;
     }
 
-      await this.demuxMgr.getMountedInputPath(this.ff);
-    if (this.session.abortController.signal.aborted || generation !== this.session.playbackGeneration) {
-      logger.playback(`[PlaybackController-${this.instanceId}] Init aborted during demux mount.`);
+    const resumeTime = this.videoEl.currentTime;
+    const startChunk = Math.floor(resumeTime / 10) * 10;
+    const chunkId = `audio_${this.state.activeStreamIndex}_${startChunk}`;
+    logger.playback(`controller=${this.instanceId} ready at ${resumeTime.toFixed(3)}s; first audio ${chunkId}`);
+
+    // Warm only the first playable chunk before play begins.
+    logger.buffer(`warm-up: first playable chunk ${startChunk}s for ${resumeTime.toFixed(3)}s`);
+    try {
+      await this.fillBufferWindow(resumeTime, 'initialize-first-chunk', generation, true, true);
+    } catch (err) {
+      logger.warn(`[PlaybackController-${this.instanceId}] Initial audio warm-up failed:`, err);
       return;
     }
+    if (generation !== this.session.playbackGeneration || this.session.abortController.signal.aborted) return;
 
-    this.decodeWorkers = [{ ff: this.ff, manager: this.ffmpegMgr, demux: this.demuxMgr, reader: this.packetReader }];
-    // Each FFmpeg.wasm instance has one execution lane. A second worker gives
-    // look-ahead real parallelism instead of queuing commands inside one worker.
-    for (let index = 1; index < FFMPEG_WORKER_COUNT; index++) {
-      try {
-        const manager = this.ffmpegMgr.createSibling();
-        const ff = await manager.load();
-        const demux = this.demuxMgr.createSibling(manager);
-        await demux.getMountedInputPath(ff);
-        this.decodeWorkers.push({ ff, manager, demux, reader: new PacketReader(demux, this.audioCtx) });
-        logger.scheduler(`decode worker ${index + 1}/${FFMPEG_WORKER_COUNT} ready`);
-      } catch (err) {
-        logger.warn(`Unable to start extra decode worker; continuing with ${this.decodeWorkers.length}:`, err);
-      }
-    }
-
-    // Bind event listeners only if we are still active
-    if (!this.session.abortController.signal.aborted && generation === this.session.playbackGeneration) {
-      this.videoEl.addEventListener('timeupdate', this.onTimeUpdate);
-      this.videoEl.addEventListener('play', this.onPlayEvent);
-      this.videoEl.addEventListener('pause', this.onPauseEvent);
-      this.videoEl.addEventListener('waiting', this.onWaitingEvent);
-      this.videoEl.addEventListener('playing', this.onPlayingEvent);
-      this.videoEl.addEventListener('seeking', this.onSeekingEvent);
-      this.videoEl.addEventListener('seeked', this.onSeekedEvent);
-      this.videoEl.addEventListener('ratechange', this.onRateChangeEvent);
-      this.listenersBound = true;
-      logger.playback(`controller=${this.instanceId} video listeners ready`);
-
-      const resumeTime = this.videoEl.currentTime;
-      const startChunk = Math.floor(resumeTime / 10) * 10;
-      const chunkId = `audio_${this.state.activeStreamIndex}_${startChunk}`;
-      logger.playback(`controller=${this.instanceId} ready at ${resumeTime.toFixed(3)}s; first audio ${chunkId}`);
-
-      // Warm only the first playable chunk before play begins. The remaining
-      // window starts after playback, avoiding an expensive abandoned 50s fill
-      // if the user immediately presses play or seeks.
-      logger.buffer(`warm-up: first playable chunk ${startChunk}s for ${resumeTime.toFixed(3)}s`);
-      try {
-        await this.fillBufferWindow(resumeTime, 'initialize-first-chunk', generation, true, true);
-      } catch (err) {
-        logger.warn(`[PlaybackController-${this.instanceId}] Initial audio warm-up failed:`, err);
-        return;
-      }
-      if (generation !== this.session.playbackGeneration || this.session.abortController.signal.aborted) return;
-
-      this.hydrateManifestFromCache();
-      this.initializedGeneration = generation;
-      logger.buffer(`warm-up complete; first playable audio is cached`);
-    }
+    this.hydrateManifestFromCache();
+    this.initializedGeneration = generation;
+    logger.buffer(`warm-up complete; first playable audio is cached`);
   }
 
   setBufferingCallback(cb: (buffering: boolean) => void): void {
@@ -893,12 +911,6 @@ export class PlaybackController {
     if (this.session.abortController.signal.aborted) return;
     this.state.activeStreamIndex = typeof streamIndex === 'number' ? streamIndex : -1;
     logger.playback(`[PlaybackController-${this.instanceId}] switchAudioTrack called. streamIndex=${this.state.activeStreamIndex}`);
-    this.fetchingKeys.clear();
-    this.playbackQueue.clear();
-    this.manifest.clear();
-    this.bufferManager.clear();
-    this.bufferManager.resetFailures();
-    this.scheduler.reset();
 
     if (this.videoEl) {
       this.videoEl.muted = false;
@@ -910,10 +922,26 @@ export class PlaybackController {
       return;
     }
 
+    const generation = this.startNewPlaybackGeneration('switchAudioTrack');
+    this.fetchingKeys.clear();
+    this.playbackQueue.clear();
+    this.manifest.clear();
+    this.bufferManager.clear();
+    this.bufferManager.resetFailures();
+    this.scheduler.reset();
+
+    this.bindVideoListeners();
+
+    // Ensure Web Audio context is resumed upon user track switch
+    void this.audioScheduler.resume().catch(() => {});
+
+    const loaded = await this.ensureWorkersLoaded();
+    if (!loaded || this.session.abortController.signal.aborted || generation !== this.session.playbackGeneration) return;
+
     if (this.videoEl) {
       const isPlaying = !this.videoEl.paused;
       const currentTime = this.videoEl.currentTime;
-      await this.fillBufferWindow(currentTime, 'switchAudioTrack');
+      await this.fillBufferWindow(currentTime, 'switchAudioTrack', generation, true, true);
       if (this.bufferManager.getCache().hasChunk(Math.floor(currentTime / 10) * 10)) {
         this.videoEl.muted = true;
       }
@@ -923,6 +951,7 @@ export class PlaybackController {
         this.playbackQueue.clear();
         this.hydrateManifestFromCache();
         this.playbackQueue.update(syncedTime, this.state.playbackRate);
+        void this.fillBufferWindow(syncedTime, 'switchAudioTrack-followup', generation, false, false);
       } else {
         this.hydrateManifestFromCache();
       }
