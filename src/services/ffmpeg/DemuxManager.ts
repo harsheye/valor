@@ -245,9 +245,6 @@ export class DemuxManager {
       try {
         const runSlice = async (seekSeconds: number): Promise<Uint8Array> => {
           const args = [
-            '-discard:v', 'all',
-            '-analyzeduration', '1500000',
-            '-probesize', '2000000',
             '-ss', seekSeconds.toString(),
             '-accurate_seek',
             '-i', inputPath,

@@ -3678,6 +3678,10 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
       playbackControllerRef.current?.switchAudioTrack(targetIdx);
     } else {
       playbackControllerRef.current?.switchAudioTrack(null);
+      if (videoRef.current) {
+        videoRef.current.muted = isMuted;
+        videoRef.current.volume = volume;
+      }
     }
     if (playbackControllerRef.current) {
       playbackControllerRef.current.setVolume(volume, isMuted);

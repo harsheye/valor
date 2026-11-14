@@ -308,7 +308,6 @@ export const AudioSubPopover: React.FC<AudioSubPopoverProps> = ({
               onClick={(e) => {
                 e.preventDefault();
                 e.stopPropagation();
-                if (active) return;
                 handleSelectEmbeddedAudio(s.index, s.codec, s.language);
                 if (!isMobile && isFolded) setShowAudioSubMenu(false);
               }}
