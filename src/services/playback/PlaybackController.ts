@@ -202,7 +202,7 @@ export class PlaybackController {
     return this.workersLoadPromise;
   }
 
-  async initialize(videoEl: HTMLVideoElement, streamIndex: number | null): Promise<void> {
+  async initialize(videoEl: HTMLVideoElement, streamIndex: number | null, initialTime?: number): Promise<void> {
     this.videoEl = videoEl;
     this.state.activeStreamIndex = typeof streamIndex === 'number' ? streamIndex : -1;
     this.videoEl.muted = false; // Preserve native audio until the first WASM chunk is ready.
@@ -226,7 +226,9 @@ export class PlaybackController {
       return;
     }
 
-    const resumeTime = this.videoEl.currentTime;
+    const resumeTime = (typeof initialTime === 'number' && initialTime > 0)
+      ? initialTime
+      : (this.videoEl.currentTime > 0 ? this.videoEl.currentTime : 0);
     const startChunk = Math.floor(resumeTime / 10) * 10;
     const chunkId = `audio_${this.state.activeStreamIndex}_${startChunk}`;
     logger.playback(`controller=${this.instanceId} ready at ${resumeTime.toFixed(3)}s; first audio ${chunkId}`);
@@ -349,7 +351,7 @@ export class PlaybackController {
   private onSeekedEvent = () => {
     if (!this.videoEl) return;
     logger.playback(`[PlaybackController-${this.instanceId}] Native seeked detected at ${this.videoEl.currentTime.toFixed(3)}s`);
-    if (this.state.isPlaying && !this.isSeeking) {
+    if (!this.isSeeking) {
       void this.seek(this.videoEl.currentTime);
     }
   };

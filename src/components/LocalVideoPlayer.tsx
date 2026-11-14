@@ -4337,7 +4337,10 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
           const targetAudioIndex = (audioTracks.length >= 2 || isNonNativeAudio)
             ? (activeAudioStreamIndex ?? audioTracks[0]?.index ?? null)
             : activeAudioStreamIndex;
-          await controller.initialize(videoRef.current, targetAudioIndex);
+          const initialResume = (video.currentTime && video.currentTime > 0)
+            ? video.currentTime
+            : (getMediaTimestamp(video) || (videoRef.current ? videoRef.current.currentTime : 0));
+          await controller.initialize(videoRef.current, targetAudioIndex, initialResume);
         } catch (err) {
           console.warn(`[LocalVideoPlayer] PlaybackController init failed:`, err);
           return;
@@ -5138,15 +5141,15 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
   return (
     <div 
       ref={containerRef} 
-      className={`player-container ${isFileAccessBlocked ? 'has-file-access-blocked show-cursor' : (controlsVisible ? 'show-cursor' : 'hide-cursor')} ${hideUIOverlays ? 'keyboard-only' : ''} ${disableAnimations ? 'no-animations' : ''} ${hoveredSetting === 'lockModeActive' || hoveredSetting === 'pauseOnFocusChange' || hoveredSetting === 'disableAnimations' ? 'highlight-active' : ''} ${isPseudoFullscreen ? 'pseudo-fullscreen' : ''}`}
+      className={`player-container ${isFileAccessBlocked ? 'has-file-access-blocked show-cursor' : ((controlsVisible || showPauseMetadataOverlay) ? 'show-cursor' : 'hide-cursor')} ${hideUIOverlays ? 'keyboard-only' : ''} ${disableAnimations ? 'no-animations' : ''} ${hoveredSetting === 'lockModeActive' || hoveredSetting === 'pauseOnFocusChange' || hoveredSetting === 'disableAnimations' ? 'highlight-active' : ''} ${isPseudoFullscreen ? 'pseudo-fullscreen' : ''}`}
       style={{
         '--player-ui-scale': uiScale
       } as React.CSSProperties}
       onMouseMove={(e) => {
-        if (!isLocked && !showPauseMetadataOverlayRef.current) handleMouseMove(e);
+        if (!isLocked) handleMouseMove(e);
       }}
       onMouseLeave={() => {
-        if (!isScrubbing) setShowControls(false);
+        if (!isScrubbing && !showPauseMetadataOverlay) setShowControls(false);
       }}
       onClick={(e) => {
         const target = e.target as HTMLElement | null;
@@ -5432,9 +5435,15 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
                   videoRef.current.currentTime = targetResume;
                   setCurrentTime(targetResume);
                   latestTimeRef.current = targetResume;
+                  if (playbackControllerRef.current) {
+                    void playbackControllerRef.current.seek(targetResume);
+                  }
                 } else {
                   logger.player(`Resume location too close to end (currentTime: ${targetResume}s, remaining: ${remainingTime}s). Starting from 0.`);
                   videoRef.current.currentTime = 0;
+                  if (playbackControllerRef.current) {
+                    void playbackControllerRef.current.seek(0);
+                  }
                 }
                 hasSeekedRef.current = true;
               }
@@ -5614,6 +5623,7 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
               maxWidth: videoLayout.width > 0 ? `${Math.min(videoLayout.width * 0.44, 520)}px` : '42%',
               textShadow: '0 2px 8px rgba(0, 0, 0, 0.95), 0 0 20px rgba(0, 0, 0, 0.5)',
               pointerEvents: 'none',
+              cursor: 'default',
               fontFamily: "'Inter', sans-serif",
               alignItems: overlayPosition.includes('right') ? 'flex-end' : 'flex-start',
               textAlign: overlayPosition.includes('right') ? 'right' : 'left'
