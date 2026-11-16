@@ -213,6 +213,25 @@ export const OnlineStreamAdBanner: React.FC<OnlineStreamAdBannerProps> = ({ onDi
               </div>
             </div>
 
+            {/* Brave Shields & Sandbox Guidance */}
+            <div style={{
+              background: 'rgba(239, 68, 68, 0.08)',
+              border: '1px solid rgba(239, 68, 68, 0.25)',
+              borderRadius: '10px',
+              padding: '12px 14px',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '6px'
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', fontWeight: 600, color: '#fca5a5' }}>
+                <ShieldAlert size={16} />
+                <span>Seeing "Iframe Sandbox Detected"?</span>
+              </div>
+              <span style={{ fontSize: '12px', color: '#d1d5db', lineHeight: 1.5 }}>
+                In <strong>Brave Browser</strong> or with ad-blocking extensions, click the <strong>Brave Lion / Shield icon</strong> in your browser's address bar and turn <strong>Shields DOWN</strong> for <code>127.0.0.1</code>, or switch between <strong>Source 1, 2, 3, 4, or 5</strong> in the top-right source selector.
+              </span>
+            </div>
+
             {/* Footer Actions */}
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', paddingTop: '4px' }}>
               <button

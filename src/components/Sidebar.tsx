@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Home, History, Film, PlayCircle, Zap, Settings, Play, X, Palette, Check } from 'lucide-react';
 import { ValorVIcon } from './ui/ValorVIcon';
-import type { VideoItem } from '../types/media';
+import { getVideoSourceType, type VideoItem } from '../types/media';
 import { classifyVideoTitle } from '../utils/libraryClassifier';
 import { smartTitleCase } from '../utils/libraryViewModel';
 import { sidecarService } from '../services/remote/sidecarService';
@@ -373,6 +373,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 const base = smartTitleCase(info.cleanTitle || video.title);
                 cleaned = info.year ? `${base} (${info.year})` : base;
               }
+              const sourceType = getVideoSourceType(video);
               return (
                 <div
                   key={`sidebar-${video.id}`}
@@ -395,6 +396,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     style={{ flexGrow: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
                   >
                     {cleaned}
+                  </span>
+                  <span className={`sidebar-source-tag history-source-${sourceType}`} style={{ fontSize: '0.62rem', padding: '1px 5px' }}>
+                    {sourceType}
                   </span>
                   <button
                     className="sidebar-history-remove-btn"

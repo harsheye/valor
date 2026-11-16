@@ -5,9 +5,12 @@ import {
   Search, 
   Check, 
   Film,
-  AlertTriangle
+  AlertTriangle,
+  HardDrive,
+  Server,
+  Globe
 } from 'lucide-react';
-import type { VideoItem } from '../types/media';
+import { getVideoSourceType, type VideoItem } from '../types/media';
 import { classifyVideoTitle } from '../utils/libraryClassifier';
 import { smartTitleCase, getTileColors, getFirstAlphanumeric } from '../utils/libraryViewModel';
 import { formatRuntime, parseDurationToSeconds } from '../utils/timeFormat';
@@ -48,6 +51,7 @@ interface MonthBlock {
 interface HistoryDisplayItem {
   id: string;
   title: string;
+  sourceType: 'local' | 'remote' | 'online';
   seasonEpisode?: string;
   resumeText: string;
   playedAtTime: string;
@@ -91,7 +95,7 @@ export const HistoryPage: React.FC<HistoryPageProps> = ({
   syncVideoToTraktHistory,
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
-  const [filterPill, setFilterPill] = useState<'all' | 'stopped' | 'finished' | 'trakt'>('all');
+  const [filterPill, setFilterPill] = useState<'all' | 'local' | 'remote' | 'online' | 'stopped' | 'finished' | 'trakt'>('all');
   
   // By default, no single day is selected (shows all days by default)
   const [selectedDateKey, setSelectedDateKey] = useState<string | null>(null);
@@ -250,10 +254,12 @@ export const HistoryPage: React.FC<HistoryPageProps> = ({
 
       const dayDateStr = d.toLocaleDateString([], { day: 'numeric', month: 'short', year: 'numeric' });
       const dateGroupLabel = `${dateKey}_${dayKeyword}`;
+      const sourceType = getVideoSourceType(v);
 
       return {
         id: v.id || `video-${idx}`,
         title: sTitle,
+        sourceType,
         seasonEpisode: code,
         resumeText: isFinished ? 'completed' : `resume at ${formatRuntime(curr)}`,
         playedAtTime: timeStr,
@@ -286,6 +292,9 @@ export const HistoryPage: React.FC<HistoryPageProps> = ({
       }
 
       // 2. Pill Filter
+      if (filterPill === 'local' && item.sourceType !== 'local') return false;
+      if (filterPill === 'remote' && item.sourceType !== 'remote') return false;
+      if (filterPill === 'online' && item.sourceType !== 'online') return false;
       if (filterPill === 'stopped' && item.status !== 'stopped') return false;
       if (filterPill === 'finished' && item.status !== 'finished') return false;
       if (filterPill === 'trakt' && item.isSyncedToTrakt) return false;
@@ -434,9 +443,17 @@ export const HistoryPage: React.FC<HistoryPageProps> = ({
                   </div>
                   <div className="history-resume-info">
                     <h3 className="history-resume-title">{card.title}</h3>
-                    <p className="history-resume-sub">
-                      {card.seasonEpisode ? `${card.seasonEpisode} · ` : ''}{card.resumeText}
-                    </p>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap', marginTop: '2px', marginBottom: '4px' }}>
+                      <span className={`history-source-badge history-source-${card.sourceType}`}>
+                        {card.sourceType === 'online' && <Globe size={10} />}
+                        {card.sourceType === 'remote' && <Server size={10} />}
+                        {card.sourceType === 'local' && <HardDrive size={10} />}
+                        <span>{card.sourceType}</span>
+                      </span>
+                      <p className="history-resume-sub" style={{ margin: 0 }}>
+                        {card.seasonEpisode ? `${card.seasonEpisode} · ` : ''}{card.resumeText}
+                      </p>
+                    </div>
                     <div className="history-progress-track">
                       <div
                         className="history-progress-fill"
@@ -583,7 +600,7 @@ export const HistoryPage: React.FC<HistoryPageProps> = ({
                     border: '1px solid var(--border)',
                     color: 'var(--accent)',
                     padding: '2px 8px',
-                    borderRadius: '9999px',
+                    borderRadius: '4px',
                     fontSize: '0.72rem',
                     fontWeight: 600,
                     cursor: 'pointer',
@@ -607,6 +624,30 @@ export const HistoryPage: React.FC<HistoryPageProps> = ({
                 onClick={() => setFilterPill('all')}
               >
                 All
+              </button>
+              <button
+                type="button"
+                className={`history-filter-pill ${filterPill === 'local' ? 'active' : ''}`}
+                onClick={() => setFilterPill('local')}
+              >
+                <HardDrive size={12} style={{ marginRight: '4px', verticalAlign: 'middle' }} />
+                Local
+              </button>
+              <button
+                type="button"
+                className={`history-filter-pill ${filterPill === 'remote' ? 'active' : ''}`}
+                onClick={() => setFilterPill('remote')}
+              >
+                <Server size={12} style={{ marginRight: '4px', verticalAlign: 'middle' }} />
+                Remote
+              </button>
+              <button
+                type="button"
+                className={`history-filter-pill ${filterPill === 'online' ? 'active' : ''}`}
+                onClick={() => setFilterPill('online')}
+              >
+                <Globe size={12} style={{ marginRight: '4px', verticalAlign: 'middle' }} />
+                Online
               </button>
               <button
                 type="button"
@@ -677,6 +718,12 @@ export const HistoryPage: React.FC<HistoryPageProps> = ({
                       <div className="history-item-info">
                         <h4 className="history-item-title">{item.title}</h4>
                         <div className="history-item-meta-row">
+                          <span className={`history-source-badge history-source-${item.sourceType}`}>
+                            {item.sourceType === 'online' && <Globe size={10} />}
+                            {item.sourceType === 'remote' && <Server size={10} />}
+                            {item.sourceType === 'local' && <HardDrive size={10} />}
+                            <span>{item.sourceType}</span>
+                          </span>
                           <span>
                             {item.seasonEpisode ? `${item.seasonEpisode} · ` : ''}{item.playedAtTime}
                           </span>

@@ -1,9 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { 
   UploadCloud, Play, Sparkles, Film, Loader2, 
-  ExternalLink, Clock, Radio, CheckCircle2, Shield, Zap 
+  ExternalLink, Clock, Radio, CheckCircle2, Shield, Zap,
+  HardDrive, Server, Globe
 } from 'lucide-react';
-import type { VideoItem } from '../types/media';
+import { getVideoSourceType, type VideoItem } from '../types/media';
 import { classifyVideoTitle } from '../utils/libraryClassifier';
 
 interface HomePageProps {
@@ -307,10 +308,21 @@ export const HomePage: React.FC<HomePageProps> = ({
             }}
           >
             <div style={{ flex: 1, minWidth: '0', paddingRight: '1rem' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '0.4rem' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '0.4rem', flexWrap: 'wrap' }}>
                 <span style={{ fontSize: '0.7rem', fontWeight: 800, letterSpacing: '0.08em', background: 'var(--surface-2)', color: 'var(--text-2)', padding: '2px 8px', borderRadius: 'var(--radius-sm)', textTransform: 'uppercase' }}>
                   RESUME PLAYBACK
                 </span>
+                {(() => {
+                  const src = getVideoSourceType(primaryContinue);
+                  return (
+                    <span className={`history-source-badge history-source-${src}`}>
+                      {src === 'online' && <Globe size={10} />}
+                      {src === 'remote' && <Server size={10} />}
+                      {src === 'local' && <HardDrive size={10} />}
+                      <span>{src}</span>
+                    </span>
+                  );
+                })()}
                 {primaryContinue.duration && (
                   <span style={{ fontSize: '0.75rem', color: 'var(--text-2)', fontWeight: 500 }}>
                     {(() => {
@@ -612,9 +624,14 @@ export const HomePage: React.FC<HomePageProps> = ({
                   <Play size={18} fill="currentColor" />
                 </div>
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <h4 style={{ margin: 0, fontSize: '0.9rem', fontWeight: 700, color: 'var(--text-1)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                    {classifyVideoTitle(video.title).displayTitle}
-                  </h4>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '2px', minWidth: 0 }}>
+                    <span className={`sidebar-source-tag history-source-${getVideoSourceType(video)}`} style={{ fontSize: '0.62rem', padding: '1px 5px' }}>
+                      {getVideoSourceType(video)}
+                    </span>
+                    <h4 style={{ margin: 0, fontSize: '0.9rem', fontWeight: 700, color: 'var(--text-1)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
+                      {classifyVideoTitle(video.title).displayTitle}
+                    </h4>
+                  </div>
                   <p style={{ margin: '3px 0 0 0', fontSize: '0.75rem', color: 'var(--text-2)' }}>
                     {video.currentTime ? `At ${formatTime(video.currentTime)}` : 'Ready to play'}
                   </p>

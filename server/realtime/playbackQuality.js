@@ -486,6 +486,26 @@ export class AnalyticsAndAdminManager {
         animePattern: 'https://www.vidking.net/embed/movie/{id}{query}',
         defaultParams: 'color=e50914&autoPlay=true&nextEpisode=true&episodeSelector=true',
         allowFullscreen: true
+      },
+      {
+        id: 'vidlink',
+        name: 'Source 3',
+        enabled: true,
+        moviePattern: 'https://vidlink.pro/movie/{id}{query}',
+        tvPattern: 'https://vidlink.pro/tv/{id}/{season}/{episode}{query}',
+        animePattern: 'https://vidlink.pro/movie/{id}{query}',
+        defaultParams: 'primaryColor=e50914&secondaryColor=8b5cf6&autoplay=false',
+        allowFullscreen: true
+      },
+      {
+        id: 'vidsrc',
+        name: 'Source 4',
+        enabled: true,
+        moviePattern: 'https://vidsrc.me/embed/movie?tmdb={id}',
+        tvPattern: 'https://vidsrc.me/embed/tv?tmdb={id}&season={season}&episode={episode}',
+        animePattern: 'https://vidsrc.me/embed/movie?tmdb={id}',
+        defaultParams: '',
+        allowFullscreen: true
       }
     ];
   }

@@ -27,6 +27,7 @@ export interface VideoItem {
   title: string;
   url: string;
   type: 'local' | 'url' | 'online_movie' | 'online_tv' | 'online_anime';
+  sourceType?: 'local' | 'remote' | 'online';
   file?: File;
   fileName?: string;
   duration?: string;
@@ -93,4 +94,12 @@ export interface Bookmark {
   mediaName?: string;
   userId?: string;
   videoId?: string;
+}
+
+export function getVideoSourceType(v: Partial<VideoItem> | undefined | null): 'local' | 'remote' | 'online' {
+  if (!v) return 'local';
+  if (v.sourceType) return v.sourceType;
+  if (v.type === 'online_movie' || v.type === 'online_tv' || v.type === 'online_anime') return 'online';
+  if (v.isRemote || v.type === 'url' || v.playbackMode === 'server') return 'remote';
+  return 'local';
 }

@@ -26,6 +26,7 @@ export const OnlineEmbedPlayer: React.FC<OnlineEmbedPlayerProps> = ({
 }) => {
   useAutoLandscape(true);
   const [server, setServer] = useState<string>('videasy');
+  const iframeRef = useRef<HTMLIFrameElement>(null);
   const topRightControlsRef = useRef<HTMLDivElement>(null);
   const [controlsHovered, setControlsHovered] = useState(false);
   const [controlsOpacity, setControlsOpacity] = useState(0.1);
@@ -200,6 +201,53 @@ export const OnlineEmbedPlayer: React.FC<OnlineEmbedPlayerProps> = ({
     };
   }, [video, currentSeason, currentEpisode, onUpdateProgress]);
 
+  // Anti-Sandbox Protection: Blocks browser extensions / ad-blockers from injecting restrictive sandbox attributes into the stream iframe
+  useEffect(() => {
+    const iframe = iframeRef.current;
+    if (!iframe) return;
+
+    const fullPermissions = 'allow-forms allow-modals allow-orientation-lock allow-pointer-lock allow-popups allow-popups-to-escape-sandbox allow-presentation allow-same-origin allow-scripts';
+
+    const sanitizeIframe = () => {
+      if (iframe.hasAttribute('sandbox')) {
+        const current = iframe.getAttribute('sandbox') || '';
+        if (!current.includes('allow-forms') || !current.includes('allow-scripts') || !current.includes('allow-same-origin')) {
+          console.warn('[Valor] Upgrading restrictive 3rd-party sandbox attribute on online stream iframe to allow all player permissions');
+          iframe.setAttribute('sandbox', fullPermissions);
+        }
+      }
+    };
+
+    sanitizeIframe();
+
+    // Hook setAttribute to prevent extensions from adding a restrictive sandbox
+    try {
+      const origSetAttribute = iframe.setAttribute.bind(iframe);
+      iframe.setAttribute = function(name: string, val: string) {
+        if (name && name.toLowerCase() === 'sandbox') {
+          console.warn('[Valor] Intercepted 3rd-party sandbox setAttribute on online stream iframe, granting all permissions');
+          return origSetAttribute(name, fullPermissions);
+        }
+        return origSetAttribute(name, val);
+      };
+    } catch {}
+
+    // MutationObserver to ensure sandbox is never restrictive
+    const observer = new MutationObserver((mutations) => {
+      for (const m of mutations) {
+        if (m.type === 'attributes' && m.attributeName?.toLowerCase() === 'sandbox') {
+          sanitizeIframe();
+        }
+      }
+    });
+
+    observer.observe(iframe, { attributes: true, attributeFilter: ['sandbox'] });
+
+    return () => {
+      observer.disconnect();
+    };
+  }, [server, video.id, currentSeason, currentEpisode]);
+
   // Construct Player URL
   const getEmbedUrl = () => {
     return buildEmbedUrl(server, video, currentTime, currentSeason, currentEpisode);
@@ -295,6 +343,7 @@ export const OnlineEmbedPlayer: React.FC<OnlineEmbedPlayerProps> = ({
       {/* Main Iframe Player Wrapper */}
       <main className="online-player-iframe-wrapper">
         <iframe
+          ref={iframeRef}
           key={getEmbedUrl()}
           src={getEmbedUrl()}
           className="online-player-iframe"

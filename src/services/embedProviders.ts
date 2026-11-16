@@ -12,6 +12,10 @@ export interface EmbedProvider {
 export function getProviderDisplayName(provider: { id: string; name: string }, index = 0): string {
   if (provider.id === 'videasy') return 'Source 1';
   if (provider.id === 'vidking') return 'Source 2';
+  if (provider.id === 'vidlink') return 'Source 3';
+  if (provider.id === 'vidsrc') return 'Source 4';
+  if (provider.id === 'autoembed') return 'Source 5';
+  if (provider.name && /^Source\s*\d+$/i.test(provider.name.trim())) return provider.name.trim();
   if (provider.name && provider.name.includes('Source 1')) return 'Source 1';
   if (provider.name && provider.name.includes('Source 2')) return 'Source 2';
   return `Source ${index + 1}`;
@@ -37,6 +41,36 @@ export const DEFAULT_EMBED_PROVIDERS: EmbedProvider[] = [
     animePattern: 'https://www.vidking.net/embed/movie/{id}{query}',
     defaultParams: 'color=e50914&autoPlay=true&nextEpisode=true&episodeSelector=true',
     allowFullscreen: true
+  },
+  {
+    id: 'vidlink',
+    name: 'Source 3',
+    enabled: true,
+    moviePattern: 'https://vidlink.pro/movie/{id}{query}',
+    tvPattern: 'https://vidlink.pro/tv/{id}/{season}/{episode}{query}',
+    animePattern: 'https://vidlink.pro/movie/{id}{query}',
+    defaultParams: 'primaryColor=e50914&secondaryColor=8b5cf6&autoplay=false',
+    allowFullscreen: true
+  },
+  {
+    id: 'vidsrc',
+    name: 'Source 4',
+    enabled: true,
+    moviePattern: 'https://vidsrc.me/embed/movie?tmdb={id}',
+    tvPattern: 'https://vidsrc.me/embed/tv?tmdb={id}&season={season}&episode={episode}',
+    animePattern: 'https://vidsrc.me/embed/movie?tmdb={id}',
+    defaultParams: '',
+    allowFullscreen: true
+  },
+  {
+    id: 'autoembed',
+    name: 'Source 5',
+    enabled: true,
+    moviePattern: 'https://player.autoembed.cc/embed/movie/{id}',
+    tvPattern: 'https://player.autoembed.cc/embed/tv/{id}/{season}/{episode}',
+    animePattern: 'https://player.autoembed.cc/embed/movie/{id}',
+    defaultParams: '',
+    allowFullscreen: true
   }
 ];
 
@@ -49,7 +83,14 @@ export function getEmbedProviders(): EmbedProvider[] {
     if (saved) {
       const parsed = JSON.parse(saved);
       if (Array.isArray(parsed) && parsed.length > 0) {
-        return parsed.map((p: any, idx: number) => ({ ...p, name: getProviderDisplayName(p, idx) }));
+        const existingIds = new Set(parsed.map((p: any) => p.id));
+        const merged = [...parsed];
+        for (const def of DEFAULT_EMBED_PROVIDERS) {
+          if (!existingIds.has(def.id)) {
+            merged.push(def);
+          }
+        }
+        return merged.map((p: any, idx: number) => ({ ...p, name: getProviderDisplayName(p, idx) }));
       }
     }
   } catch (e) {

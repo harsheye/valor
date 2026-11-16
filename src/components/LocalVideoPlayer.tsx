@@ -5551,17 +5551,18 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
       {/* Side Skip Indicator (Left: Rewind / Right: Forward) */}
       {consecutiveSkipInfo && (
         <div 
-          className={`player-side-skip player-side-skip-${consecutiveSkipInfo.direction}`}
+          className={`player-side-skip player-side-skip-${consecutiveSkipInfo.direction === 'rewind' ? 'left' : 'right'} player-side-skip-${consecutiveSkipInfo.direction}`}
         >
+          <div className="player-side-skip-scrim" />
           <div 
             key={`${consecutiveSkipInfo.direction}-${consecutiveSkipInfo.count}`}
             className="player-side-skip-badge"
           >
             <div className="player-side-skip-icon-wrap">
               {consecutiveSkipInfo.direction === 'rewind' ? (
-                <RotateCcw size={30} strokeWidth={2.4} className="player-side-skip-icon anim-spin-rewind" />
+                <RotateCcw size={26} strokeWidth={2.4} className="player-side-skip-icon anim-spin-rewind" />
               ) : (
-                <RotateCw size={30} strokeWidth={2.4} className="player-side-skip-icon anim-spin-forward" />
+                <RotateCw size={26} strokeWidth={2.4} className="player-side-skip-icon anim-spin-forward" />
               )}
             </div>
             <span className="player-side-skip-text">
@@ -9123,34 +9124,67 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
           position: absolute;
           top: 0;
           bottom: 0;
-          width: 28%;
-          min-width: 160px;
-          max-width: 340px;
+          width: 30%;
+          min-width: 180px;
+          max-width: 380px;
           display: flex;
           align-items: center;
           justify-content: center;
           pointer-events: none;
-          z-index: 55;
+          z-index: 60;
+          overflow: hidden;
         }
-        .player-side-skip-left {
+        .player-side-skip-left,
+        .player-side-skip-rewind {
           left: 0;
+          right: auto;
         }
-        .player-side-skip-right {
+        .player-side-skip-right,
+        .player-side-skip-forward {
           right: 0;
+          left: auto;
         }
+
+        /* Ambient curved gradient scrim matching player theme */
+        .player-side-skip-scrim {
+          position: absolute;
+          inset: 0;
+          pointer-events: none;
+          opacity: 0;
+          animation: sideSkipScrimFade 0.85s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+        }
+        .player-side-skip-left .player-side-skip-scrim,
+        .player-side-skip-rewind .player-side-skip-scrim {
+          background: radial-gradient(ellipse at 0% 50%, var(--accent-soft, rgba(229, 9, 20, 0.22)) 0%, rgba(10, 12, 18, 0.45) 45%, transparent 75%);
+        }
+        .player-side-skip-right .player-side-skip-scrim,
+        .player-side-skip-forward .player-side-skip-scrim {
+          background: radial-gradient(ellipse at 100% 50%, var(--accent-soft, rgba(229, 9, 20, 0.22)) 0%, rgba(10, 12, 18, 0.45) 45%, transparent 75%);
+        }
+
+        @keyframes sideSkipScrimFade {
+          0% { opacity: 0; transform: scaleX(0.85); }
+          22% { opacity: 1; transform: scaleX(1); }
+          75% { opacity: 1; }
+          100% { opacity: 0; }
+        }
+
+        /* Modern, Glassmorphism Theme-Adaptive Skip Badge */
         .player-side-skip-badge {
+          position: relative;
           display: flex;
           flex-direction: column;
           align-items: center;
           justify-content: center;
-          gap: 8px;
+          gap: 6px;
+          min-width: 96px;
           padding: 16px 26px;
-          border-radius: 9999px;
-          background: rgba(15, 17, 23, 0.78);
-          border: 1px solid rgba(255, 255, 255, 0.16);
-          backdrop-filter: blur(14px);
-          -webkit-backdrop-filter: blur(14px);
-          box-shadow: 0 10px 30px rgba(0, 0, 0, 0.55), 0 0 20px rgba(229, 9, 20, 0.2);
+          border-radius: 24px;
+          background: rgba(12, 15, 23, 0.82);
+          border: 1px solid rgba(255, 255, 255, 0.14);
+          backdrop-filter: blur(20px);
+          -webkit-backdrop-filter: blur(20px);
+          box-shadow: 0 16px 40px rgba(0, 0, 0, 0.65), 0 0 25px var(--accent-soft, rgba(229, 9, 20, 0.3)), inset 0 1px 1px rgba(255, 255, 255, 0.2);
           color: #ffffff;
           animation: sideSkipPopFade 0.85s cubic-bezier(0.16, 1, 0.3, 1) forwards;
           user-select: none;
@@ -9159,58 +9193,63 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
           display: flex;
           align-items: center;
           justify-content: center;
+          width: 44px;
+          height: 44px;
+          border-radius: 50%;
+          background: var(--accent-soft, rgba(229, 9, 20, 0.18));
+          border: 1px solid var(--accent-color, rgba(229, 9, 20, 0.35));
         }
         .player-side-skip-icon {
-          color: #ffffff;
-          filter: drop-shadow(0 2px 6px rgba(0, 0, 0, 0.6));
+          color: var(--accent-color, #e50914);
+          filter: drop-shadow(0 0 8px var(--accent-soft, rgba(229, 9, 20, 0.5)));
         }
         .player-side-skip-text {
-          font-size: 1.15rem;
-          font-weight: 700;
-          letter-spacing: 0.03em;
-          font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+          font-size: 1.25rem;
+          font-weight: 800;
+          letter-spacing: -0.01em;
+          font-family: 'Outfit', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
           color: #ffffff;
-          text-shadow: 0 2px 8px rgba(0, 0, 0, 0.7);
+          text-shadow: 0 2px 10px rgba(0, 0, 0, 0.8);
         }
 
         @keyframes sideSkipPopFade {
           0% {
-            transform: scale(0.7);
+            transform: scale(0.72) translateY(6px);
             opacity: 0;
           }
-          20% {
-            transform: scale(1.08);
+          18% {
+            transform: scale(1.08) translateY(-2px);
             opacity: 1;
           }
           30% {
-            transform: scale(1.0);
+            transform: scale(1.0) translateY(0);
             opacity: 1;
           }
           75% {
-            transform: scale(1.0);
+            transform: scale(1.0) translateY(0);
             opacity: 1;
           }
           100% {
-            transform: scale(0.92);
+            transform: scale(0.9) translateY(4px);
             opacity: 0;
           }
         }
 
         .anim-spin-rewind {
-          animation: skipIconPulseRewind 0.4s ease-out;
+          animation: skipIconPulseRewind 0.45s cubic-bezier(0.34, 1.56, 0.64, 1);
         }
         .anim-spin-forward {
-          animation: skipIconPulseForward 0.4s ease-out;
+          animation: skipIconPulseForward 0.45s cubic-bezier(0.34, 1.56, 0.64, 1);
         }
 
         @keyframes skipIconPulseRewind {
           0% { transform: rotate(0deg) scale(0.85); }
-          50% { transform: rotate(-25deg) scale(1.15); }
+          50% { transform: rotate(-35deg) scale(1.2); }
           100% { transform: rotate(0deg) scale(1); }
         }
         @keyframes skipIconPulseForward {
           0% { transform: rotate(0deg) scale(0.85); }
-          50% { transform: rotate(25deg) scale(1.15); }
+          50% { transform: rotate(35deg) scale(1.2); }
           100% { transform: rotate(0deg) scale(1); }
         }
       `}</style>

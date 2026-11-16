@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, Component, useCallback, useMemo, type ReactNode } from 'react';
-import type { VideoItem, CustomAudioTrack, CustomSubtitleTrack } from './types/media';
+import { getVideoSourceType, type VideoItem, type CustomAudioTrack, type CustomSubtitleTrack } from './types/media';
 
 class ErrorBoundary extends Component<{ children: ReactNode }, { hasError: boolean; error: any }> {
   constructor(props: { children: ReactNode }) {
@@ -1227,44 +1227,74 @@ function App() {
     return false;
   };
 
-  const getVideoIdentity = (title: string): string => {
+  const getVideoIdentity = (
+    itemOrTitle: string | Partial<VideoItem>,
+    sourceHint?: 'local' | 'remote' | 'online' | Partial<VideoItem>
+  ): string => {
+    let title = '';
+    let source: 'local' | 'remote' | 'online' = 'local';
+
+    if (typeof itemOrTitle === 'string') {
+      title = itemOrTitle;
+      if (typeof sourceHint === 'string') {
+        source = sourceHint;
+      } else if (sourceHint && typeof sourceHint === 'object') {
+        source = getVideoSourceType(sourceHint);
+      }
+    } else if (itemOrTitle) {
+      title = itemOrTitle.title || '';
+      if (typeof sourceHint === 'string') {
+        source = sourceHint;
+      } else {
+        source = getVideoSourceType(itemOrTitle);
+      }
+    }
+
     const info = classifyVideoTitle(title);
+    let baseKey = '';
     if (info.type === 'series' && info.season !== undefined && info.episode !== undefined) {
       const cleanSeries = info.seriesTitle ? info.seriesTitle.toLowerCase().trim() : info.displayTitle.toLowerCase().trim();
-      return `series:${cleanSeries}:s${info.season.toString().padStart(2, '0')}e${info.episode.toString().padStart(2, '0')}`;
+      baseKey = `series:${cleanSeries}:s${info.season.toString().padStart(2, '0')}e${info.episode.toString().padStart(2, '0')}`;
+    } else {
+      baseKey = `movie:${info.displayTitle.toLowerCase().trim()}`;
     }
-    return `movie:${info.displayTitle.toLowerCase().trim()}`;
+    return `${source}:${baseKey}`;
   };
 
   const mergeOrAddVideo = (prev: VideoItem[], newItem: VideoItem): VideoItem[] => {
-    const newIdentity = getVideoIdentity(newItem.title);
-    const existingIndex = prev.findIndex(v => getVideoIdentity(v.title) === newIdentity);
+    const itemWithSource: VideoItem = {
+      ...newItem,
+      sourceType: newItem.sourceType || getVideoSourceType(newItem)
+    };
+    const newIdentity = getVideoIdentity(itemWithSource);
+    const existingIndex = prev.findIndex(v => getVideoIdentity(v) === newIdentity);
     const nowIso = new Date().toISOString();
 
     if (existingIndex !== -1) {
       const existing = prev[existingIndex];
       const merged: VideoItem = {
         ...existing,
-        ...newItem,
+        ...itemWithSource,
         id: existing.id,
-        currentTime: existing.currentTime || newItem.currentTime || 0,
+        sourceType: itemWithSource.sourceType,
+        currentTime: existing.currentTime || itemWithSource.currentTime || 0,
         lastPlayedDate: nowIso,
         playedDates: Array.from(new Set([...(existing.playedDates || []), nowIso])),
-        rating: existing.rating || newItem.rating,
-        totalTimeWatched: existing.totalTimeWatched || newItem.totalTimeWatched || 0,
-        timeToFinish: existing.timeToFinish || newItem.timeToFinish
+        rating: existing.rating || itemWithSource.rating,
+        totalTimeWatched: existing.totalTimeWatched || itemWithSource.totalTimeWatched || 0,
+        timeToFinish: existing.timeToFinish || itemWithSource.timeToFinish
       };
       
       const filtered = prev.filter((_, idx) => idx !== existingIndex);
       return [merged, ...filtered];
     } else {
-      const initItem = {
-        ...newItem,
+      const initItem: VideoItem = {
+        ...itemWithSource,
         lastPlayedDate: nowIso,
         playedDates: [nowIso]
       };
-      const filtered = (newItem.url && newItem.url.trim() !== '')
-        ? prev.filter(v => v.url !== newItem.url)
+      const filtered = (itemWithSource.url && itemWithSource.url.trim() !== '')
+        ? prev.filter(v => v.url !== itemWithSource.url || getVideoSourceType(v) !== itemWithSource.sourceType)
         : prev;
       return [initItem, ...filtered];
     }
@@ -2462,6 +2492,8 @@ function App() {
       title,
       url: blobUrl,
       type: 'local',
+      sourceType: 'local',
+      isRemote: false,
       file: file,
       fileName: file.name,
       currentTime: maxCurrentTime,
@@ -2475,8 +2507,8 @@ function App() {
     };
 
     setVideos(prev => {
-      const newIdentity = getVideoIdentity(newVideoItem.title);
-      const filtered = prev.filter(v => v.id !== targetId && getVideoIdentity(v.title) !== newIdentity && !matches.some(m => m.id === v.id));
+      const newIdentity = getVideoIdentity(newVideoItem);
+      const filtered = prev.filter(v => v.id !== targetId && getVideoIdentity(v) !== newIdentity && !matches.some(m => m.id === v.id));
       return mergeOrAddVideo(filtered, newVideoItem);
     });
 
@@ -2495,37 +2527,43 @@ function App() {
   const handlePlayVideo = async (video: VideoItem) => {
     if (isPickerOpenRef.current) return;
     
-    if (video.type === 'online_movie' || video.type === 'online_tv' || video.type === 'online_anime') {
-      setVideos(prev => mergeOrAddVideo(prev, video));
-      setPlayingVideo(video);
+    const source = video.sourceType || getVideoSourceType(video);
+    const videoWithSource: VideoItem = {
+      ...video,
+      sourceType: source
+    };
+
+    if (videoWithSource.type === 'online_movie' || videoWithSource.type === 'online_tv' || videoWithSource.type === 'online_anime') {
+      setVideos(prev => mergeOrAddVideo(prev, videoWithSource));
+      setPlayingVideo(videoWithSource);
       return;
     }
 
     // Set picker open lock if we might open a file picker
-    if (video.type === 'local' && !video.file && !video.url) {
+    if (videoWithSource.type === 'local' && !videoWithSource.file && !videoWithSource.url) {
       isPickerOpenRef.current = true;
     }
 
     try {
-      const hasCues = video.subtitleTracks && video.subtitleTracks.some(t => t.cues && t.cues.length > 0);
+      const hasCues = videoWithSource.subtitleTracks && videoWithSource.subtitleTracks.some(t => t.cues && t.cues.length > 0);
       if (!hasCues) {
-        const cachedSubs = getEmbedSubtitlesSync(video);
+        const cachedSubs = getEmbedSubtitlesSync(videoWithSource);
         if (cachedSubs && cachedSubs.length > 0) {
-          video = { ...video, subtitleTracks: cachedSubs };
+          videoWithSource.subtitleTracks = cachedSubs;
         }
       }
 
-      if (video.type === 'url') {
-        setVideos(prev => mergeOrAddVideo(prev, video));
-        setPlayingVideo(video);
-      } else if (video.type === 'local') {
-        if (video.localFilePath) {
+      if (videoWithSource.type === 'url') {
+        setVideos(prev => mergeOrAddVideo(prev, videoWithSource));
+        setPlayingVideo(videoWithSource);
+      } else if (videoWithSource.type === 'local') {
+        if (videoWithSource.localFilePath) {
           const useIdStream = settings.storageMode === 'file' && settings.userId && settings.userId !== 'local' && !settings.userId.startsWith('local_');
-          const streamUrl = (useIdStream && !video.id.startsWith('url-'))
-            ? `${BACKEND_ORIGIN}/local-video-stream?id=${encodeURIComponent(video.id)}&path=${encodeURIComponent(video.localFilePath)}`
-            : `${BACKEND_ORIGIN}/local-video-stream?path=${encodeURIComponent(video.localFilePath)}`;
+          const streamUrl = (useIdStream && !videoWithSource.id.startsWith('url-'))
+            ? `${BACKEND_ORIGIN}/local-video-stream?id=${encodeURIComponent(videoWithSource.id)}&path=${encodeURIComponent(videoWithSource.localFilePath)}`
+            : `${BACKEND_ORIGIN}/local-video-stream?path=${encodeURIComponent(videoWithSource.localFilePath)}`;
           const updated = {
-            ...video,
+            ...videoWithSource,
             url: streamUrl
           };
           setVideos(prev => mergeOrAddVideo(prev, updated));
@@ -2534,30 +2572,30 @@ function App() {
           return;
         }
 
-        if (!video.file && video.url) {
+        if (!videoWithSource.file && videoWithSource.url) {
           // Play directly from the local stream URL (open-with) without picker
-          setVideos(prev => mergeOrAddVideo(prev, video));
-          setPlayingVideo(video);
+          setVideos(prev => mergeOrAddVideo(prev, videoWithSource));
+          setPlayingVideo(videoWithSource);
           return;
         }
-        if (video.file) {
+        if (videoWithSource.file) {
           let readable = false;
           try {
-            await video.file.slice(0, 1).arrayBuffer();
+            await videoWithSource.file.slice(0, 1).arrayBuffer();
             readable = true;
           } catch (e) {
             console.warn('Local file object in state is no longer readable:', e);
           }
 
           if (readable) {
-            if (video.url && video.url.startsWith('blob:')) {
+            if (videoWithSource.url && videoWithSource.url.startsWith('blob:')) {
               try {
-                URL.revokeObjectURL(video.url);
+                URL.revokeObjectURL(videoWithSource.url);
               } catch (e) {}
             }
-            const newBlobUrl = URL.createObjectURL(video.file);
+            const newBlobUrl = URL.createObjectURL(videoWithSource.file);
             const updatedVideo = {
-              ...video,
+              ...videoWithSource,
               url: newBlobUrl
             };
             setVideos(prev => mergeOrAddVideo(prev, updatedVideo));
@@ -2568,7 +2606,7 @@ function App() {
 
         // Try to load from IndexedDB
         try {
-          const handle = await getFileHandle(video.id);
+          const handle = await getFileHandle(videoWithSource.id);
           if (handle) {
             const hasPermission = await verifyPermission(handle);
             if (hasPermission) {
@@ -2584,13 +2622,13 @@ function App() {
               if (fileReadable) {
                 const blobUrl = URL.createObjectURL(file);
                 const updated = {
-                  ...video,
+                  ...videoWithSource,
                   url: blobUrl,
                   file: file
                 };
                 setVideos(prev => {
-                  const filtered = prev.filter(v => v.id !== video.id);
-                  return [updated, ...filtered];
+                  const filtered = prev.filter(v => v.id !== videoWithSource.id);
+                  return mergeOrAddVideo(filtered, updated);
                 });
                 setPlayingVideo(updated);
                 isPickerOpenRef.current = false;
@@ -2751,8 +2789,9 @@ function App() {
       if (!capabilities.supported) {
         const parsedInfo = classifyVideoTitle(titleHint || localPathVal || url);
         let title = parsedInfo.displayTitle || parsedInfo.cleanTitle || 'Remote Stream';
+        const expectedSource: 'local' | 'remote' = isLocalFile ? 'local' : 'remote';
         
-        // Match history by normalized identity
+        // Match history by normalized identity with source
         let match: VideoItem | undefined = undefined;
         try {
           const activeUserId = localStorage.getItem('valor_active_user_id') || 'local';
@@ -2760,8 +2799,8 @@ function App() {
           const savedHistory = localStorage.getItem(videosKey);
           if (savedHistory) {
             const parsedHistory = JSON.parse(savedHistory) as VideoItem[];
-            const targetIden = getVideoIdentity(title);
-            match = parsedHistory.find(v => getVideoIdentity(v.title) === targetIden);
+            const targetIden = getVideoIdentity(title, expectedSource);
+            match = parsedHistory.find(v => getVideoIdentity(v) === targetIden);
           }
         } catch (e) {}
 
@@ -2782,6 +2821,7 @@ function App() {
           title,
           url,
           type: isLocalFile ? 'local' : 'url',
+          sourceType: expectedSource,
           isRemote: !isLocalFile,
           authRequired: capabilities.authRequired,
           fileName: isLocalFile ? title : undefined,
@@ -2883,8 +2923,9 @@ function App() {
 
       const parsedInfo = classifyVideoTitle(titleHint || localPathVal || url);
       let title = parsedInfo.displayTitle || parsedInfo.cleanTitle || 'Remote Stream';
+      const expectedSource: 'local' | 'remote' = isLocalFile ? 'local' : 'remote';
       
-      // Match history by normalized identity
+      // Match history by normalized identity with source
       let match: VideoItem | undefined = undefined;
       try {
         const activeUserId = localStorage.getItem('valor_active_user_id') || 'local';
@@ -2892,8 +2933,8 @@ function App() {
         const savedHistory = localStorage.getItem(videosKey);
         if (savedHistory) {
           const parsedHistory = JSON.parse(savedHistory) as VideoItem[];
-          const targetIden = getVideoIdentity(title);
-          match = parsedHistory.find(v => getVideoIdentity(v.title) === targetIden);
+          const targetIden = getVideoIdentity(title, expectedSource);
+          match = parsedHistory.find(v => getVideoIdentity(v) === targetIden);
         }
       } catch (e) {}
 
@@ -2902,6 +2943,7 @@ function App() {
         title,
         url,
         type: isLocalFile ? 'local' : 'url',
+        sourceType: expectedSource,
         isRemote: !isLocalFile,
         fileName: isLocalFile ? title : undefined,
         containerType: container,
@@ -2945,8 +2987,9 @@ function App() {
 
       const parsedInfo = classifyVideoTitle(titleHint || localPathVal || url);
       let title = parsedInfo.displayTitle || parsedInfo.cleanTitle || 'Remote Stream';
+      const expectedFallbackSource: 'local' | 'remote' = isLocalFile ? 'local' : 'remote';
       
-      // Match history by normalized identity
+      // Match history by normalized identity with source
       let match: VideoItem | undefined = undefined;
       try {
         const activeUserId = localStorage.getItem('valor_active_user_id') || 'local';
@@ -2954,8 +2997,8 @@ function App() {
         const savedHistory = localStorage.getItem(videosKey);
         if (savedHistory) {
           const parsedHistory = JSON.parse(savedHistory) as VideoItem[];
-          const targetIden = getVideoIdentity(title);
-          match = parsedHistory.find(v => getVideoIdentity(v.title) === targetIden);
+          const targetIden = getVideoIdentity(title, expectedFallbackSource);
+          match = parsedHistory.find(v => getVideoIdentity(v) === targetIden);
         }
       } catch (e) {}
 
@@ -2964,6 +3007,7 @@ function App() {
         title,
         url,
         type: isLocalFile ? 'local' : 'url',
+        sourceType: expectedFallbackSource,
         isRemote: !isLocalFile,
         fileName: isLocalFile ? title : undefined,
         containerType: 'unknown',
@@ -3304,8 +3348,9 @@ function App() {
                       return v.id === selectedVideo.id && v.season === season && v.episode === episode;
                     }
                   });
-                  const toPlay = {
+                  const toPlay: VideoItem = {
                     ...selectedVideo,
+                    sourceType: 'online',
                     season,
                     episode,
                     currentTime: match ? (match.currentTime || 0) : 0
