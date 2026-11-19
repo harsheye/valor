@@ -100,6 +100,10 @@ export default defineConfig(({ mode }): any => {
           target: process.env.PORT_BACKEND ? `http://127.0.0.1:${process.env.PORT_BACKEND}` : 'http://127.0.0.1:50001',
           changeOrigin: true,
         },
+        '/auth': {
+          target: process.env.PORT_BACKEND ? `http://127.0.0.1:${process.env.PORT_BACKEND}` : 'http://127.0.0.1:50001',
+          changeOrigin: true,
+        },
         '/admin/stream': {
           target: process.env.PORT_BACKEND ? `http://127.0.0.1:${process.env.PORT_BACKEND}` : 'http://127.0.0.1:50001',
           changeOrigin: true,

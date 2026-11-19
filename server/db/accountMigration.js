@@ -56,6 +56,10 @@ export async function runAccountMigrations(pgPool, sqliteDb) {
         }
       }
 
+      if (!existingCols.includes('created_at')) {
+        await pgPool.query(`ALTER TABLE accounts ADD COLUMN IF NOT EXISTS created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP;`);
+      }
+
       console.log('[Database] PostgreSQL 16 accounts table verified & migrated.');
     } catch (err) {
       console.warn('[PostgreSQL Migration Error]', err.message);
@@ -98,6 +102,9 @@ export async function runAccountMigrations(pgPool, sqliteDb) {
         } else {
           try { sqliteDb.exec("ALTER TABLE accounts ADD COLUMN password_hash TEXT DEFAULT '';"); } catch {}
         }
+      }
+      if (!colNames.includes('created_at')) {
+        try { sqliteDb.exec("ALTER TABLE accounts ADD COLUMN created_at TEXT DEFAULT (datetime('now'));"); } catch {}
       }
 
       console.log('[Database] SQLite accounts table verified & migrated.');

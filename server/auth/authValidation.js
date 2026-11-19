@@ -60,7 +60,8 @@ export function validatePassword(password) {
 export function validateSignupPayload(payload = {}) {
   const errors = {};
 
-  const profileNameCheck = validateProfileName(payload.profileName);
+  const effectiveName = payload.profileName || payload.name || payload.existingProfileName || payload.username || 'User';
+  const profileNameCheck = validateProfileName(effectiveName);
   if (!profileNameCheck.valid) {
     errors.profileName = profileNameCheck.error;
   }

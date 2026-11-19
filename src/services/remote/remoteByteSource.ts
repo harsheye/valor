@@ -643,7 +643,7 @@ export async function detectUrlCapabilities(url: string): Promise<UrlCapabilitie
         signal: controller.signal
       });
       clearTimeout(id);
-      if (res.status === 401 || res.status === 403) {
+      if (res.status === 401) {
         return { supported: false, statusCode: res.status, authRequired: true };
       }
       if (res.status === 404) {
@@ -661,7 +661,7 @@ export async function detectUrlCapabilities(url: string): Promise<UrlCapabilitie
       signal: controller.signal
     });
     clearTimeout(id);
-    if (response.status === 401 || response.status === 403) {
+    if (response.status === 401) {
       return { supported: false, statusCode: response.status, authRequired: true };
     }
     if (response.status === 404) {
@@ -683,7 +683,7 @@ export async function detectUrlCapabilities(url: string): Promise<UrlCapabilitie
         signal: proxyController.signal
       });
       clearTimeout(pId);
-      if (res.status === 401 || res.status === 403) {
+      if (res.status === 401) {
         return { supported: false, statusCode: res.status, authRequired: true };
       }
       if (res.status === 404) {

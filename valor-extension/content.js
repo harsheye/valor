@@ -2,7 +2,7 @@
 
 (function() {
   let valorEmbedUrl = 'http://localhost:5173/embed';
-  let embedMode = 'badge'; // Default: 'badge' (Hover Toggle) | 'auto' | 'off'
+  let embedMode = 'badge'; // 'auto' (Auto Replace) | 'badge' (Show Icon) | 'off' (Don't)
   let replacedElements = new WeakSet();
   let currentUrl = window.location.href;
 
@@ -19,13 +19,21 @@
     }
 
     if (!/^https?:\/\//i.test(str)) {
-      str = 'http://' + str;
+      const isLocal = /^(localhost|127\.\d+\.\d+\.\d+|0\.0\.0\.0)(:\d+)?/i.test(str);
+      str = (isLocal ? 'http://' : 'https://') + str;
     }
 
     try {
       const parsed = new URL(str);
       if (!parsed.pathname || parsed.pathname === '/') {
         parsed.pathname = '/embed';
+      }
+      // Upgrade remote HTTP to HTTPS when on HTTPS host to prevent Mixed Content
+      if (typeof window !== 'undefined' && window.location && window.location.protocol === 'https:') {
+        const isLocalHost = parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1' || parsed.hostname === '0.0.0.0';
+        if (!isLocalHost && parsed.protocol === 'http:') {
+          parsed.protocol = 'https:';
+        }
       }
       return parsed.toString();
     } catch (e) {
@@ -119,9 +127,15 @@
       document.querySelector('video') === videoEl;
     if (isStandalone) return true;
 
-    // 3. Filter out zero-size or tiny tracking / thumbnail elements
+    // 3. Size check: allow if rendered dimensions are reasonable, or if video has metadata/is playing
     const rect = videoEl.getBoundingClientRect();
-    if (rect.width < 240 || rect.height < 130) {
+    const hasDimensions = rect.width >= 160 && rect.height >= 90;
+    const hasMediaMetadata = (videoEl.videoWidth >= 160 && videoEl.videoHeight >= 90) ||
+                             (videoEl.duration > 4) ||
+                             (!videoEl.paused && videoEl.currentTime > 0);
+
+    if (!hasDimensions && !hasMediaMetadata) {
+      // Don't permanently disqualify unrendered videos; they might be styled/displayed upon interaction
       return false;
     }
 
@@ -143,6 +157,7 @@
   function extractVideoSource(videoElement) {
     let src = videoElement.currentSrc || videoElement.getAttribute('src') || videoElement.src;
     
+    // Check child <source> elements
     if (!src || src.startsWith('blob:')) {
       const sourceElem = videoElement.querySelector('source[src]');
       if (sourceElem) {
@@ -150,12 +165,52 @@
       }
     }
 
+    // Check data attributes on video element
     if (!src || src.startsWith('blob:')) {
-      if (videoElement.dataset && videoElement.dataset.src) {
-        src = videoElement.dataset.src;
-      } else if (videoElement.getAttribute('data-src')) {
-        src = videoElement.getAttribute('data-src');
+      const dataKeys = ['src', 'url', 'video', 'videoUrl', 'stream', 'hls', 'mp4', 'file', 'manifest'];
+      for (const k of dataKeys) {
+        if (videoElement.dataset && videoElement.dataset[k]) {
+          src = videoElement.dataset[k];
+          break;
+        }
+        const attr = videoElement.getAttribute(`data-${k}`);
+        if (attr) {
+          src = attr;
+          break;
+        }
       }
+    }
+
+    // Check player container wrapper for stream data attributes
+    if (!src || src.startsWith('blob:')) {
+      const container = videoElement.closest('[data-url], [data-video], [data-src], [data-file], [data-stream], [data-hls]');
+      if (container) {
+        src = container.getAttribute('data-url') ||
+              container.getAttribute('data-video') ||
+              container.getAttribute('data-src') ||
+              container.getAttribute('data-file') ||
+              container.getAttribute('data-stream') ||
+              container.getAttribute('data-hls');
+      }
+    }
+
+    // Check performance resource timing entries for recent stream playlists / media chunks
+    if (!src || src.startsWith('blob:')) {
+      try {
+        const entries = performance.getEntriesByType('resource');
+        for (let i = entries.length - 1; i >= 0; i--) {
+          const entryUrl = entries[i].name;
+          if (entryUrl && (
+            /\.(m3u8|mpd|mp4|webm|m4v)(\?.*)?$/i.test(entryUrl) ||
+            /(\/hls\/|\/manifest|\/playlist\.m3u8|\/master\.m3u8)/i.test(entryUrl)
+          )) {
+            if (!entryUrl.includes('google-analytics') && !entryUrl.includes('doubleclick') && !entryUrl.includes('beacon')) {
+              src = entryUrl;
+              break;
+            }
+          }
+        }
+      } catch (e) {}
     }
 
     // Direct standalone video link
@@ -216,7 +271,7 @@
     replacedElements.add(videoElement);
     videoElement.dataset.valorReplaced = 'true';
 
-    // Capture playback state so resume is 100% seamless
+    // Capture playback state so resume is seamless
     const currentPosition = Math.max(0, Math.floor(videoElement.currentTime || 0));
 
     try {
@@ -259,19 +314,9 @@
     iframe.style.inset = '0';
     iframe.style.zIndex = '999';
 
-    // Restore Original Player Button (Non-intrusive floating control)
-    const restoreBtn = document.createElement('button');
-    restoreBtn.className = 'valor-restore-btn';
-    restoreBtn.type = 'button';
-    restoreBtn.title = 'Switch back to original website player';
-    restoreBtn.innerHTML = `
-      <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-      <span>Restore Original Player</span>
-    `;
-
-    restoreBtn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      e.preventDefault();
+    // Restore Original Player Functionality
+    const restoreOriginal = () => {
+      window.removeEventListener('message', handleWindowMessage);
       activeWrapper.remove();
       delete targetContainer.dataset.valorReplaced;
       delete targetContainer.dataset.valorContainer;
@@ -285,10 +330,20 @@
 
       // Re-attach hover toggle
       setTimeout(() => attachHoverPill(videoElement), 300);
-    });
+    };
+
+    // Listen for back button / close messages from the embedded player iframe
+    const handleWindowMessage = (event) => {
+      if (
+        (event.data && event.data.source === 'valor-embed-iframe' && (event.data.payload?.type === 'CLOSE' || event.data.type === 'RESTORE_ORIGINAL')) ||
+        (event.data && (event.data.type === 'CLOSE' || event.data.type === 'RESTORE_ORIGINAL'))
+      ) {
+        restoreOriginal();
+      }
+    };
+    window.addEventListener('message', handleWindowMessage);
 
     activeWrapper.appendChild(iframe);
-    activeWrapper.appendChild(restoreBtn);
 
     // Standalone direct media tab
     if (document.body && document.body.children.length <= 3 && document.querySelector('video') === videoElement) {
@@ -309,47 +364,106 @@
     }
   }
 
-  // Floating "Play in Valor" Hover Toggle Pill
+  // Floating "Play in Valor" In-Page Button (Show Icon Mode)
   function attachHoverPill(videoElement) {
     if (!isLegitimateMediaTarget(videoElement)) return;
     if (videoElement.dataset.valorPillAttached === 'true') return;
     videoElement.dataset.valorPillAttached = 'true';
 
     const container = getPlayerRootContainer(videoElement);
-    if (!container || container.querySelector('.valor-hover-pill-btn')) return;
+    if (!container || container.querySelector('.valor-pill-host')) return;
 
-    // Ensure relative positioning
+    // Ensure relative positioning on the container
     const compPos = window.getComputedStyle(container).position;
     if (compPos === 'static') {
       container.style.position = 'relative';
     }
 
-    const pill = document.createElement('button');
-    pill.className = 'valor-hover-pill-btn';
-    pill.type = 'button';
-    pill.innerHTML = `
-      <span class="valor-pill-pulse"></span>
-      <svg class="valor-pill-icon" width="12" height="12" viewBox="0 0 24 24" fill="currentColor" stroke="none"><polygon points="5 3 19 12 5 21 5 3"/></svg>
-      <span class="valor-pill-label">Play in Valor</span>
+    // Host element with Shadow DOM for complete CSS isolation from host page
+    const host = document.createElement('div');
+    host.className = 'valor-pill-host';
+    host.style.cssText = 'all: initial !important; position: absolute !important; top: 12px !important; left: 12px !important; z-index: 2147483647 !important; display: block !important;';
+
+    const shadow = host.attachShadow({ mode: 'open' });
+    shadow.innerHTML = `
+      <style>
+        * {
+          box-sizing: border-box;
+          margin: 0;
+          padding: 0;
+        }
+        :host {
+          all: initial;
+          display: block;
+        }
+        .valor-btn {
+          all: initial;
+          display: inline-flex;
+          align-items: center;
+          gap: 6px;
+          padding: 6px 10px;
+          background: rgba(15, 16, 19, 0.85);
+          backdrop-filter: blur(8px);
+          -webkit-backdrop-filter: blur(8px);
+          border: 1px solid rgba(255, 255, 255, 0.1);
+          border-radius: 8px;
+          color: #f2f2f5;
+          font-family: Inter, -apple-system, "Segoe UI", sans-serif;
+          font-size: 12px;
+          font-weight: 500;
+          line-height: 1;
+          cursor: pointer;
+          opacity: 0;
+          pointer-events: none;
+          transition: opacity 150ms ease, background-color 150ms ease;
+          user-select: none;
+        }
+        .valor-btn:hover {
+          background: rgba(23, 24, 28, 0.95);
+        }
+        .valor-btn:focus-visible {
+          outline: 2px solid #e5484d;
+          outline-offset: 2px;
+        }
+        .valor-btn.visible,
+        .valor-btn:focus-visible {
+          opacity: 1;
+          pointer-events: auto;
+        }
+        .play-icon {
+          width: 11px;
+          height: 11px;
+          fill: #e5484d;
+          flex-shrink: 0;
+        }
+        @media (prefers-reduced-motion: reduce) {
+          .valor-btn {
+            transition: none !important;
+          }
+        }
+      </style>
+      <button type="button" class="valor-btn" aria-label="Play in Valor">
+        <svg class="play-icon" viewBox="0 0 24 24" aria-hidden="true">
+          <polygon points="6 4 20 12 6 20 6 4" />
+        </svg>
+        <span>Play in Valor</span>
+      </button>
     `;
 
-    const labelSpan = pill.querySelector('.valor-pill-label');
+    const btn = shadow.querySelector('.valor-btn');
 
     let hideTimer = null;
     const showPill = () => {
       if (hideTimer) clearTimeout(hideTimer);
-      pill.classList.add('valor-visible');
-      if (videoElement.currentTime > 2) {
-        labelSpan.textContent = `Play in Valor (${formatDuration(videoElement.currentTime)})`;
-      } else {
-        labelSpan.textContent = 'Play in Valor';
-      }
+      btn.classList.add('visible');
     };
 
     const scheduleHide = () => {
       hideTimer = setTimeout(() => {
-        pill.classList.remove('valor-visible');
-      }, 1500);
+        if (shadow.activeElement !== btn) {
+          btn.classList.remove('visible');
+        }
+      }, 250);
     };
 
     container.addEventListener('mouseenter', showPill);
@@ -357,115 +471,47 @@
     container.addEventListener('mouseleave', scheduleHide);
     videoElement.addEventListener('mouseenter', showPill);
     videoElement.addEventListener('mousemove', showPill);
+    btn.addEventListener('focus', showPill);
+    btn.addEventListener('blur', scheduleHide);
 
-    pill.addEventListener('click', (e) => {
+    btn.addEventListener('click', (e) => {
       e.stopPropagation();
       e.preventDefault();
-      pill.remove();
+      host.remove();
       replaceVideoWithValor(videoElement);
     });
 
-    container.appendChild(pill);
+    container.appendChild(host);
   }
 
-  // Inject sleek floating badge and restore styles
+  function clearAllInjected() {
+    document.querySelectorAll('.valor-pill-host, .valor-hover-pill-btn').forEach(el => el.remove());
+    document.querySelectorAll('video[data-valor-pill-attached]').forEach(v => {
+      delete v.dataset.valorPillAttached;
+    });
+  }
+
+  // Inject styles for wrapper
   function injectPillStyles() {
     if (document.getElementById('valor-extension-styles')) return;
     const style = document.createElement('style');
     style.id = 'valor-extension-styles';
     style.textContent = `
-      .valor-hover-pill-btn {
-        position: absolute;
-        top: 14px;
-        right: 14px;
-        z-index: 2147483647;
-        display: inline-flex;
-        align-items: center;
-        gap: 7px;
-        padding: 7px 15px;
-        background: rgba(11, 14, 20, 0.92);
-        color: #fff;
-        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Inter", sans-serif;
-        font-size: 11.5px;
-        font-weight: 700;
-        letter-spacing: 0.03em;
-        border: 1px solid rgba(229, 9, 20, 0.5);
-        border-radius: 999px;
-        backdrop-filter: blur(20px);
-        -webkit-backdrop-filter: blur(20px);
-        box-shadow: 0 10px 30px rgba(0, 0, 0, 0.65), 0 0 14px rgba(229, 9, 20, 0.35);
-        cursor: pointer;
-        opacity: 0;
-        transform: translateY(-6px) scale(0.95);
-        transition: opacity 0.25s ease, transform 0.25s cubic-bezier(0.16, 1, 0.3, 1), background 0.2s, box-shadow 0.2s, border-color 0.2s;
-        pointer-events: none;
-      }
-      .valor-hover-pill-btn.valor-visible,
-      *:hover > .valor-hover-pill-btn,
-      .valor-hover-pill-btn:hover {
-        opacity: 1;
-        transform: translateY(0) scale(1);
-        pointer-events: auto;
-      }
-      .valor-hover-pill-btn:hover {
-        background: #e50914;
-        border-color: #ff3e3e;
-        box-shadow: 0 12px 36px rgba(229, 9, 20, 0.6), 0 0 20px rgba(229, 9, 20, 0.5);
-        transform: translateY(-1px) scale(1.03);
-      }
-      .valor-pill-pulse {
-        width: 6px;
-        height: 6px;
-        border-radius: 50%;
-        background: #e50914;
-        box-shadow: 0 0 8px #ff3e3e;
-        animation: valor-pulse 1.8s infinite;
-      }
-      .valor-hover-pill-btn:hover .valor-pill-pulse {
-        background: #fff;
-        box-shadow: 0 0 8px #fff;
-      }
-      @keyframes valor-pulse {
-        0%, 100% { opacity: 1; transform: scale(1); }
-        50% { opacity: 0.4; transform: scale(0.85); }
-      }
-      .valor-restore-btn {
-        position: absolute;
-        top: 10px;
-        left: 10px;
-        z-index: 2147483647;
-        display: inline-flex;
-        align-items: center;
-        gap: 5px;
-        padding: 5px 11px;
-        background: rgba(14, 18, 26, 0.88);
-        color: #cbd5e1;
-        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-        font-size: 11px;
-        font-weight: 600;
-        border: 1px solid rgba(255, 255, 255, 0.15);
-        border-radius: 6px;
-        backdrop-filter: blur(14px);
-        -webkit-backdrop-filter: blur(14px);
-        cursor: pointer;
-        opacity: 0;
-        transition: opacity 0.2s ease, background 0.2s, color 0.2s;
-      }
-      .valor-active-wrapper:hover .valor-restore-btn {
-        opacity: 0.85;
-      }
-      .valor-restore-btn:hover {
-        opacity: 1 !important;
-        background: rgba(229, 9, 20, 0.9);
-        color: #fff;
-        border-color: rgba(229, 9, 20, 0.6);
+      .valor-active-wrapper {
+        box-sizing: border-box;
+        overflow: hidden;
+        background: #000;
+        border-radius: inherit;
       }
     `;
     (document.head || document.documentElement).appendChild(style);
   }
 
   function scanMedia() {
-    if (embedMode === 'off' || isValorHostPage()) return;
+    if (embedMode === 'off' || isValorHostPage()) {
+      clearAllInjected();
+      return;
+    }
     injectPillStyles();
 
     const videos = Array.from(document.querySelectorAll('video'));
@@ -473,7 +519,6 @@
       if (embedMode === 'auto') {
         replaceVideoWithValor(v);
       } else if (embedMode === 'badge') {
-        // Preferred default: Attach sleek hover toggle pill
         attachHoverPill(v);
       }
     }
@@ -482,11 +527,14 @@
   // Sniffer API for Extension Popup
   function getDetectedMediaStreams() {
     const streams = [];
-    const videos = Array.from(document.querySelectorAll('video'));
+    const seenUrls = new Set();
 
+    // 1. Direct and sniffer-extracted HTML5 video elements
+    const videos = Array.from(document.querySelectorAll('video'));
     videos.forEach((v, idx) => {
       const src = extractVideoSource(v);
-      if (src && !src.startsWith('blob:')) {
+      if (src && !src.startsWith('blob:') && !seenUrls.has(src)) {
+        seenUrls.add(src);
         const rect = v.getBoundingClientRect();
         streams.push({
           id: `vid-${idx}`,
@@ -498,6 +546,45 @@
           height: Math.round(rect.height || v.videoHeight || 0),
           isReplaced: v.dataset.valorReplaced === 'true'
         });
+      }
+    });
+
+    // 2. Resource Timing entries for active stream playlists / MP4s
+    try {
+      const entries = performance.getEntriesByType('resource');
+      for (let i = entries.length - 1; i >= 0 && streams.length < 12; i--) {
+        const u = entries[i].name;
+        if (u && !seenUrls.has(u) && (
+          /\.(m3u8|mpd|mp4|webm|m4v)(\?.*)?$/i.test(u) ||
+          /(\/hls\/|\/manifest|\/playlist\.m3u8|\/master\.m3u8)/i.test(u)
+        )) {
+          if (!u.includes('google-analytics') && !u.includes('doubleclick') && !u.includes('beacon')) {
+            seenUrls.add(u);
+            streams.push({
+              id: `res-${streams.length}`,
+              title: getCleanMediaTitle() || `Stream #${streams.length + 1}`,
+              url: u,
+              isReplaced: false
+            });
+          }
+        }
+      }
+    } catch {}
+
+    // 3. Iframe video players
+    const iframes = Array.from(document.querySelectorAll('iframe'));
+    iframes.forEach((ifr, idx) => {
+      const ifrSrc = ifr.src;
+      if (ifrSrc && !seenUrls.has(ifrSrc) && !ifrSrc.includes(chrome.runtime?.id || '') && !ifrSrc.includes('google') && !ifrSrc.includes('recaptcha')) {
+        if (/embed|player|video|stream|watch/i.test(ifrSrc)) {
+          seenUrls.add(ifrSrc);
+          streams.push({
+            id: `ifr-${idx}`,
+            title: `Embedded Frame Player #${idx + 1}`,
+            url: ifrSrc,
+            isReplaced: ifr.dataset.valorReplaced === 'true'
+          });
+        }
       }
     });
 
@@ -561,9 +648,7 @@
       }
 
       if (isValorHostPage()) return;
-      if (embedMode !== 'off') {
-        initWatcher();
-      }
+      initWatcher();
     });
 
     chrome.storage.onChanged.addListener((changes, areaName) => {
@@ -573,7 +658,9 @@
         if (changes.extensionEnabled && !changes.embedMode) {
           embedMode = changes.extensionEnabled.newValue ? 'badge' : 'off';
         }
-        if (embedMode !== 'off' && !isValorHostPage()) {
+        if (embedMode === 'off') {
+          clearAllInjected();
+        } else if (!isValorHostPage()) {
           scanMedia();
         }
       }
@@ -587,7 +674,26 @@
   function initWatcher() {
     scanMedia();
 
-    // Debounced Mutation Observer
+    // Catch dynamically loaded videos as soon as they play or load metadata
+    const handleMediaEvent = (e) => {
+      if (e.target && e.target instanceof HTMLVideoElement) {
+        if (embedMode === 'off' || isValorHostPage()) return;
+        setTimeout(() => {
+          if (embedMode === 'auto') {
+            replaceVideoWithValor(e.target);
+          } else if (embedMode === 'badge') {
+            attachHoverPill(e.target);
+          }
+        }, 150);
+      }
+    };
+
+    document.addEventListener('play', handleMediaEvent, true);
+    document.addEventListener('loadedmetadata', handleMediaEvent, true);
+    document.addEventListener('canplay', handleMediaEvent, true);
+    document.addEventListener('loadstart', handleMediaEvent, true);
+
+    // Debounced Mutation Observer for DOM insertions
     let debounceTimer = null;
     const observer = new MutationObserver(() => {
       if (debounceTimer) clearTimeout(debounceTimer);

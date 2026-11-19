@@ -491,14 +491,10 @@ export const OnlineVideoPlayer: React.FC<OnlineVideoPlayerProps> = ({
       localStorage.setItem(key, JSON.stringify(updatedBookmarks));
     } catch (err) {}
 
-    // 2. Send GraphQL mutation to server (SQLite / TiDB)
+    // 2. Send GraphQL & REST mutations to server database (PostgreSQL / SQLite / Redis)
     try {
       const activeUserId = userId || 'local';
       const resolvedTmdbId = video.tmdbId;
-      if (!resolvedTmdbId) {
-        console.warn('Skipping bookmarks server sync: tmdbId is missing');
-        return;
-      }
       
       const seriesInfo = classifyVideoTitle(video.title);
       const isTV = video.type === 'online_tv' || seriesInfo.type === 'series';
@@ -510,24 +506,15 @@ export const OnlineVideoPlayer: React.FC<OnlineVideoPlayerProps> = ({
         return !bm.createdBy || bm.createdBy === 'manual' || bm.userId === activeUserId || bm.userName === profileName;
       });
 
-      const mutation = `
-        mutation SaveBookmarks($userId: String!, $videoId: String!, $tmdbId: Int!, $season: Int, $episode: Int, $bookmarks: [BookmarkInput!]!) {
-          saveBookmarks(userId: $userId, videoId: $videoId, tmdbId: $tmdbId, season: $season, episode: $episode, bookmarks: $bookmarks) {
-            success
-            count
-          }
-        }
-      `;
-      
       const serialized = userBookmarks.map(bm => ({
-        id: bm.id,
-        time: bm.time,
+        id: bm.id || `bm_${bm.time}_${Math.random().toString(36).substring(2, 7)}`,
+        time: Number(bm.time) || 0,
         endTime: bm.endTime !== undefined ? bm.endTime : null,
-        label: bm.label || '',
+        label: bm.label || bm.title || 'Bookmark',
         isIntro: bm.isIntro || false,
         isOutro: bm.isOutro || false,
         skipEnabled: bm.skipEnabled || false,
-        title: bm.title || '',
+        title: bm.title || bm.label || 'Bookmark',
         description: bm.description || '',
         category: bm.category || 'Custom',
         thumbnail: bm.thumbnail || '',
@@ -539,21 +526,48 @@ export const OnlineVideoPlayer: React.FC<OnlineVideoPlayerProps> = ({
         mediaName: bm.mediaName || video.title || ''
       }));
 
-      await fetch('http://127.0.0.1:50001/api/graphql', {
+      // A. Save to /api/timestamps REST endpoint (works with or without tmdbId)
+      await fetch('/api/timestamps', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
         body: JSON.stringify({
-          query: mutation,
-          variables: { 
-            userId: activeUserId, 
-            videoId: video.id, 
-            tmdbId: resolvedTmdbId,
-            season: isTV ? season : null,
-            episode: isTV ? episode : null,
-            bookmarks: serialized 
-          }
+          userId: activeUserId,
+          videoId: video.id,
+          tmdbId: resolvedTmdbId || null,
+          season: isTV ? season : null,
+          episode: isTV ? episode : null,
+          bookmarks: serialized
         })
-      });
+      }).catch(() => {});
+
+      // B. Save via GraphQL if tmdbId is resolved
+      if (resolvedTmdbId) {
+        const mutation = `
+          mutation SaveBookmarks($userId: String!, $videoId: String!, $tmdbId: Int!, $season: Int, $episode: Int, $bookmarks: [BookmarkInput!]!) {
+            saveBookmarks(userId: $userId, videoId: $videoId, tmdbId: $tmdbId, season: $season, episode: $episode, bookmarks: $bookmarks) {
+              success
+              count
+            }
+          }
+        `;
+        await fetch('/api/graphql', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({
+            query: mutation,
+            variables: { 
+              userId: activeUserId, 
+              videoId: video.id, 
+              tmdbId: resolvedTmdbId,
+              season: isTV ? season : null,
+              episode: isTV ? episode : null,
+              bookmarks: serialized 
+            }
+          })
+        }).catch(() => {});
+      }
     } catch (err) {
       console.warn('Failed to sync bookmarks to server:', err);
     }
@@ -813,28 +827,22 @@ export const OnlineVideoPlayer: React.FC<OnlineVideoPlayerProps> = ({
   const seekDelta = (secs: number) => {
     if (blockSeekingCompletely) return;
     const dir: 'forward' | 'rewind' = secs < 0 ? 'rewind' : 'forward';
-    const absSecs = Math.abs(secs);
     const now = Date.now();
     const acc = consecutiveSkipAccumulatorRef.current;
 
-    // Consecutive skipping window (1.8s)
-    if (acc.direction === dir && now - acc.lastTime <= 1800 && acc.count > 0) {
-      acc.totalSeconds += absSecs;
-      acc.count += 1;
-    } else {
-      acc.direction = dir;
-      acc.totalSeconds = absSecs;
-      acc.count = 1;
-    }
+    acc.direction = dir;
+    acc.totalSeconds = 10;
+    acc.count = (acc.count || 0) + 1;
     acc.lastTime = now;
 
+    const delta = dir === 'forward' ? 10 : -10;
     const maxDuration = duration > 0 ? duration : Infinity;
-    const target = Math.max(0, Math.min(maxDuration, currentTime + secs));
+    const target = Math.max(0, Math.min(maxDuration, currentTime + delta));
     sendIframeCommand('seek', target);
     setCurrentTime(target);
-    island.notify({ type: 'seek', delta: secs, time: target, duration });
+    island.notify({ type: 'seek', delta: delta, time: target, duration });
 
-    setConsecutiveSkipInfo({ direction: dir, totalSeconds: acc.totalSeconds, count: acc.count });
+    setConsecutiveSkipInfo({ direction: dir, totalSeconds: 10, count: acc.count });
 
     if (consecutiveSkipTimerRef.current) {
       clearTimeout(consecutiveSkipTimerRef.current);
@@ -842,7 +850,7 @@ export const OnlineVideoPlayer: React.FC<OnlineVideoPlayerProps> = ({
     consecutiveSkipTimerRef.current = setTimeout(() => {
       consecutiveSkipAccumulatorRef.current = { direction: dir, totalSeconds: 0, count: 0, lastTime: 0 };
       setConsecutiveSkipInfo(null);
-    }, 1800);
+    }, 800);
   };
 
   const handleSliderChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -943,6 +951,10 @@ export const OnlineVideoPlayer: React.FC<OnlineVideoPlayerProps> = ({
     }
     setBookmarks(nextBookmarks);
     saveBookmarksToServer(nextBookmarks);
+    onUpdateVideo((prev: any) => ({
+      ...prev,
+      bookmarks: nextBookmarks
+    }), false, undefined, true);
     setMarkingStartTime(null);
   };
 
@@ -950,6 +962,10 @@ export const OnlineVideoPlayer: React.FC<OnlineVideoPlayerProps> = ({
     const next = bookmarks.filter(b => b.id !== bmId);
     setBookmarks(next);
     saveBookmarksToServer(next);
+    onUpdateVideo((prev: any) => ({
+      ...prev,
+      bookmarks: next
+    }), false, undefined, true);
     addToast("Bookmark Deleted");
   };
 
@@ -1057,9 +1073,9 @@ export const OnlineVideoPlayer: React.FC<OnlineVideoPlayerProps> = ({
           >
             <div className="player-side-skip-icon-wrap">
               {consecutiveSkipInfo.direction === 'rewind' ? (
-                <RotateCcw size={26} strokeWidth={2.4} className="player-side-skip-icon anim-spin-rewind" />
+                <RotateCcw size={18} strokeWidth={2.4} className="player-side-skip-icon anim-spin-rewind" />
               ) : (
-                <RotateCw size={26} strokeWidth={2.4} className="player-side-skip-icon anim-spin-forward" />
+                <RotateCw size={18} strokeWidth={2.4} className="player-side-skip-icon anim-spin-forward" />
               )}
             </div>
             <span className="player-side-skip-text">
@@ -1075,15 +1091,16 @@ export const OnlineVideoPlayer: React.FC<OnlineVideoPlayerProps> = ({
           position: absolute;
           top: 0;
           bottom: 0;
-          width: 30%;
-          min-width: 180px;
-          max-width: 380px;
+          width: 25%;
+          min-width: 120px;
+          max-width: 260px;
           display: flex;
           align-items: center;
           justify-content: center;
           pointer-events: none;
           z-index: 60;
           overflow: hidden;
+          background: transparent !important;
         }
         .player-side-skip-left,
         .player-side-skip-rewind {
@@ -1096,71 +1113,52 @@ export const OnlineVideoPlayer: React.FC<OnlineVideoPlayerProps> = ({
           left: auto;
         }
 
-        /* Ambient curved gradient scrim matching player theme */
+        /* Transparent background scrim */
         .player-side-skip-scrim {
-          position: absolute;
-          inset: 0;
-          pointer-events: none;
-          opacity: 0;
-          animation: sideSkipScrimFade 0.85s cubic-bezier(0.16, 1, 0.3, 1) forwards;
-        }
-        .player-side-skip-left .player-side-skip-scrim,
-        .player-side-skip-rewind .player-side-skip-scrim {
-          background: radial-gradient(ellipse at 0% 50%, var(--accent-soft, rgba(229, 9, 20, 0.22)) 0%, rgba(10, 12, 18, 0.45) 45%, transparent 75%);
-        }
-        .player-side-skip-right .player-side-skip-scrim,
-        .player-side-skip-forward .player-side-skip-scrim {
-          background: radial-gradient(ellipse at 100% 50%, var(--accent-soft, rgba(229, 9, 20, 0.22)) 0%, rgba(10, 12, 18, 0.45) 45%, transparent 75%);
+          display: none !important;
         }
 
-        @keyframes sideSkipScrimFade {
-          0% { opacity: 0; transform: scaleX(0.85); }
-          22% { opacity: 1; transform: scaleX(1); }
-          75% { opacity: 1; }
-          100% { opacity: 0; }
-        }
-
-        /* Modern, Glassmorphism Theme-Adaptive Skip Badge */
+        /* Minimal, Transparent Background Skip Badge with Small Icon */
         .player-side-skip-badge {
           position: relative;
           display: flex;
           flex-direction: column;
           align-items: center;
           justify-content: center;
-          gap: 6px;
-          min-width: 96px;
-          padding: 16px 26px;
-          border-radius: 24px;
-          background: rgba(12, 15, 23, 0.82);
-          border: 1px solid rgba(255, 255, 255, 0.14);
-          backdrop-filter: blur(20px);
-          -webkit-backdrop-filter: blur(20px);
-          box-shadow: 0 16px 40px rgba(0, 0, 0, 0.65), 0 0 25px var(--accent-soft, rgba(229, 9, 20, 0.3)), inset 0 1px 1px rgba(255, 255, 255, 0.2);
+          gap: 4px;
+          min-width: auto;
+          padding: 0 !important;
+          border-radius: 0;
+          background: transparent !important;
+          border: none !important;
+          backdrop-filter: none !important;
+          -webkit-backdrop-filter: none !important;
+          box-shadow: none !important;
           color: #ffffff;
-          animation: sideSkipPopFade 0.85s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+          animation: sideSkipPopFade 0.75s cubic-bezier(0.16, 1, 0.3, 1) forwards;
           user-select: none;
         }
         .player-side-skip-icon-wrap {
           display: flex;
           align-items: center;
           justify-content: center;
-          width: 44px;
-          height: 44px;
+          width: 28px;
+          height: 28px;
           border-radius: 50%;
-          background: var(--accent-soft, rgba(229, 9, 20, 0.18));
-          border: 1px solid var(--accent-color, rgba(229, 9, 20, 0.35));
+          background: transparent !important;
+          border: none !important;
         }
         .player-side-skip-icon {
-          color: var(--accent-color, #e50914);
-          filter: drop-shadow(0 0 8px var(--accent-soft, rgba(229, 9, 20, 0.5)));
+          color: #ffffff;
+          filter: drop-shadow(0 2px 8px rgba(0, 0, 0, 0.9));
         }
         .player-side-skip-text {
-          font-size: 1.25rem;
-          font-weight: 800;
+          font-size: 0.95rem;
+          font-weight: 700;
           letter-spacing: -0.01em;
           font-family: 'Outfit', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
           color: #ffffff;
-          text-shadow: 0 2px 10px rgba(0, 0, 0, 0.8);
+          text-shadow: 0 2px 8px rgba(0, 0, 0, 0.95);
         }
 
         @keyframes sideSkipPopFade {

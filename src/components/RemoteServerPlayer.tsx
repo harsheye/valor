@@ -233,9 +233,11 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
   onReassociate,
   onSwitchMode,
   isCinema,
+  isEmbed = false,
   cacheSettings,
   onUpdateCacheSettings
 }) => {
+  const isEffectiveEmbed = isEmbed || (typeof window !== 'undefined' && window.location.pathname.startsWith('/embed'));
   const island = usePlayerIsland();
   const isFile = (obj: any): obj is File => obj instanceof File || (obj && typeof obj.size === 'number' && typeof obj.slice === 'function');
   const video = useMemo(() => ({
@@ -1976,8 +1978,7 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
   }>(() => {
     const rawUrl = video.url || '';
     const creds = (video as any).auth || getSavedCredentials(rawUrl);
-    const requiresAuth = (video as any).authRequired || 
-                         (video.probingError && (video.probingError.includes('401') || video.probingError.includes('403') || video.probingError.includes('Access is denied')));
+    const requiresAuth = (video as any).authRequired === true;
     return {
       isOpen: Boolean(requiresAuth && !creds),
       initialUsername: creds?.username || '',
@@ -2060,13 +2061,11 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
           })
         });
 
-        if (res.status === 401 || res.status === 403) {
+        if (res.status === 401) {
           setAuthModalState({
             isOpen: true,
             initialUsername: creds?.username || '',
-            errorMessage: res.status === 403
-              ? 'Access forbidden (403). Authentication credentials required to access this media.'
-              : 'Authentication required. Please enter username and password.',
+            errorMessage: 'Authentication required. Please enter username and password.',
             isLoading: false
           });
           return false;
@@ -2142,21 +2141,19 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
         }
 
         const errJson = await res.json().catch(() => null);
-        setAuthModalState(prev => ({
-          ...prev,
-          isOpen: true,
-          isLoading: false,
-          errorMessage: errJson?.error || `Remote server responded with error (${res.status}).`
-        }));
+        if (res.status === 401) {
+          setAuthModalState(prev => ({
+            ...prev,
+            isOpen: true,
+            isLoading: false,
+            errorMessage: errJson?.error || `Authentication required (${res.status}).`
+          }));
+        } else {
+          console.warn('[RemoteServerPlayer] Probe returned non-OK status:', res.status, errJson);
+        }
         return false;
       } catch (err: any) {
         console.warn('[RemoteServerPlayer] Probe error:', err);
-        setAuthModalState(prev => ({
-          ...prev,
-          isOpen: true,
-          isLoading: false,
-          errorMessage: err?.message || 'Connection to remote server failed.'
-        }));
         return false;
       } finally {
         inFlightRemoteProbes.delete(targetUrl);
@@ -3678,14 +3675,12 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
     // If remote, verify if 401 or 403 authentication, or 404 is returned before displaying error overlay
     if (video.isRemote) {
       fetch(getProxiedVideoUrl(video.url), { headers: { Range: 'bytes=0-15' } }).then(async res => {
-        if (res.status === 401 || res.status === 403) {
+        if (res.status === 401) {
           setPlaybackError(null);
           setAuthModalState({
             isOpen: true,
             initialUsername: (video as any).auth?.username || '',
-            errorMessage: res.status === 403
-              ? 'Access forbidden (HTTP 403). Authentication credentials required to access this media.'
-              : 'Authentication required. Please enter username and password to access this media.',
+            errorMessage: 'Authentication required. Please enter username and password to access this media.',
             isLoading: false
           });
           return;
@@ -3697,7 +3692,7 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
         if (res.status >= 500) {
           try {
             const errRes = await fetch(getProxiedVideoUrl(video.url), { headers: { Range: 'bytes=0-15' } });
-            if (errRes.status === 401 || errRes.status === 403) {
+            if (errRes.status === 401) {
               setPlaybackError(null);
               setAuthModalState({
                 isOpen: true,
@@ -3955,18 +3950,13 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
     const now = Date.now();
     const acc = consecutiveSkipAccumulatorRef.current;
     
-    if (acc.direction === 'rewind' && now - acc.lastTime <= 1800 && acc.count > 0) {
-      acc.totalSeconds += seconds;
-      acc.count += 1;
-    } else {
-      acc.direction = 'rewind';
-      acc.totalSeconds = seconds;
-      acc.count = 1;
-    }
+    acc.direction = 'rewind';
+    acc.totalSeconds = 10;
+    acc.count = (acc.count || 0) + 1;
     acc.lastTime = now;
 
     const baseTime = getEffectiveTime();
-    const targetTime = Math.max(0, baseTime - seconds);
+    const targetTime = Math.max(0, baseTime - 10);
     seekTargetRef.current = targetTime;
     const hasAltAudio = (activeAudioStreamIndex !== null && activeAudioStreamIndex >= 0) || (selectedAudioTrack !== null);
     const buffered = isTimeBuffered(targetTime, 0.2);
@@ -3990,7 +3980,7 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
     seekRemoteAudio(targetTime);
     queuePrefetchOnSeekRef.current?.(targetTime);
 
-    setConsecutiveSkipInfo({ direction: 'rewind', totalSeconds: acc.totalSeconds, count: acc.count });
+    setConsecutiveSkipInfo({ direction: 'rewind', totalSeconds: 10, count: acc.count });
 
     if (consecutiveSkipTimerRef.current) {
       clearTimeout(consecutiveSkipTimerRef.current);
@@ -3999,7 +3989,7 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
       consecutiveSkipAccumulatorRef.current = { direction: 'rewind', totalSeconds: 0, count: 0, lastTime: 0 };
       setConsecutiveSkipInfo(null);
       seekTargetRef.current = null;
-    }, 1800);
+    }, 800);
 
     resetControlsTimeout();
     resetPauseOverlayTimer();
@@ -4010,19 +4000,14 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
     const now = Date.now();
     const acc = consecutiveSkipAccumulatorRef.current;
     
-    if (acc.direction === 'forward' && now - acc.lastTime <= 1800 && acc.count > 0) {
-      acc.totalSeconds += seconds;
-      acc.count += 1;
-    } else {
-      acc.direction = 'forward';
-      acc.totalSeconds = seconds;
-      acc.count = 1;
-    }
+    acc.direction = 'forward';
+    acc.totalSeconds = 10;
+    acc.count = (acc.count || 0) + 1;
     acc.lastTime = now;
 
     const baseTime = getEffectiveTime();
     const maxDuration = duration || (videoRef.current?.duration) || 0;
-    const targetTime = maxDuration > 0 ? Math.min(maxDuration, baseTime + seconds) : baseTime + seconds;
+    const targetTime = maxDuration > 0 ? Math.min(maxDuration, baseTime + 10) : baseTime + 10;
     seekTargetRef.current = targetTime;
     const hasAltAudio = (activeAudioStreamIndex !== null && activeAudioStreamIndex >= 0) || (selectedAudioTrack !== null);
     const buffered = isTimeBuffered(targetTime, 0.2);
@@ -4046,7 +4031,7 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
     seekRemoteAudio(targetTime);
     queuePrefetchOnSeekRef.current?.(targetTime);
 
-    setConsecutiveSkipInfo({ direction: 'forward', totalSeconds: acc.totalSeconds, count: acc.count });
+    setConsecutiveSkipInfo({ direction: 'forward', totalSeconds: 10, count: acc.count });
 
     if (consecutiveSkipTimerRef.current) {
       clearTimeout(consecutiveSkipTimerRef.current);
@@ -4055,13 +4040,15 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
       consecutiveSkipAccumulatorRef.current = { direction: 'forward', totalSeconds: 0, count: 0, lastTime: 0 };
       setConsecutiveSkipInfo(null);
       seekTargetRef.current = null;
-    }, 1800);
+    }, 800);
 
     resetControlsTimeout();
     resetPauseOverlayTimer();
   };
 
   const handlePlayerDoubleClick = (e: React.MouseEvent<HTMLElement>) => {
+    e.stopPropagation();
+    e.preventDefault();
     if (isLocked || showPlayBarMode === 'disable' || uiConfig.blockSeekingCompletely) return;
     const target = e.target as HTMLElement | null;
     if (target && target.closest(
@@ -4086,10 +4073,10 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
     // Ignore double clicks in the bottom 20% to avoid interfering with controls
     if (clickY > height * 0.8) return;
 
-    if (clickX < width * 0.24) {
-      handleRewind();
-    } else if (clickX > width * 0.76) {
-      handleForward();
+    if (clickX < width * 0.35) {
+      handleRewind(10);
+    } else if (clickX > width * 0.65) {
+      handleForward(10);
     }
   };
 
@@ -4526,6 +4513,7 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
 
   const handleKeyDownRef = useRef<((e: KeyboardEvent) => void) | undefined>(undefined);
   handleKeyDownRef.current = (e: KeyboardEvent) => {
+    if (e.repeat) return;
     const pressedKey = e.key.toLowerCase();
     
     // If add bookmark dialog or settings panel is open, ignore player hotkeys
@@ -4730,6 +4718,7 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
       togglePlay();
     } else if (matchesKey(rewindKey)) {
       e.preventDefault();
+      e.stopPropagation();
       if (showPlayBarMode === 'disable') {
         triggerSwitchToast('Seeking hotkeys are disabled');
         return;
@@ -4739,10 +4728,11 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
         return;
       }
       if (videoRef.current) {
-        handleRewind();
+        handleRewind(10);
       }
     } else if (matchesKey(forwardKey)) {
       e.preventDefault();
+      e.stopPropagation();
       if (showPlayBarMode === 'disable') {
         triggerSwitchToast('Seeking hotkeys are disabled');
         return;
@@ -4752,7 +4742,7 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
         return;
       }
       if (videoRef.current) {
-        handleForward();
+        handleForward(10);
       }
     } else if (pressedKey === 'c') {
       e.preventDefault();
@@ -5290,7 +5280,7 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
           totalTimeWatchedRef.current += delta;
 
           // Check if remaining time is below rating threshold (minutes) to show rating prompt
-          if (videoRef.current && duration > 0 && !ratingPromptedRef.current && !isUndetectedLocalMedia) {
+          if (videoRef.current && duration > 0 && !ratingPromptedRef.current && !isUndetectedLocalMedia && !isEffectiveEmbed) {
             const remaining = duration - videoRef.current.currentTime;
             if (remaining <= (ratingThreshold || 3) * 60 && remaining > 5) {
               setShowRatingPrompt(true);
@@ -5924,7 +5914,6 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
         }
       }}
       onWheel={handleWheel}
-      onDoubleClick={handlePlayerDoubleClick}
       onContextMenu={(e) => {
         e.preventDefault();
         if (!hideUIOverlays) {
@@ -6268,7 +6257,7 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
           onEnded={() => {
             saveMediaTimestamp(video, 0, durationRef.current || duration, video.title, true);
             scrobbleToTrakt();
-            if (!ratingPromptedRef.current && !isUndetectedLocalMedia) {
+            if (!ratingPromptedRef.current && !isUndetectedLocalMedia && !isEffectiveEmbed) {
               setShowRatingPrompt(true);
               ratingPromptedRef.current = true;
             }
@@ -6340,9 +6329,9 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
           >
             <div className="player-side-skip-icon-wrap">
               {consecutiveSkipInfo.direction === 'rewind' ? (
-                <RotateCcw size={26} strokeWidth={2.4} className="player-side-skip-icon anim-spin-rewind" />
+                <RotateCcw size={18} strokeWidth={2.4} className="player-side-skip-icon anim-spin-rewind" />
               ) : (
-                <RotateCw size={26} strokeWidth={2.4} className="player-side-skip-icon anim-spin-forward" />
+                <RotateCw size={18} strokeWidth={2.4} className="player-side-skip-icon anim-spin-forward" />
               )}
             </div>
             <span className="player-side-skip-text">
@@ -6444,7 +6433,7 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
           }}
         >
           {/* Back Button */}
-          <button className="close-btn" onClick={handleExit} title="Back">
+          <button className="close-btn" onClick={handleExit} title={isEffectiveEmbed ? "Restore Original Player (Esc)" : "Back (Esc)"}>
             <ArrowLeft size={24} />
           </button>
           
@@ -6466,7 +6455,7 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
 
 
       {/* Floating Rating Prompt Overlay */}
-      {showRatingPrompt && (
+      {showRatingPrompt && !isEffectiveEmbed && (
         <div className="floating-rating-prompt animate-slide-in" onClick={(e) => e.stopPropagation()}>
           <div className="rating-header">
             <span>Enjoying this video? Rate it:</span>
@@ -9730,15 +9719,16 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
           position: absolute;
           top: 0;
           bottom: 0;
-          width: 30%;
-          min-width: 180px;
-          max-width: 380px;
+          width: 25%;
+          min-width: 120px;
+          max-width: 260px;
           display: flex;
           align-items: center;
           justify-content: center;
           pointer-events: none;
           z-index: 60;
           overflow: hidden;
+          background: transparent !important;
         }
         .player-side-skip-left,
         .player-side-skip-rewind {
@@ -9751,71 +9741,52 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
           left: auto;
         }
 
-        /* Ambient curved gradient scrim matching player theme */
+        /* Transparent background scrim */
         .player-side-skip-scrim {
-          position: absolute;
-          inset: 0;
-          pointer-events: none;
-          opacity: 0;
-          animation: sideSkipScrimFade 0.85s cubic-bezier(0.16, 1, 0.3, 1) forwards;
-        }
-        .player-side-skip-left .player-side-skip-scrim,
-        .player-side-skip-rewind .player-side-skip-scrim {
-          background: radial-gradient(ellipse at 0% 50%, var(--accent-soft, rgba(229, 9, 20, 0.22)) 0%, rgba(10, 12, 18, 0.45) 45%, transparent 75%);
-        }
-        .player-side-skip-right .player-side-skip-scrim,
-        .player-side-skip-forward .player-side-skip-scrim {
-          background: radial-gradient(ellipse at 100% 50%, var(--accent-soft, rgba(229, 9, 20, 0.22)) 0%, rgba(10, 12, 18, 0.45) 45%, transparent 75%);
+          display: none !important;
         }
 
-        @keyframes sideSkipScrimFade {
-          0% { opacity: 0; transform: scaleX(0.85); }
-          22% { opacity: 1; transform: scaleX(1); }
-          75% { opacity: 1; }
-          100% { opacity: 0; }
-        }
-
-        /* Modern, Glassmorphism Theme-Adaptive Skip Badge */
+        /* Minimal, Transparent Background Skip Badge with Small Icon */
         .player-side-skip-badge {
           position: relative;
           display: flex;
           flex-direction: column;
           align-items: center;
           justify-content: center;
-          gap: 6px;
-          min-width: 96px;
-          padding: 16px 26px;
-          border-radius: 24px;
-          background: rgba(12, 15, 23, 0.82);
-          border: 1px solid rgba(255, 255, 255, 0.14);
-          backdrop-filter: blur(20px);
-          -webkit-backdrop-filter: blur(20px);
-          box-shadow: 0 16px 40px rgba(0, 0, 0, 0.65), 0 0 25px var(--accent-soft, rgba(229, 9, 20, 0.3)), inset 0 1px 1px rgba(255, 255, 255, 0.2);
+          gap: 4px;
+          min-width: auto;
+          padding: 0 !important;
+          border-radius: 0;
+          background: transparent !important;
+          border: none !important;
+          backdrop-filter: none !important;
+          -webkit-backdrop-filter: none !important;
+          box-shadow: none !important;
           color: #ffffff;
-          animation: sideSkipPopFade 0.85s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+          animation: sideSkipPopFade 0.75s cubic-bezier(0.16, 1, 0.3, 1) forwards;
           user-select: none;
         }
         .player-side-skip-icon-wrap {
           display: flex;
           align-items: center;
           justify-content: center;
-          width: 44px;
-          height: 44px;
+          width: 28px;
+          height: 28px;
           border-radius: 50%;
-          background: var(--accent-soft, rgba(229, 9, 20, 0.18));
-          border: 1px solid var(--accent-color, rgba(229, 9, 20, 0.35));
+          background: transparent !important;
+          border: none !important;
         }
         .player-side-skip-icon {
-          color: var(--accent-color, #e50914);
-          filter: drop-shadow(0 0 8px var(--accent-soft, rgba(229, 9, 20, 0.5)));
+          color: #ffffff;
+          filter: drop-shadow(0 2px 8px rgba(0, 0, 0, 0.9));
         }
         .player-side-skip-text {
-          font-size: 1.25rem;
-          font-weight: 800;
+          font-size: 0.95rem;
+          font-weight: 700;
           letter-spacing: -0.01em;
           font-family: 'Outfit', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
           color: #ffffff;
-          text-shadow: 0 2px 10px rgba(0, 0, 0, 0.8);
+          text-shadow: 0 2px 8px rgba(0, 0, 0, 0.95);
         }
 
         @keyframes sideSkipPopFade {

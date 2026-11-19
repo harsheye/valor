@@ -26,6 +26,14 @@ try {
   dns.setDefaultResultOrder('ipv4first');
 } catch {}
 
+try {
+  if (typeof process.loadEnvFile === 'function') {
+    if (fs.existsSync('.env')) {
+      process.loadEnvFile('.env');
+    }
+  }
+} catch {}
+
 process.on('uncaughtException', (err) => {
   console.error('[Server Uncaught Exception]', err?.stack || err?.message || err);
 });
@@ -370,10 +378,23 @@ function setCorsHeaders(req, res) {
   res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
 }
 
-function setSecurityHeaders(res) {
+function setSecurityHeaders(res, req) {
   res.setHeader('X-Content-Type-Options', 'nosniff');
-  res.setHeader('X-Frame-Options', 'SAMEORIGIN');
   res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+
+  let isEmbed = false;
+  if (req && req.url) {
+    try {
+      const p = new URL(req.url, 'http://localhost').pathname;
+      if (p === '/embed' || p.startsWith('/embed/')) isEmbed = true;
+    } catch {}
+  }
+
+  if (isEmbed) {
+    res.setHeader('Content-Security-Policy', "frame-ancestors *");
+  } else {
+    res.setHeader('X-Frame-Options', 'SAMEORIGIN');
+  }
 }
 
 const ALLOWED_MEDIA_EXTS = new Set([
@@ -582,7 +603,7 @@ function handleProxyRequest(targetUrl, req, res, redirectCount = 0, parsedUrl = 
     }
 
     setCorsHeaders(req, res);
-    setSecurityHeaders(res);
+    setSecurityHeaders(res, req);
 
     if (req.method === 'OPTIONS') {
       res.statusCode = 204;
@@ -708,7 +729,7 @@ const backendServer = http.createServer(async (req, res) => {
   if (res.writableEnded) return;
 
   setCorsHeaders(req, res);
-  setSecurityHeaders(res);
+  setSecurityHeaders(res, req);
 
   if (req.method === 'OPTIONS') {
     res.statusCode = 204;
@@ -926,7 +947,7 @@ const backendServer = http.createServer(async (req, res) => {
         const TMDB_BEARER = process.env.VITE_TMDB_BEARER_TOKEN || process.env.TMDB_BEARER_TOKEN || "";
 
         setCorsHeaders(req, res);
-        setSecurityHeaders(res);
+        setSecurityHeaders(res, req);
 
         if (req.method === 'OPTIONS') {
           res.statusCode = 204;
@@ -962,7 +983,7 @@ const backendServer = http.createServer(async (req, res) => {
   // Companion Sidecar scripts distribution
   if (pathname.startsWith('/api/sidecar/')) {
     setCorsHeaders(req, res);
-    setSecurityHeaders(res);
+    setSecurityHeaders(res, req);
     if (req.method === 'OPTIONS') {
       res.statusCode = 204;
       res.end();
@@ -1025,7 +1046,7 @@ const backendServer = http.createServer(async (req, res) => {
       }
 
       setCorsHeaders(req, res);
-      setSecurityHeaders(res);
+      setSecurityHeaders(res, req);
 
       if (req.method === 'OPTIONS') {
         res.statusCode = 204;
@@ -2013,25 +2034,69 @@ const backendServer = http.createServer(async (req, res) => {
 
   // Delete Profile API
   if (pathname === '/api/profile/delete' && req.method === 'POST') {
-    getJsonBody(req).then(data => {
+    getJsonBody(req).then(async data => {
       const { userId } = data;
       if (!userId || userId === 'local') {
         res.statusCode = 400;
+        res.setHeader('Content-Type', 'application/json');
         res.end(JSON.stringify({ error: 'Invalid userId' }));
         return;
       }
       try {
-        db.prepare('DELETE FROM profiles WHERE userId = ?').run(userId);
-        db.prepare('DELETE FROM settings WHERE userId = ?').run(userId);
-        db.prepare('DELETE FROM history WHERE userId = ?').run(userId);
-        db.prepare('DELETE FROM bookmarks WHERE userId = ?').run(userId);
+        let result = null;
+        if (dataStore && dataStore.deleteProfile) {
+          result = await dataStore.deleteProfile(userId);
+        } else {
+          let username = null;
+          let accountDeleted = false;
+          let remainingProfiles = [];
+
+          const prof = db.prepare('SELECT username FROM profiles WHERE userId = ?').get(userId);
+          if (prof && prof.username) {
+            username = prof.username;
+          } else {
+            const acc = db.prepare('SELECT username FROM accounts WHERE id = ?').get(userId);
+            if (acc) username = acc.username;
+          }
+
+          if (username) {
+            remainingProfiles = db.prepare('SELECT userId, name, username FROM profiles WHERE username = ? AND userId != ?').all(username, userId);
+            if (remainingProfiles.length === 0) {
+              accountDeleted = true;
+            }
+          } else {
+            accountDeleted = true;
+          }
+
+          db.prepare('DELETE FROM profiles WHERE userId = ?').run(userId);
+          db.prepare('DELETE FROM settings WHERE userId = ?').run(userId);
+          db.prepare('DELETE FROM history WHERE userId = ?').run(userId);
+          db.prepare('DELETE FROM bookmarks WHERE userId = ?').run(userId);
+
+          if (accountDeleted) {
+            if (username) {
+              db.prepare('DELETE FROM accounts WHERE username_lower = ? OR id = ?').run(username.toLowerCase(), userId);
+              try { db.prepare('DELETE FROM user_sessions WHERE username = ? OR user_id = ?').run(username, userId); } catch {}
+            } else {
+              db.prepare('DELETE FROM accounts WHERE id = ?').run(userId);
+            }
+          }
+
+          result = {
+            success: true,
+            accountDeleted,
+            remainingProfiles,
+            message: accountDeleted ? 'Profile and cloud account permanently deleted.' : 'Profile permanently deleted.'
+          };
+        }
         
         res.statusCode = 200;
         res.setHeader('Content-Type', 'application/json');
-        res.end(JSON.stringify({ success: true }));
+        res.end(JSON.stringify(result));
       } catch (e) {
-        console.error('[SQLite profile delete error]', e.message);
+        console.error('[Profile delete error]', e.message);
         res.statusCode = 500;
+        res.setHeader('Content-Type', 'application/json');
         res.end(JSON.stringify({ error: e.message }));
       }
     });
@@ -2711,14 +2776,18 @@ const backendServer = http.createServer(async (req, res) => {
   if (pathname === '/api/settings') {
     res.statusCode = 200;
     res.setHeader('Content-Type', 'application/json');
-    const userId = parsedUrl.searchParams.get('userId');
+    const queryUserId = parsedUrl.searchParams.get('userId');
     
     if (req.method === 'POST') {
       getJsonBody(req).then(data => {
-        if (userId && userId !== 'local') {
+        const targetUserId = queryUserId || (data && data.userId);
+        if (targetUserId && targetUserId !== 'local') {
+          if (dataStore && dataStore.saveSettings) {
+            dataStore.saveSettings(targetUserId, data).catch(() => {});
+          }
           try {
             const insert = db.prepare('INSERT OR REPLACE INTO settings (userId, settingsJson) VALUES (?, ?)');
-            insert.run(userId, JSON.stringify(data));
+            insert.run(targetUserId, JSON.stringify(data));
           } catch (e) {
             console.error('[SQLite settings POST error]', e.message);
           }
@@ -2729,11 +2798,23 @@ const backendServer = http.createServer(async (req, res) => {
         res.end(JSON.stringify({ success: true }));
       });
     } else {
+      const userId = queryUserId;
       if (userId && userId !== 'local') {
         try {
           const query = db.prepare('SELECT settingsJson FROM settings WHERE userId = ?');
           const row = query.get(userId);
-          res.end(row ? row.settingsJson : JSON.stringify({}));
+          if (row && row.settingsJson) {
+            const parsed = JSON.parse(row.settingsJson);
+            if (!parsed.profileName) {
+              const p = db.prepare('SELECT name FROM profiles WHERE userId = ?').get(userId);
+              if (p && p.name) parsed.profileName = p.name;
+            }
+            if (!parsed.userId) parsed.userId = userId;
+            res.end(JSON.stringify(parsed));
+          } else {
+            const p = db.prepare('SELECT name FROM profiles WHERE userId = ?').get(userId);
+            res.end(JSON.stringify({ userId, profileName: p ? p.name : 'User', storageMode: 'file', experienceMode: 'cloud', isOnboarded: true }));
+          }
         } catch (e) {
           console.error('[SQLite settings GET error]', e.message);
           res.end(JSON.stringify({}));
@@ -2754,13 +2835,24 @@ const backendServer = http.createServer(async (req, res) => {
   if (pathname === '/api/history') {
     res.statusCode = 200;
     res.setHeader('Content-Type', 'application/json');
-    const userId = parsedUrl.searchParams.get('userId') || 'local';
+    const queryUserId = parsedUrl.searchParams.get('userId');
 
     if (req.method === 'POST') {
       getJsonBody(req).then(async data => {
         try {
+          let targetUserId = queryUserId || (data && data.userId) || 'local';
+          let historyList = [];
           if (Array.isArray(data)) {
-            await dataStore.saveHistory(userId, data);
+            historyList = data;
+          } else if (data && typeof data === 'object') {
+            if (Array.isArray(data.history)) {
+              historyList = data.history;
+            } else if (Array.isArray(data.videos)) {
+              historyList = data.videos;
+            }
+          }
+          if (Array.isArray(historyList)) {
+            await dataStore.saveHistory(targetUserId, historyList);
           }
         } catch (e) {
           console.error('[History POST error]', e.message);
@@ -2768,6 +2860,7 @@ const backendServer = http.createServer(async (req, res) => {
         res.end(JSON.stringify({ success: true }));
       });
     } else {
+      const userId = queryUserId || 'local';
       try {
         const profileData = await dataStore.getProfileData(userId);
         res.end(JSON.stringify(profileData.history || []));
@@ -3158,7 +3251,7 @@ async function start() {
           if (res.writableEnded) return;
 
           setCorsHeaders(req, res);
-          setSecurityHeaders(res);
+          setSecurityHeaders(res, req);
 
           if (req.method === 'OPTIONS') {
             res.statusCode = 204;
@@ -3179,8 +3272,8 @@ async function start() {
             return;
           }
 
-          // Proxy API requests to backend server
-          if (pathname.startsWith('/api')) {
+          // Proxy backend API and auth requests to backend server
+          if (pathname.startsWith('/api') || pathname.startsWith('/auth') || pathname.startsWith('/admin')) {
             const proxyReq = http.request(
               {
                 hostname: '127.0.0.1',
@@ -3269,23 +3362,62 @@ async function start() {
           open: false,
           headers: {
             'Cache-Control': 'no-cache',
+          },
+          proxy: {
+            '/api': {
+              target: `http://127.0.0.1:${PORT_BACKEND}`,
+              changeOrigin: true,
+            },
+            '/auth': {
+              target: `http://127.0.0.1:${PORT_BACKEND}`,
+              changeOrigin: true,
+            },
+            '/admin/stream': {
+              target: `http://127.0.0.1:${PORT_BACKEND}`,
+              changeOrigin: true,
+            }
           }
         },
       });
       viteServer.middlewares.use(telemetryMiddleware);
       viteServer.middlewares.use((req, res, next) => {
-        if (req.url && req.url.startsWith('/api/play')) {
-          try {
-            const portPart = PORT_SERVICE === 80 ? '' : `:${PORT_SERVICE}`;
-            const parsedUrl = new URL(req.url, `http://localhost${portPart}`);
-            const file = parsedUrl.searchParams.get('file');
-            if (file) {
-              console.log(`[Server] Active tab detected (via Service Server). Queueing file for playback: ${file}`);
-              pendingPlayFile = file;
+        const u = req.url || '';
+        if (u.startsWith('/auth/') || u.startsWith('/api/') || u.startsWith('/admin/')) {
+          if (u.startsWith('/api/play')) {
+            try {
+              const portPart = PORT_SERVICE === 80 ? '' : `:${PORT_SERVICE}`;
+              const parsedUrl = new URL(req.url, `http://localhost${portPart}`);
+              const file = parsedUrl.searchParams.get('file');
+              if (file) {
+                console.log(`[Server] Active tab detected (via Service Server). Queueing file for playback: ${file}`);
+                pendingPlayFile = file;
+              }
+            } catch (e) {}
+            res.statusCode = 200;
+            res.end('OK');
+            return;
+          }
+
+          const proxyReq = http.request(
+            {
+              hostname: '127.0.0.1',
+              port: PORT_BACKEND,
+              path: req.url,
+              method: req.method,
+              headers: req.headers
+            },
+            (proxyRes) => {
+              res.writeHead(proxyRes.statusCode, proxyRes.headers);
+              proxyRes.pipe(res);
             }
-          } catch (e) {}
-          res.statusCode = 200;
-          res.end('OK');
+          );
+          proxyReq.on('error', () => {
+            if (!res.headersSent) {
+              res.statusCode = 502;
+              res.end(JSON.stringify({ error: 'Backend unreachable' }));
+            }
+          });
+          req.pipe(proxyReq);
           return;
         }
         next();

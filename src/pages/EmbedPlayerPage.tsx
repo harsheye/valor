@@ -698,6 +698,7 @@ export const EmbedPlayerPage: React.FC = () => {
           setVideo(null);
           try {
             window.parent.postMessage({ source: 'valor-embed-iframe', version: '1.0.0', payload: { type: 'CLOSE' } }, '*');
+            window.parent.postMessage({ source: 'valor-embed-iframe', type: 'RESTORE_ORIGINAL' }, '*');
           } catch (e) {}
         }}
         onUpdateVideo={handleUpdateVideo}

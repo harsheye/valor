@@ -9,12 +9,33 @@ import bcrypt from 'bcryptjs';
 import { lookupIpIntelligence, getFlagEmoji } from './geoLookup.js';
 import { runAccountMigrations } from './server/db/accountMigration.js';
 
+try {
+  if (typeof process.loadEnvFile === 'function') {
+    process.loadEnvFile();
+  }
+} catch {}
+
 const { Pool } = pg;
 
 export class DataStore {
   constructor(options = {}) {
-    this.pgUrl = options.pgUrl || process.env.DATABASE_URL || 'postgresql://valor_user:ValorPass2026!@localhost:5432/valor';
-    this.redisUrl = options.redisUrl || process.env.REDIS_URL || 'redis://app_user:AppPass2026!@localhost:6379';
+    const pgUser = process.env.POSTGRES_USER || process.env.PGUSER || process.env.DB_USERNAME || 'valor_user';
+    const pgPass = process.env.POSTGRES_PASSWORD || process.env.PGPASSWORD || process.env.DB_PASSWORD || 'ValorPass2026!';
+    const pgHost = process.env.POSTGRES_HOST || process.env.PGHOST || process.env.DB_HOST || 'localhost';
+    const pgPort = process.env.POSTGRES_PORT || process.env.PGPORT || process.env.DB_PORT || '5432';
+    const pgDb = process.env.POSTGRES_DB || process.env.PGDATABASE || process.env.DB_DATABASE_NAME || 'valor';
+    const defaultPgUrl = `postgresql://${encodeURIComponent(pgUser)}:${encodeURIComponent(pgPass)}@${pgHost}:${pgPort}/${pgDb}`;
+
+    this.pgUrl = options.pgUrl || process.env.DATABASE_URL || defaultPgUrl;
+
+    const redisUser = process.env.REDIS_USER || process.env.REDIS_USERNAME || 'admin';
+    const redisPass = process.env.REDIS_PASSWORD || 'AdminPass2026!';
+    const redisHost = process.env.REDIS_HOST || 'localhost';
+    const redisPort = process.env.REDIS_PORT || '6379';
+    const redisAuth = redisUser ? `${encodeURIComponent(redisUser)}:${encodeURIComponent(redisPass)}@` : (redisPass ? `:${encodeURIComponent(redisPass)}@` : '');
+    const defaultRedisUrl = `redis://${redisAuth}${redisHost}:${redisPort}`;
+
+    this.redisUrl = options.redisUrl || process.env.REDIS_URL || defaultRedisUrl;
     this.sqliteDb = options.sqliteDb || null;
 
     this.pgPool = null;
@@ -50,10 +71,15 @@ export class DataStore {
       const res = await client.query('SELECT NOW() AS now, current_database() AS db;');
       client.release();
       this.isPgConnected = true;
-      console.log(`\x1b[32m[PostgreSQL]\x1b[0m Connected to Docker PostgreSQL database "${res.rows[0].db}" at localhost:5432`);
+      let pgHostDisplay = '5432';
+      try {
+        const u = new URL(this.pgUrl);
+        pgHostDisplay = `${u.hostname}:${u.port || 5432}`;
+      } catch {}
+      console.log(`\x1b[32m[PostgreSQL]\x1b[0m Connected to PostgreSQL database "${res.rows[0].db}" at ${pgHostDisplay}`);
     } catch (err) {
       this.isPgConnected = false;
-      console.warn(`\x1b[33m[PostgreSQL Warning]\x1b[0m Could not connect to Docker Postgres (${err.message}). Using local storage fallback.`);
+      console.warn(`\x1b[33m[PostgreSQL Warning]\x1b[0m Could not connect to Postgres (${err.message}). Using local storage fallback.`);
     }
 
     // 2. Initialize Redis (Lazy Loading Cache)
@@ -73,11 +99,16 @@ export class DataStore {
       const ping = await this.redis.ping();
       if (ping === 'PONG') {
         this.isRedisConnected = true;
-        console.log(`\x1b[32m[Redis Cache]\x1b[0m Connected to Docker Redis server at localhost:6379 (Lazy Loading enabled)`);
+        let redisHostDisplay = '6379';
+        try {
+          const u = new URL(this.redisUrl);
+          redisHostDisplay = `${u.hostname}:${u.port || 6379}`;
+        } catch {}
+        console.log(`\x1b[32m[Redis Cache]\x1b[0m Connected to Redis server at ${redisHostDisplay} (Lazy Loading enabled)`);
       }
     } catch (err) {
       this.isRedisConnected = false;
-      console.warn(`\x1b[33m[Redis Warning]\x1b[0m Could not connect to Docker Redis (${err.message}). Lazy caching disabled.`);
+      console.warn(`\x1b[33m[Redis Warning]\x1b[0m Could not connect to Redis (${err.message}). Lazy caching disabled.`);
     }
 
     // Run table verification for both PostgreSQL and SQLite
@@ -895,6 +926,108 @@ export class DataStore {
     return { userId, name, username };
   }
 
+  async deleteProfile(userId) {
+    if (!userId || userId === 'local') return { success: false, error: 'Invalid userId' };
+
+    let username = null;
+    let accountDeleted = false;
+    let remainingProfiles = [];
+
+    // 1. PostgreSQL deletion
+    if (this.isPgConnected && this.pgPool) {
+      try {
+        const profRes = await this.pgPool.query('SELECT username FROM profiles WHERE user_id = $1', [userId]);
+        if (profRes.rows.length > 0 && profRes.rows[0].username) {
+          username = profRes.rows[0].username;
+        } else {
+          const accRes = await this.pgPool.query('SELECT username FROM accounts WHERE id::text = $1', [userId]);
+          if (accRes.rows.length > 0) username = accRes.rows[0].username;
+        }
+
+        if (username) {
+          const remRes = await this.pgPool.query('SELECT user_id AS "userId", name, username FROM profiles WHERE username = $1 AND user_id != $2', [username, userId]);
+          remainingProfiles = remRes.rows;
+          if (remainingProfiles.length === 0) {
+            accountDeleted = true;
+          }
+        } else {
+          accountDeleted = true;
+        }
+
+        await this.pgPool.query('DELETE FROM profiles WHERE user_id = $1', [userId]);
+        await this.pgPool.query('DELETE FROM settings WHERE user_id = $1', [userId]);
+        await this.pgPool.query('DELETE FROM history WHERE user_id = $1', [userId]);
+        await this.pgPool.query('DELETE FROM bookmarks WHERE user_id = $1', [userId]);
+
+        if (accountDeleted) {
+          if (username) {
+            await this.pgPool.query('DELETE FROM accounts WHERE username_lower = $1 OR id::text = $2', [username.toLowerCase(), userId]);
+            await this.pgPool.query('DELETE FROM user_sessions WHERE username = $1 OR user_id = $2', [username, userId]);
+          } else {
+            await this.pgPool.query('DELETE FROM accounts WHERE id::text = $1', [userId]);
+          }
+        }
+      } catch (err) {
+        console.error('[PostgreSQL] deleteProfile error:', err.message);
+      }
+    }
+
+    // 2. SQLite deletion
+    if (this.sqliteDb) {
+      try {
+        if (!username) {
+          const prof = this.sqliteDb.prepare('SELECT username FROM profiles WHERE userId = ?').get(userId);
+          if (prof && prof.username) {
+            username = prof.username;
+          } else {
+            const acc = this.sqliteDb.prepare('SELECT username FROM accounts WHERE id = ?').get(userId);
+            if (acc) username = acc.username;
+          }
+        }
+
+        if (username) {
+          remainingProfiles = this.sqliteDb.prepare('SELECT userId, name, username FROM profiles WHERE username = ? AND userId != ?').all(username, userId);
+          if (remainingProfiles.length === 0) {
+            accountDeleted = true;
+          }
+        } else {
+          accountDeleted = true;
+        }
+
+        this.sqliteDb.prepare('DELETE FROM profiles WHERE userId = ?').run(userId);
+        this.sqliteDb.prepare('DELETE FROM settings WHERE userId = ?').run(userId);
+        this.sqliteDb.prepare('DELETE FROM history WHERE userId = ?').run(userId);
+        this.sqliteDb.prepare('DELETE FROM bookmarks WHERE userId = ?').run(userId);
+
+        if (accountDeleted) {
+          if (username) {
+            this.sqliteDb.prepare('DELETE FROM accounts WHERE username_lower = ? OR id = ?').run(username.toLowerCase(), userId);
+            try { this.sqliteDb.prepare('DELETE FROM user_sessions WHERE username = ? OR user_id = ?').run(username, userId); } catch {}
+          } else {
+            this.sqliteDb.prepare('DELETE FROM accounts WHERE id = ?').run(userId);
+          }
+        }
+      } catch (err) {
+        console.error('[SQLite] deleteProfile error:', err.message);
+      }
+    }
+
+    // 3. Cache Invalidation
+    await this.cacheDel('valor:cache:profiles:all');
+    if (username) {
+      await this.cacheDel(`valor:cache:profiles:u_${username}`);
+    }
+    await this.cacheDel(`valor:cache:profile_data:${userId}`);
+    await this.cacheDel(`valor:cache:settings:${userId}`);
+
+    return {
+      success: true,
+      accountDeleted,
+      remainingProfiles,
+      message: accountDeleted ? 'Profile and cloud account permanently deleted.' : 'Profile permanently deleted.'
+    };
+  }
+
   // --------------------------------------------------------------------------
   // User Profile Data & Playback History (with Multi-Tier Cache)
   // --------------------------------------------------------------------------
@@ -913,10 +1046,31 @@ export class DataStore {
       try {
         // Fetch Settings
         const settingsRes = await this.pgPool.query('SELECT settings_json FROM settings WHERE user_id = $1', [activeUserId]);
-        const settings = settingsRes.rows.length > 0 ? settingsRes.rows[0].settings_json : {};
+        let settings = settingsRes.rows.length > 0 ? settingsRes.rows[0].settings_json : {};
+        if (!settings.profileName) {
+          try {
+            const profRes = await this.pgPool.query('SELECT name FROM profiles WHERE user_id = $1', [activeUserId]);
+            if (profRes.rows.length > 0 && profRes.rows[0].name) {
+              settings.profileName = profRes.rows[0].name;
+            }
+          } catch {}
+        }
+        if (!settings.userId) {
+          settings.userId = activeUserId;
+        }
 
         // Fetch History
-        const historyRes = await this.pgPool.query('SELECT * FROM history WHERE user_id = $1 ORDER BY last_played_date DESC NULLS LAST', [activeUserId]);
+        let historyRes = await this.pgPool.query('SELECT * FROM history WHERE user_id = $1 ORDER BY last_played_date DESC NULLS LAST', [activeUserId]);
+        if (historyRes.rows.length === 0 && activeUserId !== 'local' && !activeUserId.startsWith('local_')) {
+          try {
+            const localHistRes = await this.pgPool.query('SELECT * FROM history WHERE user_id = $1', ['local']);
+            if (localHistRes.rows.length > 0) {
+              await this.pgPool.query('UPDATE history SET user_id = $1 WHERE user_id = $2', [activeUserId, 'local']).catch(() => {});
+              await this.pgPool.query('UPDATE bookmarks SET user_id = $1 WHERE user_id = $2', [activeUserId, 'local']).catch(() => {});
+              historyRes = await this.pgPool.query('SELECT * FROM history WHERE user_id = $1 ORDER BY last_played_date DESC NULLS LAST', [activeUserId]);
+            }
+          } catch (e) {}
+        }
         
         // Fetch Bookmarks
         const bookmarksRes = await this.pgPool.query('SELECT * FROM bookmarks WHERE user_id = $1', [activeUserId]);
@@ -993,9 +1147,32 @@ export class DataStore {
     if (this.sqliteDb) {
       try {
         const settingsRow = this.sqliteDb.prepare('SELECT settingsJson FROM settings WHERE userId = ?').get(activeUserId);
-        const settings = settingsRow ? JSON.parse(settingsRow.settingsJson) : {};
-        const historyRows = this.sqliteDb.prepare('SELECT * FROM history WHERE userId = ?').all(activeUserId);
-        const bookmarksRows = this.sqliteDb.prepare('SELECT * FROM bookmarks WHERE userId = ?').all(activeUserId);
+        let settings = settingsRow ? JSON.parse(settingsRow.settingsJson) : {};
+        if (!settings.profileName) {
+          try {
+            const profRow = this.sqliteDb.prepare('SELECT name FROM profiles WHERE userId = ?').get(activeUserId);
+            if (profRow && profRow.name) {
+              settings.profileName = profRow.name;
+            }
+          } catch {}
+        }
+        if (!settings.userId) {
+          settings.userId = activeUserId;
+        }
+        let historyRows = this.sqliteDb.prepare('SELECT * FROM history WHERE userId = ?').all(activeUserId);
+        let bookmarksRows = this.sqliteDb.prepare('SELECT * FROM bookmarks WHERE userId = ?').all(activeUserId);
+
+        if (historyRows.length === 0 && activeUserId !== 'local' && !activeUserId.startsWith('local_')) {
+          try {
+            const localHist = this.sqliteDb.prepare('SELECT * FROM history WHERE userId = ?').all('local');
+            if (localHist.length > 0) {
+              this.sqliteDb.prepare('UPDATE OR IGNORE history SET userId = ? WHERE userId = ?').run(activeUserId, 'local');
+              this.sqliteDb.prepare('UPDATE OR IGNORE bookmarks SET userId = ? WHERE userId = ?').run(activeUserId, 'local');
+              historyRows = this.sqliteDb.prepare('SELECT * FROM history WHERE userId = ?').all(activeUserId);
+              bookmarksRows = this.sqliteDb.prepare('SELECT * FROM bookmarks WHERE userId = ?').all(activeUserId);
+            }
+          } catch (e) {}
+        }
 
         const videos = historyRows.map(row => ({
           id: row.videoId,
@@ -1161,11 +1338,14 @@ export class DataStore {
                 user_time = EXCLUDED.user_time, media_name = EXCLUDED.media_name, created_by = EXCLUDED.created_by
             `;
             for (const bm of v.bookmarks) {
+              const bmId = bm.id || bm._id || ('bm_' + Math.random().toString(36).substring(2, 9) + '_' + Date.now());
+              const bmLabel = bm.label || bm.title || 'Bookmark';
               await client.query(upsertBookmarkPg, [
-                activeUserId, v.id, bm.id, Number(bm.time) || 0,
+                activeUserId, v.id, bmId, Number(bm.time) || 0,
                 bm.endTime !== undefined && bm.endTime !== null ? Number(bm.endTime) : null,
-                bm.label || '', Boolean(bm.isIntro), Boolean(bm.isOutro), Boolean(bm.skipEnabled),
-                bm.title || null, bm.description || null, bm.category || null,
+                bmLabel, Boolean(bm.isIntro), Boolean(bm.isOutro), Boolean(bm.skipEnabled),
+                bm.title || bmLabel, bm.description || null,
+                bm.category || (bm.isIntro ? 'Intro' : bm.isOutro ? 'Outro' : 'Custom'),
                 bm.startTime !== undefined && bm.startTime !== null ? Number(bm.startTime) : (Number(bm.time) || 0),
                 bm.thumbnail || null, Boolean(bm.favorite),
                 v.episode || null, v.season || null, bm.color || null, v.tmdbId || null,
@@ -1221,17 +1401,22 @@ export class DataStore {
             `);
             for (const bm of v.bookmarks) {
               try {
+                const bmId = bm.id || bm._id || ('bm_' + Math.random().toString(36).substring(2, 9) + '_' + Date.now());
+                const bmLabel = bm.label || bm.title || 'Bookmark';
                 upsertStmt.run(
-                  activeUserId, v.id, bm.id, Number(bm.time) || 0,
+                  activeUserId, v.id, bmId, Number(bm.time) || 0,
                   bm.endTime !== undefined && bm.endTime !== null ? Number(bm.endTime) : null,
-                  bm.label || '', bm.isIntro ? 1 : 0, bm.isOutro ? 1 : 0, bm.skipEnabled ? 1 : 0,
-                  bm.title || null, bm.description || null, bm.category || null,
+                  bmLabel, bm.isIntro ? 1 : 0, bm.isOutro ? 1 : 0, bm.skipEnabled ? 1 : 0,
+                  bm.title || bmLabel, bm.description || null,
+                  bm.category || (bm.isIntro ? 'Intro' : bm.isOutro ? 'Outro' : 'Custom'),
                   bm.startTime !== undefined && bm.startTime !== null ? Number(bm.startTime) : (Number(bm.time) || 0),
                   bm.thumbnail || null, bm.favorite ? 1 : 0,
                   v.episode || null, v.season || null, bm.color || null, v.tmdbId || null,
                   bm.userName || null, bm.userTime || null, v.title || null, bm.createdBy || 'manual'
                 );
-              } catch (e) {}
+              } catch (e) {
+                console.error('[SQLite] saveHistory bookmark upsert error:', e.message);
+              }
             }
           }
         }
@@ -3609,18 +3794,20 @@ export class DataStore {
           const bmTmdbId = bm.tmdbId !== undefined && bm.tmdbId !== null ? parseInt(bm.tmdbId, 10) : tId;
           const bmSeason = bm.season !== undefined && bm.season !== null ? parseInt(bm.season, 10) : s;
           const bmEpisode = bm.episode !== undefined && bm.episode !== null ? parseInt(bm.episode, 10) : ep;
+          const bmId = bm.id || bm._id || ('bm_' + Math.random().toString(36).substring(2, 9) + '_' + Date.now());
+          const bmLabel = bm.label || bm.title || 'Bookmark';
 
           await client.query(upsertQuery, [
             bmUserId,
             bmVideoId,
-            bm.id,
+            bmId,
             Number(bm.time) || 0,
             bm.endTime !== undefined && bm.endTime !== null ? Number(bm.endTime) : null,
-            bm.label || '',
+            bmLabel,
             Boolean(bm.isIntro),
             Boolean(bm.isOutro),
             Boolean(bm.skipEnabled),
-            bm.title || bm.label || '',
+            bm.title || bmLabel,
             bm.description || null,
             bm.category || (bm.isIntro ? 'Intro' : bm.isOutro ? 'Outro' : 'Custom'),
             bm.startTime !== undefined && bm.startTime !== null ? Number(bm.startTime) : (Number(bm.time) || 0),
@@ -3669,18 +3856,20 @@ export class DataStore {
           const bmTmdbId = bm.tmdbId !== undefined && bm.tmdbId !== null ? parseInt(bm.tmdbId, 10) : tId;
           const bmSeason = bm.season !== undefined && bm.season !== null ? parseInt(bm.season, 10) : s;
           const bmEpisode = bm.episode !== undefined && bm.episode !== null ? parseInt(bm.episode, 10) : ep;
+          const bmId = bm.id || bm._id || ('bm_' + Math.random().toString(36).substring(2, 9) + '_' + Date.now());
+          const bmLabel = bm.label || bm.title || 'Bookmark';
 
           insertStmt.run(
             bmUserId,
             bmVideoId,
-            bm.id,
+            bmId,
             Number(bm.time) || 0,
             bm.endTime !== undefined && bm.endTime !== null ? Number(bm.endTime) : null,
-            bm.label || '',
+            bmLabel,
             bm.isIntro ? 1 : 0,
             bm.isOutro ? 1 : 0,
             bm.skipEnabled ? 1 : 0,
-            bm.title || bm.label || '',
+            bm.title || bmLabel,
             bm.description || null,
             bm.category || (bm.isIntro ? 'Intro' : bm.isOutro ? 'Outro' : 'Custom'),
             bm.startTime !== undefined && bm.startTime !== null ? Number(bm.startTime) : (Number(bm.time) || 0),

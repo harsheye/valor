@@ -38,6 +38,7 @@ import {
   DEFAULT_CACHE_SETTINGS 
 } from '../services/cache/cachePolicy';
 import { clearRemoteProbeCache } from '../utils/remoteProbeCache';
+import { syncProfileDataToCloud } from '../services/storage/cloudSync';
 import { 
   initiateTraktPkceAuth, 
   generateTraktDeviceCode, 
@@ -104,13 +105,16 @@ interface SettingsPageProps {
   handleSwitchProfile?: (profile: any) => void;
   openAuthModal?: (tab: 'login' | 'signup', targetProfile?: any, onSuccess?: (userId: string) => void) => void;
   setDeleteTargetProfile?: (profile: any) => void;
+  setIsDeleteModalOpen?: (open: boolean) => void;
   setRemoveError?: (msg: string) => void;
   setIsRemoveModalOpen?: (open: boolean) => void;
+  setRemoveTargetProfile?: (profile: any) => void;
   setNewProfileName?: (name: string) => void;
   setNewProfilePassword?: (pwd: string) => void;
   setCreateProfileError?: (err: string) => void;
   setIsCreateProfileModalOpen?: (open: boolean) => void;
   addToast?: (title: string, type?: 'success' | 'error' | 'warning', message?: string) => void;
+  videos?: any[];
   setVideos?: (videos: any) => void;
   previewExpanded?: boolean;
   setPreviewExpanded?: (expanded: boolean) => void;
@@ -128,11 +132,14 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
   availableProfiles = [],
   handleSwitchProfile,
   openAuthModal,
-  setIsRemoveModalOpen,
   setDeleteTargetProfile,
+  setIsDeleteModalOpen,
+  setIsRemoveModalOpen,
+  setRemoveTargetProfile,
   setIsCreateProfileModalOpen,
   renderMockPreviewButton,
   addToast,
+  videos,
   setVideos,
 }) => {
   const resolveSectionId = (tab?: string): SettingsSectionId => {
@@ -533,6 +540,31 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
   const activeProfileName = settings.profileName || 'Local profile';
   const isCloudProfile = settings.userId && settings.userId !== 'local' && !settings.userId.startsWith('local_');
 
+  const handleLogoutCloud = async () => {
+    try {
+      await fetch('/auth/logout', { method: 'POST', credentials: 'include' });
+    } catch {}
+    localStorage.removeItem('valor_logged_in_username');
+    const localUserId = 'local_' + Math.random().toString(36).substring(2, 11);
+    localStorage.setItem('valor_active_user_id', localUserId);
+    const newLocal = {
+      ...settings,
+      userId: localUserId,
+      profileName: 'Local Profile',
+      storageMode: 'localstorage',
+      experienceMode: 'local',
+      isOnboarded: true
+    };
+    try {
+      localStorage.setItem(`valor_settings_${localUserId}`, JSON.stringify(newLocal));
+      localStorage.setItem('valor_settings', JSON.stringify(newLocal));
+    } catch {}
+    setSettings(newLocal);
+    saveSettingsToStorage(newLocal);
+    if (addToast) addToast('Logged out of cloud account', 'success');
+    window.location.reload();
+  };
+
   // Search filter query
   const isSearching = searchQuery.trim().length > 0;
   const normalizedQuery = searchQuery.trim().toLowerCase();
@@ -869,7 +901,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                     >
                       <SettingRow
                         title="History limit"
-                        description="How many titles to keep in History."
+                        description="How many titles to display in History. All data is securely stored in database."
                         control={
                           <Select
                             value={settings.historyLimit || 10}
@@ -1730,49 +1762,111 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                       </div>
                     </div>
 
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
-                      <button
-                        type="button"
-                        onClick={() => openAuthModal && openAuthModal('signup')}
-                        style={{
-                          background: '#6366f1',
-                          border: 'none',
-                          color: '#ffffff',
-                          fontWeight: 600,
-                          fontSize: '0.85rem',
-                          padding: '8px 20px',
-                          borderRadius: '8px',
-                          cursor: 'pointer',
-                          boxShadow: '0 2px 10px rgba(99, 102, 241, 0.35)',
-                          transition: 'background 0.2s, transform 0.1s',
-                          minHeight: '38px',
-                        }}
-                        onMouseEnter={(e) => (e.currentTarget.style.background = '#4f46e5')}
-                        onMouseLeave={(e) => (e.currentTarget.style.background = '#6366f1')}
-                      >
-                        Create account
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => openAuthModal && openAuthModal('login')}
-                        style={{
-                          background: 'rgba(255, 255, 255, 0.06)',
-                          border: '1px solid rgba(255, 255, 255, 0.12)',
-                          color: '#ffffff',
-                          fontWeight: 600,
-                          fontSize: '0.85rem',
-                          padding: '8px 20px',
-                          borderRadius: '8px',
-                          cursor: 'pointer',
-                          transition: 'background 0.2s',
-                          minHeight: '38px',
-                        }}
-                        onMouseEnter={(e) => (e.currentTarget.style.background = 'rgba(255, 255, 255, 0.1)')}
-                        onMouseLeave={(e) => (e.currentTarget.style.background = 'rgba(255, 255, 255, 0.06)')}
-                      >
-                        Log in to cloud
-                      </button>
-                    </div>
+                    {isCloudProfile ? (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+                        <div
+                          style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '6px',
+                            padding: '8px 14px',
+                            background: 'rgba(16, 185, 129, 0.12)',
+                            border: '1px solid rgba(16, 185, 129, 0.3)',
+                            borderRadius: '8px',
+                            color: '#10b981',
+                            fontSize: '0.84rem',
+                            fontWeight: 600,
+                          }}
+                        >
+                          <Cloud size={16} />
+                          <span>Logged in as @{localStorage.getItem('valor_logged_in_username') || activeProfileName}</span>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => openAuthModal && openAuthModal('login')}
+                          style={{
+                            background: 'rgba(255, 255, 255, 0.06)',
+                            border: '1px solid rgba(255, 255, 255, 0.12)',
+                            color: '#ffffff',
+                            fontWeight: 600,
+                            fontSize: '0.85rem',
+                            padding: '8px 16px',
+                            borderRadius: '8px',
+                            cursor: 'pointer',
+                            transition: 'background 0.2s',
+                            minHeight: '38px',
+                          }}
+                          onMouseEnter={(e) => (e.currentTarget.style.background = 'rgba(255, 255, 255, 0.1)')}
+                          onMouseLeave={(e) => (e.currentTarget.style.background = 'rgba(255, 255, 255, 0.06)')}
+                        >
+                          Switch account
+                        </button>
+                        <button
+                          type="button"
+                          onClick={handleLogoutCloud}
+                          style={{
+                            background: 'rgba(239, 68, 68, 0.12)',
+                            border: '1px solid rgba(239, 68, 68, 0.25)',
+                            color: '#f87171',
+                            fontWeight: 600,
+                            fontSize: '0.85rem',
+                            padding: '8px 16px',
+                            borderRadius: '8px',
+                            cursor: 'pointer',
+                            transition: 'background 0.2s',
+                            minHeight: '38px',
+                          }}
+                          onMouseEnter={(e) => (e.currentTarget.style.background = 'rgba(239, 68, 68, 0.2)')}
+                          onMouseLeave={(e) => (e.currentTarget.style.background = 'rgba(239, 68, 68, 0.12)')}
+                        >
+                          Log out
+                        </button>
+                      </div>
+                    ) : (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+                        <button
+                          type="button"
+                          onClick={() => openAuthModal && openAuthModal('signup')}
+                          style={{
+                            background: '#6366f1',
+                            border: 'none',
+                            color: '#ffffff',
+                            fontWeight: 600,
+                            fontSize: '0.85rem',
+                            padding: '8px 20px',
+                            borderRadius: '8px',
+                            cursor: 'pointer',
+                            boxShadow: '0 2px 10px rgba(99, 102, 241, 0.35)',
+                            transition: 'background 0.2s, transform 0.1s',
+                            minHeight: '38px',
+                          }}
+                          onMouseEnter={(e) => (e.currentTarget.style.background = '#4f46e5')}
+                          onMouseLeave={(e) => (e.currentTarget.style.background = '#6366f1')}
+                        >
+                          Create account
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => openAuthModal && openAuthModal('login')}
+                          style={{
+                            background: 'rgba(255, 255, 255, 0.06)',
+                            border: '1px solid rgba(255, 255, 255, 0.12)',
+                            color: '#ffffff',
+                            fontWeight: 600,
+                            fontSize: '0.85rem',
+                            padding: '8px 20px',
+                            borderRadius: '8px',
+                            cursor: 'pointer',
+                            transition: 'background 0.2s',
+                            minHeight: '38px',
+                          }}
+                          onMouseEnter={(e) => (e.currentTarget.style.background = 'rgba(255, 255, 255, 0.1)')}
+                          onMouseLeave={(e) => (e.currentTarget.style.background = 'rgba(255, 255, 255, 0.06)')}
+                        >
+                          Log in to cloud
+                        </button>
+                      </div>
+                    )}
                   </div>
 
                   {/* Right: Device / Cloud Visual Connector & Segmented Switch */}
@@ -1866,11 +1960,25 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                       </button>
                       <button
                         type="button"
-                        onClick={() => {
+                        onClick={async () => {
                           if (!isCloudProfile) {
                             openAuthModal && openAuthModal('login');
                           } else {
                             updateSetting('storageMode', 'file');
+                            try {
+                              const activeUid = settings.userId;
+                              if (activeUid && activeUid !== 'local') {
+                                const { mergedVideos } = await syncProfileDataToCloud(activeUid, {
+                                  prevUserId: activeUid,
+                                  inMemoryVideos: videos,
+                                  currentSettings: { ...settings, storageMode: 'file' }
+                                });
+                                if (setVideos) setVideos(mergedVideos);
+                                if (addToast) addToast('Profile data and bookmarks synced to cloud', 'success');
+                              }
+                            } catch (e) {
+                              console.error('Failed to sync to cloud:', e);
+                            }
                           }
                         }}
                         style={{
@@ -2199,6 +2307,46 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                                     Click to switch
                                   </span>
                                 </div>
+                                <button
+                                  type="button"
+                                  title={`Delete profile ${p.name || p.username || ''}`}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    if (setDeleteTargetProfile && setIsDeleteModalOpen) {
+                                      const isCloudP = !p.userId?.startsWith('local_') && p.userId !== 'local';
+                                      const remainingCloud = availableProfiles.filter(ap => !ap.userId?.startsWith('local_') && ap.userId !== 'local');
+                                      setDeleteTargetProfile({
+                                        userId: p.userId,
+                                        name: p.name || p.username || 'Profile',
+                                        isOnlyProfile: isCloudP && remainingCloud.length <= 1
+                                      });
+                                      setIsDeleteModalOpen(true);
+                                    }
+                                  }}
+                                  style={{
+                                    background: 'transparent',
+                                    border: 'none',
+                                    color: 'rgba(239, 68, 68, 0.65)',
+                                    cursor: 'pointer',
+                                    padding: '6px',
+                                    borderRadius: '6px',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'center',
+                                    transition: 'all 0.2s',
+                                    flexShrink: 0
+                                  }}
+                                  onMouseEnter={(e) => {
+                                    e.currentTarget.style.color = '#ef4444';
+                                    e.currentTarget.style.background = 'rgba(239, 68, 68, 0.12)';
+                                  }}
+                                  onMouseLeave={(e) => {
+                                    e.currentTarget.style.color = 'rgba(239, 68, 68, 0.65)';
+                                    e.currentTarget.style.background = 'transparent';
+                                  }}
+                                >
+                                  <Trash2 size={15} />
+                                </button>
                               </div>
                             ))}
                         </div>
@@ -2357,13 +2505,26 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                       }}
                     >
                       <span style={{ fontSize: '0.8rem', color: 'rgba(255, 255, 255, 0.55)', lineHeight: 1.4 }}>
-                        Removes this profile and its history from this device.
+                        {isCloudProfile
+                          ? (availableProfiles.filter(p => !p.userId?.startsWith('local_') && p.userId !== 'local').length <= 1
+                              ? 'This is the only profile on your cloud account. Deleting this profile will permanently delete your account and all synced data.'
+                              : 'Permanently removes this profile and all its synced watch history.')
+                          : 'Removes this local profile and its history from this device.'}
                       </span>
                       <button
                         type="button"
                         onClick={() => {
-                          if (setIsRemoveModalOpen) {
-                            setDeleteTargetProfile && setDeleteTargetProfile({ userId: settings.userId, name: activeProfileName });
+                          const isOnly = isCloudProfile && (availableProfiles.filter(p => !p.userId?.startsWith('local_') && p.userId !== 'local').length <= 1);
+                          if (setDeleteTargetProfile && setIsDeleteModalOpen) {
+                            setDeleteTargetProfile({
+                              userId: settings.userId,
+                              name: activeProfileName,
+                              isOnlyProfile: isOnly
+                            });
+                            setIsDeleteModalOpen(true);
+                          } else if (setIsRemoveModalOpen) {
+                            setDeleteTargetProfile && setDeleteTargetProfile({ userId: settings.userId, name: activeProfileName, isOnlyProfile: isOnly });
+                            setRemoveTargetProfile && setRemoveTargetProfile({ userId: settings.userId, name: activeProfileName });
                             setIsRemoveModalOpen(true);
                           } else {
                             triggerAutosaveToast('Profile removed');
@@ -2386,7 +2547,9 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                         onMouseEnter={(e) => (e.currentTarget.style.background = 'rgba(239, 68, 68, 0.16)')}
                         onMouseLeave={(e) => (e.currentTarget.style.background = 'rgba(239, 68, 68, 0.08)')}
                       >
-                        Remove profile
+                        {isCloudProfile && availableProfiles.filter(p => !p.userId?.startsWith('local_') && p.userId !== 'local').length <= 1
+                          ? 'Delete Profile & Account'
+                          : 'Delete Profile'}
                       </button>
                     </div>
                   </div>

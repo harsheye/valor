@@ -93,6 +93,7 @@ export const HistoryPage: React.FC<HistoryPageProps> = ({
   handlePlayVideo,
   handleRemoveVideo,
   syncVideoToTraktHistory,
+  settings,
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [filterPill, setFilterPill] = useState<'all' | 'local' | 'remote' | 'online' | 'stopped' | 'finished' | 'trakt'>('all');
@@ -102,6 +103,20 @@ export const HistoryPage: React.FC<HistoryPageProps> = ({
   
   const [isClearModalOpen, setIsClearModalOpen] = useState(false);
   const [hoveredCell, setHoveredCell] = useState<{ dateKey: string; count: number; x: number; y: number } | null>(null);
+
+  // History display limit (default 10 or user chosen setting; database stores all)
+  const displayLimit = useMemo(() => {
+    const lim = settings?.historyLimit;
+    if (lim === 'Infinite' || lim === 'infinite') return Infinity;
+    if (typeof lim === 'number' && lim > 0) return lim;
+    if (typeof lim === 'string') {
+      const parsed = parseInt(lim, 10);
+      if (!isNaN(parsed) && parsed > 0) return parsed;
+    }
+    return 10;
+  }, [settings?.historyLimit]);
+
+  const [showAllItems, setShowAllItems] = useState(false);
 
   const searchInputRef = useRef<HTMLInputElement>(null);
 
@@ -308,11 +323,17 @@ export const HistoryPage: React.FC<HistoryPageProps> = ({
     });
   }, [allHistoryItems, searchQuery, filterPill, selectedDateKey]);
 
+  // 5. Slice to user display limit (default 10 or configured limit)
+  const displayedHistoryItems = useMemo(() => {
+    if (showAllItems || displayLimit === Infinity) return filteredItems;
+    return filteredItems.slice(0, displayLimit);
+  }, [filteredItems, displayLimit, showAllItems]);
+
   // Group items by date for display (exact match to screenshot)
   const groupedWatchLog = useMemo(() => {
     const map = new Map<string, { dayKeyword: string; dayDateStr: string; dateKey: string; items: HistoryDisplayItem[]; totalWatchSec: number }>();
 
-    filteredItems.forEach(item => {
+    displayedHistoryItems.forEach(item => {
       const key = item.dateKey || 'unknown';
       let grp = map.get(key);
       if (!grp) {
@@ -330,7 +351,7 @@ export const HistoryPage: React.FC<HistoryPageProps> = ({
     });
 
     return Array.from(map.values());
-  }, [filteredItems]);
+  }, [displayedHistoryItems]);
 
   // Top Continue Watching Cards (2 cards side by side)
   const topResumeCards = useMemo(() => {
@@ -591,6 +612,11 @@ export const HistoryPage: React.FC<HistoryPageProps> = ({
           <div className="history-watchlog-header">
             <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
               <h2 className="history-watchlog-title">Watch log</h2>
+              {filteredItems.length > displayLimit && displayLimit !== Infinity && (
+                <span style={{ fontSize: '0.78rem', color: 'var(--text-3)', fontWeight: 500 }}>
+                  ({showAllItems ? `All ${filteredItems.length} items` : `Showing ${displayedHistoryItems.length} of ${filteredItems.length}`})
+                </span>
+              )}
               {selectedDateKey && (
                 <button
                   type="button"
@@ -630,24 +656,24 @@ export const HistoryPage: React.FC<HistoryPageProps> = ({
                 className={`history-filter-pill ${filterPill === 'local' ? 'active' : ''}`}
                 onClick={() => setFilterPill('local')}
               >
-                <HardDrive size={12} style={{ marginRight: '4px', verticalAlign: 'middle' }} />
-                Local
+                <HardDrive size={13} />
+                <span>Local</span>
               </button>
               <button
                 type="button"
                 className={`history-filter-pill ${filterPill === 'remote' ? 'active' : ''}`}
                 onClick={() => setFilterPill('remote')}
               >
-                <Server size={12} style={{ marginRight: '4px', verticalAlign: 'middle' }} />
-                Remote
+                <Server size={13} />
+                <span>Remote</span>
               </button>
               <button
                 type="button"
                 className={`history-filter-pill ${filterPill === 'online' ? 'active' : ''}`}
                 onClick={() => setFilterPill('online')}
               >
-                <Globe size={12} style={{ marginRight: '4px', verticalAlign: 'middle' }} />
-                Online
+                <Globe size={13} />
+                <span>Online</span>
               </button>
               <button
                 type="button"
@@ -751,7 +777,7 @@ export const HistoryPage: React.FC<HistoryPageProps> = ({
                           className="history-btn-resume"
                           onClick={() => handlePlayVideo(item.videoItem)}
                         >
-                          <Play size={11} fill="white" />
+                          <Play size={11} fill="currentColor" />
                           <span>Resume</span>
                         </button>
                       ) : (
@@ -798,6 +824,31 @@ export const HistoryPage: React.FC<HistoryPageProps> = ({
                 ))}
               </div>
             ))
+          )}
+
+          {filteredItems.length > displayLimit && displayLimit !== Infinity && (
+            <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', margin: '20px 0 8px 0' }}>
+              <button
+                type="button"
+                className="history-filter-pill"
+                style={{
+                  padding: '8px 24px',
+                  fontSize: '0.82rem',
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                  borderRadius: '8px',
+                  background: 'var(--surface-2)',
+                  border: '1px solid var(--border)',
+                  color: 'var(--text-1)',
+                  transition: 'all 0.15s ease'
+                }}
+                onClick={() => setShowAllItems(prev => !prev)}
+              >
+                {showAllItems
+                  ? `Show fewer (${displayLimit} items)`
+                  : `Show all (${filteredItems.length} items recorded)`}
+              </button>
+            </div>
           )}
         </section>
       </div>

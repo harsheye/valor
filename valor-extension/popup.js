@@ -1,35 +1,58 @@
 document.addEventListener('DOMContentLoaded', () => {
+  const connStatus = document.getElementById('connStatus');
+  const addressStatusDot = document.getElementById('addressStatusDot');
   const valorUrlInput = document.getElementById('valorUrlInput');
-  const btnSave = document.getElementById('btnSave');
-  const btnTestConn = document.getElementById('btnTestConn');
+  const modeSelector = document.getElementById('modeSelector');
+  const mediaSnifferList = document.getElementById('mediaSnifferList');
   const btnRescan = document.getElementById('btnRescan');
   const rescanIcon = document.getElementById('rescanIcon');
-  const connStatus = document.getElementById('connStatus');
-  const toastMessage = document.getElementById('toastMessage');
-  const mediaSnifferList = document.getElementById('mediaSnifferList');
+  const btnSwitchResume = document.getElementById('btnSwitchResume');
   const chkResume = document.getElementById('chkResume');
+  const btnSwitchCinema = document.getElementById('btnSwitchCinema');
   const chkCinema = document.getElementById('chkCinema');
-  const modeSelector = document.getElementById('modeSelector');
+  const btnSave = document.getElementById('btnSave');
+  const toastMessage = document.getElementById('toastMessage');
+  const versionLabel = document.getElementById('versionLabel');
 
-  let currentMode = 'auto';
+  let currentMode = 'badge';
+  let debounceTimer = null;
+  let toastTimer = null;
+
+  // Set manifest version in footer
+  try {
+    const version = chrome.runtime?.getManifest?.()?.version || '2.4.0';
+    if (versionLabel) {
+      versionLabel.textContent = `Valor v${version}`;
+    }
+  } catch (e) {}
 
   // 1. Load saved settings from Chrome storage
   chrome.storage.sync.get(['valorUrl', 'embedMode', 'resumePlayback', 'cinemaMode'], (res) => {
-    valorUrlInput.value = res.valorUrl || 'http://localhost:5173/embed';
-    currentMode = res.embedMode || 'auto';
-    chkResume.checked = res.resumePlayback !== false;
-    chkCinema.checked = res.cinemaMode === true;
+    const initialUrl = res.valorUrl || 'http://localhost:5173/embed';
+    if (valorUrlInput) {
+      valorUrlInput.value = initialUrl;
+    }
+    currentMode = res.embedMode || 'badge';
     updateModeUI(currentMode);
-    checkServerPing(valorUrlInput.value);
+
+    const isResume = res.resumePlayback !== false;
+    setToggleState(btnSwitchResume, chkResume, isResume);
+
+    const isCinema = res.cinemaMode === true;
+    setToggleState(btnSwitchCinema, chkCinema, isCinema);
+
+    checkConnection(initialUrl);
     queryActiveTabMedia();
   });
 
-  // 2. Mode Segmented Control
+  // 2. Segmented control handling
   function updateModeUI(mode) {
     currentMode = mode;
     const buttons = modeSelector.querySelectorAll('.seg-btn');
     buttons.forEach((btn) => {
-      if (btn.dataset.mode === mode) {
+      const isActive = btn.dataset.mode === mode;
+      btn.setAttribute('aria-pressed', isActive ? 'true' : 'false');
+      if (isActive) {
         btn.classList.add('active');
       } else {
         btn.classList.remove('active');
@@ -40,179 +63,200 @@ document.addEventListener('DOMContentLoaded', () => {
   modeSelector.addEventListener('click', (e) => {
     const btn = e.target.closest('.seg-btn');
     if (!btn) return;
-    const mode = btn.dataset.mode;
-    updateModeUI(mode);
-    saveSettings(true);
+    updateModeUI(btn.dataset.mode);
   });
 
-  // 3. Preset Pills
-  document.querySelectorAll('.preset-pill').forEach((pill) => {
-    pill.addEventListener('click', () => {
-      valorUrlInput.value = pill.dataset.url;
-      checkServerPing(valorUrlInput.value);
-      showToast('Preset applied!');
-    });
-  });
-
-  // 4. Test Server Connection Ping
-  async function checkServerPing(url) {
-    connStatus.className = 'valor-status-pill checking';
-    connStatus.querySelector('.status-label').textContent = 'CHECKING...';
-
-    const normalized = normalizeUrl(url);
-    try {
-      // Use background fetch or direct head fetch
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 2000);
-      const res = await fetch(normalized, { method: 'HEAD', signal: controller.signal }).catch(() => null);
-      clearTimeout(timeoutId);
-
-      if (res && (res.ok || res.status < 500)) {
-        connStatus.className = 'valor-status-pill online';
-        try {
-          const parsed = new URL(normalized);
-          const portStr = parsed.port ? `:${parsed.port}` : '';
-          connStatus.querySelector('.status-label').textContent = `ONLINE ${portStr}`;
-        } catch {
-          connStatus.querySelector('.status-label').textContent = 'ONLINE';
-        }
-        return true;
-      }
-    } catch {}
-
-    connStatus.className = 'valor-status-pill offline';
-    connStatus.querySelector('.status-label').textContent = 'OFFLINE';
-    return false;
+  // 3. Toggle switch helper & handlers
+  function setToggleState(btn, input, checked) {
+    if (!btn || !input) return;
+    input.checked = checked;
+    btn.setAttribute('aria-checked', checked ? 'true' : 'false');
   }
 
-  btnTestConn.addEventListener('click', () => {
-    checkServerPing(valorUrlInput.value);
+  btnSwitchResume.addEventListener('click', () => {
+    const nextState = btnSwitchResume.getAttribute('aria-checked') !== 'true';
+    setToggleState(btnSwitchResume, chkResume, nextState);
   });
 
-  valorUrlInput.addEventListener('change', () => {
-    checkServerPing(valorUrlInput.value);
+  btnSwitchCinema.addEventListener('click', () => {
+    const nextState = btnSwitchCinema.getAttribute('aria-checked') !== 'true';
+    setToggleState(btnSwitchCinema, chkCinema, nextState);
   });
 
-  // 5. Query Active Tab for Media Streams (Media Sniffer)
+  // 4. Reachability check (debounced automatically on input)
+  async function checkConnection(url) {
+    const normalized = normalizeUrl(url);
+    let reachable = false;
+
+    try {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 1800);
+      const res = await fetch(normalized, { method: 'HEAD', signal: controller.signal }).catch(() => null);
+      clearTimeout(timer);
+      if (res && (res.ok || res.status < 500)) {
+        reachable = true;
+      }
+    } catch (e) {}
+
+    // Update Header Status
+    if (connStatus) {
+      const statusText = connStatus.querySelector('.status-text');
+      if (reachable) {
+        connStatus.classList.remove('not-connected');
+        connStatus.classList.add('connected');
+        if (statusText) statusText.textContent = 'Connected';
+      } else {
+        connStatus.classList.remove('connected');
+        connStatus.classList.add('not-connected');
+        if (statusText) statusText.textContent = 'Not connected';
+      }
+    }
+
+    // Update Input Dot
+    if (addressStatusDot) {
+      if (reachable) {
+        addressStatusDot.classList.add('reachable');
+      } else {
+        addressStatusDot.classList.remove('reachable');
+      }
+    }
+
+    // Inform background script
+    try {
+      chrome.runtime.sendMessage({
+        type: 'SYNC_LIVE_STATE',
+        isLive: reachable && currentMode !== 'off'
+      });
+    } catch (e) {}
+
+    return reachable;
+  }
+
+  valorUrlInput.addEventListener('input', () => {
+    if (debounceTimer) clearTimeout(debounceTimer);
+    debounceTimer = setTimeout(() => {
+      checkConnection(valorUrlInput.value);
+    }, 300);
+  });
+
+  // 5. Query Active Tab Media
   function queryActiveTabMedia() {
-    mediaSnifferList.innerHTML = '<div class="sniffer-empty">Scanning for media on current tab...</div>';
-
     chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
       if (!tabs || tabs.length === 0 || !tabs[0].id) {
-        mediaSnifferList.innerHTML = '<div class="sniffer-empty">No active web tab detected.</div>';
+        showEmptyDetected('No active tab detected');
         return;
       }
 
       const activeTabId = tabs[0].id;
       chrome.tabs.sendMessage(activeTabId, { type: 'GET_PAGE_MEDIA' }, (response) => {
         const lastErr = chrome.runtime.lastError;
-        if (lastErr || !response || !response.streams) {
-          mediaSnifferList.innerHTML = '<div class="sniffer-empty">No media streams found on this page.</div>';
+        if (lastErr || !response || !response.streams || response.streams.length === 0) {
+          showEmptyDetected('No media detected on this page');
           return;
         }
 
-        renderMediaList(response.streams, activeTabId);
+        renderDetectedMedia(response.streams, activeTabId);
       });
     });
   }
 
-  function renderMediaList(streams, activeTabId) {
-    if (!streams || streams.length === 0) {
-      mediaSnifferList.innerHTML = '<div class="sniffer-empty">No active video players found on this page.</div>';
-      return;
-    }
+  function showEmptyDetected(message) {
+    mediaSnifferList.innerHTML = `<div class="detected-empty">${escapeHtml(message)}</div>`;
+  }
 
+  function renderDetectedMedia(streams, activeTabId) {
     mediaSnifferList.innerHTML = '';
+
     streams.forEach((s) => {
-      const item = document.createElement('div');
-      item.className = 'sniffer-item';
+      const card = document.createElement('div');
+      card.className = 'media-card';
 
       const format = s.url.includes('.m3u8') ? 'HLS' : (s.url.includes('.mkv') ? 'MKV' : 'MP4');
-      const resLabel = s.width && s.height ? `${s.width}x${s.height}` : '';
-      const durLabel = s.duration ? formatDuration(s.duration) : '';
+      const parts = [format];
+      if (s.width && s.height) {
+        parts.push(`${s.width}×${s.height}`);
+      }
+      if (s.duration) {
+        parts.push(formatDuration(s.duration));
+      }
+      const metaLine = parts.join(' · ');
 
-      item.innerHTML = `
-        <div class="sniffer-meta">
-          <span class="sniffer-title" title="${escapeHtml(s.title || s.url)}">${escapeHtml(s.title || 'Video Stream')}</span>
-          <div class="sniffer-tags">
-            <span class="sniffer-tag">${format}</span>
-            ${resLabel ? `<span class="sniffer-tag res">${resLabel}</span>` : ''}
-            ${durLabel ? `<span class="sniffer-tag">${durLabel}</span>` : ''}
-          </div>
+      card.innerHTML = `
+        <div class="media-thumb" aria-hidden="true">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+            <polygon points="5 3 19 12 5 21 5 3" />
+          </svg>
         </div>
-        <button type="button" class="sniffer-action-btn" data-url="${escapeHtml(s.url)}" data-title="${escapeHtml(s.title)}">
-          <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
-          <span>${s.isReplaced ? 'Active' : 'Play'}</span>
+        <div class="media-info">
+          <span class="media-title" title="${escapeHtml(s.title || s.url)}">${escapeHtml(s.title || 'Video stream')}</span>
+          <span class="media-meta">${escapeHtml(metaLine)}</span>
+        </div>
+        <button type="button" class="btn-ghost" data-url="${escapeHtml(s.url)}">
+          Play
         </button>
       `;
 
-      const actionBtn = item.querySelector('.sniffer-action-btn');
-      actionBtn.addEventListener('click', () => {
-        actionBtn.disabled = true;
-        actionBtn.innerHTML = '<span>Opening...</span>';
+      const playBtn = card.querySelector('.btn-ghost');
+      playBtn.addEventListener('click', () => {
+        playBtn.disabled = true;
+        playBtn.textContent = 'Opening…';
         chrome.tabs.sendMessage(activeTabId, {
           type: 'TRIGGER_EMBED_STREAM',
           url: s.url,
           title: s.title
         }, () => {
-          setTimeout(queryActiveTabMedia, 800);
+          setTimeout(queryActiveTabMedia, 500);
         });
       });
 
-      mediaSnifferList.appendChild(item);
+      mediaSnifferList.appendChild(card);
     });
   }
 
-  // Rescan Page Button
+  // Rescan button
   btnRescan.addEventListener('click', () => {
-    rescanIcon.style.transition = 'transform 0.6s cubic-bezier(0.16, 1, 0.3, 1)';
-    rescanIcon.style.transform = 'rotate(360deg)';
+    rescanIcon.style.transition = 'transform 300ms ease';
+    rescanIcon.style.transform = 'rotate(180deg)';
     setTimeout(() => {
       rescanIcon.style.transition = 'none';
       rescanIcon.style.transform = 'rotate(0deg)';
-    }, 600);
+    }, 300);
 
     chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
       if (tabs && tabs[0]?.id) {
         chrome.tabs.sendMessage(tabs[0].id, { type: 'RESCAN' }, () => {
           queryActiveTabMedia();
+          showToast('Rescanned');
         });
       }
     });
   });
 
-  // 6. Save Settings
-  function saveSettings(silent = false) {
-    const rawUrl = valorUrlInput.value.trim();
-    const valorUrl = normalizeUrl(rawUrl);
-    valorUrlInput.value = valorUrl;
-
-    const embedMode = currentMode;
-    const resumePlayback = chkResume.checked;
-    const cinemaMode = chkCinema.checked;
+  // 6. Save Button
+  btnSave.addEventListener('click', () => {
+    const rawUrl = valorUrlInput.value;
+    const normalized = normalizeUrl(rawUrl);
 
     chrome.storage.sync.set({
-      valorUrl,
-      embedMode,
-      extensionEnabled: embedMode !== 'off',
-      resumePlayback,
-      cinemaMode
+      valorUrl: normalized,
+      embedMode: currentMode,
+      extensionEnabled: currentMode !== 'off',
+      resumePlayback: chkResume.checked,
+      cinemaMode: chkCinema.checked
     }, () => {
-      checkServerPing(valorUrl);
-      if (!silent) {
-        showToast('Settings saved successfully!');
-      }
+      checkConnection(normalized);
+      showToast('Saved');
     });
-  }
-
-  btnSave.addEventListener('click', () => saveSettings(false));
+  });
 
   function showToast(msg) {
+    if (!toastMessage) return;
+    if (toastTimer) clearTimeout(toastTimer);
     toastMessage.textContent = msg;
     toastMessage.style.opacity = '1';
-    setTimeout(() => {
+    toastTimer = setTimeout(() => {
       toastMessage.style.opacity = '0';
-    }, 2200);
+    }, 1500);
   }
 
   function normalizeUrl(input) {
@@ -227,7 +271,8 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     if (!/^https?:\/\//i.test(val)) {
-      val = 'http://' + val;
+      const isLocal = /^(localhost|127\.\d+\.\d+\.\d+|0\.0\.0\.0)(:\d+)?/i.test(val);
+      val = (isLocal ? 'http://' : 'https://') + val;
     }
 
     try {
@@ -236,7 +281,7 @@ document.addEventListener('DOMContentLoaded', () => {
         parsed.pathname = '/embed';
       }
       return parsed.toString();
-    } catch {
+    } catch (e) {
       return val;
     }
   }

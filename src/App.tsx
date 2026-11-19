@@ -59,6 +59,7 @@ import { OnlineDetailsPage } from './components/OnlineDetailsPage';
 import { EmbedPlayerPage } from './pages/EmbedPlayerPage';
 import { GraphQLStorageProvider } from './services/storage/GraphQLStorageProvider';
 import { LocalIndexedDBProvider } from './services/storage/LocalIndexedDBProvider';
+import { collectLocalVideos, syncProfileDataToCloud } from './services/storage/cloudSync';
 import { ActorDetailsPage } from './components/ActorDetailsPage';
 import { OnlineVideoPlayer } from './components/OnlineVideoPlayer';
 import { CustomSelect } from './components/CustomSelect';
@@ -479,13 +480,36 @@ function App() {
       const saved = localStorage.getItem(videosKey);
       if (saved) {
         const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed)) {
+        if (Array.isArray(parsed) && parsed.length > 0) {
           const useIdStreamInit = getUseIdStreamFromStorage();
           return sanitizeVideoList(parsed.map((v: any) => ({
             ...v,
             audioTracks: [],
             subtitleTracks: []
           })), useIdStreamInit);
+        }
+      }
+
+      // Fallback: If current profile key had no videos, scan localStorage for any existing valor_videos*
+      const keys = Object.keys(localStorage);
+      for (const k of keys) {
+        if (k === 'valor_videos' || k.startsWith('valor_videos_')) {
+          const fallbackSaved = localStorage.getItem(k);
+          if (fallbackSaved) {
+            try {
+              const parsed = JSON.parse(fallbackSaved);
+              if (Array.isArray(parsed) && parsed.length > 0) {
+                // Recover and mirror to active user key
+                localStorage.setItem(videosKey, fallbackSaved);
+                const useIdStreamInit = getUseIdStreamFromStorage();
+                return sanitizeVideoList(parsed.map((v: any) => ({
+                  ...v,
+                  audioTracks: [],
+                  subtitleTracks: []
+                })), useIdStreamInit);
+              }
+            } catch {}
+          }
         }
       }
       return [];
@@ -979,11 +1003,13 @@ function App() {
             }
           `, { userId: activeUserId });
           const profileData = pData.profile || {};
-          if (profileData && profileData.settings) {
+          const fallbackName = localStorage.getItem('valor_logged_in_username') || '';
+          if (profileData && profileData.settings && Object.keys(profileData.settings).length > 0) {
             loadedSettings = {
               ...defaultSettings,
               ...profileData.settings,
               userId: activeUserId,
+              profileName: profileData.settings.profileName || fallbackName || 'User',
               storageMode: 'file',
               keybinds: { ...defaultSettings.keybinds, ...(profileData.settings.keybinds || {}) },
               subSettings: { ...defaultSettings.subSettings, ...(profileData.settings.subSettings || {}) },
@@ -991,8 +1017,24 @@ function App() {
             };
             setSettings(loadedSettings);
             settingsLoaded = true;
+          } else {
+            const localSaved = localStorage.getItem(`valor_settings_${activeUserId}`);
+            if (localSaved) {
+              try {
+                const parsed = JSON.parse(localSaved);
+                loadedSettings = {
+                  ...defaultSettings,
+                  ...parsed,
+                  userId: activeUserId,
+                  profileName: parsed.profileName || fallbackName || 'User',
+                  storageMode: 'file'
+                };
+                setSettings(loadedSettings);
+                settingsLoaded = true;
+              } catch {}
+            }
           }
-          if (profileData && Array.isArray(profileData.history)) {
+          if (profileData && Array.isArray(profileData.history) && profileData.history.length > 0) {
             loadedVideos = profileData.history.map((v: any) => ({
               ...v,
               audioTracks: v.audioTracks || [],
@@ -1000,6 +1042,14 @@ function App() {
             }));
             setVideos(loadedVideos);
             historyLoaded = true;
+          } else {
+            // Check local fallback: if cloud has no history yet, recover from sitting localStorage!
+            const localVideos = collectLocalVideos(activeUserId);
+            if (localVideos.length > 0) {
+              setVideos(localVideos);
+              historyLoaded = true;
+              syncProfileDataToCloud(activeUserId, { inMemoryVideos: localVideos, currentSettings: loadedSettings }).catch(() => {});
+            }
           }
         } catch (e) {
           console.warn('Failed to load profile data from saved local user ID');
@@ -1546,8 +1596,14 @@ function App() {
             if (profileData.settings) {
               setSettings(prev => ({ ...prev, ...profileData.settings, userId: p.userId, storageMode: 'file' }));
             }
-            if (Array.isArray(profileData.history)) {
+            if (Array.isArray(profileData.history) && profileData.history.length > 0) {
               setVideos(profileData.history);
+            } else {
+              const localVideos = collectLocalVideos(p.userId);
+              if (localVideos.length > 0) {
+                setVideos(localVideos);
+                syncProfileDataToCloud(p.userId, { inMemoryVideos: localVideos }).catch(() => {});
+              }
             }
           } catch {}
         })();
@@ -1597,6 +1653,20 @@ function App() {
           localProfiles = JSON.parse(localSaved);
         }
       } catch {}
+
+      // If user is logged into cloud or server profiles exist, clean up ghost local profile duplicates
+      const activeUserIdNow = localStorage.getItem('valor_active_user_id') || 'local';
+      const isCloudNow = activeUserIdNow !== 'local' && !activeUserIdNow.startsWith('local_');
+      if (isCloudNow || serverList.length > 0) {
+        localProfiles = localProfiles.filter((p: any) => 
+          p.userId !== 'local' && 
+          p.name !== 'Local Profile' && 
+          p.name !== 'Local profile' &&
+          p.name !== 'local' &&
+          !serverList.some((sp: any) => sp.userId === p.userId || sp.name === p.name)
+        );
+        localStorage.setItem('valor_local_profiles', JSON.stringify(localProfiles));
+      }
       
       const combined = [...localProfiles, ...serverList];
       setAvailableProfiles(combined);
@@ -1701,9 +1771,18 @@ function App() {
         }
 
         // 2. Load latest history
-        const loadedHistory = await storageProvider.getHistory();
-        if (active && loadedHistory) {
-          setVideos(loadedHistory);
+        let effectiveHistory = await storageProvider.getHistory();
+        if ((!effectiveHistory || effectiveHistory.length === 0) && active) {
+          // If provider returned 0 history, recover any sitting local history and sync to cloud!
+          const localVideos = collectLocalVideos(settings.userId);
+          if (localVideos.length > 0) {
+            effectiveHistory = localVideos;
+            syncProfileDataToCloud(settings.userId, { inMemoryVideos: localVideos, currentSettings: loadedSettings }).catch(() => {});
+          }
+        }
+
+        if (active && effectiveHistory && effectiveHistory.length > 0) {
+          setVideos(effectiveHistory);
           loadedVideosUserIdRef.current = settings.userId;
 
           // 3. Recover currently playing video with full path and metadata (per-tab)
@@ -1713,7 +1792,7 @@ function App() {
               let videoObj = JSON.parse(currentlyPlaying) as VideoItem;
               
               // Try to find a match in the loaded history
-              const matched = loadedHistory.find(h => h.id === videoObj.id || h.title === videoObj.title);
+              const matched = effectiveHistory.find(h => h.id === videoObj.id || h.title === videoObj.title);
               if (matched) {
                 const useIdStream = (loadedSettings?.storageMode === 'file' || settings.storageMode === 'file');
                 const storedPos = getMediaTimestamp(videoObj);
@@ -2007,13 +2086,6 @@ function App() {
     }
   }, [playingVideo, settings.saveHistory]);
 
-  useEffect(() => {
-    const limit = settings.historyLimit;
-    if (limit !== 'Infinite' && typeof limit === 'number' && videos.length > limit) {
-      setVideos(prev => prev.slice(0, limit));
-    }
-  }, [videos, settings.historyLimit]);
-
   const saveVideosToStorage = (videoList: VideoItem[], forceSync = false) => {
     if (saveTimeoutRef.current) {
       clearTimeout(saveTimeoutRef.current);
@@ -2032,11 +2104,8 @@ function App() {
           return;
         }
 
-        const limit = settings.historyLimit;
-        let targetVideos = videoList;
-        if (limit !== 'Infinite' && typeof limit === 'number') {
-          targetVideos = videoList.slice(0, limit);
-        }
+        // Store all videos in the database and local storage without pruning
+        const targetVideos = videoList;
 
         await storageProvider.saveHistory(targetVideos, forceSync);
 
@@ -2124,7 +2193,7 @@ function App() {
 
   useEffect(() => {
     saveVideosToStorage(videos, false);
-  }, [videos, settings.historyLimit]);
+  }, [videos]);
 
   useEffect(() => {
     // Check if the playingVideo is unplayable (dead local blob URL with no File object)
@@ -2807,7 +2876,7 @@ function App() {
         let probingError: string | undefined = undefined;
         if (capabilities.statusCode === 404) {
           probingError = 'The file server responded with a status of 404 (Not Found). The file does not exist at this URL.';
-        } else if (capabilities.authRequired || capabilities.statusCode === 401 || capabilities.statusCode === 403) {
+        } else if (capabilities.authRequired || capabilities.statusCode === 401) {
           probingError = undefined;
           capabilities.authRequired = true;
         } else if (capabilities.isCorsBlocked) {
@@ -3463,13 +3532,16 @@ function App() {
                   handleSwitchProfile={handleSwitchProfile}
                   openAuthModal={openAuthModal}
                   setDeleteTargetProfile={setDeleteTargetProfile}
+                  setIsDeleteModalOpen={setIsDeleteModalOpen}
                   setRemoveError={setRemoveError}
                   setIsRemoveModalOpen={setIsRemoveModalOpen}
+                  setRemoveTargetProfile={setRemoveTargetProfile}
                   setNewProfileName={setNewProfileName}
                   setNewProfilePassword={setNewProfilePassword}
                   setCreateProfileError={setCreateProfileError}
                   setIsCreateProfileModalOpen={setIsCreateProfileModalOpen}
                   addToast={addToast}
+                  videos={videos}
                   setVideos={setVideos}
                   previewExpanded={previewExpanded}
                   setPreviewExpanded={setPreviewExpanded}
@@ -3805,6 +3877,7 @@ function App() {
         settings={settings}
         setSettings={setSettings}
         saveSettingsToStorage={saveSettingsToStorage}
+        videos={videos}
         setVideos={setVideos}
         addToast={addToast}
         fetchProfiles={fetchProfiles}
@@ -3849,7 +3922,15 @@ function App() {
                 ⚠️ Permanent Deletion
               </span>
               <span style={{ fontSize: '0.78rem', color: 'rgba(255,255,255,0.7)', lineHeight: 1.4 }}>
-                Are you sure you want to permanently delete profile <strong>{deleteTargetProfile?.name}</strong>? All associated watch history, bookmarks, and settings will be permanently destroyed.
+                {deleteTargetProfile?.isOnlyProfile ? (
+                  <>
+                    Are you sure you want to delete profile <strong>{deleteTargetProfile?.name}</strong>? Because this is the only profile on your cloud account, <strong>deleting this profile will permanently delete your account and all associated data</strong>.
+                  </>
+                ) : (
+                  <>
+                    Are you sure you want to permanently delete profile <strong>{deleteTargetProfile?.name}</strong>? All associated watch history, bookmarks, and settings will be permanently destroyed.
+                  </>
+                )}
               </span>
             </div>
 
@@ -3986,18 +4067,53 @@ function App() {
                       });
                       const resData = await res.json();
                       if (resData.success) {
-                        addToast(`Successfully deleted profile: ${deleteTargetProfile.name}`, 'success');
-                        
-                        if (settings.userId === deleteTargetProfile.userId) {
-                          localStorage.setItem('valor_active_user_id', 'local');
-                          setSettings(prev => ({
-                            ...prev,
-                            userId: 'local',
-                            storageMode: 'localstorage'
-                          }));
-                          const savedVideos = localStorage.getItem('valor_videos');
-                          if (savedVideos) {
-                            try { setVideos(JSON.parse(savedVideos)); } catch {}
+                        if (resData.accountDeleted) {
+                          try {
+                            await fetch('/auth/logout', { method: 'POST', credentials: 'include' });
+                          } catch {}
+                          localStorage.removeItem('valor_logged_in_username');
+                          const localUserId = 'local_' + Math.random().toString(36).substring(2, 11);
+                          localStorage.setItem('valor_active_user_id', localUserId);
+                          const freshSettings = {
+                            ...defaultSettings,
+                            userId: localUserId,
+                            profileName: 'Local Profile',
+                            storageMode: 'localstorage' as const,
+                            experienceMode: 'local' as const,
+                            isOnboarded: true
+                          };
+                          try {
+                            localStorage.setItem(`valor_settings_${localUserId}`, JSON.stringify(freshSettings));
+                            localStorage.setItem('valor_settings', JSON.stringify(freshSettings));
+                          } catch {}
+                          setSettings(freshSettings);
+                          setVideos([]);
+                          addToast(`Permanently deleted profile and cloud account: ${deleteTargetProfile.name}`, 'success');
+                        } else {
+                          addToast(`Successfully deleted profile: ${deleteTargetProfile.name}`, 'success');
+                          
+                          if (settings.userId === deleteTargetProfile.userId) {
+                            const rem = resData.remainingProfiles || [];
+                            if (rem.length > 0) {
+                              const nextP = rem[0];
+                              localStorage.setItem('valor_active_user_id', nextP.userId);
+                              setSettings(prev => ({
+                                ...prev,
+                                userId: nextP.userId,
+                                profileName: nextP.name || prev.profileName,
+                                storageMode: 'file' as const
+                              }));
+                            } else {
+                              const localUserId = 'local_' + Math.random().toString(36).substring(2, 11);
+                              localStorage.setItem('valor_active_user_id', localUserId);
+                              setSettings(prev => ({
+                                ...prev,
+                                userId: localUserId,
+                                profileName: 'Local Profile',
+                                storageMode: 'localstorage' as const,
+                                experienceMode: 'local' as const
+                              }));
+                            }
                           }
                         }
                         

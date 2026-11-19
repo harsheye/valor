@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { HardDrive, Cloud, Check, Eye, EyeOff, Loader2, X, AlertCircle, ShieldAlert, UserPlus } from 'lucide-react';
+import { HardDrive, Cloud, Check, Eye, EyeOff, Loader2, X, AlertCircle, ShieldAlert, UserPlus, UserCheck } from 'lucide-react';
 import { validateProfileName, validateUsername, validatePassword } from '../../utils/authValidation';
+import { syncProfileDataToCloud } from '../../services/storage/cloudSync';
 
 export interface CreateAccountModalProps {
   isOpen: boolean;
@@ -8,6 +9,7 @@ export interface CreateAccountModalProps {
   settings: any;
   setSettings: (s: any) => void;
   saveSettingsToStorage: (s: any) => void;
+  videos?: any[];
   setVideos: (v: any) => void;
   addToast: (msg: string, type?: 'success' | 'warning' | 'error' | any) => void;
   fetchProfiles: () => Promise<void>;
@@ -21,6 +23,7 @@ export const CreateAccountModal: React.FC<CreateAccountModalProps> = ({
   settings,
   setSettings,
   saveSettingsToStorage,
+  videos,
   setVideos,
   addToast,
   fetchProfiles,
@@ -43,11 +46,36 @@ export const CreateAccountModal: React.FC<CreateAccountModalProps> = ({
   const dialogRef = useRef<HTMLDivElement>(null);
   const firstInputRef = useRef<HTMLInputElement>(null);
 
+  const currentProfileName = (
+    settings?.profileName ||
+    (() => {
+      try {
+        const activeUid = localStorage.getItem('valor_active_user_id');
+        const localSaved = localStorage.getItem('valor_local_profiles');
+        if (localSaved) {
+          const list = JSON.parse(localSaved);
+          const match = list.find((p: any) => p.userId === activeUid);
+          if (match && match.name) return match.name;
+          if (list.length > 0 && list[0].name) return list[0].name;
+        }
+        const key = activeUid && activeUid !== 'local' ? `valor_settings_${activeUid}` : 'valor_settings';
+        const saved = localStorage.getItem(key);
+        if (saved) {
+          const parsed = JSON.parse(saved);
+          if (parsed.profileName) return parsed.profileName;
+        }
+      } catch {}
+      return '';
+    })() ||
+    'Local Profile'
+  ).trim();
+  const hasExistingProfile = Boolean(currentProfileName && currentProfileName !== 'local' && accountType === 'cloud');
+
   useEffect(() => {
     if (isOpen) {
       setFieldErrors({});
       setFormError('');
-      setProfileName('');
+      setProfileName(currentProfileName || '');
       setUsername('');
       setPassword('');
       setUnderstoodNoRecovery(false);
@@ -55,7 +83,7 @@ export const CreateAccountModal: React.FC<CreateAccountModalProps> = ({
         firstInputRef.current?.focus();
       }, 50);
     }
-  }, [isOpen, accountType]);
+  }, [isOpen, accountType, currentProfileName]);
 
   // Rate-limiting countdown ticker
   useEffect(() => {
@@ -131,8 +159,12 @@ export const CreateAccountModal: React.FC<CreateAccountModalProps> = ({
 
     const errors: { profileName?: string; username?: string; password?: string } = {};
 
-    const nameCheck = validateProfileName(profileName);
-    if (!nameCheck.valid) errors.profileName = nameCheck.error;
+    const effectiveProfileName = (hasExistingProfile ? currentProfileName : profileName.trim()) || 'User';
+
+    if (!hasExistingProfile) {
+      const nameCheck = validateProfileName(effectiveProfileName);
+      if (!nameCheck.valid) errors.profileName = nameCheck.error;
+    }
 
     if (accountType === 'cloud') {
       const userCheck = validateUsername(username);
@@ -203,10 +235,12 @@ export const CreateAccountModal: React.FC<CreateAccountModalProps> = ({
         const res = await fetch('/auth/signup', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
           body: JSON.stringify({
-            profileName: profileName.trim(),
+            profileName: effectiveProfileName,
             username: username.trim(),
-            password
+            password,
+            existingUserId: settings?.userId
           })
         });
 
@@ -236,19 +270,50 @@ export const CreateAccountModal: React.FC<CreateAccountModalProps> = ({
         localStorage.setItem('valor_active_user_id', newUserId);
         localStorage.setItem('valor_logged_in_username', trimmedUser);
 
+        const prevUserId = settings?.userId;
         const newSettings = {
           ...defaultSettings,
+          ...settings,
           userId: newUserId,
-          profileName: profileName.trim(),
+          profileName: effectiveProfileName || trimmedUser,
           storageMode: 'file' as const,
           experienceMode: 'cloud' as const,
           isOnboarded: true
         };
 
+        // Fully sync local watch history, bookmarks, and settings to the server database
+        const { mergedVideos } = await syncProfileDataToCloud(newUserId, {
+          prevUserId,
+          inMemoryVideos: videos,
+          currentSettings: newSettings
+        });
+
+        // Clean up previous local profile from valor_local_profiles so no duplicate "local" profile exists
+        try {
+          let localProfiles = [];
+          const localSaved = localStorage.getItem('valor_local_profiles');
+          if (localSaved) localProfiles = JSON.parse(localSaved);
+          localProfiles = localProfiles.filter((p: any) => 
+            p.userId !== prevUserId && 
+            p.userId !== 'local' && 
+            p.name !== 'Local Profile' && 
+            p.name !== 'Local profile' &&
+            p.name !== 'local'
+          );
+          localStorage.setItem('valor_local_profiles', JSON.stringify(localProfiles));
+        } catch {}
+
         setSettings(newSettings);
         saveSettingsToStorage(newSettings);
-        setVideos([]);
-        addToast(`Successfully created Cloud Account: @${trimmedUser}`, 'success');
+        if (setVideos) {
+          setVideos(mergedVideos);
+        }
+        addToast(
+          hasExistingProfile
+            ? `Linked profile "${effectiveProfileName}" to @${trimmedUser}! Cloud account created.`
+            : `Successfully created Cloud Account: @${trimmedUser}`,
+          'success'
+        );
 
         if (onAuthSuccess) {
           onAuthSuccess(newUserId, trimmedUser);
@@ -574,47 +639,94 @@ export const CreateAccountModal: React.FC<CreateAccountModalProps> = ({
 
         {/* Input Fields */}
         <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
-          {/* Profile Name (Required for both local and cloud) */}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '5px' }}>
-            <label
-              htmlFor="create-profile-name"
+          {/* Profile Name (Required for local or if no profile exists) */}
+          {hasExistingProfile ? (
+            <div
               style={{
-                fontSize: '0.82rem',
-                color: 'rgba(255, 255, 255, 0.85)',
-                fontWeight: 600
+                display: 'flex',
+                alignItems: 'center',
+                gap: '12px',
+                background: 'linear-gradient(135deg, rgba(99, 102, 241, 0.12) 0%, rgba(139, 92, 246, 0.08) 100%)',
+                border: '1px solid rgba(99, 102, 241, 0.28)',
+                borderRadius: '10px',
+                padding: '12px 14px',
+                fontFamily: 'Outfit, sans-serif'
               }}
             >
-              Profile Name <span style={{ color: accountType === 'local' ? '#10b981' : '#ef4444' }}>*</span>
-            </label>
-            <input
-              ref={firstInputRef}
-              id="create-profile-name"
-              type="text"
-              autoComplete="name"
-              placeholder="e.g. Living Room, John, Personal..."
-              value={profileName}
-              onChange={e => setProfileName(e.target.value)}
-              style={{
-                minHeight: '44px',
-                background: 'rgba(0, 0, 0, 0.35)',
-                border: fieldErrors.profileName
-                  ? '1.5px solid #ef4444'
-                  : '1px solid rgba(255, 255, 255, 0.15)',
-                borderRadius: '8px',
-                padding: '10px 14px',
-                fontSize: '0.9rem',
-                color: '#ffffff',
-                outline: 'none',
-                fontFamily: 'Outfit, sans-serif',
-                boxSizing: 'border-box'
-              }}
-            />
-            {fieldErrors.profileName && (
-              <span style={{ fontSize: '0.75rem', color: '#ef4444', marginTop: '2px' }}>
-                {fieldErrors.profileName}
-              </span>
-            )}
-          </div>
+              <div
+                style={{
+                  width: '36px',
+                  height: '36px',
+                  borderRadius: '50%',
+                  background: 'rgba(99, 102, 241, 0.25)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  color: '#818cf8',
+                  flexShrink: 0
+                }}
+              >
+                <UserCheck size={20} />
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                <span
+                  style={{
+                    fontSize: '0.72rem',
+                    color: 'rgba(255, 255, 255, 0.55)',
+                    textTransform: 'uppercase',
+                    letterSpacing: '0.6px',
+                    fontWeight: 600
+                  }}
+                >
+                  Linking to current profile
+                </span>
+                <span style={{ fontSize: '0.94rem', color: '#ffffff', fontWeight: 700 }}>
+                  {currentProfileName}
+                </span>
+              </div>
+            </div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '5px' }}>
+              <label
+                htmlFor="create-profile-name"
+                style={{
+                  fontSize: '0.82rem',
+                  color: 'rgba(255, 255, 255, 0.85)',
+                  fontWeight: 600
+                }}
+              >
+                Profile Name <span style={{ color: accountType === 'local' ? '#10b981' : '#ef4444' }}>*</span>
+              </label>
+              <input
+                ref={!hasExistingProfile ? firstInputRef : undefined}
+                id="create-profile-name"
+                type="text"
+                autoComplete="name"
+                placeholder="e.g. Living Room, John, Personal..."
+                value={profileName}
+                onChange={e => setProfileName(e.target.value)}
+                style={{
+                  minHeight: '44px',
+                  background: 'rgba(0, 0, 0, 0.35)',
+                  border: fieldErrors.profileName
+                    ? '1.5px solid #ef4444'
+                    : '1px solid rgba(255, 255, 255, 0.15)',
+                  borderRadius: '8px',
+                  padding: '10px 14px',
+                  fontSize: '0.9rem',
+                  color: '#ffffff',
+                  outline: 'none',
+                  fontFamily: 'Outfit, sans-serif',
+                  boxSizing: 'border-box'
+                }}
+              />
+              {fieldErrors.profileName && (
+                <span style={{ fontSize: '0.75rem', color: '#ef4444', marginTop: '2px' }}>
+                  {fieldErrors.profileName}
+                </span>
+              )}
+            </div>
+          )}
 
           {/* Cloud Account specific fields: Username, Password, Notice & Checkbox */}
           {accountType === 'cloud' && (
@@ -632,6 +744,7 @@ export const CreateAccountModal: React.FC<CreateAccountModalProps> = ({
                   Username <span style={{ color: '#ef4444' }}>*</span>
                 </label>
                 <input
+                  ref={hasExistingProfile ? firstInputRef : undefined}
                   id="create-username"
                   type="text"
                   autoComplete="username"

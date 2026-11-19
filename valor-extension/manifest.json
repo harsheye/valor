@@ -23,21 +23,32 @@
       "matches": ["<all_urls>"],
       "js": ["content.js"],
       "run_at": "document_end",
-      "all_frames": false
+      "all_frames": true
     }
   ],
   "action": {
     "default_popup": "popup.html",
     "default_title": "Valor Player Companion",
     "default_icon": {
-      "16": "icons/icon-16.png",
-      "48": "icons/icon-48.png",
-      "128": "icons/icon-128.png"
+      "16": "icons/icon-16-grey.png",
+      "48": "icons/icon-48-grey.png",
+      "128": "icons/icon-128-grey.png"
     }
   },
   "web_accessible_resources": [
     {
-      "resources": ["embed.html", "embed.js", "icons/logo.svg", "icons/icon-128.png"],
+      "resources": [
+        "embed.html",
+        "embed.js",
+        "icons/logo.svg",
+        "icons/logo-grey.svg",
+        "icons/icon-16.png",
+        "icons/icon-48.png",
+        "icons/icon-128.png",
+        "icons/icon-16-grey.png",
+        "icons/icon-48-grey.png",
+        "icons/icon-128-grey.png"
+      ],
       "matches": ["<all_urls>"]
     }
   ]

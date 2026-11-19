@@ -225,6 +225,7 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
   uiHideTimeout = 1.5,
   onReassociate
 }) => {
+  const isEffectiveEmbed = isEmbed || (typeof window !== 'undefined' && window.location.pathname.startsWith('/embed'));
   const isFile = (obj: any): obj is File => obj instanceof File || (obj && typeof obj.size === 'number' && typeof obj.slice === 'function');
   const video = useMemo(() => ({
     ...rawVideo,
@@ -4532,7 +4533,7 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
           totalTimeWatchedRef.current += delta;
 
           // Check if remaining time is below rating threshold (minutes) to show rating prompt
-          if (videoRef.current && duration > 0 && !ratingPromptedRef.current && !isUndetectedLocalMedia) {
+          if (videoRef.current && duration > 0 && !ratingPromptedRef.current && !isUndetectedLocalMedia && !isEffectiveEmbed) {
             const remaining = duration - videoRef.current.currentTime;
             if (remaining <= (ratingThreshold || 3) * 60 && remaining > 5) {
               setShowRatingPrompt(true);
@@ -5306,7 +5307,7 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
           onEnded={() => {
             saveMediaTimestamp(video, 0, durationRef.current || duration, video.title, true);
             scrobbleToTrakt();
-            if (!ratingPromptedRef.current && !isUndetectedLocalMedia) {
+            if (!ratingPromptedRef.current && !isUndetectedLocalMedia && !isEffectiveEmbed) {
               setShowRatingPrompt(true);
               ratingPromptedRef.current = true;
             }
@@ -5853,7 +5854,7 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
       )}
 
       {/* Floating Rating Prompt Overlay */}
-      {showRatingPrompt && (
+      {showRatingPrompt && !isEffectiveEmbed && (
         <div className="floating-rating-prompt animate-slide-in" onClick={(e) => e.stopPropagation()}>
           <div className="rating-header">
             <span>Enjoying this video? Rate it:</span>

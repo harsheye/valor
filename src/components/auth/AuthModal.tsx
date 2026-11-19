@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Eye, EyeOff, Loader2, X, AlertCircle, ShieldAlert } from 'lucide-react';
+import { Eye, EyeOff, Loader2, X, AlertCircle, ShieldAlert, UserCheck } from 'lucide-react';
 import { validateProfileName, validateUsername, validatePassword } from '../../utils/authValidation';
+import { syncProfileDataToCloud } from '../../services/storage/cloudSync';
 
 export interface AuthModalProps {
   isOpen: boolean;
@@ -53,6 +54,34 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   const dialogRef = useRef<HTMLDivElement>(null);
   const firstInputRef = useRef<HTMLInputElement>(null);
 
+  // Determine current active profile name to link seamlessly
+  const currentProfileName = (
+    selectedProfileForLogin?.name ||
+    selectedProfileForLogin?.profileName ||
+    settings?.profileName ||
+    (() => {
+      try {
+        const activeUid = localStorage.getItem('valor_active_user_id');
+        const localSaved = localStorage.getItem('valor_local_profiles');
+        if (localSaved) {
+          const list = JSON.parse(localSaved);
+          const match = list.find((p: any) => p.userId === activeUid);
+          if (match && match.name) return match.name;
+          if (list.length > 0 && list[0].name) return list[0].name;
+        }
+        const key = activeUid && activeUid !== 'local' ? `valor_settings_${activeUid}` : 'valor_settings';
+        const saved = localStorage.getItem(key);
+        if (saved) {
+          const parsed = JSON.parse(saved);
+          if (parsed.profileName) return parsed.profileName;
+        }
+      } catch {}
+      return '';
+    })() ||
+    'Local Profile'
+  ).trim();
+  const hasExistingProfile = Boolean(currentProfileName && currentProfileName !== 'local');
+
   // Reset states on open/close and sync initialTab
   useEffect(() => {
     if (isOpen) {
@@ -63,9 +92,9 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       setFormError('');
       setUnderstoodNoRecovery(false);
       setPassword('');
+      setProfileName(currentProfileName);
       if (!selectedProfileForLogin) {
         setUsername('');
-        setProfileName('');
       } else {
         setUsername(selectedProfileForLogin.username || selectedProfileForLogin.name || '');
       }
@@ -153,9 +182,13 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     // Client-side validation
     const errors: { profileName?: string; username?: string; password?: string } = {};
 
+    const effectiveProfileName = (hasExistingProfile ? currentProfileName : profileName.trim()) || 'User';
+
     if (isSignUp) {
-      const nameCheck = validateProfileName(profileName);
-      if (!nameCheck.valid) errors.profileName = nameCheck.error;
+      if (!hasExistingProfile) {
+        const nameCheck = validateProfileName(effectiveProfileName);
+        if (!nameCheck.valid) errors.profileName = nameCheck.error;
+      }
 
       const userCheck = validateUsername(username);
       if (!userCheck.valid) errors.username = userCheck.error;
@@ -192,10 +225,12 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         const res = await fetch('/auth/signup', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
           body: JSON.stringify({
-            profileName: profileName.trim(),
+            profileName: effectiveProfileName,
             username: username.trim(),
-            password
+            password,
+            existingUserId: settings?.userId
           })
         });
 
@@ -225,18 +260,50 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         localStorage.setItem('valor_active_user_id', newUserId);
         localStorage.setItem('valor_logged_in_username', trimmedUser);
 
+        const prevUserId = settings?.userId;
         const updatedSettings = {
           ...settings,
           userId: newUserId,
-          profileName: newUser.profileName,
+          profileName: newUser.profileName || effectiveProfileName || trimmedUser,
           storageMode: 'file',
           experienceMode: 'cloud',
           isOnboarded: true
         };
+
+        // Fully sync local watch history, bookmarks, and settings to the server database
+        const { mergedVideos } = await syncProfileDataToCloud(newUserId, {
+          prevUserId,
+          inMemoryVideos: videos,
+          currentSettings: updatedSettings
+        });
+
+        // Clean up previous local profile from valor_local_profiles so no duplicate "local" profile exists
+        try {
+          let localProfiles = [];
+          const localSaved = localStorage.getItem('valor_local_profiles');
+          if (localSaved) localProfiles = JSON.parse(localSaved);
+          localProfiles = localProfiles.filter((p: any) => 
+            p.userId !== prevUserId && 
+            p.userId !== 'local' && 
+            p.name !== 'Local Profile' && 
+            p.name !== 'Local profile' &&
+            p.name !== 'local'
+          );
+          localStorage.setItem('valor_local_profiles', JSON.stringify(localProfiles));
+        } catch {}
+
         setSettings(updatedSettings);
         saveSettingsToStorage(updatedSettings);
+        if (setVideos) {
+          setVideos(mergedVideos);
+        }
 
-        addToast(`Welcome @${trimmedUser}! Cloud account created.`, 'success');
+        addToast(
+          hasExistingProfile
+            ? `Linked "${effectiveProfileName}" to @${trimmedUser}! Cloud account created.`
+            : `Welcome @${trimmedUser}! Cloud account created.`,
+          'success'
+        );
 
         if (onAuthSuccess) {
           onAuthSuccess(newUserId, trimmedUser);
@@ -259,6 +326,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         const res = await fetch('/auth/login', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
           body: JSON.stringify(payload)
         });
 
@@ -289,6 +357,21 @@ export const AuthModal: React.FC<AuthModalProps> = ({
           localStorage.setItem('valor_logged_in_username', targetUsername);
         }
 
+        // Clean up any default local profile
+        try {
+          let localProfiles = [];
+          const localSaved = localStorage.getItem('valor_local_profiles');
+          if (localSaved) localProfiles = JSON.parse(localSaved);
+          localProfiles = localProfiles.filter((p: any) => 
+            p.userId !== 'local' && 
+            p.name !== 'Local Profile' && 
+            p.name !== 'Local profile' &&
+            p.name !== 'local'
+          );
+          localStorage.setItem('valor_local_profiles', JSON.stringify(localProfiles));
+        } catch {}
+
+        const prevUserId = settings?.userId;
         const updatedSettings = {
           ...settings,
           userId: targetUserId,
@@ -297,34 +380,41 @@ export const AuthModal: React.FC<AuthModalProps> = ({
           experienceMode: 'cloud',
           isOnboarded: true
         };
-        setSettings(updatedSettings);
-        saveSettingsToStorage(updatedSettings);
 
-        // Fetch watch history and profile data
+        // Fully merge and sync watch history, bookmarks, and settings to the server database
+        const { mergedVideos, mergedSettings } = await syncProfileDataToCloud(targetUserId, {
+          prevUserId,
+          inMemoryVideos: videos,
+          currentSettings: updatedSettings
+        });
+
+        // Fetch remote profile settings if available to merge extra cloud preferences
         try {
           const profileDataRes = await fetch(`/api/profile/data?userId=${targetUserId}`);
           const profileData = await profileDataRes.json().catch(() => null);
           if (profileData && profileData.settings) {
-            const merged = {
+            const finalMerged = {
               ...defaultSettings,
               ...profileData.settings,
+              ...mergedSettings,
               userId: targetUserId,
               profileName: targetProfileName,
               storageMode: 'file'
             };
-            setSettings(merged);
-            saveSettingsToStorage(merged);
-          }
-          if (profileData && Array.isArray(profileData.history)) {
-            setVideos(profileData.history);
+            setSettings(finalMerged);
+            saveSettingsToStorage(finalMerged);
           } else {
-            const historyRes = await fetch(`/api/history?userId=${targetUserId}`);
-            const hist = await historyRes.json().catch(() => null);
-            if (Array.isArray(hist)) {
-              setVideos(hist);
-            }
+            setSettings(mergedSettings);
+            saveSettingsToStorage(mergedSettings);
           }
-        } catch {}
+        } catch {
+          setSettings(mergedSettings);
+          saveSettingsToStorage(mergedSettings);
+        }
+
+        if (setVideos) {
+          setVideos(mergedVideos);
+        }
 
         if (selectedProfileForLogin) {
           addToast(`Switched to profile: ${targetProfileName}`, 'success');
@@ -640,47 +730,94 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
           {/* Profile Name (Sign Up only) */}
           {isSignUp && (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '5px' }}>
-              <label
-                htmlFor="auth-profile-name"
+            hasExistingProfile ? (
+              <div
                 style={{
-                  fontSize: '0.82rem',
-                  color: 'rgba(255, 255, 255, 0.85)',
-                  fontWeight: 600,
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '12px',
+                  background: 'linear-gradient(135deg, rgba(99, 102, 241, 0.12) 0%, rgba(139, 92, 246, 0.08) 100%)',
+                  border: '1px solid rgba(99, 102, 241, 0.28)',
+                  borderRadius: '10px',
+                  padding: '12px 14px',
                   fontFamily: 'Outfit, sans-serif'
                 }}
               >
-                Profile Name <span style={{ color: '#ef4444' }}>*</span>
-              </label>
-              <input
-                ref={tab === 'signup' ? firstInputRef : undefined}
-                id="auth-profile-name"
-                type="text"
-                autoComplete="name"
-                placeholder="e.g. Living Room, Alex..."
-                value={profileName}
-                onChange={e => setProfileName(e.target.value)}
-                style={{
-                  minHeight: '44px',
-                  background: 'rgba(0, 0, 0, 0.35)',
-                  border: fieldErrors.profileName
-                    ? '1.5px solid #ef4444'
-                    : '1px solid rgba(255, 255, 255, 0.15)',
-                  borderRadius: '8px',
-                  padding: '10px 14px',
-                  fontSize: '0.9rem',
-                  color: '#ffffff',
-                  outline: 'none',
-                  fontFamily: 'Outfit, sans-serif',
-                  boxSizing: 'border-box'
-                }}
-              />
-              {fieldErrors.profileName && (
-                <span style={{ fontSize: '0.75rem', color: '#ef4444', marginTop: '2px' }}>
-                  {fieldErrors.profileName}
-                </span>
-              )}
-            </div>
+                <div
+                  style={{
+                    width: '36px',
+                    height: '36px',
+                    borderRadius: '50%',
+                    background: 'rgba(99, 102, 241, 0.25)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    color: '#818cf8',
+                    flexShrink: 0
+                  }}
+                >
+                  <UserCheck size={20} />
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                  <span
+                    style={{
+                      fontSize: '0.72rem',
+                      color: 'rgba(255, 255, 255, 0.55)',
+                      textTransform: 'uppercase',
+                      letterSpacing: '0.6px',
+                      fontWeight: 600
+                    }}
+                  >
+                    Linking to current profile
+                  </span>
+                  <span style={{ fontSize: '0.94rem', color: '#ffffff', fontWeight: 700 }}>
+                    {currentProfileName}
+                  </span>
+                </div>
+              </div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '5px' }}>
+                <label
+                  htmlFor="auth-profile-name"
+                  style={{
+                    fontSize: '0.82rem',
+                    color: 'rgba(255, 255, 255, 0.85)',
+                    fontWeight: 600,
+                    fontFamily: 'Outfit, sans-serif'
+                  }}
+                >
+                  Profile Name <span style={{ color: '#ef4444' }}>*</span>
+                </label>
+                <input
+                  ref={tab === 'signup' && !hasExistingProfile ? firstInputRef : undefined}
+                  id="auth-profile-name"
+                  type="text"
+                  autoComplete="name"
+                  placeholder="e.g. Living Room, Alex..."
+                  value={profileName}
+                  onChange={e => setProfileName(e.target.value)}
+                  style={{
+                    minHeight: '44px',
+                    background: 'rgba(0, 0, 0, 0.35)',
+                    border: fieldErrors.profileName
+                      ? '1.5px solid #ef4444'
+                      : '1px solid rgba(255, 255, 255, 0.15)',
+                    borderRadius: '8px',
+                    padding: '10px 14px',
+                    fontSize: '0.9rem',
+                    color: '#ffffff',
+                    outline: 'none',
+                    fontFamily: 'Outfit, sans-serif',
+                    boxSizing: 'border-box'
+                  }}
+                />
+                {fieldErrors.profileName && (
+                  <span style={{ fontSize: '0.75rem', color: '#ef4444', marginTop: '2px' }}>
+                    {fieldErrors.profileName}
+                  </span>
+                )}
+              </div>
+            )
           )}
 
           {/* Username */}
@@ -698,7 +835,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                 Username <span style={{ color: '#ef4444' }}>*</span>
               </label>
               <input
-                ref={tab === 'login' ? firstInputRef : undefined}
+                ref={(tab === 'login' || (tab === 'signup' && hasExistingProfile)) ? firstInputRef : undefined}
                 id="auth-username"
                 type="text"
                 autoComplete="username"

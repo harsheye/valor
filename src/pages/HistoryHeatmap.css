@@ -245,7 +245,7 @@
 
 .history-resume-btn {
   background: var(--accent-fill);
-  color: var(--on-accent);
+  color: #000000;
   border: none;
   border-radius: var(--radius-sm);
   padding: 8px 16px;
@@ -257,6 +257,13 @@
   cursor: pointer;
   flex-shrink: 0;
   transition: opacity 0.15s ease, transform 0.1s ease;
+}
+
+.history-resume-btn svg {
+  display: inline-block;
+  flex-shrink: 0;
+  color: #000000;
+  fill: currentColor;
 }
 
 .history-resume-btn:hover {
@@ -380,15 +387,30 @@
 }
 
 .history-filter-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 12px;
+  border-radius: 4px;
   background: var(--surface-2);
   color: var(--text-2);
   border: 1px solid var(--border);
-  padding: 5px 12px;
-  border-radius: 4px;
-  font-size: 0.76rem;
+  font-size: 0.78rem;
   font-weight: 600;
   cursor: pointer;
+  white-space: nowrap;
+  box-sizing: border-box;
   transition: all 0.15s ease;
+  line-height: 1;
+}
+
+.history-filter-pill svg {
+  display: inline-block;
+  flex-shrink: 0;
+  margin: 0 !important;
+  vertical-align: middle;
 }
 
 .history-filter-pill:hover {
@@ -398,7 +420,7 @@
 
 .history-filter-pill.active {
   background: var(--accent-fill);
-  color: var(--on-accent);
+  color: #000000;
   border-color: var(--accent);
 }
 
@@ -621,7 +643,7 @@
 
 .history-btn-resume {
   background: var(--accent-fill, #d92d40);
-  color: var(--on-accent, #ffffff);
+  color: #000000;
   border: none;
   padding: 6px 16px;
   border-radius: 4px;
@@ -631,14 +653,20 @@
   align-items: center;
   gap: 6px;
   cursor: pointer;
-  box-shadow: 0 2px 8px rgba(217, 45, 64, 0.3);
+  box-shadow: none;
   transition: all 0.15s ease;
+}
+
+.history-btn-resume svg {
+  display: inline-block;
+  flex-shrink: 0;
+  color: #000000;
+  fill: currentColor;
 }
 
 .history-btn-resume:hover {
   opacity: 0.92;
   transform: translateY(-1px);
-  box-shadow: 0 4px 12px rgba(217, 45, 64, 0.4);
 }
 
 .history-btn-resume:active {
@@ -828,7 +856,8 @@
 
   .history-filter-pill {
     flex-shrink: 0;
-    padding: 6px 14px !important;
+    height: 32px !important;
+    padding: 0 12px !important;
     font-size: 12px !important;
   }
 

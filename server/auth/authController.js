@@ -105,7 +105,7 @@ async function findAccountByIdOrUsername(dataStore, { userId, usernameLower }) {
 }
 
 // Create account in Postgres or SQLite fallback
-async function createAccountRecord(dataStore, { id, profileName, username, usernameLower, passwordHash }) {
+async function createAccountRecord(dataStore, { id, profileName, username, usernameLower, passwordHash, existingUserId }) {
   let created = false;
 
   // 1. PostgreSQL
@@ -126,6 +126,13 @@ async function createAccountRecord(dataStore, { id, profileName, username, usern
   // 2. SQLite
   if (dataStore && dataStore.sqliteDb) {
     try {
+      try {
+        const info = dataStore.sqliteDb.prepare("PRAGMA table_info(accounts)").all();
+        if (!info.some(c => c.name.toLowerCase() === 'created_at')) {
+          dataStore.sqliteDb.exec("ALTER TABLE accounts ADD COLUMN created_at TEXT DEFAULT (datetime('now'));");
+        }
+      } catch {}
+
       dataStore.sqliteDb.prepare(
         `INSERT INTO accounts (id, profile_name, username, username_lower, password_hash, created_at)
          VALUES (?, ?, ?, ?, ?, datetime('now'))`
@@ -152,6 +159,41 @@ async function createAccountRecord(dataStore, { id, profileName, username, usern
       await dataStore.cacheDel(`valor:cache:profiles:u_${username}`);
     }
   } catch {}
+
+  // Ensure settings table has initial record with profileName and userId
+  try {
+    const initialSettings = {
+      userId: id,
+      profileName: profileName || username,
+      storageMode: 'file',
+      experienceMode: 'cloud',
+      isOnboarded: true
+    };
+    if (dataStore && dataStore.saveSettings) {
+      await dataStore.saveSettings(id, initialSettings);
+    }
+  } catch (err) {
+    console.warn('[Initial Settings Save Error]', err.message);
+  }
+
+  // If linking an existing profile / user id, migrate history, settings, and bookmarks (fallback to 'local')
+  const sourceUserId = existingUserId || 'local';
+  if (sourceUserId !== id) {
+    try {
+      if (dataStore && dataStore.isPgConnected && dataStore.pgPool) {
+        await dataStore.pgPool.query(`UPDATE history SET user_id = $1 WHERE user_id = $2`, [id, sourceUserId]).catch(() => {});
+        await dataStore.pgPool.query(`UPDATE settings SET user_id = $1 WHERE user_id = $2`, [id, sourceUserId]).catch(() => {});
+        await dataStore.pgPool.query(`UPDATE bookmarks SET user_id = $1 WHERE user_id = $2`, [id, sourceUserId]).catch(() => {});
+      }
+      if (dataStore && dataStore.sqliteDb) {
+        try { dataStore.sqliteDb.prepare(`UPDATE OR IGNORE history SET userId = ? WHERE userId = ?`).run(id, sourceUserId); } catch {}
+        try { dataStore.sqliteDb.prepare(`UPDATE OR IGNORE settings SET userId = ? WHERE userId = ?`).run(id, sourceUserId); } catch {}
+        try { dataStore.sqliteDb.prepare(`UPDATE OR IGNORE bookmarks SET userId = ? WHERE userId = ?`).run(id, sourceUserId); } catch {}
+      }
+    } catch (migErr) {
+      console.warn('[Account Linking Migration]', migErr.message);
+    }
+  }
 
   return created;
 }
@@ -300,7 +342,8 @@ export async function handleAuthRoutes(req, res, pathname, parsedUrl, cleanClien
         profileName,
         username,
         usernameLower,
-        passwordHash
+        passwordHash,
+        existingUserId: body.existingUserId || body.userId
       });
 
       // Record signup for IP rate limiter
