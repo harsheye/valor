@@ -50,7 +50,7 @@ class ErrorBoundary extends Component<{ children: ReactNode }, { hasError: boole
 
 import './App.css';
 import { ffmpegService } from './services/ffmpeg';
-import { LocalVideoPlayer } from './components/LocalVideoPlayer';
+import { LocalVideoPlayer, disposeActiveLocalPlayer } from './components/LocalVideoPlayer';
 import { RemoteVideoPlayer } from './components/RemoteVideoPlayer';
 import { StreamLoadingOverlay } from './components/StreamLoadingOverlay';
 import { OnlineSearchTab } from './components/OnlineSearchTab';
@@ -81,9 +81,15 @@ import {
   LogOut, Trash2, Plus, Download, UserPlus, Trophy, Radio, RotateCcw,
   HardDrive, Cloud, ShieldCheck, Check, Server, LogIn
 } from 'lucide-react';
-import { storeFileHandle, getFileHandle, removeFileHandle, verifyPermission, cleanupFileHandles } from './utils/indexedDB';
+import { storeFileHandle, getFileHandle, removeFileHandle, verifyPermission, cleanupFileHandles, savePlaylistToStore } from './utils/indexedDB';
+import { usePlaylist, makeFingerprint, naturalSortItems, resolveFile, stateToStored, type PlaylistItem } from './hooks/usePlaylist';
+import { PlaylistPanel } from './components/PlaylistPanel';
+import { getMediaTimestamp, saveMediaTimestamp } from './utils/mediaTimestampStorage';
+import { ReloadGuardModal } from './components/ReloadGuardModal';
+import { useReloadGuard } from './hooks/useReloadGuard';
 import { HttpByteSource, CachedByteSource, detectUrlCapabilities, getBackendProxyUrl, getProxyHeaders } from './services/remote/remoteByteSource';
-import { probeContainer, parseMp4, parseMkv } from './utils/containerParser';
+import { probeContainer, parseMp4, parseMkv, normalizeMkvCodec } from './utils/containerParser';
+import { FileByteSource } from './services/local/localByteSource';
 import { parseHlsManifest } from './utils/hlsParser';
 
 import { ToggleSwitch } from './components/ToggleSwitch';
@@ -118,7 +124,7 @@ import {
   intervalOptions, toastOptions, uiHideTimeoutOptions, fontOptions, 
   storageModeOptions, ratingThresholdOptions 
 } from './utils/constants';
-import { saveMediaTimestamp, getMediaTimestamp } from './utils/mediaTimestampStorage';
+
 
 
 const NotchedFrame: React.FC<{ children: React.ReactNode; resetAction: React.ReactNode }> = ({ children, resetAction }) => {
@@ -366,6 +372,7 @@ const defaultSettings = {
   overlayShowBackground: true as boolean,
   overlayShowRating: true as boolean,
   overlayShowOverview: true as boolean,
+  overlayActiveTime: 10 as number,
   openSubtitlesApiKey: '' as string,
   traktAccessToken: '' as string,
   traktRefreshToken: '' as string,
@@ -575,20 +582,35 @@ function App() {
         localStorage.removeItem('valor_active_tab');
       } catch {}
 
-      const params = new URLSearchParams(window.location.search);
-      if (params.get('file')) return null;
-
-      // Use sessionStorage so multiple tabs/webpages can play independent media
-      const saved = sessionStorage.getItem('valor_currently_playing');
-      const useIdStreamInit = getUseIdStreamFromStorage();
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        const storedPos = getMediaTimestamp(parsed);
-        if (storedPos > 0 && (!parsed.currentTime || storedPos > parsed.currentTime)) {
-          parsed.currentTime = storedPos;
+      const isReload = (() => {
+        try {
+          const navEntries = performance.getEntriesByType('navigation');
+          if (navEntries.length > 0) {
+            return (navEntries[0] as PerformanceNavigationTiming).type === 'reload';
+          }
+          return (performance as any).navigation?.type === 1;
+        } catch {
+          return false;
         }
-        return sanitizeVideoItem(parsed, useIdStreamInit);
+      })();
+
+      if (!isReload) {
+        // Fresh navigation / typing URL: start clean on Home/Library, do not auto-jump into player
+        try {
+          sessionStorage.removeItem('valor_currently_playing');
+        } catch {}
+        return null;
       }
+
+      // Page reload: keep user in player where they left off
+      const saved = sessionStorage.getItem('valor_currently_playing');
+      if (saved) {
+        const item = JSON.parse(saved);
+        if (item && item.id) {
+          return item;
+        }
+      }
+
       return null;
     } catch (err) {
       console.error('Failed to parse currently playing video:', err);
@@ -596,13 +618,7 @@ function App() {
     }
   });
 
-  const [isPlaybackRestoring, setIsPlaybackRestoring] = useState(() => {
-    try {
-      return !!sessionStorage.getItem('valor_currently_playing');
-    } catch {
-      return false;
-    }
-  });
+  const [isPlaybackRestoring, setIsPlaybackRestoring] = useState(false);
 
   const videos = videosState;
   const playingVideo = playingVideoState;
@@ -702,7 +718,7 @@ function App() {
     if (playingVideo) {
       sessionStorage.setItem('valor_currently_playing', JSON.stringify(playingVideo));
       if (typeof playingVideo.currentTime === 'number') {
-        saveMediaTimestamp(playingVideo, playingVideo.currentTime, Number(playingVideo.duration) || 0, playingVideo.title);
+        saveMediaTimestamp(playingVideo, playingVideo.currentTime, parseDurationToSeconds(playingVideo.duration), playingVideo.title);
       }
     } else {
       sessionStorage.removeItem('valor_currently_playing');
@@ -713,7 +729,7 @@ function App() {
   useEffect(() => {
     const handleUnload = () => {
       if (playingVideo && typeof playingVideo.currentTime === 'number') {
-        saveMediaTimestamp(playingVideo, playingVideo.currentTime, Number(playingVideo.duration) || 0, playingVideo.title);
+        saveMediaTimestamp(playingVideo, playingVideo.currentTime, parseDurationToSeconds(playingVideo.duration), playingVideo.title);
         sessionStorage.setItem('valor_currently_playing', JSON.stringify(playingVideo));
       }
     };
@@ -1358,6 +1374,76 @@ function App() {
   const historyVideoInputRef = useRef<HTMLInputElement>(null);
   const pendingLocalReassociateIdRef = useRef<string | null>(null);
   const isPickerOpenRef = useRef(false);
+
+  // ── Multi-file playlist ──────────────────────────────────────────────────
+  const {
+    playlist,
+    setPlaylist,
+    allPlaylists,
+    addItems: addPlaylistItems,
+    setIndex: setPlaylistIndex,
+    nextIndex: playlistNextIndex,
+    prevIndex: playlistPrevIndex,
+    removeItem: removePlaylistItem,
+    clearAll: clearPlaylist,
+    markError: markPlaylistError,
+    updateSavedTime: updatePlaylistSavedTime,
+    reorderItem: reorderPlaylistItem,
+    loadFolderPlaylist,
+    switchPlaylist,
+    renamePlaylist,
+    deletePlaylist,
+    createNewPlaylist,
+    locateFile,
+    resolveItemFile,
+    persist: persistPlaylist,
+  } = usePlaylist();
+
+  const [showPlaylistPanel, setShowPlaylistPanel] = useState(false);
+  const [isFilesAccessExpired, setIsFilesAccessExpired] = useState(false);
+  const restoreAttemptedRef = useRef(false);
+
+  // Check if a local collection / media is currently loaded in the local player
+  const isCollectionLoaded = Boolean(
+    playingVideo &&
+    !playingVideo.isRemote &&
+    (playlist.items.length > 0 || playingVideo.file || (playingVideo as any).hasHandle || playingVideo.type === 'local')
+  );
+
+  // Save playback position and playlist state to persistent storage
+  const handleSavePlaybackAndPlaylist = useCallback(() => {
+    if (playingVideo) {
+      const pos = typeof playingVideo.currentTime === 'number' ? playingVideo.currentTime : 0;
+      saveMediaTimestamp(playingVideo, pos, parseDurationToSeconds(playingVideo.duration), playingVideo.title);
+      try {
+        sessionStorage.setItem('valor_currently_playing', JSON.stringify({
+          ...playingVideo,
+          currentTime: pos,
+        }));
+      } catch {}
+    }
+    if (playlist && playlist.items && playlist.items.length > 0) {
+      try {
+        const stored = stateToStored(playlist);
+        savePlaylistToStore(stored);
+      } catch {}
+    }
+  }, [playingVideo, playlist]);
+
+  // Reload guard hook: intercepts F5, Ctrl+R, beforeunload, pagehide, visibilitychange
+  const {
+    showModal: showReloadModal,
+    dismissModal: handleDismissReloadModal,
+    reloadAnyway: handleReloadAnyway,
+  } = useReloadGuard({
+    isCollectionLoaded,
+    onSaveState: handleSavePlaybackAndPlaylist,
+  });
+
+  // Switch token: stale async loads see a different token and bail out
+  const switchTokenRef = useRef(0);
+  // Drop "play now vs queue" prompt state
+  const [pendingDropFiles, setPendingDropFiles] = useState<{ items: PlaylistItem[]; onPlayNow: () => void; onAddToQueue: () => void } | null>(null);
   const lastHistorySyncTimeRef = useRef<number>(0);
   const historySyncTimeoutRef = useRef<any>(null);
   const saveTimeoutRef = useRef<any>(null);
@@ -2109,9 +2195,7 @@ function App() {
 
         await storageProvider.saveHistory(targetVideos, forceSync);
 
-        // Clean up stale file handles from IndexedDB (only removes entries for videos no longer in history)
-        const activeIds = targetVideos.map(v => v.id);
-        cleanupFileHandles(activeIds).catch(err => console.warn('[IndexedDB Cleanup] Failed:', err));
+        // Preserve all file handles in IndexedDB across reloads, playlists, and aliases
 
         // Ensure subtitle tracks with cues are backed up into browser storage
         targetVideos.forEach(v => {
@@ -2260,6 +2344,10 @@ function App() {
         saveEmbedSubtitles(targetVideo, targetVideo.subtitleTracks);
       }
 
+      if (targetVideo && typeof targetVideo.currentTime === 'number' && targetVideo.currentTime > 0) {
+        updatePlaylistSavedTime(targetVideo.id, targetVideo.currentTime, parseDurationToSeconds(targetVideo.duration));
+      }
+
       let nextVideos: VideoItem[];
       if (!targetVideo) {
         nextVideos = prev.map((v) => {
@@ -2356,41 +2444,157 @@ function App() {
     }
   };
 
+  /** Build a PlaylistItem from a File + optional FileSystemFileHandle */
+  const buildPlaylistItem = async (file: File, handle?: FileSystemFileHandle): Promise<PlaylistItem> => {
+    const fp = makeFingerprint(file);
+    const title = file.name.replace(/\.[^/.]+$/, '');
+    // Retrieve saved time from mediaTimestampStorage
+    const savedEntry = getMediaTimestamp({ id: fp, fileName: file.name, title } as any);
+    return {
+      id: fp,
+      fingerprint: fp,
+      name: file.name,
+      title,
+      fileName: file.name,
+      size: file.size,
+      lastModified: file.lastModified,
+      savedTime: savedEntry > 0 ? savedEntry : undefined,
+      file,
+      handle,
+    };
+  };
+
+  /**
+   * Flatten a DataTransferItemList into (File, FileSystemFileHandle | undefined)[] pairs.
+   * Uses getAsFileSystemHandle() where available so handles are persistent.
+   */
+  const extractDropItems = async (transfer: DataTransfer): Promise<{ file: File; handle?: FileSystemFileHandle }[]> => {
+    const result: { file: File; handle?: FileSystemFileHandle }[] = [];
+    const items = Array.from(transfer.items ?? []);
+    for (const item of items) {
+      if (item.kind !== 'file') continue;
+      try {
+        if ('getAsFileSystemHandle' in item) {
+          const h = await (item as any).getAsFileSystemHandle();
+          if (!h) continue;
+          if (h.kind === 'directory') {
+            // Recursively collect video files from directory
+            for await (const [, entry] of (h as any).entries()) {
+              if (entry.kind === 'file') {
+                try {
+                  const f: File = await (entry as FileSystemFileHandle).getFile();
+                  if (/\.(mp4|mkv|webm|mov|avi|m4v|ts|ogv)$/i.test(f.name)) {
+                    result.push({ file: f, handle: entry as FileSystemFileHandle });
+                  }
+                } catch {}
+              }
+            }
+          } else if (h.kind === 'file') {
+            const f: File = await (h as FileSystemFileHandle).getFile();
+            if (/\.(mp4|mkv|webm|mov|avi|m4v|ts|ogv)$/i.test(f.name)) {
+              result.push({ file: f, handle: h as FileSystemFileHandle });
+            }
+          }
+          continue;
+        }
+      } catch {}
+      // Fallback
+      const f = item.getAsFile();
+      if (f && /\.(mp4|mkv|webm|mov|avi|m4v|ts|ogv)$/i.test(f.name)) {
+        result.push({ file: f });
+      }
+    }
+    // Also handle legacy files list if items was empty
+    if (result.length === 0 && transfer.files.length > 0) {
+      for (const f of Array.from(transfer.files)) {
+        if (/\.(mp4|mkv|webm|mov|avi|m4v|ts|ogv)$/i.test(f.name)) {
+          result.push({ file: f });
+        }
+      }
+    }
+    return result;
+  };
+
   const handleDrop = async (e: React.DragEvent) => {
     e.preventDefault();
     e.stopPropagation();
     setIsDragActive(false);
 
-    if (e.dataTransfer.items && e.dataTransfer.items[0]) {
-      const item = e.dataTransfer.items[0];
-      if (item.kind === 'file') {
-        try {
-          if ('getAsFileSystemHandle' in item) {
-            const handle = await (item as any).getAsFileSystemHandle();
-            if (handle && handle.kind === 'file') {
-              const file = await handle.getFile();
-              const fingerprint = `local-${file.name}_${file.size}_${file.lastModified}`;
-              await storeFileHandle(fingerprint, handle);
-              await processLocalVideo(file, fingerprint, handle);
-              return;
-            }
+    // If a single directory handle was dropped, load as folder playlist
+    if (e.dataTransfer.items && e.dataTransfer.items.length === 1 && 'getAsFileSystemHandle' in e.dataTransfer.items[0]) {
+      try {
+        const h = await (e.dataTransfer.items[0] as any).getAsFileSystemHandle();
+        if (h && h.kind === 'directory') {
+          const folderItems = await loadFolderPlaylist(h, h.name);
+          if (folderItems.length > 0 && !playingVideo) {
+            await playIndex(0);
           }
-        } catch (err) {
-          console.error('Failed to get handle from drop:', err);
+          return;
         }
+      } catch {}
+    }
+
+    const dropped = await extractDropItems(e.dataTransfer);
+    if (dropped.length === 0) return;
+
+    // Store handles in IndexedDB
+    for (const { file, handle } of dropped) {
+      if (handle) {
+        const fp = makeFingerprint(file);
+        await storeFileHandle(fp, handle).catch(() => {});
       }
     }
 
-    if (e.dataTransfer.files && e.dataTransfer.files[0]) {
-      const file = e.dataTransfer.files[0];
-      await processLocalVideo(file);
+    // Build playlist items (natural-sorted, de-duplicated happens inside addPlaylistItems)
+    const newItems = await Promise.all(dropped.map(({ file, handle }) => buildPlaylistItem(file, handle)));
+
+    if (dropped.length === 1 && !playingVideo) {
+      // Single file, nothing playing → play immediately as standalone file without playlist
+      clearPlaylist();
+      await processLocalVideo(dropped[0].file, makeFingerprint(dropped[0].file), dropped[0].handle);
+      return;
+    }
+
+    if (playingVideo && dropped.length === 1) {
+      // Single file dropped while playing → offer choice
+      setPendingDropFiles({
+        items: newItems,
+        onPlayNow: async () => {
+          setPendingDropFiles(null);
+          clearPlaylist();
+          await processLocalVideo(dropped[0].file, makeFingerprint(dropped[0].file), dropped[0].handle);
+        },
+        onAddToQueue: () => {
+          setPendingDropFiles(null);
+          addPlaylistItems(newItems, false);
+        },
+      });
+      return;
+    }
+
+    // Multiple files → add to playlist and start first if nothing playing
+    addPlaylistItems(newItems, false);
+    if (!playingVideo && newItems.length > 0) {
+      const first = newItems[0];
+      await processLocalVideo(first.file!, makeFingerprint(first.file!), first.handle);
     }
   };
 
   const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files && e.target.files[0]) {
-      const file = e.target.files[0];
-      await processLocalVideo(file);
+    if (e.target.files && e.target.files.length > 0) {
+      if (e.target.files.length === 1) {
+        const file = e.target.files[0];
+        const fp = makeFingerprint(file);
+        clearPlaylist();
+        await processLocalVideo(file, fp);
+      } else {
+        const files = Array.from(e.target.files);
+        const items = await Promise.all(files.map(f => buildPlaylistItem(f)));
+        addPlaylistItems(items, false);
+        const sorted = naturalSortItems(items);
+        const first = sorted[0];
+        await processLocalVideo(first.file!, makeFingerprint(first.file!));
+      }
     }
   };
 
@@ -2405,42 +2609,182 @@ function App() {
     }
   };
 
-  // Select local file (using showOpenFilePicker with IndexedDB storage if supported)
+  // Select local file(s) — showOpenFilePicker({ multiple: true }) or fallback input
   const handleSelectLocalFile = async () => {
-    if (isPickerOpenRef.current) return;
+    isPickerOpenRef.current = false;
+
+    // Unlock Web Audio context while user gesture is active from the click
+    try {
+      const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+      if (AudioCtx) {
+        const dummyCtx = new AudioCtx();
+        dummyCtx.resume().then(() => dummyCtx.close()).catch(() => {});
+      }
+    } catch {}
+
+    const openWithInput = () => {
+      const input = document.createElement('input');
+      input.type = 'file';
+      input.multiple = true;
+      input.accept = 'video/*,.mp4,.mkv,.webm,.mov,.avi,.m4v';
+      input.style.display = 'none';
+      document.body.appendChild(input);
+      input.onchange = async () => {
+        if (input.files && input.files.length > 0) {
+          const files = Array.from(input.files);
+          if (files.length === 1) {
+            const file = files[0];
+            const fp = makeFingerprint(file);
+            clearPlaylist();
+            await processLocalVideo(file, fp);
+          } else {
+            const items: PlaylistItem[] = [];
+            for (const f of files) {
+              items.push(await buildPlaylistItem(f));
+            }
+            addPlaylistItems(items, false);
+            const sorted = naturalSortItems(items);
+            const first = sorted[0];
+            await processLocalVideo(first.file!, makeFingerprint(first.file!));
+          }
+        }
+        input.remove();
+      };
+      input.click();
+    };
+
+    // Chromium strictly blocks showOpenFilePicker in fullscreen; use input fallback
+    if (typeof document !== 'undefined' && document.fullscreenElement) {
+      openWithInput();
+      return;
+    }
+
     try {
       if ('showOpenFilePicker' in window) {
         isPickerOpenRef.current = true;
-        const [handle] = await (window as any).showOpenFilePicker({
-          types: [{
-            description: 'Video Files',
-            accept: {
-              'video/mp4': ['.mp4', '.m4v'],
-              'video/webm': ['.webm'],
-              'video/x-matroska': ['.mkv'],
-              'video/quicktime': ['.mov'],
-              'video/x-msvideo': ['.avi']
-            }
-          }]
-        });
-        const file = await handle.getFile();
-        const fingerprint = `local-${file.name}_${file.size}_${file.lastModified}`;
-        await storeFileHandle(fingerprint, handle);
-        await processLocalVideo(file, fingerprint, handle);
+        let handles: FileSystemFileHandle[] = [];
+        try {
+          handles = await (window as any).showOpenFilePicker({
+            multiple: true,
+            types: [{
+              description: 'Video Files',
+              accept: {
+                'video/mp4': ['.mp4', '.m4v'],
+                'video/webm': ['.webm'],
+                'video/x-matroska': ['.mkv'],
+                'video/quicktime': ['.mov'],
+                'video/x-msvideo': ['.avi']
+              }
+            }]
+          });
+        } catch (pickerErr: any) {
+          if (pickerErr?.name === 'AbortError') {
+            return;
+          }
+          console.warn('showOpenFilePicker failed, falling back to input:', pickerErr);
+          openWithInput();
+          return;
+        }
+
+        if (handles.length === 1) {
+          const handle = handles[0];
+          const file = await handle.getFile();
+          const fingerprint = makeFingerprint(file);
+          await storeFileHandle(fingerprint, handle).catch(() => {});
+          await storeFileHandle(`local-${fingerprint}`, handle).catch(() => {});
+          clearPlaylist();
+          await processLocalVideo(file, fingerprint, handle);
+        } else if (handles.length > 1) {
+          // Build items and store handles
+          const items: PlaylistItem[] = [];
+          for (const handle of handles) {
+            const file = await handle.getFile();
+            const fp = makeFingerprint(file);
+            await storeFileHandle(fp, handle).catch(() => {});
+            await storeFileHandle(`local-${fp}`, handle).catch(() => {});
+            items.push(await buildPlaylistItem(file, handle));
+          }
+          addPlaylistItems(items, false);
+          // Start playing the first one (natural-sorted order)
+          const sorted = naturalSortItems(items);
+          const first = sorted[0];
+          await processLocalVideo(first.file!, makeFingerprint(first.file!), first.handle);
+        }
       } else {
-        isPickerOpenRef.current = true;
-        fileInputRef.current?.click();
-        setTimeout(() => {
-          isPickerOpenRef.current = false;
-        }, 1000);
+        openWithInput();
       }
     } catch (err) {
       console.error('File picker cancelled or failed:', err);
     } finally {
-      if ('showOpenFilePicker' in window) {
-        isPickerOpenRef.current = false;
+      isPickerOpenRef.current = false;
+    }
+  };
+
+  /** Open a directory picker and add all video files from it. */
+  const handleSelectDirectory = async () => {
+    if (!('showDirectoryPicker' in window)) return;
+    try {
+      const dirHandle = await (window as any).showDirectoryPicker({ mode: 'read' });
+      const folderItems = await loadFolderPlaylist(dirHandle, dirHandle.name);
+      if (folderItems.length > 0 && !playingVideo) {
+        await playIndex(0);
+      }
+    } catch (err: any) {
+      if (err.name !== 'AbortError') {
+        console.error('Directory picker failed:', err);
       }
     }
+  };
+
+  /** Fast-probe MKV / MP4 container headers directly from File for instant track & duration readiness */
+  const fastProbeMediaFile = async (file: File): Promise<{
+    duration?: string;
+    format?: string;
+    streams?: any[];
+    seekMap?: any[];
+    timecodeScale?: number;
+  }> => {
+    try {
+      const fileSource = new FileByteSource(file);
+      const lowerName = file.name.toLowerCase();
+      if (lowerName.endsWith('.mkv') || lowerName.endsWith('.webm')) {
+        const mkvInfo = await parseMkv(fileSource);
+        if (mkvInfo && mkvInfo.tracks && mkvInfo.tracks.length > 0) {
+          return {
+            format: lowerName.endsWith('.webm') ? 'webm' : 'matroska',
+            duration: mkvInfo.duration > 0 ? String(mkvInfo.duration) : undefined,
+            seekMap: mkvInfo.seekMap && mkvInfo.seekMap.length > 0 ? mkvInfo.seekMap : undefined,
+            timecodeScale: mkvInfo.timecodeScale,
+            streams: mkvInfo.tracks.map((t, idx) => ({
+              index: t.number > 0 ? t.number - 1 : idx,
+              type: t.type,
+              codec: normalizeMkvCodec(t.codec),
+              language: t.language || 'und',
+              title: t.title || ''
+            }))
+          };
+        }
+      } else if (lowerName.endsWith('.mp4') || lowerName.endsWith('.m4v') || lowerName.endsWith('.mov')) {
+        const mp4Info = await parseMp4(fileSource);
+        if (mp4Info && mp4Info.tracks && mp4Info.tracks.length > 0) {
+          return {
+            format: 'mp4',
+            duration: mp4Info.duration > 0 ? String(mp4Info.duration) : undefined,
+            seekMap: mp4Info.tracks[0]?.seekMap?.timeToOffset,
+            streams: mp4Info.tracks.map((t: any, idx: number) => ({
+              index: idx,
+              type: t.type,
+              codec: t.codec || '',
+              language: t.language || 'und',
+              title: t.title || ''
+            }))
+          };
+        }
+      }
+    } catch (err) {
+      console.warn('[fastProbeMediaFile] Container fast-parse fallback to autoProbe:', err);
+    }
+    return {};
   };
 
   // Import a local video file with deduplication, merging, and handle storage
@@ -2490,6 +2834,28 @@ function App() {
     }
 
     let maxCurrentTime = 0;
+    // Check persistent site storage for exact saved timestamp position
+    const persistentTimestamp = getMediaTimestamp({
+      id: targetId,
+      fileName: file.name,
+      title: title,
+      localFilePath: (file as any).path || (file as any).localFilePath || undefined
+    });
+    if (persistentTimestamp > 0) {
+      maxCurrentTime = persistentTimestamp;
+    }
+
+    // Check if this item exists in playlist items with saved progress
+    const matchedPlaylistItem = playlist.items.find(it =>
+      (it.id && (it.id === targetId || it.id === customId || it.id === finalCustomId)) ||
+      (it.fingerprint && (it.fingerprint === targetId || it.fingerprint === customId || it.fingerprint === finalCustomId)) ||
+      (it.fileName && it.fileName.toLowerCase() === file.name.toLowerCase()) ||
+      (it.title && it.title.toLowerCase() === title.toLowerCase())
+    );
+    if (matchedPlaylistItem && typeof matchedPlaylistItem.savedTime === 'number' && matchedPlaylistItem.savedTime > maxCurrentTime) {
+      maxCurrentTime = matchedPlaylistItem.savedTime;
+    }
+
     const mergedAudioTracks: CustomAudioTrack[] = [];
     const mergedSubtitleTracks: CustomSubtitleTrack[] = [];
     let mergedDuration: string | undefined = undefined;
@@ -2556,6 +2922,55 @@ function App() {
       }
     });
 
+    let mergedSeekMap: any[] | undefined = undefined;
+    let mergedTimecodeScale: number | undefined = undefined;
+
+    // Fast container pre-probe for local files so PlaybackController and audio tracks
+    // are immediately available on first selection without needing a reload!
+    if (!mergedStreams && file) {
+      const probed = await fastProbeMediaFile(file);
+      if (probed.format) mergedFormat = probed.format;
+      if (probed.duration && !mergedDuration) mergedDuration = probed.duration;
+      if (probed.seekMap) mergedSeekMap = probed.seekMap;
+      if (probed.timecodeScale) mergedTimecodeScale = probed.timecodeScale;
+      if (probed.streams) mergedStreams = probed.streams;
+    }
+
+    if (mergedAudioTracks.length === 0 && mergedStreams) {
+      mergedStreams
+        .filter((s: any) => s.type === 'audio')
+        .forEach((s: any) => {
+          mergedAudioTracks.push({
+            id: String(s.index),
+            streamIndex: s.index,
+            name: s.title || (s.language && s.language !== 'und' ? `Audio (${s.language.toUpperCase()})` : `Audio Track ${s.index + 1}`),
+            language: s.language || 'und',
+            codec: s.codec,
+            url: '',
+            isExtracted: false
+          });
+        });
+    }
+
+    if (mergedSubtitleTracks.length === 0 && mergedStreams) {
+      mergedStreams
+        .filter((s: any) => s.type === 'subtitle')
+        .forEach((s: any) => {
+          const rawFormat = (s.codec || '').toLowerCase();
+          const format = rawFormat.includes('ass') || rawFormat.includes('ssa') ? 'ass' : (rawFormat.includes('srt') || rawFormat.includes('subrip') ? 'srt' : 'vtt');
+          mergedSubtitleTracks.push({
+            id: String(s.index),
+            streamIndex: s.index,
+            name: s.title || (s.language && s.language !== 'und' ? `Subtitle (${s.language.toUpperCase()})` : `Subtitle Track ${s.index + 1}`),
+            language: s.language || 'und',
+            format,
+            cues: [],
+            url: '',
+            isExtracted: false
+          });
+        });
+    }
+
     const newVideoItem: VideoItem = {
       id: targetId,
       title,
@@ -2566,9 +2981,12 @@ function App() {
       file: file,
       fileName: file.name,
       currentTime: maxCurrentTime,
+      resumeTime: maxCurrentTime,
       duration: mergedDuration,
       format: mergedFormat,
       streams: mergedStreams,
+      seekMap: mergedSeekMap,
+      timecodeScale: mergedTimecodeScale,
       audioTracks: mergedAudioTracks,
       subtitleTracks: mergedSubtitleTracks,
       lastPlayedDate: new Date().toISOString(),
@@ -2593,8 +3011,345 @@ function App() {
     }
   };
 
+  /**
+   * playIndex — the central playlist switching function.
+   *
+   * Dispose order (see explanation at top of file):
+   *   1. Bump the switch token so stale async loads bail out early.
+   *   2. Persist outgoing timestamp and watch-history.
+   *   3. End the Trakt scrobble (fires synchronously via beforeunload-style flush).
+   *   4. Revoke the old blob URL (after the caller's player unmount disposes the
+   *      PlaybackController — the React key change on LocalVideoPlayer handles
+   *      controller.destroy() + audioScheduler.stopAll() + FFmpeg cleanup).
+   *   5. Resolve the new item's File (from memory, IndexedDB handle, or show-permission prompt).
+   *   6. Load via processLocalVideo.
+   *
+   * The token check at step 5/6 prevents a slow handle resolution from overwriting a
+   * newer switch that happened while this one was still pending.
+   */
+  const playIndex = async (targetIdx: number, preferredAudioLang?: string, preferredSubLang?: string) => {
+    const myToken = ++switchTokenRef.current;
+    const items = playlist.items;
+    if (targetIdx < 0 || targetIdx >= items.length) return;
+
+    const item = items[targetIdx];
+    setPlaylistIndex(targetIdx);
+
+    // If the item has an error state, do not cascade-skip the queue
+    if (item.error) {
+      addToast(`"${item.title || item.name}" – file missing or inaccessible. Click "Locate file" in playlist to re-link.`, 'error');
+      setShowPlaylistPanel(true);
+      return;
+    }
+
+    // Step 1 - 5 in exact required dispose order:
+    // 1) Persist outgoing timestamp and watch history
+    // 2) End Trakt scrobble
+    // 3) Fully dispose PlaybackController and cancel scheduled AudioBufferSourceNodes and in-flight FFmpeg decode jobs
+    // 4) Reset BufferScheduler & video element
+    // 5) Revoke old blob URL
+    await disposeActiveLocalPlayer();
+    if (switchTokenRef.current !== myToken) return;
+
+    // ── Resolve File ────────────────────────────────────────────────────────
+    let resolvedFile: File | null = item.file ?? null;
+    let resolvedHandle: FileSystemFileHandle | undefined = item.handle;
+
+    if (!resolvedFile) {
+      try {
+        resolvedFile = await resolveItemFile(item);
+        resolvedHandle = item.handle;
+      } catch (err) {
+        console.warn(`[playIndex] resolveItemFile failed for ${item.title}:`, err);
+      }
+
+      if (!resolvedFile) {
+        const candidateKeys = [
+          item.id,
+          item.fingerprint,
+          item.id ? item.id.replace(/^local-/, '') : '',
+          item.fingerprint ? `local-${item.fingerprint}` : '',
+          item.name,
+          item.title,
+          item.fileName
+        ].filter(Boolean) as string[];
+
+        for (const k of candidateKeys) {
+          try {
+            const h = await getFileHandle(k);
+            if (h) {
+              const perm = await verifyPermission(h);
+              if (perm) {
+                resolvedFile = await h.getFile();
+                resolvedHandle = h;
+                break;
+              }
+            }
+          } catch {}
+        }
+      }
+    }
+
+    if (switchTokenRef.current !== myToken) return; // Stale load
+
+    if (!resolvedFile) {
+      // Missing or moved file: mark ONLY this item with Locate file; never cascade-skip or empty the list
+      markPlaylistError(item.id || item.fingerprint);
+      addToast(`"${item.title || item.name}" – file not accessible. Click "Locate file" in playlist to re-link.`, 'error');
+      setShowPlaylistPanel(true);
+      return;
+    }
+
+    if (switchTokenRef.current !== myToken) return;
+
+    // Step 6: Load the new item via processLocalVideo
+    await processLocalVideo(resolvedFile, item.id || item.fingerprint, resolvedHandle);
+
+    // Update playlist item with live handle/file for future switches
+    setPlaylist(prev => ({
+      ...prev,
+      items: prev.items.map(it =>
+        (it.id || it.fingerprint) === (item.id || item.fingerprint)
+          ? { ...it, file: resolvedFile!, handle: resolvedHandle, error: false }
+          : it
+      ),
+    }));
+  };
+
+  /** Finish playback session and return to home page */
+  const isFinishingSessionRef = useRef(false);
+
+  const handleFinishSession = useCallback(async () => {
+    if (isFinishingSessionRef.current) return;
+    isFinishingSessionRef.current = true;
+    const myToken = ++switchTokenRef.current;
+
+    const currentVideo = playingVideo;
+    if (!currentVideo) {
+      isFinishingSessionRef.current = false;
+      return;
+    }
+
+    // 1. Mark item completed in mediaTimestampStorage (reset resume timestamp to 0 so reopening starts at 0)
+    saveMediaTimestamp(currentVideo, 0, Number(currentVideo.duration) || 0, currentVideo.title, true);
+
+    // 2. Complete Trakt scrobble
+    const traktToken = settings.traktAccessToken;
+    if (traktToken) {
+      try {
+        syncTraktHistory(currentVideo, traktToken).catch(() => {});
+      } catch {}
+    }
+
+    // 3. Mark completed and update history at top of videos list
+    setVideos(prev => {
+      const existing = prev.find(v => v.id === currentVideo.id || (v.fileName && v.fileName === currentVideo.fileName));
+      const updatedItem: VideoItem = {
+        ...(existing || currentVideo),
+        currentTime: 0,
+        isWatched: true,
+        lastPlayedDate: new Date().toISOString(),
+        lastPlayedAt: Date.now(),
+      };
+      const remaining = prev.filter(v => v.id !== currentVideo.id && (!v.fileName || v.fileName !== currentVideo.fileName));
+      return [updatedItem, ...remaining];
+    });
+
+    // 4. Reset playlist's currentIndex to 0 while keeping per-item watched flags
+    setPlaylist(prev => ({
+      ...prev,
+      currentIndex: 0,
+      items: prev.items.map(it => {
+        if ((it.id || it.fingerprint) === currentVideo.id) {
+          return { ...it, isWatched: true, savedTime: 0 };
+        }
+        return it;
+      }),
+      updatedAt: Date.now(),
+    }));
+
+    // 5. Dispose PlaybackController, AudioBufferSourceNodes, FFmpeg decode jobs, and BufferScheduler
+    await disposeActiveLocalPlayer();
+
+    // 6. Token guard check
+    if (switchTokenRef.current !== myToken) {
+      isFinishingSessionRef.current = false;
+      return;
+    }
+
+    // 7. Revoke blob URL
+    if (currentVideo.url && currentVideo.url.startsWith('blob:')) {
+      try {
+        URL.revokeObjectURL(currentVideo.url);
+      } catch {}
+    }
+
+    // 8. Return to home page
+    setPlayingVideo(null);
+    setActiveTab('home');
+    isFinishingSessionRef.current = false;
+  }, [playingVideo, setPlaylist, setVideos]);
+
+  /** Open network stream prompt */
+  const handleOpenNetworkStream = useCallback((inputUrl?: string) => {
+    const raw = typeof inputUrl === 'string' ? inputUrl : window.prompt('Enter media stream or video URL (HLS / MP4 / etc.):');
+    if (raw && raw.trim()) {
+      const url = raw.trim();
+      const videoItem: VideoItem = {
+        id: `url-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+        title: url.split('/').pop()?.split('?')[0] || 'Network Stream',
+        url,
+        type: 'url',
+        sourceType: 'remote',
+        isRemote: true,
+        audioTracks: [],
+        subtitleTracks: []
+      };
+      handlePlayVideo(videoItem);
+    }
+  }, []);
+
+  /** Add file(s) to playlist via picker */
+  const handleAddToPlaylist = useCallback(async () => {
+    if ('showOpenFilePicker' in window) {
+      try {
+        const handles: FileSystemFileHandle[] = await (window as any).showOpenFilePicker({
+          multiple: true,
+          types: [{
+            description: 'Video Files',
+            accept: {
+              'video/*': ['.mp4', '.mkv', '.webm', '.mov', '.avi', '.m4v', '.ts', '.ogv']
+            }
+          }]
+        });
+        const items: PlaylistItem[] = [];
+        for (const h of handles) {
+          const f = await h.getFile();
+          const fp = makeFingerprint(f);
+          await storeFileHandle(fp, h).catch(() => {});
+          items.push(await buildPlaylistItem(f, h));
+        }
+        if (items.length > 0) {
+          addPlaylistItems(items, true);
+          addToast(`Added ${items.length} item${items.length > 1 ? 's' : ''} to playlist`, 'success');
+          setShowPlaylistPanel(true);
+        }
+      } catch (err: any) {
+        if (err.name !== 'AbortError') console.error(err);
+      }
+    } else {
+      const input = document.createElement('input');
+      input.type = 'file';
+      input.multiple = true;
+      input.accept = 'video/*';
+      input.onchange = async () => {
+        if (input.files) {
+          const files = Array.from(input.files);
+          const items = await Promise.all(files.map(f => buildPlaylistItem(f)));
+          addPlaylistItems(items, true);
+          addToast(`Added ${items.length} items to playlist`, 'success');
+          setShowPlaylistPanel(true);
+        }
+      };
+      input.click();
+    }
+  }, [addPlaylistItems, addToast]);
+
+  /** Locate missing / moved file */
+  const handleLocateFile = async (itemId: string) => {
+    const item = playlist.items.find(it => (it.id || it.fingerprint) === itemId);
+    if (!item) return;
+
+    if ('showOpenFilePicker' in window) {
+      try {
+        const handles: FileSystemFileHandle[] = await (window as any).showOpenFilePicker({
+          multiple: false,
+          types: [{
+            description: 'Video Files',
+            accept: {
+              'video/*': ['.mp4', '.mkv', '.webm', '.mov', '.avi', '.m4v', '.ts', '.ogv']
+            }
+          }]
+        });
+        if (handles.length > 0) {
+          const handle = handles[0];
+          const file = await handle.getFile();
+
+          // Match by name, size, lastModified
+          const nameMatch = file.name.toLowerCase() === (item.name || item.fileName || '').toLowerCase();
+          const sizeMatch = file.size === item.size;
+
+          if (!nameMatch && !sizeMatch) {
+            const proceed = window.confirm(
+              `The selected file "${file.name}" does not match the original "${item.name || item.title}". Do you want to use it anyway?`
+            );
+            if (!proceed) return;
+          }
+
+          await locateFile(itemId, file, handle);
+          await storeFileHandle(itemId, handle);
+          markPlaylistError(itemId, false);
+          addToast(`Located "${file.name}" successfully!`, 'success');
+        }
+      } catch (err: any) {
+        if (err.name !== 'AbortError') {
+          console.error('Error locating file:', err);
+        }
+      }
+    } else {
+      const input = document.createElement('input');
+      input.type = 'file';
+      input.accept = 'video/*';
+      input.onchange = async () => {
+        const file = input.files?.[0];
+        if (file) {
+          await locateFile(itemId, file);
+          markPlaylistError(itemId, false);
+          addToast(`Updated "${file.name}"`, 'success');
+        }
+      };
+      input.click();
+    }
+  };
+
+  /** Prefetch next item's container metadata in the last 60 seconds without decoding */
+  const handlePlaylistPrefetchNext = useCallback(async () => {
+    const curIdx = playlist.items.findIndex(it => (it.id || it.fingerprint) === playingVideo?.id);
+    if (curIdx < 0) return;
+    const nextIdx = playlistNextIndex(curIdx);
+    if (nextIdx < 0 || nextIdx >= playlist.items.length) return;
+    const nextItem = playlist.items[nextIdx];
+    try {
+      const file = await resolveItemFile(nextItem);
+      if (file) {
+        // Read first 64KB slice into memory to warm cache and file handle without decoding
+        await file.slice(0, 64 * 1024).arrayBuffer();
+      }
+    } catch (err) {
+      console.warn('[Playlist] Metadata prefetch error:', err);
+    }
+  }, [playlist, playingVideo?.id, playlistNextIndex, resolveItemFile]);
+
+  // ── Restore playlist on launch ──────────────────────────────────────────
+  useEffect(() => {
+    if (restoreAttemptedRef.current) return;
+    if (!playlist || !playlist.items || playlist.items.length === 0) return;
+
+    restoreAttemptedRef.current = true;
+    console.log(`[App Startup] Playlist "${playlist.name}" loaded with ${playlist.items.length} items rendered purely from stored metadata.`);
+  }, [playlist.items.length, playlist.name]);
+
   const handlePlayVideo = async (video: VideoItem) => {
-    if (isPickerOpenRef.current) return;
+    isPickerOpenRef.current = false;
+
+    // Deactivate playlist selection without deleting the stored playlist in IndexedDB
+    const normId = video.id.replace(/^local-/, '');
+    const inCurrentPlaylist = playlist.items.some(it => 
+      it.id === video.id || it.id === normId || it.fingerprint === video.id || it.fingerprint === normId
+    );
+    if (!inCurrentPlaylist) {
+      setPlaylistIndex(-1);
+    }
     
     const source = video.sourceType || getVideoSourceType(video);
     const videoWithSource: VideoItem = {
@@ -2606,11 +3361,6 @@ function App() {
       setVideos(prev => mergeOrAddVideo(prev, videoWithSource));
       setPlayingVideo(videoWithSource);
       return;
-    }
-
-    // Set picker open lock if we might open a file picker
-    if (videoWithSource.type === 'local' && !videoWithSource.file && !videoWithSource.url) {
-      isPickerOpenRef.current = true;
     }
 
     try {
@@ -2625,7 +3375,10 @@ function App() {
       if (videoWithSource.type === 'url') {
         setVideos(prev => mergeOrAddVideo(prev, videoWithSource));
         setPlayingVideo(videoWithSource);
-      } else if (videoWithSource.type === 'local') {
+        return;
+      }
+
+      if (videoWithSource.type === 'local') {
         if (videoWithSource.localFilePath) {
           const useIdStream = settings.storageMode === 'file' && settings.userId && settings.userId !== 'local' && !settings.userId.startsWith('local_');
           const streamUrl = (useIdStream && !videoWithSource.id.startsWith('url-'))
@@ -2637,16 +3390,15 @@ function App() {
           };
           setVideos(prev => mergeOrAddVideo(prev, updated));
           setPlayingVideo(updated);
-          isPickerOpenRef.current = false;
           return;
         }
 
-        if (!videoWithSource.file && videoWithSource.url) {
-          // Play directly from the local stream URL (open-with) without picker
+        if (!videoWithSource.file && videoWithSource.url && !videoWithSource.url.startsWith('blob:')) {
           setVideos(prev => mergeOrAddVideo(prev, videoWithSource));
           setPlayingVideo(videoWithSource);
           return;
         }
+
         if (videoWithSource.file) {
           let readable = false;
           try {
@@ -2673,75 +3425,117 @@ function App() {
           }
         }
 
-        // Try to load from IndexedDB
-        try {
-          const handle = await getFileHandle(videoWithSource.id);
-          if (handle) {
-            const hasPermission = await verifyPermission(handle);
-            if (hasPermission) {
-              const file = await handle.getFile();
-              let fileReadable = false;
-              try {
-                await file.slice(0, 1).arrayBuffer();
-                fileReadable = true;
-              } catch (e) {
-                console.warn('File retrieved from IndexedDB handle is not readable:', e);
-              }
+        // 1. Check if item exists in currently loaded playlist items
+        if (playlist && playlist.items && playlist.items.length > 0) {
+          const normId = video.id.replace(/^local-/, '');
+          const pIdx = playlist.items.findIndex(it => 
+            it.id === video.id ||
+            it.id === normId ||
+            it.fingerprint === video.id ||
+            it.fingerprint === normId ||
+            (video.fileName && (it.name === video.fileName || it.title === video.fileName)) ||
+            (video.title && (it.title === video.title || it.name === video.title))
+          );
+          if (pIdx >= 0) {
+            await playIndex(pIdx);
+            return;
+          }
+        }
 
-              if (fileReadable) {
-                const blobUrl = URL.createObjectURL(file);
-                const updated = {
-                  ...videoWithSource,
-                  url: blobUrl,
-                  file: file
-                };
-                setVideos(prev => {
-                  const filtered = prev.filter(v => v.id !== videoWithSource.id);
-                  return mergeOrAddVideo(filtered, updated);
-                });
-                setPlayingVideo(updated);
-                isPickerOpenRef.current = false;
+        // 2. Check if item exists in any other loaded playlist
+        if (allPlaylists && allPlaylists.length > 0) {
+          const normId = video.id.replace(/^local-/, '');
+          for (const pl of allPlaylists) {
+            const pIdx = pl.items.findIndex(it =>
+              it.id === video.id ||
+              it.id === normId ||
+              (video.fileName && it.name === video.fileName) ||
+              (video.title && (it.name.startsWith(video.title) || it.name === video.title))
+            );
+            if (pIdx >= 0) {
+              if (switchPlaylist) {
+                await switchPlaylist(pl.id);
+                await playIndex(pIdx);
                 return;
               }
             }
           }
-        } catch (err) {
-          console.error('IndexedDB file restoration failed:', err);
         }
 
-        // Fallback to picker
-        pendingLocalReassociateIdRef.current = video.id;
+        // 3. Try to load handle from IndexedDB across all possible key aliases
+        const candidateKeys = [
+          videoWithSource.id,
+          videoWithSource.id.replace(/^local-/, ''),
+          `local-${videoWithSource.id}`,
+          (videoWithSource as any).fingerprint,
+          videoWithSource.fileName,
+          videoWithSource.title
+        ].filter(Boolean) as string[];
 
-        if ('showOpenFilePicker' in window) {
+        for (const key of candidateKeys) {
           try {
-            const [handle] = await (window as any).showOpenFilePicker({
-              types: [{
-                description: 'Video Files',
-                accept: {
-                  'video/mp4': ['.mp4', '.m4v'],
-                  'video/webm': ['.webm'],
-                  'video/x-matroska': ['.mkv'],
-                  'video/quicktime': ['.mov'],
-                  'video/x-msvideo': ['.avi']
+            const handle = await getFileHandle(key);
+            if (handle) {
+              const hasPermission = await verifyPermission(handle);
+              if (hasPermission) {
+                const file = await handle.getFile();
+                let fileReadable = false;
+                try {
+                  await file.slice(0, 1).arrayBuffer();
+                  fileReadable = true;
+                } catch (e) {
+                  console.warn('File retrieved from IndexedDB handle is not readable:', e);
                 }
-              }]
-            });
-            const file = await handle.getFile();
-            await processLocalVideo(file, video.id, handle);
+
+                if (fileReadable) {
+                  let probedStreams = videoWithSource.streams;
+                  let probedDuration = videoWithSource.duration;
+                  let probedFormat = videoWithSource.format;
+                  let probedSeekMap = videoWithSource.seekMap;
+                  let probedTimecodeScale = videoWithSource.timecodeScale;
+                  if (!probedStreams) {
+                    const probed = await fastProbeMediaFile(file);
+                    if (probed.streams) probedStreams = probed.streams;
+                    if (probed.duration && !probedDuration) probedDuration = probed.duration;
+                    if (probed.format && !probedFormat) probedFormat = probed.format;
+                    if (probed.seekMap && !probedSeekMap) probedSeekMap = probed.seekMap;
+                    if (probed.timecodeScale) probedTimecodeScale = probedTimecodeScale || probed.timecodeScale;
+                  }
+                  const blobUrl = URL.createObjectURL(file);
+                  const updated = {
+                    ...videoWithSource,
+                    url: blobUrl,
+                    file: file,
+                    streams: probedStreams,
+                    duration: probedDuration,
+                    format: probedFormat,
+                    seekMap: probedSeekMap,
+                    timecodeScale: probedTimecodeScale
+                  };
+                  setVideos(prev => {
+                    const filtered = prev.filter(v => v.id !== videoWithSource.id);
+                    return mergeOrAddVideo(filtered, updated);
+                  });
+                  setPlayingVideo(updated);
+                  return;
+                }
+              }
+            }
           } catch (err) {
-            console.error('Re-association picker cancelled:', err);
-          } finally {
-            isPickerOpenRef.current = false;
+            console.error(`IndexedDB handle check for key "${key}" failed:`, err);
           }
-        } else {
-          historyVideoInputRef.current?.click();
-          setTimeout(() => {
-            isPickerOpenRef.current = false;
-          }, 1000);
         }
+
+        // 4. File handle requires user gesture to restore access — mount player immediately
+        // so user enters the player view directly and clicks "Resume Playback"
+        pendingLocalReassociateIdRef.current = video.id;
+        setVideos(prev => mergeOrAddVideo(prev, videoWithSource));
+        setPlayingVideo(videoWithSource);
+        return;
       }
     } catch (err) {
       console.error('Playback re-association failed:', err);
+    } finally {
       isPickerOpenRef.current = false;
     }
   };
@@ -2812,6 +3606,35 @@ function App() {
         }
       });
     }
+  };
+
+  const handleRateVideo = (id: string, rating: number) => {
+    try {
+      const stored = JSON.parse(localStorage.getItem('valor_ratings') || '{}');
+      stored[id] = rating;
+      const normId = id.replace(/^local-/, '');
+      stored[normId] = rating;
+      localStorage.setItem('valor_ratings', JSON.stringify(stored));
+    } catch {}
+
+    setVideos(prev => {
+      const updated = prev.map(v => {
+        if (v.id === id || v.id === `local-${id}` || v.id.replace(/^local-/, '') === id) {
+          return { ...v, rating, userRating: rating };
+        }
+        return v;
+      });
+      try {
+        const activeUserId = localStorage.getItem('valor_active_user_id') || 'local';
+        const videosKey = activeUserId === 'local' ? 'valor_videos' : `valor_videos_${activeUserId}`;
+        localStorage.setItem(videosKey, JSON.stringify(updated.map(v => ({ ...v, file: undefined, url: '' }))));
+      } catch (e) {
+        console.warn('Failed to save rated video to storage:', e);
+      }
+      return updated;
+    });
+
+    addToast(`Rated ${rating} star${rating > 1 ? 's' : ''}`, 'success');
   };
 
   const processRemoteUrl = async (url: string, isLocalFile = false, titleHint?: string) => {
@@ -3120,6 +3943,172 @@ function App() {
     await processRemoteUrl(url, isLocalFile);
   };
 
+  // Verify file access permissions for playlist & local media
+  useEffect(() => {
+    let active = true;
+    const verifyAccess = async () => {
+      if (!playlist.items || playlist.items.length === 0) {
+        if (active) setIsFilesAccessExpired(false);
+        return;
+      }
+
+      let isGranted = false;
+      try {
+        if (playlist.rootHandle && 'queryPermission' in playlist.rootHandle) {
+          const q = await (playlist.rootHandle as any).queryPermission({ mode: 'read' });
+          if (q === 'granted') isGranted = true;
+        }
+      } catch {}
+
+      if (!isGranted) {
+        const target = playlist.items[playlist.currentIndex >= 0 ? playlist.currentIndex : 0] || playlist.items[0];
+        if (target) {
+          try {
+            if (target.handle && 'queryPermission' in target.handle) {
+              const q = await (target.handle as any).queryPermission({ mode: 'read' });
+              if (q === 'granted') isGranted = true;
+            } else {
+              const id = target.id || (target as any).fingerprint;
+              const h = await getFileHandle(id);
+              if (h && 'queryPermission' in h) {
+                const q = await (h as any).queryPermission({ mode: 'read' });
+                if (q === 'granted') isGranted = true;
+              }
+            }
+          } catch {}
+        }
+      }
+
+      if (active) {
+        const isFileObjCheck = (obj: any): obj is File => obj instanceof File || (obj && typeof obj.size === 'number' && typeof obj.slice === 'function');
+        const hasInMemoryFile = playingVideo && isFileObjCheck(playingVideo.file);
+        if (!isGranted && !hasInMemoryFile) {
+          setIsFilesAccessExpired(true);
+        } else {
+          setIsFilesAccessExpired(false);
+        }
+      }
+    };
+
+    verifyAccess();
+    return () => { active = false; };
+  }, [playlist.items, playlist.rootHandle, playlist.currentIndex, playingVideo]);
+
+  // Request file access permission and resume where left off at saved timestamp
+  const handleContinueWhereLeftOff = useCallback(async (targetVideoId?: string) => {
+    const activeItem = (targetVideoId ? playlist.items.find(it => it.id === targetVideoId || it.fingerprint === targetVideoId) : null)
+      || playlist.items[playlist.currentIndex >= 0 ? playlist.currentIndex : 0]
+      || playlist.items[0];
+
+    const targetVideo = (targetVideoId && playingVideo?.id === targetVideoId ? playingVideo : null)
+      || playingVideo
+      || (activeItem ? {
+          id: activeItem.id || activeItem.fingerprint,
+          title: activeItem.title || activeItem.name,
+          fileName: activeItem.name || activeItem.fileName,
+          type: 'local' as const,
+          duration: activeItem.duration || '0',
+          currentTime: activeItem.savedTime || 0,
+        } : null);
+
+    if (!targetVideo && !activeItem) return;
+
+    const targetId = targetVideoId || targetVideo?.id || activeItem?.id || (activeItem as any)?.fingerprint;
+    const savedTime = (targetVideo ? getMediaTimestamp(targetVideo) : 0)
+      || (activeItem ? (activeItem.savedTime || getMediaTimestamp({ id: targetId, fileName: activeItem.name, title: activeItem.title } as any)) : 0)
+      || ((targetVideo as any)?.currentTime || 0)
+      || 0;
+
+    pendingLocalReassociateIdRef.current = targetId;
+
+    // 1. Try root directory handle first if available
+    if (playlist.rootHandle && 'requestPermission' in playlist.rootHandle) {
+      try {
+        const perm = await (playlist.rootHandle as any).requestPermission({ mode: 'read' }).catch(() => 'denied');
+        if (perm === 'granted') {
+          if (activeItem) {
+            const file = await resolveFile(activeItem, playlist.rootHandle);
+            if (file) {
+              setIsFilesAccessExpired(false);
+              await processLocalVideo(file, targetId, activeItem.handle);
+              return;
+            }
+          }
+        }
+      } catch (e) {
+        console.warn('[handleContinueWhereLeftOff] rootHandle permission error:', e);
+      }
+    }
+
+    // 2. Try candidate keys in IndexedDB handle store or item.handle
+    const candidateKeys = [
+      targetId,
+      targetId?.replace(/^local-/, ''),
+      `local-${targetId}`,
+      targetVideo?.fileName,
+      targetVideo?.title,
+      activeItem?.name,
+      activeItem?.fileName,
+      activeItem?.title
+    ].filter(Boolean) as string[];
+
+    for (const k of candidateKeys) {
+      try {
+        const handle = (activeItem && activeItem.handle) || await getFileHandle(k);
+        if (handle && 'requestPermission' in handle) {
+          const perm = await (handle as any).requestPermission({ mode: 'read' }).catch(() => 'denied');
+          if (perm === 'granted') {
+            const file = await handle.getFile();
+            setIsFilesAccessExpired(false);
+            await processLocalVideo(file, targetId, handle);
+            return;
+          }
+        }
+      } catch (e) {
+        console.warn('[handleContinueWhereLeftOff] Handle requestPermission failed for:', k, e);
+      }
+    }
+
+    // 3. Fallback: prompt with file picker
+    if ('showOpenFilePicker' in window) {
+      try {
+        const [handle] = await (window as any).showOpenFilePicker({
+          types: [{
+            description: 'Video Files',
+            accept: {
+              'video/mp4': ['.mp4', '.m4v'],
+              'video/webm': ['.webm'],
+              'video/x-matroska': ['.mkv'],
+              'video/quicktime': ['.mov'],
+              'video/x-msvideo': ['.avi']
+            }
+          }]
+        });
+        const file = await handle.getFile();
+        setIsFilesAccessExpired(false);
+        await processLocalVideo(file, targetId, handle);
+        return;
+      } catch (pickerErr: any) {
+        if (pickerErr?.name === 'AbortError') return;
+      }
+    }
+
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = 'video/*,.mp4,.mkv,.webm,.mov,.avi,.m4v';
+    input.style.display = 'none';
+    input.onchange = async () => {
+      if (input.files && input.files[0]) {
+        const file = input.files[0];
+        setIsFilesAccessExpired(false);
+        await processLocalVideo(file, targetId);
+      }
+      input.remove();
+    };
+    document.body.appendChild(input);
+    input.click();
+  }, [playlist, playingVideo]);
+
   const isFileObj = (obj: any): obj is File => obj instanceof File || (obj && typeof obj.size === 'number' && typeof obj.slice === 'function');
   const isPlayable = playingVideo && (
     playingVideo.type !== 'local' || 
@@ -3203,6 +4192,7 @@ function App() {
       overlayShowBackground: settings.overlayShowBackground !== false,
       overlayShowRating: settings.overlayShowRating !== false,
       overlayShowOverview: settings.overlayShowOverview !== false,
+      overlayActiveTime: typeof settings.overlayActiveTime === 'number' ? settings.overlayActiveTime : 10,
       openSubtitlesApiKey: settings.openSubtitlesApiKey,
       allowUiSkipping: settings.allowUiSkipping,
       blockSeekingCompletely: settings.blockSeekingCompletely,
@@ -3251,62 +4241,17 @@ function App() {
         await processRemoteUrl(url, false);
       },
       onAddToPlaylist: async (file: File) => {
-        await processLocalVideo(file);
+        const fp = makeFingerprint(file);
+        const item = await buildPlaylistItem(file);
+        addPlaylistItems([item], true);
+        // Also process so it appears in history
+        await processLocalVideo(file, fp);
       },
       onPlayVideo: (video: VideoItem) => {
         handlePlayVideo(video);
       },
       onReassociate: async (videoId: string) => {
-        pendingLocalReassociateIdRef.current = videoId;
-        
-        // Try IndexedDB handle first — but we must also start the file picker
-        // synchronously to preserve the user gesture activation for showOpenFilePicker.
-        // Strategy: start both paths, use whichever succeeds.
-        
-        // Path 1: Try IndexedDB handle (fast path — no user interaction needed)
-        let handleRestored = false;
-        try {
-          const handle = await getFileHandle(videoId);
-          if (handle) {
-            const hasPermission = await verifyPermission(handle);
-            if (hasPermission) {
-              const file = await handle.getFile();
-              await processLocalVideo(file, videoId, handle);
-              handleRestored = true;
-            }
-          }
-        } catch (err) {
-          console.error('[Recovery] Failed to restore from IndexedDB in onReassociate:', err);
-        }
-        
-        if (handleRestored) return;
-
-        // Path 2: Fallback to file picker.
-        // The hidden file input may not be in the DOM (we're in the player render path),
-        // so we create a temporary one on-the-fly. This works even after async awaits
-        // because <input>.click() doesn't require transient user activation like showOpenFilePicker.
-        const input = document.createElement('input');
-        input.type = 'file';
-        input.accept = 'video/*';
-        input.style.display = 'none';
-        input.onchange = async () => {
-          if (input.files && input.files[0]) {
-            const file = input.files[0];
-            pendingLocalReassociateIdRef.current = null;
-            
-            // Try to get a persistent handle via showOpenFilePicker for future reloads
-            let handle: FileSystemFileHandle | undefined;
-            if ('showOpenFilePicker' in window) {
-              // We can't call showOpenFilePicker here (no gesture), but we have the file.
-              // The handle won't be saved this time, but the file will work for this session.
-            }
-            
-            await processLocalVideo(file, videoId);
-          }
-          document.body.removeChild(input);
-        };
-        document.body.appendChild(input);
-        input.click();
+        await handleContinueWhereLeftOff(videoId);
       }
     };
 
@@ -3318,11 +4263,182 @@ function App() {
         />
       );
     } else {
+      // ── Playlist-aware local player render ──────────────────────────────
+      const normPlayingId = playingVideo.id.replace(/^local-/, '');
+      const currentPlaylistIdx = playlist.items.findIndex(
+        it => it.id === playingVideo.id ||
+              it.fingerprint === playingVideo.id ||
+              it.id === normPlayingId ||
+              it.fingerprint === normPlayingId ||
+              (playingVideo.fileName && (it.name === playingVideo.fileName || it.title === playingVideo.fileName)) ||
+              (playingVideo.title && (it.title === playingVideo.title || it.name === playingVideo.title))
+      );
+      const hasNext = currentPlaylistIdx >= 0
+        ? playlistNextIndex(currentPlaylistIdx) >= 0
+        : false;
+      const hasPrev = currentPlaylistIdx > 0;
+
+      const handlePlaylistEnded = () => {
+        const next = currentPlaylistIdx >= 0
+          ? playlistNextIndex(currentPlaylistIdx)
+          : -1;
+        if (next >= 0) {
+          playIndex(next);
+        } else {
+          // Repeat off and no next item → idle
+          setPlayingVideo(null);
+          setPlaylistIndex(-1);
+        }
+      };
+
+      const handlePlaylistNext = () => {
+        const next = currentPlaylistIdx >= 0
+          ? playlistNextIndex(currentPlaylistIdx)
+          : -1;
+        if (next >= 0) playIndex(next);
+      };
+
+      const handlePlaylistPrev = () => {
+        // If currentTime > 3s the player restarts; < 3s we go to previous
+        // The player checks this internally and calls onPrev or resets
+        const prev = currentPlaylistIdx > 0
+          ? playlistPrevIndex(currentPlaylistIdx)
+          : -1;
+        if (prev >= 0) playIndex(prev);
+      };
+
       return (
         <LocalVideoPlayer 
           key={playingVideo.id}
           {...playerProps}
-        />
+          isPermissionExpired={isFilesAccessExpired}
+          onContinueWhereLeftOff={() => handleContinueWhereLeftOff(playingVideo.id)}
+          playlist={playlist}
+          onPlaylistEnded={handlePlaylistEnded}
+          onPlaylistNext={handlePlaylistNext}
+          onPlaylistPrev={handlePlaylistPrev}
+          onPlaylistPrefetchNext={handlePlaylistPrefetchNext}
+          autoNextCountdown={5}
+          onFinishSession={handleFinishSession}
+          whenFinished={(settings as any).whenFinished || 'home'}
+          playbackFinishDelay={(settings as any).playbackFinishDelay ?? 5}
+          onOpenFile={handleSelectLocalFile}
+          onOpenNetworkStream={handleOpenNetworkStream}
+          onAddToPlaylist={handleAddToPlaylist}
+          onPlayIndex={playIndex}
+          onTogglePlaylistPanel={() => setShowPlaylistPanel(p => !p)}
+          onTimelineOnlyChange={(isTimeline) => {
+            if (isTimeline) setShowPlaylistPanel(false);
+          }}
+          playlistIndex={currentPlaylistIdx}
+          isPlaylistOpen={showPlaylistPanel}
+          onClosePlaylistPanel={() => setShowPlaylistPanel(false)}
+        >
+          {/* Playlist slide-in panel */}
+          <PlaylistPanel
+            playlist={playlist}
+            allPlaylists={allPlaylists}
+            currentFP={playingVideo.id}
+            isOpen={showPlaylistPanel}
+            isPermissionExpired={isFilesAccessExpired}
+            onContinueWhereLeftOff={() => handleContinueWhereLeftOff()}
+            onClose={() => setShowPlaylistPanel(false)}
+            onPlayIndex={(i) => playIndex(i)}
+            onRemoveItem={(fp) => {
+              const newIdx = removePlaylistItem(fp, currentPlaylistIdx);
+              if (playingVideo.id === fp) {
+                if (newIdx >= 0 && newIdx < playlist.items.length - 1) {
+                  playIndex(newIdx);
+                } else {
+                  setPlayingVideo(null);
+                }
+              }
+            }}
+            onClearAll={() => {
+              clearPlaylist();
+              setPlayingVideo(null);
+            }}
+            onReorder={(from, to) => {
+              reorderPlaylistItem(from, to);
+            }}
+            onSetRepeat={(r) => setPlaylist(prev => ({ ...prev, repeat: r }))}
+            onSetShuffle={(s) => setPlaylist(prev => ({ ...prev, shuffle: s }))}
+            onSwitchPlaylist={async (id) => {
+              const ok = await switchPlaylist(id);
+              if (ok) addToast('Switched playlist', 'success');
+            }}
+            onRenamePlaylist={(newName, id) => {
+              renamePlaylist(newName, id);
+            }}
+            onDeletePlaylist={(id) => {
+              deletePlaylist(id);
+              addToast('Deleted playlist', 'warning');
+            }}
+            onCreatePlaylist={(name) => {
+              createNewPlaylist(name);
+              addToast('Created new playlist', 'success');
+            }}
+            onLocateFile={handleLocateFile}
+            formatTime={formatTime}
+          />
+          {/* Drop "Play now / Add to queue" prompt */}
+          {pendingDropFiles && (
+            <div
+              style={{
+                position: 'fixed', inset: 0,
+                zIndex: 9995,
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                background: 'rgba(0,0,0,0.6)',
+                backdropFilter: 'blur(8px)',
+              }}
+              onClick={() => setPendingDropFiles(null)}
+            >
+              <div
+                onClick={e => e.stopPropagation()}
+                style={{
+                  background: '#161616',
+                  border: '1px solid rgba(255,255,255,0.1)',
+                  borderRadius: 14,
+                  padding: '24px 28px',
+                  display: 'flex', flexDirection: 'column', gap: 12,
+                  fontFamily: 'Outfit, sans-serif',
+                  minWidth: 280,
+                }}
+              >
+                <div style={{ fontSize: '1rem', fontWeight: 700, color: '#fff' }}>
+                  Add to playlist?
+                </div>
+                <div style={{ fontSize: '0.82rem', color: 'rgba(255,255,255,0.6)' }}>
+                  {pendingDropFiles.items[0]?.title}
+                </div>
+                <div style={{ display: 'flex', gap: 10, marginTop: 8 }}>
+                  <button
+                    onClick={pendingDropFiles.onPlayNow}
+                    style={{
+                      flex: 1, background: '#e50914', border: 'none',
+                      color: '#fff', borderRadius: 8, padding: '10px',
+                      cursor: 'pointer', fontWeight: 600, fontSize: '0.85rem',
+                    }}
+                  >
+                    Play now
+                  </button>
+                  <button
+                    onClick={pendingDropFiles.onAddToQueue}
+                    style={{
+                      flex: 1,
+                      background: 'rgba(255,255,255,0.08)',
+                      border: '1px solid rgba(255,255,255,0.12)',
+                      color: '#fff', borderRadius: 8, padding: '10px',
+                      cursor: 'pointer', fontWeight: 600, fontSize: '0.85rem',
+                    }}
+                  >
+                    Add to queue
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+        </LocalVideoPlayer>
       );
     }
   }
@@ -3444,6 +4560,7 @@ function App() {
                   handleDrag={handleDrag}
                   handleDrop={handleDrop}
                   handleSelectLocalFile={handleSelectLocalFile}
+                  handleSelectDirectory={handleSelectDirectory}
                   fileInputRef={fileInputRef}
                   handleFileSelect={handleFileSelect}
                   historyVideoInputRef={historyVideoInputRef}
@@ -3475,6 +4592,7 @@ function App() {
                   settings={settings}
                   handlePlayVideo={handlePlayVideo}
                   handleRemoveVideo={handleRemoveVideo}
+                  onRateVideo={handleRateVideo}
                   syncVideoToTraktHistory={syncVideoToTraktHistory}
                   isInstantlyPlayable={isInstantlyPlayable}
                   parseDurationToSeconds={parseDurationToSeconds}
@@ -3493,6 +4611,15 @@ function App() {
                   setVideos={setVideos}
                   onSelectMedia={handleOpenMediaDetails}
                   tmdbApiKey={settings.tmdbApiKey}
+                  playlist={playlist}
+                  allPlaylists={allPlaylists}
+                  onSwitchPlaylist={async (id) => {
+                    await switchPlaylist(id);
+                    await playIndex(0);
+                  }}
+                  onDeletePlaylist={deletePlaylist}
+                  onCreatePlaylist={createNewPlaylist}
+                  onPlayIndex={playIndex}
                 />
               )}
 
@@ -3681,6 +4808,45 @@ function App() {
       )}
 
       
+
+      {/* Playlist slide-in panel */}
+      <PlaylistPanel
+        playlist={playlist}
+        allPlaylists={allPlaylists}
+        isOpen={showPlaylistPanel}
+        isPermissionExpired={isFilesAccessExpired}
+        onContinueWhereLeftOff={() => handleContinueWhereLeftOff()}
+        onClose={() => setShowPlaylistPanel(false)}
+        onPlayIndex={(i) => playIndex(i)}
+        onRemoveItem={(fp) => {
+          removePlaylistItem(fp, -1);
+        }}
+        onClearAll={() => {
+          clearPlaylist();
+        }}
+        onReorder={(from, to) => {
+          reorderPlaylistItem(from, to);
+        }}
+        onSetRepeat={(r) => setPlaylist(prev => ({ ...prev, repeat: r }))}
+        onSetShuffle={(s) => setPlaylist(prev => ({ ...prev, shuffle: s }))}
+        onSwitchPlaylist={async (id) => {
+          const ok = await switchPlaylist(id);
+          if (ok) addToast('Switched playlist', 'success');
+        }}
+        onRenamePlaylist={(newName, id) => {
+          renamePlaylist(newName, id);
+        }}
+        onDeletePlaylist={(id) => {
+          deletePlaylist(id);
+          addToast('Deleted playlist', 'warning');
+        }}
+        onCreatePlaylist={(name) => {
+          createNewPlaylist(name);
+          addToast('Created new playlist', 'success');
+        }}
+        onLocateFile={handleLocateFile}
+        formatTime={formatTime}
+      />
 
       {/* Global Toast Container */}
       <div style={{
@@ -4486,6 +5652,13 @@ function App() {
           </div>
         </div>
       )}
+
+      {/* Local Player Reload Guard Modal */}
+      <ReloadGuardModal
+        isOpen={showReloadModal}
+        onStay={handleDismissReloadModal}
+        onReloadAnyway={handleReloadAnyway}
+      />
     </div>
   );
 }

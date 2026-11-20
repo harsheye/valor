@@ -808,19 +808,16 @@ export const BufferingOverlay: React.FC<{
         opacity: visible ? 1 : 0,
         transition: 'opacity 0.35s ease-in-out',
         pointerEvents: 'none',
-        ...(isNetflixTheme ? {
-          background: 'transparent',
-          pointerEvents: 'none',
-          position: 'absolute',
-          inset: 0,
-          zIndex: 50,
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          width: '100%',
-          height: '100%',
-          overflow: 'hidden'
-        } : {})
+        position: 'absolute',
+        inset: 0,
+        zIndex: 50,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        width: '100%',
+        height: '100%',
+        overflow: 'hidden',
+        background: 'transparent'
       }}
     >
       <LoadingSpinner customLoaderUrl={customLoaderUrl} customLoaderType={customLoaderType} preset={resolvedPreset} />

@@ -3,7 +3,7 @@ import {
   Play, Pause, RotateCcw, RotateCw, Cast, X, ArrowLeft, 
   MessageSquare, MessageSquareText, CircleGauge, Maximize, Minimize, MonitorPlay,
   Volume2, Volume1, VolumeX, AlertCircle, Lock, Unlock,
-  Layers, Type, Clock, Sliders, SkipForward, Ban, FastForward, Zap, Coffee, ChevronRight, ChevronLeft, Eye, Settings, Bookmark as BookmarkIcon, Activity, Terminal, Sun, Sparkles
+  Layers, Type, Clock, Sliders, SkipForward, Ban, FastForward, Zap, Coffee, ChevronRight, ChevronLeft, Eye, Settings, Bookmark as BookmarkIcon, Activity, Terminal, Sun, Sparkles, Star
 } from 'lucide-react';
 import { Button } from './ui/button';
 import type { VideoItem, CustomAudioTrack, CustomSubtitleTrack, Bookmark } from '../types/media';
@@ -107,6 +107,7 @@ import { ConsoleOverlay } from './ConsoleOverlay';
 import { SpeedPopover } from './SpeedPopover';
 import { EsportsLiveOverlay } from './EsportsLiveOverlay';
 import { trimSubtitleName, saveEmbedSubtitles, getEmbedSubtitlesSync, getEmbedSubtitlesAsync } from '../utils/embedSubtitleStorage';
+import { mergeBookmarksList, isIntroBookmark, isOutroBookmark, deduplicateBookmarks } from '../utils/bookmarkUtils';
 
 export interface VideoPlayerProps {
   video: VideoItem;
@@ -140,6 +141,7 @@ export interface VideoPlayerProps {
   overlayShowBackground?: boolean;
   overlayShowRating?: boolean;
   overlayShowOverview?: boolean;
+  overlayActiveTime?: number;
   openSubtitlesApiKey?: string;
   onUpdateSettings?: (settings: Partial<any>) => void;
   allowUiSkipping?: boolean;
@@ -220,6 +222,7 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
   overlayShowBackground = true,
   overlayShowRating = true,
   overlayShowOverview = true,
+  overlayActiveTime = 10,
   openSubtitlesApiKey = '',
   onUpdateSettings,
   allowUiSkipping = true,
@@ -629,7 +632,7 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
   const [showSettingsPanel, setShowSettingsPanel] = useState(false);
   const [showAddDialog, setShowAddDialog] = useState(false);
   const [showBookmarksPopover, setShowBookmarksPopover] = useState(false);
-  const [bookmarks, setBookmarks] = useState<any[]>(() => video.bookmarks || []);
+  const [bookmarks, setBookmarks] = useState<any[]>(() => deduplicateBookmarks(video.bookmarks || []));
   const [editingBookmark, setEditingBookmark] = useState<Bookmark | undefined>(undefined);
   const [markingStartTime, setMarkingStartTime] = useState<number | null>(null);
 
@@ -870,8 +873,8 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
       const seriesInfo = classifyVideoTitle(video.title);
       if (seriesInfo.type === 'series' && seriesInfo.seriesTitle) {
         const currentBookmarks = video.bookmarks || [];
-        const hasIntro = currentBookmarks.some((b: any) => b.isIntro);
-        const hasOutro = currentBookmarks.some((b: any) => b.isOutro);
+        const hasIntro = currentBookmarks.some((b: any) => isIntroBookmark(b));
+        const hasOutro = currentBookmarks.some((b: any) => isOutroBookmark(b));
 
         if (!hasIntro || !hasOutro) {
           const otherEpisodes = videos.filter(
@@ -884,9 +887,9 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
 
           for (const ep of otherEpisodes) {
             const epBms = ep.bookmarks || [];
-            if (!introToCopy) introToCopy = epBms.find((b: any) => b.isIntro);
+            if (!introToCopy) introToCopy = epBms.find((b: any) => isIntroBookmark(b));
             if (!outroToCopy) {
-              outroToCopy = epBms.find((b: any) => b.isOutro);
+              outroToCopy = epBms.find((b: any) => isOutroBookmark(b));
               if (outroToCopy) outroSourceEp = ep;
             }
             if (introToCopy && outroToCopy) break;
@@ -909,7 +912,7 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
           }
 
           if (updated) {
-            const sortedBms = newBms.sort((a, b) => a.time - b.time);
+            const sortedBms = mergeBookmarksList(newBms);
             setBookmarks(sortedBms);
             onUpdateVideo((prev: any) => ({
               ...prev,
@@ -1174,8 +1177,45 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
   const sessionStartRef = useRef<number | null>(null);
   const mountTimeRef = useRef<number>(Date.now());
   const [showRatingPrompt, setShowRatingPrompt] = useState(false);
-  const [userRating, setUserRating] = useState<number | null>((video as any).rating || null);
+  const [userRating, setUserRating] = useState<number | null>(() => {
+    const r = (video as any).rating;
+    if (typeof r === 'number' && r > 0) return r;
+    try {
+      const stored = JSON.parse(localStorage.getItem('valor_ratings') || '{}');
+      if (video.id && stored[video.id]) return Number(stored[video.id]);
+      if (video.title && stored[video.title]) return Number(stored[video.title]);
+    } catch {}
+    return null;
+  });
+  const [hoverRating, setHoverRating] = useState<number | null>(null);
   const ratingPromptedRef = useRef<boolean>(!!(video as any).rating);
+
+  const handleSelectRating = useCallback((star: number) => {
+    setUserRating(star);
+    onUpdateVideo((prev: any) => ({ ...prev, rating: star }));
+    try {
+      const savedSettings = localStorage.getItem('valor_settings');
+      if (savedSettings) {
+        const parsed = JSON.parse(savedSettings);
+        if (parsed.traktAccessToken) {
+          syncTraktRating({ ...video, tmdbId: video.tmdbId || tmdbIdRef.current }, star, parsed.traktAccessToken).then(res => {
+            if (res.ok) {
+              triggerSwitchToast(`Trakt Rating: Synced ${star * 2}/10`);
+            }
+          }).catch(() => {});
+        }
+      }
+    } catch {}
+    try {
+      const currentRatings = JSON.parse(localStorage.getItem('valor_ratings') || '{}');
+      if (video.id) currentRatings[video.id] = star;
+      if (video.title) currentRatings[video.title] = star;
+      localStorage.setItem('valor_ratings', JSON.stringify(currentRatings));
+    } catch {}
+    setTimeout(() => {
+      setShowRatingPrompt(false);
+    }, 1500);
+  }, [video, onUpdateVideo, triggerSwitchToast]);
 
   const tmdbIdRef = useRef<number | null>(null);
   const hadTidbDataRef = useRef<boolean>(false);
@@ -1676,15 +1716,8 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
       }
 
       // Merge local, server, and tidb bookmarks
-      const mergeBookmarks = (existing: any[], newBms: any[]) => {
-        const map = new Map<string, any>();
-        existing.forEach(bm => map.set(bm.id, bm));
-        newBms.forEach(bm => map.set(bm.id, bm));
-        return Array.from(map.values()).sort((a, b) => a.time - b.time);
-      };
-
       const initialBms = video.bookmarks || [];
-      const merged = mergeBookmarks(mergeBookmarks(initialBms, serverBms), tidbBms);
+      const merged = mergeBookmarksList(initialBms, [...serverBms, ...tidbBms]);
       
       setBookmarks(merged);
       onUpdateVideo((prev: any) => ({
@@ -3045,26 +3078,28 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
       clearTimeout(pauseOverlayTimerRef.current);
       pauseOverlayTimerRef.current = null;
     }
-    if (!isPlaying && !isBuffering) {
+    if (!isPlaying && !isBuffering && getOverlayDataFromTmdb !== false) {
       showPauseMetadataOverlayRef.current = false;
       setShowPauseMetadataOverlay(false);
+      const delayMs = Math.max(0, (overlayActiveTime ?? 10) * 1000);
       pauseOverlayTimerRef.current = setTimeout(() => {
         showPauseMetadataOverlayRef.current = true;
         setShowPauseMetadataOverlay(true);
         setShowControls(false);
-      }, 10000);
+      }, delayMs);
     }
-  }, [isPlaying, isBuffering]);
+  }, [isPlaying, isBuffering, getOverlayDataFromTmdb, overlayActiveTime]);
 
   useEffect(() => {
-    if (!isPlaying && !isBuffering) {
+    if (!isPlaying && !isBuffering && getOverlayDataFromTmdb !== false) {
       showPauseMetadataOverlayRef.current = false;
       setShowPauseMetadataOverlay(false);
+      const delayMs = Math.max(0, (overlayActiveTime ?? 10) * 1000);
       pauseOverlayTimerRef.current = setTimeout(() => {
         showPauseMetadataOverlayRef.current = true;
         setShowPauseMetadataOverlay(true);
         setShowControls(false);
-      }, 10000);
+      }, delayMs);
     } else {
       if (pauseOverlayTimerRef.current) {
         clearTimeout(pauseOverlayTimerRef.current);
@@ -3080,7 +3115,7 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
         pauseOverlayTimerRef.current = null;
       }
     };
-  }, [isPlaying, isBuffering]);
+  }, [isPlaying, isBuffering, getOverlayDataFromTmdb, overlayActiveTime]);
 
   // Controls Auto-Hide
   const resetControlsTimeout = () => {
@@ -4289,13 +4324,15 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
         language: s.language
       });
     });
-    subtitleTracks.forEach((t) => {
-      list.push({
-        type: 'custom',
-        name: t.name,
-        track: t
+    subtitleTracks
+      .filter((t) => t.streamIndex === undefined || !subtitleStreams.some((s) => s.index === t.streamIndex))
+      .forEach((t) => {
+        list.push({
+          type: 'custom',
+          name: t.name,
+          track: t
+        });
       });
-    });
     return list;
   };
 
@@ -4312,13 +4349,15 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
         language: s.language
       });
     });
-    audioTracks.forEach((t) => {
-      list.push({
-        type: 'custom',
-        name: t.name,
-        track: t
+    audioTracks
+      .filter((t) => t.streamIndex === undefined || !audioStreams.some((s) => s.index === t.streamIndex))
+      .forEach((t) => {
+        list.push({
+          type: 'custom',
+          name: t.name,
+          track: t
+        });
       });
-    });
     return list;
   };
 
@@ -4672,12 +4711,44 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
       const isBoostKey = matchesKey(audioBoostKey);
       const isScreenshotKey = matchesKey(screenshotKey);
       const isSkipKey = pressedKey === 'c';
+      const isRatingKey = pressedKey === 'r';
+      if (isRatingKey) {
+        e.preventDefault();
+        e.stopPropagation();
+        setShowRatingPrompt(prev => !prev);
+        return;
+      }
+      if (showRatingPrompt && ['1', '2', '3', '4', '5'].includes(pressedKey)) {
+        e.preventDefault();
+        e.stopPropagation();
+        handleSelectRating(parseInt(pressedKey, 10));
+        return;
+      }
       if (!isVolumeKey && !isBoostKey && !isScreenshotKey && !isSkipKey) {
         e.preventDefault();
         e.stopPropagation();
         triggerSwitchToast("Controls are Locked");
         return;
       }
+    }
+
+    if (pressedKey === 'r') {
+      e.preventDefault();
+      e.stopPropagation();
+      setShowRatingPrompt(prev => !prev);
+      return;
+    }
+    if (showRatingPrompt && ['1', '2', '3', '4', '5'].includes(pressedKey)) {
+      e.preventDefault();
+      e.stopPropagation();
+      handleSelectRating(parseInt(pressedKey, 10));
+      return;
+    }
+    if (showRatingPrompt && pressedKey === 'escape') {
+      e.preventDefault();
+      e.stopPropagation();
+      setShowRatingPrompt(false);
+      return;
     }
     const playPauseKey = keybinds.playPause || ' ';
     const rewindKey = keybinds.rewind || 'arrowleft';
@@ -5819,14 +5890,23 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
   activeSkipBookmarkRef.current = activeSkipBookmark;
 
   const controlsVisible = showControls && !isLocked && !showPauseMetadataOverlay;
+  const isAnyPopupOpen = showAudioSubMenu || showSpeedMenu || showBookmarksPopover || showSettingsPanel;
   const effectiveDuration = duration || parseDurationToSeconds(video.duration) || 0;
+  const displayTime = isScrubbing && scrubTime !== null ? scrubTime : currentTime;
 
   const handleWheel = (e: React.WheelEvent) => {
     if (e.ctrlKey || e.metaKey) return;
     if (showSettingsPanel || showAddDialog || showBookmarksPopover || showAudioSubMenu || showConsoleOverlay) return;
     
     const target = e.target as HTMLElement;
-    if (target.closest('.player-settings-panel') || target.closest('.bookmarks-popover') || target.closest('.audio-sub-popover') || target.closest('.speed-popover-container')) return;
+    if (
+      target.closest('.player-settings-panel') || 
+      target.closest('.bookmarks-popover') || 
+      target.closest('.audio-sub-popover') || 
+      target.closest('.speed-popover-container') ||
+      target.closest('.playlist-panel-container') ||
+      target.closest('.playlist-panel-backdrop')
+    ) return;
 
     e.preventDefault();
     if (showVolumeControlMode === 'disable') {
@@ -6036,7 +6116,9 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
         style={{ 
           position: 'absolute', 
           inset: 0, 
-          zIndex: 10 
+          zIndex: 10,
+          isolation: 'isolate',
+          overflow: 'hidden'
         }}
         onDoubleClick={handlePlayerDoubleClick}
         onClick={(e) => {
@@ -6095,6 +6177,7 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
           isEnabled={isAmbianceEnabled}
           blur={ambianceBlur}
           opacity={ambianceOpacity}
+          style={{ zIndex: 0 }}
         />
         <video
           ref={videoRef}
@@ -6106,7 +6189,8 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
           className="main-video-element"
           style={{
             position: 'relative',
-            zIndex: 1,
+            zIndex: 2,
+            backgroundColor: '#000',
             filter: toneMappingMode !== 'off' ? getToneMappingCssFilter(toneMappingMode) : undefined,
             objectFit: aspectRatio === 'cover' ? 'cover' : (aspectRatio === '16:9' || aspectRatio === '4:3' ? 'fill' : 'contain'),
             aspectRatio: aspectRatio === '16:9' ? '16/9' : (aspectRatio === '4:3' ? '4/3' : undefined)
@@ -6118,7 +6202,7 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
 
               // 1. Check site storage for exact saved timestamp
               const storedTime = getMediaTimestamp(video, videoDuration);
-              const targetResume = (video.currentTime && video.currentTime > 0) ? video.currentTime : storedTime;
+              const targetResume = (video.currentTime && video.currentTime > 0) ? video.currentTime : (storedTime > 0 ? storedTime : (video.resumeTime || 0));
 
               const directResumeTime = video.resumeTime || 0;
               if (directResumeTime > 5 && videoDuration - directResumeTime > 10 && !targetResume) {
@@ -6128,7 +6212,7 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
                 return;
               }
 
-              if (targetResume > 0 && !hasSeekedRef.current) {
+              if (targetResume > 0) {
                 const remainingTime = videoDuration - targetResume;
                 if (remainingTime > 3) {
                   logger.player(`Resume site storage location met: seeking to ${targetResume}s`);
@@ -6394,21 +6478,61 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
             pointerEvents: 'auto'
           }}
         >
-          {/* Lock Indicator Button */}
-          <button 
-            className="player-lock-indicator"
-            onClick={(e) => {
-              e.stopPropagation();
-              setIsLocked(false);
-              triggerSwitchToast(`Controls Unlocked (${getLockShortcutKey()})`);
-            }}
-            title={`Unlock Controls (Shortcut: ${getLockShortcutKey()})`}
+          {/* Lock Screen Top Right Action Buttons (Unlock & Rate) */}
+          <div 
             style={{
+              position: 'absolute',
+              top: '1.5rem',
+              right: '1.5rem',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px',
+              zIndex: 10000,
               pointerEvents: 'auto'
             }}
           >
-            <Lock size={20} />
-          </button>
+            <button 
+              className="player-lock-indicator"
+              onClick={(e) => {
+                e.stopPropagation();
+                setShowRatingPrompt(prev => !prev);
+              }}
+              title="Rate this video (Shortcut: R)"
+              style={{
+                position: 'static',
+                pointerEvents: 'auto',
+                background: 'transparent',
+                backgroundColor: 'transparent',
+                border: 'none',
+                boxShadow: 'none',
+                outline: 'none',
+                cursor: 'pointer'
+              }}
+            >
+              <Star size={19} color={userRating ? "#fbbf24" : "#ffffff"} fill={userRating ? "#fbbf24" : "none"} />
+            </button>
+            <button 
+              className="player-lock-indicator"
+              onClick={(e) => {
+                e.stopPropagation();
+                setIsLocked(false);
+                triggerSwitchToast(`Controls Unlocked (${getLockShortcutKey()})`);
+              }}
+              title={`Unlock Controls (Shortcut: ${getLockShortcutKey()})`}
+              style={{
+                position: 'static',
+                pointerEvents: 'auto',
+                background: 'transparent',
+                backgroundColor: 'transparent',
+                border: 'none',
+                boxShadow: 'none',
+                outline: 'none',
+                cursor: 'pointer'
+              }}
+            >
+              <Lock size={20} />
+            </button>
+          </div>
         </div>
       )}
 
@@ -6456,45 +6580,115 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
 
       {/* Floating Rating Prompt Overlay */}
       {showRatingPrompt && !isEffectiveEmbed && (
-        <div className="floating-rating-prompt animate-slide-in" onClick={(e) => e.stopPropagation()}>
+        <div 
+          className="floating-rating-prompt animate-slide-in" 
+          onClick={(e) => e.stopPropagation()}
+          onMouseDown={(e) => e.stopPropagation()}
+          onMouseUp={(e) => e.stopPropagation()}
+          onPointerDown={(e) => e.stopPropagation()}
+          style={{ zIndex: 10001, pointerEvents: 'auto' }}
+        >
           <div className="rating-header">
-            <span>Enjoying this video? Rate it:</span>
-            <button className="rating-close" onClick={() => setShowRatingPrompt(false)}>
+            <span>
+              {hoverRating !== null
+                ? `Rate: ${hoverRating} / 5`
+                : userRating !== null
+                ? `Your Rating: ${userRating} / 5`
+                : 'Enjoying this video? Rate it:'}
+            </span>
+            <button 
+              className="rating-close" 
+              onClick={() => setShowRatingPrompt(false)}
+              title="Close"
+              type="button"
+            >
               <X size={14} />
             </button>
           </div>
-          <div className="rating-stars">
+          <div 
+            className="rating-stars"
+            onMouseLeave={() => setHoverRating(null)}
+          >
             {[1, 2, 3, 4, 5].map((star) => {
-              const active = userRating !== null && star <= userRating;
+              const displayVal = hoverRating !== null ? hoverRating : userRating;
+              const isFull = displayVal !== null && displayVal >= star;
+              const isHalf = displayVal !== null && !isFull && displayVal >= star - 0.5;
+
               return (
-                <button
+                <div
                   key={star}
-                  type="button"
-                  className={`star-btn ${active ? 'active' : ''}`}
-                  onClick={() => {
-                    setUserRating(star);
-                    onUpdateVideo((prev: any) => ({ ...prev, rating: star }));
-                    try {
-                      const savedSettings = localStorage.getItem('valor_settings');
-                      if (savedSettings) {
-                        const parsed = JSON.parse(savedSettings);
-                        if (parsed.traktAccessToken) {
-                          syncTraktRating({ ...video, tmdbId: video.tmdbId || tmdbIdRef.current }, star, parsed.traktAccessToken).then(res => {
-                            if (res.ok) {
-                              triggerSwitchToast(`Trakt Rating: Synced ${star * 2}/10`);
-                            }
-                          }).catch(() => {});
-                        }
-                      }
-                    } catch {}
-                    // Show a quick thank you message and then close
-                    setTimeout(() => {
-                      setShowRatingPrompt(false);
-                    }, 1500);
-                  }}
+                  className={`rating-star-wrapper ${isFull ? 'full' : isHalf ? 'half' : ''}`}
+                  title={`${displayVal !== null ? displayVal : star} / 5`}
                 >
-                  ★
-                </button>
+                  {/* Empty background star */}
+                  <Star 
+                    size={26} 
+                    color="rgba(255, 255, 255, 0.25)" 
+                    fill="rgba(255, 255, 255, 0.05)" 
+                  />
+
+                  {/* Filled star overlay: Full or Half */}
+                  {isFull ? (
+                    <div 
+                      style={{ 
+                        position: 'absolute', 
+                        inset: 0, 
+                        display: 'flex', 
+                        alignItems: 'center', 
+                        justifyContent: 'center', 
+                        pointerEvents: 'none' 
+                      }}
+                    >
+                      <Star 
+                        size={26} 
+                        color="#fbbf24" 
+                        fill="#fbbf24" 
+                        style={{ filter: 'drop-shadow(0 0 6px rgba(251, 191, 36, 0.5))' }} 
+                      />
+                    </div>
+                  ) : isHalf ? (
+                    <div 
+                      style={{ 
+                        position: 'absolute', 
+                        inset: 0, 
+                        display: 'flex', 
+                        alignItems: 'center', 
+                        justifyContent: 'center', 
+                        pointerEvents: 'none',
+                        clipPath: 'inset(0 50% 0 0)'
+                      }}
+                    >
+                      <Star 
+                        size={26} 
+                        color="#fbbf24" 
+                        fill="#fbbf24" 
+                        style={{ filter: 'drop-shadow(0 0 6px rgba(251, 191, 36, 0.5))' }} 
+                      />
+                    </div>
+                  ) : null}
+
+                  {/* Left 50% hit target for half-star (e.g. star - 0.5) */}
+                  <div
+                    className="star-hit-left"
+                    title={`${star - 0.5} Stars`}
+                    onMouseEnter={() => setHoverRating(star - 0.5)}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleSelectRating(star - 0.5);
+                    }}
+                  />
+
+                  {/* Right 50% hit target for whole-star (e.g. star) */}
+                  <div
+                    className="star-hit-right"
+                    title={`${star} Stars`}
+                    onMouseEnter={() => setHoverRating(star)}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleSelectRating(star);
+                    }}
+                  />
+                </div>
               );
             })}
           </div>
@@ -6507,23 +6701,22 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
       {/* Resume Button for direct URL/path opens with saved progress */}
       {resumePromptTime !== null && currentTime < 3 && !activeSkipBookmark && (
         <button 
-          className="skip-btn resume-playback-btn"
+          className="skip-btn resume-playback-btn animate-fade-in-pure"
           style={{
             position: 'absolute',
             bottom: controlsVisible ? '160px' : '40px',
             right: '40px',
             zIndex: 90,
-            background: 'rgba(0,0,0,0.7)',
-            color: 'white',
-            border: '1px solid rgba(255,255,255,0.2)',
-            padding: '12px 24px',
+            background: '#ffffff',
+            color: '#000000',
+            border: '1px solid #ffffff',
+            padding: '10px 22px',
             borderRadius: '8px',
-            fontSize: '16px',
-            fontWeight: '600',
+            fontSize: '15px',
+            fontWeight: 700,
             cursor: 'pointer',
-            transition: 'all 0.2s',
-            backdropFilter: 'blur(8px)',
-            boxShadow: '0 4px 12px rgba(0,0,0,0.5)',
+            transition: 'all 0.18s ease',
+            boxShadow: '0 4px 20px rgba(255, 255, 255, 0.35)',
             display: 'flex',
             alignItems: 'center',
             gap: '8px'
@@ -6551,7 +6744,7 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
             }
           }}
         >
-          Resume from {formatTime(resumePromptTime)}
+          <span style={{ color: '#000000' }}>Resume from {formatTime(resumePromptTime)}</span>
         </button>
       )}
 
@@ -6593,16 +6786,17 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
           {/* Seekbar timeline row */}
           {(showPlayBar || showTimeDisplay || hoveredSetting === 'showPlayBar' || hoveredSetting === 'showTimeDisplay') && (
             <div 
-              className={`seekbar-row ${isVolumeHovered ? 'hide-for-volume' : ''}`}
+              className={`seekbar-row ${isAnyPopupOpen ? 'hide-for-popup' : ''}`}
               style={{
-                opacity: isVolumeHovered ? 0 : 1,
-                pointerEvents: isVolumeHovered ? 'none' : 'auto',
-                transition: 'opacity 0.22s cubic-bezier(0.16, 1, 0.3, 1)'
+                opacity: isAnyPopupOpen ? 0 : 1,
+                pointerEvents: isAnyPopupOpen ? 'none' : 'auto',
+                visibility: isAnyPopupOpen ? 'hidden' : 'visible',
+                transition: 'opacity 0.22s cubic-bezier(0.16, 1, 0.3, 1), visibility 0.22s ease'
               }}
             >
               {(showPlayBar || hoveredSetting === 'showPlayBar') && (
                 <div 
-                  className={`scrub-container-premium ${uiConfig.blockSeekingCompletely ? 'seeking-blocked' : ''} ${getHighlightClass('showPlayBar') || getHighlightClass('blockSeekingCompletely')}`}
+                  className={`scrub-container-premium ${isScrubbing ? 'is-scrubbing' : ''} ${uiConfig.blockSeekingCompletely ? 'seeking-blocked' : ''} ${getHighlightClass('showPlayBar') || getHighlightClass('blockSeekingCompletely')}`}
                   style={{
                     opacity: showPlayBarMode === 'enable' ? 1 : 0.5,
                     pointerEvents: showPlayBarMode === 'enable' ? 'auto' : 'none'
@@ -6610,7 +6804,11 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
                 >
                   <div className="scrub-track-bg"></div>
                   <div className="scrub-track-buffered" style={{ width: `${effectiveDuration > 0 ? Math.min(100, Math.max(0, bufferedPercent)) : 0}%` }}></div>
-                  <div className="scrub-track-progress" style={{ width: `${effectiveDuration > 0 ? Math.min(100, Math.max(0, (currentTime / effectiveDuration) * 100)) : 0}%` }}></div>
+                  <div className="scrub-track-progress" style={{ width: `${effectiveDuration > 0 ? Math.min(100, Math.max(0, (displayTime / effectiveDuration) * 100)) : 0}%` }}></div>
+                  <div 
+                    className="scrub-progress-dot" 
+                    style={{ left: `${effectiveDuration > 0 ? Math.min(100, Math.max(0, (displayTime / effectiveDuration) * 100)) : 0}%` }} 
+                  />
 
                   {/* Bookmark Timeline Dots */}
                   {effectiveDuration > 0 && bookmarks.map((bm) => {
@@ -7368,9 +7566,9 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
         <div className="play-pause-feedback-overlay">
           <div key={playPauseFeedback.id} className="play-pause-feedback-circle animate-play-pause-feedback">
             {playPauseFeedback.action === 'play' ? (
-              <Play size={40} fill="white" strokeWidth={0} style={{ marginLeft: '4px' }} />
+              <Play size={52} fill="white" strokeWidth={0} style={{ marginLeft: '6px', filter: 'drop-shadow(0 4px 16px rgba(0, 0, 0, 0.85))' }} />
             ) : (
-              <Pause size={40} fill="white" strokeWidth={0} />
+              <Pause size={52} fill="white" strokeWidth={0} style={{ filter: 'drop-shadow(0 4px 16px rgba(0, 0, 0, 0.85))' }} />
             )}
           </div>
         </div>
@@ -7452,26 +7650,39 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
           90% { opacity: 1; transform: translateY(0) scale(1); }
           100% { opacity: 0; transform: translateY(0) scale(1); pointer-events: none; }
         }
-        .skip-btn-premium {
+        .series-credits-actions {
           position: absolute;
-          right: 40px;
-          bottom: 140px;
-          z-index: 90;
-          padding: 14px 28px;
-          border-radius: 4px;
-          font-size: 16px;
-          font-weight: 500;
-          cursor: pointer;
-          background: rgba(0, 0, 0, 0.6);
-          color: white;
-          border: 1px solid rgba(255, 255, 255, 0.2);
-          backdrop-filter: blur(10px);
-          -webkit-backdrop-filter: blur(10px);
+          right: 32px;
+          bottom: 36px;
+          z-index: 6000;
           display: flex;
           align-items: center;
           gap: 12px;
+          font-family: 'Outfit', sans-serif;
+          transition: bottom 0.22s cubic-bezier(0.16, 1, 0.3, 1);
+        }
+        .series-credits-actions .skip-btn-premium {
+          position: relative !important;
+          right: auto !important;
+          bottom: auto !important;
+          z-index: auto !important;
+        }
+        .skip-btn-premium {
+          position: absolute;
+          right: 32px;
+          bottom: 36px;
+          z-index: 6000;
+          padding: 11px 22px;
+          border-radius: 8px;
+          font-size: 15px;
+          font-weight: 700;
+          cursor: pointer;
+          display: flex;
+          align-items: center;
+          gap: 9px;
           overflow: hidden;
-          transition: all 0.2s;
+          transition: transform 0.18s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.18s ease, background 0.18s ease, bottom 0.22s cubic-bezier(0.16, 1, 0.3, 1);
+          user-select: none;
         }
         .skip-btn-premium:hover {
           background: white;
@@ -8155,8 +8366,8 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
           background: rgba(255, 255, 255, 0.08);
         }
         .cast-btn, .close-btn {
-          background: none;
-          border: none;
+          background: transparent !important;
+          border: none !important;
           color: var(--text-primary, white);
           cursor: pointer;
           padding: calc(6px * var(--player-ui-scale, 1));
@@ -8169,27 +8380,31 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
         .cast-btn svg, .close-btn svg {
           width: calc(24px * var(--player-ui-scale, 1)) !important;
           height: calc(24px * var(--player-ui-scale, 1)) !important;
+          filter: drop-shadow(0 2px 4px rgba(0,0,0,0.6));
         }
         .cast-btn:hover, .close-btn:hover {
           transform: scale(1.22);
           opacity: 1;
+          background: transparent !important;
         }
         .cast-btn:active, .close-btn:active {
           transform: scale(0.95);
+          background: transparent !important;
         }
         .floating-rating-prompt {
           position: absolute;
           top: 80px;
           right: 20px;
-          background: rgba(10, 10, 10, 0.88);
-          border: 1px solid rgba(255, 255, 255, 0.15);
-          border-radius: 10px;
+          background: rgba(10, 10, 10, 0.92);
+          border: 1px solid rgba(255, 255, 255, 0.18);
+          border-radius: 12px;
           padding: 0.9rem 1.1rem;
-          z-index: 200;
-          box-shadow: 0 10px 25px rgba(0,0,0,0.6);
-          backdrop-filter: blur(12px);
-          -webkit-backdrop-filter: blur(12px);
-          width: 250px;
+          z-index: 10001 !important;
+          pointer-events: auto !important;
+          box-shadow: 0 12px 30px rgba(0, 0, 0, 0.7);
+          backdrop-filter: blur(14px);
+          -webkit-backdrop-filter: blur(14px);
+          width: 255px;
           display: flex;
           flex-direction: column;
           gap: 0.5rem;
@@ -8201,7 +8416,8 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
           justify-content: space-between;
           font-size: 0.82rem;
           font-weight: 600;
-          color: rgba(255,255,255,0.85);
+          color: rgba(255, 255, 255, 0.9);
+          user-select: none;
         }
         .rating-close {
           background: none;
@@ -8211,33 +8427,52 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
           padding: 2px;
           display: flex;
           align-items: center;
+          transition: color 0.15s ease;
         }
         .rating-close:hover {
           color: #ffffff;
         }
         .rating-stars {
           display: flex;
-          gap: 0.35rem;
+          gap: 0.45rem;
           justify-content: center;
-          margin-top: 0.25rem;
+          align-items: center;
+          margin-top: 0.35rem;
+          user-select: none;
         }
-        .star-btn {
-          background: none;
-          border: none;
-          font-size: 1.8rem;
-          color: rgba(255, 255, 255, 0.15);
+        .rating-star-wrapper {
+          position: relative;
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          width: 32px;
+          height: 32px;
           cursor: pointer;
-          padding: 0;
-          line-height: 1;
-          transition: transform 0.15s, color 0.15s, text-shadow 0.15s;
+          transition: transform 0.15s ease;
         }
-        .star-btn:hover, .star-btn.active {
-          color: #f1c40f;
-          text-shadow: 0 0 8px rgba(241, 196, 15, 0.6);
-          transform: scale(1.18);
+        .rating-star-wrapper:hover {
+          transform: scale(1.15);
+        }
+        .star-hit-left {
+          position: absolute;
+          left: 0;
+          top: 0;
+          width: 50%;
+          height: 100%;
+          z-index: 4;
+          cursor: pointer;
+        }
+        .star-hit-right {
+          position: absolute;
+          right: 0;
+          top: 0;
+          width: 50%;
+          height: 100%;
+          z-index: 4;
+          cursor: pointer;
         }
         .rating-thanks {
-          font-size: 0.75rem;
+          font-size: 0.78rem;
           color: #2ecc71;
           text-align: center;
           font-weight: 600;
@@ -8246,8 +8481,8 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
           position: absolute;
           top: 1.5rem;
           right: 1.5rem;
-          background: rgba(0, 0, 0, 0.6);
-          border: 1px solid rgba(255, 255, 255, 0.15);
+          background: transparent !important;
+          border: none !important;
           color: #ffffff;
           padding: 0.55rem;
           border-radius: 50%;
@@ -8257,12 +8492,15 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
           justify-content: center;
           transition: all 0.2s ease;
           z-index: 200;
-          box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+          box-shadow: none !important;
+          filter: drop-shadow(0 2px 6px rgba(0,0,0,0.85));
         }
         .player-lock-indicator:hover {
-          background: rgba(229, 9, 20, 0.95);
-          border-color: rgba(229, 9, 20, 0.95);
-          transform: scale(1.1);
+          background: transparent !important;
+          border-color: transparent !important;
+          transform: scale(1.18);
+          color: #ffffff;
+          filter: drop-shadow(0 2px 8px rgba(0,0,0,0.95));
         }
 
         .bottom-overlay {
@@ -8350,6 +8588,12 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
           align-items: center;
           width: 100%;
           gap: calc(1.5rem * var(--player-ui-scale, 1));
+          transition: opacity 0.22s cubic-bezier(0.16, 1, 0.3, 1), visibility 0.22s ease;
+        }
+        .seekbar-row.hide-for-popup {
+          opacity: 0 !important;
+          pointer-events: none !important;
+          visibility: hidden !important;
         }
         .time-display-clean {
           font-size: calc(0.95rem * var(--player-ui-scale, 1));
@@ -8391,6 +8635,25 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
           border-radius: calc(2px * var(--player-ui-scale, 1)) 0 0 calc(2px * var(--player-ui-scale, 1));
           z-index: 3;
         }
+        .scrub-progress-dot {
+          position: absolute;
+          top: 50%;
+          width: calc(10px * var(--player-ui-scale, 1));
+          height: calc(10px * var(--player-ui-scale, 1));
+          border-radius: 50%;
+          background: #ffffff;
+          transform: translate(-50%, -50%) scale(1);
+          box-shadow: 0 1px 4px rgba(0, 0, 0, 0.7), 0 0 6px rgba(255, 255, 255, 0.4);
+          z-index: 5;
+          pointer-events: none;
+          transition: transform 0.15s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.15s ease;
+        }
+        .scrub-container-premium:hover .scrub-progress-dot,
+        .scrub-container-premium.is-scrubbing .scrub-progress-dot,
+        .scrub-bar-premium:active ~ .scrub-progress-dot {
+          transform: translate(-50%, -50%) scale(1.4);
+          box-shadow: 0 2px 8px rgba(0, 0, 0, 0.9), 0 0 10px rgba(255, 255, 255, 0.9);
+        }
         .scrub-bar-premium {
           position: absolute;
           width: 100%;
@@ -8406,39 +8669,38 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
         .scrub-bar-premium::-webkit-slider-thumb {
           -webkit-appearance: none;
           appearance: none;
-          width: calc(22px * var(--player-ui-scale, 1));
-          height: calc(22px * var(--player-ui-scale, 1));
+          width: calc(24px * var(--player-ui-scale, 1));
+          height: calc(24px * var(--player-ui-scale, 1));
           border-radius: 50%;
-          background: var(--player-accent, #e50914);
+          background: transparent !important;
+          border: none !important;
+          box-shadow: none !important;
           cursor: pointer;
-          transform: scale(0);
-          opacity: 0;
-          transition: transform 0.15s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.15s ease;
-          box-shadow: 0 0 10px rgba(229, 9, 20, 0.8);
-          z-index: 10;
+          opacity: 0 !important;
         }
         .scrub-container-premium:hover .scrub-bar-premium::-webkit-slider-thumb,
         .scrub-bar-premium:active::-webkit-slider-thumb {
-          transform: scale(1.4);
-          opacity: 1;
+          opacity: 0 !important;
+          background: transparent !important;
+          box-shadow: none !important;
+          transform: none !important;
         }
         .scrub-bar-premium::-moz-range-thumb {
-          width: calc(22px * var(--player-ui-scale, 1));
-          height: calc(22px * var(--player-ui-scale, 1));
-          border: none;
+          width: calc(24px * var(--player-ui-scale, 1));
+          height: calc(24px * var(--player-ui-scale, 1));
+          border: none !important;
           border-radius: 50%;
-          background: var(--player-accent, #e50914);
+          background: transparent !important;
+          box-shadow: none !important;
           cursor: pointer;
-          transform: scale(0);
-          opacity: 0;
-          transition: transform 0.15s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.15s ease;
-          box-shadow: 0 0 10px rgba(229, 9, 20, 0.8);
-          z-index: 10;
+          opacity: 0 !important;
         }
         .scrub-container-premium:hover .scrub-bar-premium::-moz-range-thumb,
         .scrub-bar-premium:active::-moz-range-thumb {
-          transform: scale(1.4);
-          opacity: 1;
+          opacity: 0 !important;
+          background: transparent !important;
+          box-shadow: none !important;
+          transform: none !important;
         }
         .scrub-container-premium:hover .scrub-track-bg,
         .scrub-container-premium:hover .scrub-track-buffered,
@@ -9274,18 +9536,16 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
           z-index: 120;
         }
         .play-pause-feedback-circle {
-          width: 78px;
-          height: 78px;
-          border-radius: 50%;
-          background: rgba(0, 0, 0, 0.68);
-          backdrop-filter: blur(16px);
-          -webkit-backdrop-filter: blur(16px);
-          border: 1.5px solid rgba(255, 255, 255, 0.25);
           display: flex;
           align-items: center;
           justify-content: center;
           color: #ffffff;
-          box-shadow: 0 12px 36px rgba(0, 0, 0, 0.7);
+          background: transparent !important;
+          border: none !important;
+          backdrop-filter: none !important;
+          -webkit-backdrop-filter: none !important;
+          box-shadow: none !important;
+          filter: drop-shadow(0 4px 16px rgba(0, 0, 0, 0.85));
           pointer-events: none;
         }
         .animate-play-pause-feedback {
@@ -9387,14 +9647,11 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
           }
           /* Touch-safety thumb size scaling */
           .scrub-container-premium:hover .scrub-bar-premium::-webkit-slider-thumb,
-          .scrub-bar-premium:active::-webkit-slider-thumb {
-            transform: scale(1.4) !important;
-            opacity: 1 !important;
-          }
+          .scrub-bar-premium:active::-webkit-slider-thumb,
           .scrub-container-premium:hover .scrub-bar-premium::-moz-range-thumb,
           .scrub-bar-premium:active::-moz-range-thumb {
-            transform: scale(1.4) !important;
-            opacity: 1 !important;
+            opacity: 0 !important;
+            background: transparent !important;
           }
         }
 

@@ -517,6 +517,28 @@ export class EbmlReader {
   }
 }
 
+export function normalizeMkvCodec(codecId: string): string {
+  if (!codecId) return '';
+  const c = codecId.toUpperCase();
+  if (c.includes('EAC3') || c.includes('EC3') || c.includes('DDP')) return 'eac3';
+  if (c.includes('AC3')) return 'ac3';
+  if (c.includes('AAC')) return 'aac';
+  if (c.includes('OPUS')) return 'opus';
+  if (c.includes('VORBIS')) return 'vorbis';
+  if (c.includes('DTS')) return 'dts';
+  if (c.includes('TRUEHD') || c.includes('MLP')) return 'truehd';
+  if (c.includes('FLAC')) return 'flac';
+  if (c.includes('MP3') || c.includes('MPEG/L3')) return 'mp3';
+  if (c.includes('HEVC') || c.includes('H265')) return 'hevc';
+  if (c.includes('AVC') || c.includes('H264')) return 'h264';
+  if (c.includes('VP9')) return 'vp9';
+  if (c.includes('AV1')) return 'av1';
+  if (c.includes('UTF8') || c.includes('SRT')) return 'subrip';
+  if (c.includes('ASS')) return 'ass';
+  if (c.includes('SSA')) return 'ssa';
+  return codecId.toLowerCase();
+}
+
 export interface MKVTrackInfo {
   number: number;
   type: 'video' | 'audio' | 'subtitle';

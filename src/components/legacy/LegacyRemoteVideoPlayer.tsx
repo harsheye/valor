@@ -51,6 +51,7 @@ import { ConsoleOverlay } from './ConsoleOverlay';
 import { SpeedPopover } from './SpeedPopover';
 import { EsportsLiveOverlay } from './EsportsLiveOverlay';
 import { trimSubtitleName, saveEmbedSubtitles, getEmbedSubtitlesSync, getEmbedSubtitlesAsync } from '../utils/embedSubtitleStorage';
+import { mergeBookmarksList, isIntroBookmark, isOutroBookmark, deduplicateBookmarks } from '../utils/bookmarkUtils';
 
 interface VideoPlayerProps {
   video: VideoItem;
@@ -91,6 +92,7 @@ interface VideoPlayerProps {
   overlayShowBackground?: boolean;
   overlayShowRating?: boolean;
   overlayShowOverview?: boolean;
+  overlayActiveTime?: number;
   openSubtitlesApiKey?: string;
   onUpdateSettings?: (settings: Partial<any>) => void;
   allowUiSkipping?: boolean;
@@ -213,6 +215,7 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
   overlayShowBackground = true,
   overlayShowRating = true,
   overlayShowOverview = true,
+  overlayActiveTime = 10,
   openSubtitlesApiKey = '',
   onUpdateSettings,
   allowUiSkipping = true,
@@ -706,7 +709,7 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
   const [showSettingsPanel, setShowSettingsPanel] = useState(false);
   const [showAddDialog, setShowAddDialog] = useState(false);
   const [showBookmarksPopover, setShowBookmarksPopover] = useState(false);
-  const [bookmarks, setBookmarks] = useState<any[]>(() => video.bookmarks || []);
+  const [bookmarks, setBookmarks] = useState<any[]>(() => deduplicateBookmarks(video.bookmarks || []));
   const [editingBookmark, setEditingBookmark] = useState<Bookmark | undefined>(undefined);
   const [markingStartTime, setMarkingStartTime] = useState<number | null>(null);
 
@@ -948,8 +951,8 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
       const seriesInfo = classifyVideoTitle(video.title);
       if (seriesInfo.type === 'series' && seriesInfo.seriesTitle) {
         const currentBookmarks = video.bookmarks || [];
-        const hasIntro = currentBookmarks.some((b: any) => b.isIntro);
-        const hasOutro = currentBookmarks.some((b: any) => b.isOutro);
+        const hasIntro = currentBookmarks.some((b: any) => isIntroBookmark(b));
+        const hasOutro = currentBookmarks.some((b: any) => isOutroBookmark(b));
 
         if (!hasIntro || !hasOutro) {
           const otherEpisodes = videos.filter(
@@ -962,9 +965,9 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
 
           for (const ep of otherEpisodes) {
             const epBms = ep.bookmarks || [];
-            if (!introToCopy) introToCopy = epBms.find((b: any) => b.isIntro);
+            if (!introToCopy) introToCopy = epBms.find((b: any) => isIntroBookmark(b));
             if (!outroToCopy) {
-              outroToCopy = epBms.find((b: any) => b.isOutro);
+              outroToCopy = epBms.find((b: any) => isOutroBookmark(b));
               if (outroToCopy) outroSourceEp = ep;
             }
             if (introToCopy && outroToCopy) break;
@@ -987,7 +990,7 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
           }
 
           if (updated) {
-            const sortedBms = newBms.sort((a, b) => a.time - b.time);
+            const sortedBms = mergeBookmarksList(newBms);
             setBookmarks(sortedBms);
             onUpdateVideo((prev: any) => ({
               ...prev,
@@ -1610,7 +1613,7 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
       };
 
       const initialBms = video.bookmarks || [];
-      const merged = mergeBookmarks(mergeBookmarks(initialBms, serverBms), tidbBms);
+      const merged = mergeBookmarksList(initialBms, [...serverBms, ...tidbBms]);
       
       setBookmarks(merged);
       onUpdateVideo((prev: any) => ({
@@ -2570,26 +2573,28 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
       clearTimeout(pauseOverlayTimerRef.current);
       pauseOverlayTimerRef.current = null;
     }
-    if (!isPlaying && !isBuffering) {
+    if (!isPlaying && !isBuffering && getOverlayDataFromTmdb !== false) {
       showPauseMetadataOverlayRef.current = false;
       setShowPauseMetadataOverlay(false);
+      const delayMs = Math.max(0, (overlayActiveTime ?? 10) * 1000);
       pauseOverlayTimerRef.current = setTimeout(() => {
         showPauseMetadataOverlayRef.current = true;
         setShowPauseMetadataOverlay(true);
         setShowControls(false);
-      }, 30000);
+      }, delayMs);
     }
-  }, [isPlaying, isBuffering]);
+  }, [isPlaying, isBuffering, getOverlayDataFromTmdb, overlayActiveTime]);
 
   useEffect(() => {
-    if (!isPlaying && !isBuffering) {
+    if (!isPlaying && !isBuffering && getOverlayDataFromTmdb !== false) {
       showPauseMetadataOverlayRef.current = false;
       setShowPauseMetadataOverlay(false);
+      const delayMs = Math.max(0, (overlayActiveTime ?? 10) * 1000);
       pauseOverlayTimerRef.current = setTimeout(() => {
         showPauseMetadataOverlayRef.current = true;
         setShowPauseMetadataOverlay(true);
         setShowControls(false);
-      }, 30000);
+      }, delayMs);
     } else {
       if (pauseOverlayTimerRef.current) {
         clearTimeout(pauseOverlayTimerRef.current);
@@ -2605,7 +2610,7 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
         pauseOverlayTimerRef.current = null;
       }
     };
-  }, [isPlaying, isBuffering]);
+  }, [isPlaying, isBuffering, getOverlayDataFromTmdb, overlayActiveTime]);
 
   // Controls Auto-Hide
   const resetControlsTimeout = () => {
@@ -3664,13 +3669,15 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
         language: s.language
       });
     });
-    subtitleTracks.forEach((t) => {
-      list.push({
-        type: 'custom',
-        name: t.name,
-        track: t
+    subtitleTracks
+      .filter((t) => t.streamIndex === undefined || !subtitleStreams.some((s) => s.index === t.streamIndex))
+      .forEach((t) => {
+        list.push({
+          type: 'custom',
+          name: t.name,
+          track: t
+        });
       });
-    });
     return list;
   };
 
@@ -3688,13 +3695,15 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
         language: s.language
       });
     });
-    audioTracks.forEach((t) => {
-      list.push({
-        type: 'custom',
-        name: t.name,
-        track: t
+    audioTracks
+      .filter((t) => t.streamIndex === undefined || !audioStreams.some((s) => s.index === t.streamIndex))
+      .forEach((t) => {
+        list.push({
+          type: 'custom',
+          name: t.name,
+          track: t
+        });
       });
-    });
     return list;
   };
 
@@ -6894,7 +6903,7 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
           font-size: 16px;
           font-weight: 500;
           cursor: pointer;
-          background: rgba(0, 0, 0, 0.6);
+          background: transparent !important;
           color: white;
           border: 1px solid rgba(255, 255, 255, 0.2);
           backdrop-filter: blur(10px);
@@ -7572,7 +7581,7 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
           position: absolute;
           top: 1.5rem;
           right: 1.5rem;
-          background: rgba(0, 0, 0, 0.6);
+          background: transparent !important;
           border: 1px solid rgba(255, 255, 255, 0.15);
           color: #ffffff;
           padding: 0.55rem;
@@ -7586,8 +7595,8 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
           box-shadow: 0 4px 12px rgba(0,0,0,0.5);
         }
         .player-lock-indicator:hover {
-          background: rgba(229, 9, 20, 0.95);
-          border-color: rgba(229, 9, 20, 0.95);
+          background: transparent !important;
+          border-color: transparent !important;
           transform: scale(1.1);
         }
 

@@ -424,6 +424,7 @@ export const VlcContextMenu: React.FC<VlcContextMenuProps> = ({
           label: <span>Open <u>F</u>ile...</span>,
           shortcut: 'Ctrl+O',
           icon: <FolderOpen size={12} color="#555" />,
+          closeOnClick: false,
           onClick: () => {
             onOpenFile?.();
             onClose();

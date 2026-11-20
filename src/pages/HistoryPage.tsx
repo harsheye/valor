@@ -14,6 +14,7 @@ import { getVideoSourceType, type VideoItem } from '../types/media';
 import { classifyVideoTitle } from '../utils/libraryClassifier';
 import { smartTitleCase, getTileColors, getFirstAlphanumeric } from '../utils/libraryViewModel';
 import { formatRuntime, parseDurationToSeconds } from '../utils/timeFormat';
+import { getMediaTimestampRecord } from '../utils/mediaTimestampStorage';
 import './HistoryHeatmap.css';
 
 export interface HistoryPageProps {
@@ -24,6 +25,7 @@ export interface HistoryPageProps {
   handlePlayVideo: (video: VideoItem) => void;
   handleRemoveVideo: (id: string, e: React.MouseEvent) => void;
   syncVideoToTraktHistory: (video: VideoItem, e: React.MouseEvent) => void;
+  onRateVideo?: (id: string, rating: number) => void;
   isInstantlyPlayable?: (video: VideoItem) => boolean;
   parseDurationToSeconds?: (duration: string | number | undefined) => number;
   formatTime?: (secs: number | string | undefined) => string;
@@ -93,6 +95,7 @@ export const HistoryPage: React.FC<HistoryPageProps> = ({
   handlePlayVideo,
   handleRemoveVideo,
   syncVideoToTraktHistory,
+  onRateVideo,
   settings,
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
@@ -103,6 +106,15 @@ export const HistoryPage: React.FC<HistoryPageProps> = ({
   
   const [isClearModalOpen, setIsClearModalOpen] = useState(false);
   const [hoveredCell, setHoveredCell] = useState<{ dateKey: string; count: number; x: number; y: number } | null>(null);
+  const [localRatings, setLocalRatings] = useState<Record<string, number>>({});
+
+  const storedRatings = useMemo(() => {
+    try {
+      return JSON.parse(localStorage.getItem('valor_ratings') || '{}');
+    } catch {
+      return {};
+    }
+  }, [videos]);
 
   // History display limit (default 10 or user chosen setting; database stores all)
   const displayLimit = useMemo(() => {
@@ -243,18 +255,56 @@ export const HistoryPage: React.FC<HistoryPageProps> = ({
       const d = v.lastPlayedDate ? new Date(v.lastPlayedDate) : new Date();
       const dateKey = !isNaN(d.getTime()) ? d.toISOString().split('T')[0] : '';
       const timeStr = !isNaN(d.getTime()) ? d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : '';
-      const durSec = typeof v.duration === 'number' 
-        ? v.duration 
-        : (v.duration ? parseDurationToSeconds(v.duration) : 0);
-      const curr = v.currentTime || 0;
 
-      // Auto complete media if within 3-5 minutes (default 240s = 4 min) before time remaining:
+      // Check both video object and persistent site storage for duration and currentTime
+      const savedRecord = getMediaTimestampRecord(v);
+      let rawDur = v.duration || savedRecord?.duration;
+      if (!rawDur) {
+        const alt = videos.find(other => other.duration && (
+          (other.title && other.title === v.title) || 
+          (other.fileName && other.fileName === v.fileName) ||
+          other.id === v.id.replace(/^local-/, '')
+        ));
+        if (alt) rawDur = alt.duration;
+      }
+      const durSec = typeof rawDur === 'number' 
+        ? rawDur 
+        : (rawDur ? parseDurationToSeconds(rawDur) : 0);
+      const curr = v.currentTime || savedRecord?.currentTime || 0;
+
+      // Completed if:
+      // 1. Explicitly marked completed in v or savedRecord
+      // 2. Or remaining time is within 5 minutes (300 seconds) of total duration
+      // 3. Or current time watched is >= 90% of total duration (for media > 5m)
+      // 4. Or watched >= 40 minutes (2400s) when duration was not recorded
       const remainingSec = durSec > 0 ? durSec - curr : Infinity;
-      const completionThresholdSec = durSec > 360 ? 240 : (durSec > 120 ? 60 : 15);
-      const isFinished = !!(
+      const isFinished = Boolean(
         v.completed || 
-        (durSec > 0 && (remainingSec <= completionThresholdSec || curr >= durSec * 0.92))
+        savedRecord?.completed ||
+        (durSec > 0 && (remainingSec <= 300 || curr >= durSec - 300 || (durSec > 300 && curr >= durSec * 0.90))) ||
+        (durSec <= 0 && curr >= 2400)
       );
+
+      // Duration string display: show watched runtime AND total duration (e.g. "43m / 48m watched")
+      const durText = durSec > 0 ? formatRuntime(durSec) : '';
+      const watchedText = durText 
+        ? `${formatRuntime(curr)} / ${durText} watched` 
+        : `${formatRuntime(curr)} watched`;
+
+      // Get user rating (1-5 scale) if present
+      const rawRating = localRatings[v.id] ?? 
+                        localRatings[v.id.replace(/^local-/, '')] ?? 
+                        v.rating ?? 
+                        (v as any).userRating ?? 
+                        storedRatings[v.id] ?? 
+                        storedRatings[v.id.replace(/^local-/, '')] ?? 
+                        (v.title ? storedRatings[v.title] : undefined);
+      const normalizedRating = typeof rawRating === 'number' && rawRating > 0
+        ? (rawRating > 5 ? rawRating / 2 : rawRating)
+        : undefined;
+      const stars = normalizedRating !== undefined
+        ? Math.min(5, Math.max(0.5, Math.round(normalizedRating * 2) / 2))
+        : undefined;
 
       const isToday = !isNaN(d.getTime()) && d.toDateString() === new Date().toDateString();
       const yesterday = new Date();
@@ -278,11 +328,11 @@ export const HistoryPage: React.FC<HistoryPageProps> = ({
         seasonEpisode: code,
         resumeText: isFinished ? 'completed' : `resume at ${formatRuntime(curr)}`,
         playedAtTime: timeStr,
-        watchedText: `${formatRuntime(curr)} watched`,
+        watchedText,
         status: (isFinished ? 'finished' : 'stopped') as 'stopped' | 'finished',
         hasTraktSync: true,
         isSyncedToTrakt: !!(v as any).traktSynced,
-        stars: isFinished ? 5 : undefined,
+        stars,
         progressPercent: durSec > 0 ? Math.min(100, Math.round((curr / durSec) * 100)) : 40,
         dateKey,
         dayKeyword,
@@ -758,13 +808,54 @@ export const HistoryPage: React.FC<HistoryPageProps> = ({
                           {item.status === 'stopped' ? (
                             <span className="history-badge-stopped">Stopped early</span>
                           ) : (
-                            <>
-                              <span className="history-badge-finished">✓ Finished</span>
-                              <span className="history-stars" aria-label="5 stars">
-                                ★★★★★
-                              </span>
-                            </>
+                            <span className="history-badge-finished">✓ Finished</span>
                           )}
+
+                          {/* Read-only User Rating (shown only if given) */}
+                          {item.stars && item.stars > 0 ? (
+                            <div
+                              className="history-stars-container"
+                              style={{ display: 'inline-flex', alignItems: 'center', gap: 2, marginLeft: 6 }}
+                              title={`User rating: ${item.stars}/5`}
+                            >
+                              {[1, 2, 3, 4, 5].map((star) => {
+                                const isFull = star <= item.stars!;
+                                const isHalf = !isFull && item.stars! >= star - 0.5;
+                                return (
+                                  <span
+                                    key={star}
+                                    style={{
+                                      position: 'relative',
+                                      display: 'inline-block',
+                                      color: isFull ? '#f59e0b' : 'rgba(255, 255, 255, 0.18)',
+                                      fontSize: '13px',
+                                      lineHeight: 1,
+                                      userSelect: 'none',
+                                    }}
+                                  >
+                                    ★
+                                    {isHalf && (
+                                      <span
+                                        style={{
+                                          position: 'absolute',
+                                          left: 0,
+                                          top: 0,
+                                          width: '50%',
+                                          overflow: 'hidden',
+                                          color: '#f59e0b',
+                                        }}
+                                      >
+                                        ★
+                                      </span>
+                                    )}
+                                  </span>
+                                );
+                              })}
+                              <span style={{ fontSize: '0.72rem', color: '#f59e0b', marginLeft: 3, fontWeight: 600 }}>
+                                {item.stars}/5
+                              </span>
+                            </div>
+                          ) : null}
                         </div>
                       </div>
                     </div>

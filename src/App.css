@@ -1842,3 +1842,18 @@ h1, .page-title {
     display: none !important;
   }
 }
+
+/* Universal Buffering Spinner Overlay */
+.buffering-spinner-overlay {
+  position: absolute !important;
+  inset: 0 !important;
+  z-index: 50 !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  width: 100% !important;
+  height: 100% !important;
+  pointer-events: none !important;
+  background: transparent !important;
+  overflow: hidden !important;
+}

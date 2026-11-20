@@ -61,6 +61,9 @@ export interface ControlsConfig {
   subFileOnly?: boolean;
   allowSubUpload?: boolean;
   closeButton?: boolean;
+  overlay?: boolean;
+  hideUIOverlays?: boolean;
+  overlayActiveTime?: number;
 }
 
 export const DEFAULT_CONTROLS_CONFIG: ControlsConfig = {
@@ -83,7 +86,9 @@ export const DEFAULT_CONTROLS_CONFIG: ControlsConfig = {
   audioOnly: false,
   subFileOnly: false,
   allowSubUpload: true,
-  closeButton: false // Default to hidden X button in embed player
+  closeButton: false, // Default to hidden X button in embed player
+  overlay: true,
+  hideUIOverlays: false,
 };
 
 // Theme configuration for custom branding

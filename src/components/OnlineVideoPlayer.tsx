@@ -43,6 +43,7 @@ interface OnlineVideoPlayerProps {
 }
 
 import { DEFAULT_TMDB_TOKEN } from '../utils/constants';
+import { mergeBookmarksList } from '../utils/bookmarkUtils';
 
 export const OnlineVideoPlayer: React.FC<OnlineVideoPlayerProps> = ({
   video,
@@ -470,15 +471,8 @@ export const OnlineVideoPlayer: React.FC<OnlineVideoPlayerProps> = ({
       }
     } catch {}
 
-    const mergeBookmarks = (existing: any[], newBms: any[]) => {
-      const map = new Map<string, any>();
-      existing.forEach(bm => map.set(bm.id, bm));
-      newBms.forEach(bm => map.set(bm.id, bm));
-      return Array.from(map.values()).sort((a, b) => a.time - b.time);
-    };
-
     const initialBms = video.bookmarks || localBms;
-    const merged = mergeBookmarks(mergeBookmarks(initialBms, serverBms), tidbBms);
+    const merged = mergeBookmarksList(initialBms, [...serverBms, ...tidbBms]);
     setBookmarks(merged);
   }, [video.id, video.tmdbId, video.title, video.type, video.season, video.episode, video.bookmarks, userId, duration]);
 
@@ -973,7 +967,7 @@ export const OnlineVideoPlayer: React.FC<OnlineVideoPlayerProps> = ({
     if (showSettingsPanel || showAddDialog || interactWithNative) return;
     
     const target = e.target as HTMLElement;
-    if (target.closest('.player-quick-settings-panel')) return;
+    if (target.closest('.player-quick-settings-panel') || target.closest('.playlist-panel-container') || target.closest('.playlist-panel-backdrop')) return;
 
     if (e.deltaY < 0) {
       adjustVolume(0.1);

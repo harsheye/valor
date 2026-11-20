@@ -56,6 +56,8 @@ export interface SimpleRemotePlayerProps {
   subFileOnly?: boolean;
   allowSubUpload?: boolean;
   showCloseButton?: boolean;
+  overlayActiveTime?: number;
+  getOverlayDataFromTmdb?: boolean;
 }
 
 export const SimpleRemotePlayer: React.FC<SimpleRemotePlayerProps> = ({
@@ -73,6 +75,8 @@ export const SimpleRemotePlayer: React.FC<SimpleRemotePlayerProps> = ({
   spinnerPreset = 'netflix',
   onSwitchMode,
   isEmbed = false,
+  overlayActiveTime = 10,
+  getOverlayDataFromTmdb = true,
   showSubtitleControl = true,
   showBookmarksControl = true,
   showAudioControl = true,
@@ -303,14 +307,15 @@ export const SimpleRemotePlayer: React.FC<SimpleRemotePlayerProps> = ({
     }
   }, [isBuffering, resetControlsTimeout]);
 
-  // Handle Pause Screen Timer (Show after 30s of continuous pause / inactivity)
+  // Handle Pause Screen Timer
   useEffect(() => {
-    if (!isPlaying && !isBuffering) {
+    if (!isPlaying && !isBuffering && getOverlayDataFromTmdb !== false) {
       setShowPauseMetadataOverlay(false);
+      const delayMs = Math.max(0, (overlayActiveTime ?? 10) * 1000);
       pauseOverlayTimerRef.current = setTimeout(() => {
         setShowPauseMetadataOverlay(true);
         setControlsVisible(false);
-      }, 30000);
+      }, delayMs);
     } else {
       if (pauseOverlayTimerRef.current) clearTimeout(pauseOverlayTimerRef.current);
       setShowPauseMetadataOverlay(false);
@@ -319,7 +324,7 @@ export const SimpleRemotePlayer: React.FC<SimpleRemotePlayerProps> = ({
     return () => {
       if (pauseOverlayTimerRef.current) clearTimeout(pauseOverlayTimerRef.current);
     };
-  }, [isPlaying, isBuffering, resetControlsTimeout]);
+  }, [isPlaying, isBuffering, getOverlayDataFromTmdb, overlayActiveTime, resetControlsTimeout]);
 
   // Play / Pause toggle
   const togglePlay = useCallback(() => {
@@ -986,7 +991,7 @@ export const SimpleRemotePlayer: React.FC<SimpleRemotePlayerProps> = ({
 
       {/* Netflix-style Paused Details Overlay */}
       <PauseDetailsOverlay
-        visible={showPauseMetadataOverlay && !isPlaying && !isBuffering}
+        visible={showPauseMetadataOverlay && !isPlaying && !isBuffering && getOverlayDataFromTmdb !== false}
         mediaDetails={mediaDetails}
         videoTitle={video.title}
         duration={duration}

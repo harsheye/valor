@@ -1,8 +1,9 @@
 import React, { useMemo, useRef, useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Pencil, Trash, Play, Bookmark as BookmarkIcon, Heart, Clock, X } from 'lucide-react';
+import { Pencil, Trash2, Play, Bookmark as BookmarkIcon, X, Plus, SkipForward, Flag, Flame, Heart } from 'lucide-react';
 import type { Bookmark } from '../types/media';
 import { isMobileDevice } from '../utils/screenOrientation';
+import { deduplicateBookmarks } from '../utils/bookmarkUtils';
 import './BookmarkPanel.css';
 
 interface BookmarkPanelProps {
@@ -14,7 +15,14 @@ interface BookmarkPanelProps {
   onClose: () => void;
 }
 
-export const BookmarkPanel: React.FC<BookmarkPanelProps> = ({ bookmarks, onJump, onEdit, onDelete, onAdd, onClose }) => {
+export const BookmarkPanel: React.FC<BookmarkPanelProps> = ({ 
+  bookmarks, 
+  onJump, 
+  onEdit, 
+  onDelete, 
+  onAdd, 
+  onClose 
+}) => {
   const panelRef = useRef<HTMLDivElement>(null);
 
   const [deviceState, setDeviceState] = useState(() => {
@@ -56,7 +64,7 @@ export const BookmarkPanel: React.FC<BookmarkPanelProps> = ({ bookmarks, onJump,
   };
 
   const sortedBookmarks = useMemo(() => {
-    return [...bookmarks].sort((a, b) => a.time - b.time);
+    return deduplicateBookmarks(bookmarks);
   }, [bookmarks]);
 
   const formatTime = (seconds: number) => {
@@ -65,6 +73,67 @@ export const BookmarkPanel: React.FC<BookmarkPanelProps> = ({ bookmarks, onJump,
     const s = Math.floor(seconds % 60);
     if (h > 0) return `${h}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
     return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+  };
+
+  const formatDuration = (seconds: number) => {
+    const m = Math.floor(seconds / 60);
+    const s = Math.round(seconds % 60);
+    if (m > 0) return `${m}m ${s > 0 ? `${s}s` : ''}`.trim();
+    return `${s}s`;
+  };
+
+  const getTimeDisplay = (bm: Bookmark) => {
+    if (bm.endTime && bm.endTime > bm.time) {
+      const duration = bm.endTime - bm.time;
+      return `${formatTime(bm.time)} → ${formatTime(bm.endTime)} · ${formatDuration(duration)}`;
+    }
+    return formatTime(bm.time);
+  };
+
+  const getItemMeta = (bm: Bookmark) => {
+    const isIntro = bm.category === 'Intro' || bm.isIntro || bm.category === 'Preview' || bm.category === 'Recap';
+    const isOutro = bm.category === 'Outro' || bm.isOutro;
+    const isHot = bm.category === 'Hot Scene' || bm.category === 'Nudity' || bm.category === 'Sex';
+
+    let title = bm.title || bm.label;
+    if (!title || title === 'Untitled Bookmark') {
+      if (isIntro) title = 'Intro';
+      else if (isOutro) title = 'Credits / Outro';
+      else title = 'Bookmark';
+    } else if (isOutro && (title.toLowerCase() === 'outro' || title.toLowerCase() === 'credits')) {
+      title = 'Credits / Outro';
+    }
+
+    const createdBy = (bm.createdBy as string) || '';
+    const isIntroDb = createdBy === 'theintrodb' || createdBy === 'tidb' || bm.id.startsWith('introdb-') || bm.id.startsWith('api-');
+    const isDatabase = createdBy === 'database' || createdBy === 'system' || bm.id.startsWith('bm-intro-') || bm.id.startsWith('bm-outro-');
+
+    let badgeText = 'MINE';
+    let badgeClass = 'badge-mine';
+
+    if (isIntroDb) {
+      badgeText = 'INTRODB';
+      badgeClass = 'badge-introdb';
+    } else if (isDatabase) {
+      badgeText = isIntro || isOutro ? 'INTRODB' : 'DATABASE';
+      badgeClass = isIntro || isOutro ? 'badge-introdb' : 'badge-database';
+    }
+
+    let boxClass = 'type-box-bookmark';
+    let icon = <BookmarkIcon size={20} color="#c084fc" />;
+
+    if (isIntro) {
+      boxClass = 'type-box-intro';
+      icon = <SkipForward size={20} color="#38bdf8" />;
+    } else if (isOutro) {
+      boxClass = 'type-box-outro';
+      icon = <Flag size={20} color="#fbbf24" />;
+    } else if (isHot) {
+      boxClass = 'type-box-hot';
+      icon = <Flame size={20} color="#f87171" />;
+    }
+
+    return { title, badgeText, badgeClass, boxClass, icon };
   };
 
   // Desktop Repositioning
@@ -77,7 +146,6 @@ export const BookmarkPanel: React.FC<BookmarkPanelProps> = ({ bookmarks, onJump,
       const rect = el.getBoundingClientRect();
       const viewportWidth = window.innerWidth;
       
-      // If overflowing the right edge of viewport, pull left
       if (rect.right > viewportWidth - 16) {
         const overflow = rect.right - (viewportWidth - 16);
         el.style.transform = `translateX(-${overflow}px)`;
@@ -96,133 +164,125 @@ export const BookmarkPanel: React.FC<BookmarkPanelProps> = ({ bookmarks, onJump,
     };
   }, [bookmarks, isMobile]);
 
-  // Shared Bookmark Item Renderer
+  const renderHeader = () => (
+    <div className="bookmark-panel-header">
+      <div className="bookmark-panel-header-left">
+        <div className="bookmark-panel-icon-box">
+          <BookmarkIcon size={20} color="#b490fc" />
+        </div>
+        <div className="bookmark-panel-title-group">
+          <h2 className="bookmark-panel-title">Bookmarks</h2>
+          <span className="bookmark-panel-subtitle">
+            {sortedBookmarks.length === 1 ? '1 saved in this video' : `${sortedBookmarks.length} saved in this video`}
+          </span>
+        </div>
+      </div>
+      <button 
+        type="button"
+        onClick={onClose}
+        className="bookmark-panel-close-btn"
+        title="Close"
+        aria-label="Close bookmarks panel"
+      >
+        <X size={18} />
+      </button>
+    </div>
+  );
+
+  const renderAddButton = () => (
+    <button 
+      type="button"
+      onClick={onAdd}
+      className="bookmark-add-time-btn"
+    >
+      <Plus size={18} strokeWidth={2.4} />
+      <span>Bookmark current time</span>
+    </button>
+  );
+
   const renderBookmarkList = () => (
     <div className="bookmark-panel-list">
       {sortedBookmarks.length === 0 ? (
-        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', minHeight: '140px', color: 'var(--bmp-text-muted)', textAlign: 'center', gap: '10px', padding: '16px' }}>
-          <BookmarkIcon size={40} strokeWidth={1.5} color="var(--bmp-text-muted)" />
-          <div>
-            <p style={{ margin: '0 0 4px', fontSize: '15px', color: 'var(--bmp-text-sec)', fontWeight: 600 }}>No bookmarks yet</p>
-            <span style={{ fontSize: '12px' }}>Save memorable moments while watching.</span>
+        <div className="bookmark-empty-state">
+          <div className="bookmark-empty-icon-box">
+            <BookmarkIcon size={28} color="#b490fc" />
           </div>
-          <button 
-            type="button"
-            onClick={onAdd}
-            style={{ marginTop: '12px', background: 'var(--bmp-accent)', color: '#ffffff', border: 'none', padding: '8px 18px', borderRadius: '12px', fontSize: '13px', fontWeight: 600, cursor: 'pointer', transition: 'background 0.2s', boxShadow: '0 4px 12px var(--bmp-accent-glow)' }}
-          >
-            Create First Bookmark
-          </button>
+          <p className="bookmark-empty-title">No bookmarks yet</p>
+          <span className="bookmark-empty-subtitle">Save memorable moments or intro/outro skips while watching.</span>
         </div>
       ) : (
-        sortedBookmarks.map(bm => (
-          <div 
-            key={bm.id}
-            className="bookmark-item"
-          >
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '12px' }}>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', overflow: 'hidden' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                  <span style={{ fontSize: '14px', fontWeight: 600, color: 'var(--bmp-text)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                    {bm.category === 'Movie Scene' && '🎬 '}
-                    {bm.category === 'Action' && '💥 '}
-                    {bm.category === 'Funny' && '😂 '}
-                    {bm.category === 'Hot Scene' && '🔥 '}
-                    {bm.category === 'Outro' && '🏁 '}
-                    {bm.category === 'Intro' && '⏩ '}
-                    {(bm.category === 'Preview' || bm.category === 'Recap') && '⏱️ '}
-                    {bm.category === 'Nudity' && '🔞 '}
-                    {bm.category === 'Sex' && '❤️‍🔥 '}
-                    {bm.category === 'Gore' && '🩸 '}
-                    {bm.title || bm.label || 'Untitled Bookmark'}
+        sortedBookmarks.map((bm) => {
+          const { title, badgeText, badgeClass, boxClass, icon } = getItemMeta(bm);
+          const timeDisplay = getTimeDisplay(bm);
+
+          return (
+            <div 
+              key={bm.id}
+              className="bookmark-card"
+              onClick={() => onJump(bm.time)}
+              title="Click to jump to time"
+            >
+              {/* Left Type Icon */}
+              <div className={`bookmark-type-box ${boxClass}`}>
+                {icon}
+              </div>
+
+              {/* Middle Info */}
+              <div className="bookmark-info">
+                <div className="bookmark-info-top">
+                  <span className="bookmark-item-title" title={title}>
+                    {title}
                   </span>
-                  {bm.favorite && <Heart size={14} fill="var(--bmp-accent)" color="var(--bmp-accent)" style={{ flexShrink: 0 }} />}
-                  {(() => {
-                    const createdBy = bm.createdBy;
-                    let label = 'Manual';
-                    let color = '#34d399'; // green
-                    let bg = 'rgba(52, 211, 153, 0.12)';
-                    
-                    if ((createdBy as string) === 'theintrodb' || (createdBy as string) === 'tidb' || bm.id.startsWith('introdb-') || bm.id.startsWith('api-')) {
-                      label = 'IntroDB';
-                      color = '#60a5fa'; // blue
-                      bg = 'rgba(96, 165, 250, 0.12)';
-                    } else if (createdBy === 'database' || createdBy === 'system' || bm.id.startsWith('bm-intro-') || bm.id.startsWith('bm-outro-')) {
-                      label = 'Database';
-                      color = '#c084fc'; // purple
-                      bg = 'rgba(192, 132, 252, 0.12)';
-                    } else if (createdBy === 'manual') {
-                      label = 'Manual';
-                      color = '#34d399';
-                      bg = 'rgba(52, 211, 153, 0.12)';
-                    }
-                    
-                    return (
-                      <span style={{ 
-                        fontSize: '9px', 
-                        fontWeight: 700, 
-                        textTransform: 'uppercase', 
-                        padding: '1px 5px', 
-                        borderRadius: '4px', 
-                        color, 
-                        background: bg,
-                        border: `1px solid ${color}22`,
-                        letterSpacing: '0.5px',
-                        display: 'inline-block',
-                        flexShrink: 0
-                      }}>
-                        {label}
-                      </span>
-                    );
-                  })()}
+                  {bm.favorite && (
+                    <Heart size={13} fill="#f43f5e" color="#f43f5e" style={{ flexShrink: 0 }} />
+                  )}
+                  <span className={`bookmark-source-badge ${badgeClass}`}>
+                    {badgeText}
+                  </span>
                 </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '6px', color: 'var(--bmp-accent)', fontSize: '13px', fontWeight: 600 }}>
-                  <Clock size={12} />
-                  {formatTime(bm.time)}
-                  {bm.endTime ? ` → ${formatTime(bm.endTime)}` : ''}
+                <div className="bookmark-info-bottom">
+                  {timeDisplay}
                 </div>
-                {(bm.userName || bm.userTime) && (
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--bmp-text-muted)', fontSize: '11px', marginTop: '2px' }}>
-                    {bm.userName && <span style={{ textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap', maxWidth: '120px' }}>👤 {bm.userName}</span>}
-                    {bm.userTime && <span>• 📅 {new Date(bm.userTime).toLocaleDateString()}</span>}
+                {bm.description && (
+                  <div className="bookmark-item-description">
+                    {bm.description}
                   </div>
                 )}
               </div>
-              
-              <button 
-                type="button"
-                onClick={() => onJump(bm.time)}
-                style={{ background: '#ffffff', color: '#000000', border: 'none', width: '32px', height: '32px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', flexShrink: 0, transition: 'transform 0.2s' }}
-                title="Jump to time"
-              >
-                <Play size={14} fill="#000000" style={{ marginLeft: '2px' }} />
-              </button>
-            </div>
 
-            {bm.description && (
-              <div style={{ fontSize: '12px', color: 'var(--bmp-text-sec)', lineHeight: '1.4', background: 'rgba(0,0,0,0.25)', padding: '6px 10px', borderRadius: '6px', borderLeft: '2px solid var(--bmp-border)' }}>
-                {bm.description}
+              {/* Right Actions */}
+              <div className="bookmark-actions" onClick={(e) => e.stopPropagation()}>
+                <button
+                  type="button"
+                  onClick={() => onEdit(bm)}
+                  className="bookmark-action-icon-btn"
+                  title="Edit bookmark"
+                  aria-label="Edit bookmark"
+                >
+                  <Pencil size={16} />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onDelete(bm.id)}
+                  className="bookmark-action-icon-btn delete-btn"
+                  title="Delete bookmark"
+                  aria-label="Delete bookmark"
+                >
+                  <Trash2 size={16} />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onJump(bm.time)}
+                  className="bookmark-play-btn"
+                  title="Jump to time"
+                  aria-label="Jump to time"
+                >
+                  <Play size={14} fill="#111319" color="#111319" style={{ marginLeft: '2px' }} />
+                </button>
               </div>
-            )}
-            
-            <div style={{ display: 'flex', gap: '8px', marginTop: '2px' }}>
-              <button 
-                type="button"
-                onClick={() => onEdit(bm)}
-                style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '5px', background: 'var(--bmp-surface)', border: '1px solid var(--bmp-border-subtle)', color: 'var(--bmp-text)', padding: '6px 8px', borderRadius: '6px', fontSize: '12px', fontWeight: 500, cursor: 'pointer', transition: 'background 0.2s' }}
-              >
-                <Pencil size={12} /> Edit
-              </button>
-              <button 
-                type="button"
-                onClick={() => onDelete(bm.id)}
-                style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '5px', background: 'rgba(239, 68, 68, 0.1)', border: '1px solid rgba(239, 68, 68, 0.2)', color: '#ef4444', padding: '6px 8px', borderRadius: '6px', fontSize: '12px', fontWeight: 500, cursor: 'pointer', transition: 'background 0.2s' }}
-              >
-                <Trash size={12} /> Delete
-              </button>
             </div>
-          </div>
-        ))
+          );
+        })
       )}
     </div>
   );
@@ -247,33 +307,8 @@ export const BookmarkPanel: React.FC<BookmarkPanelProps> = ({ bookmarks, onJump,
           onPointerDown={(e) => e.stopPropagation()}
         >
           {!isLandscape && <div className="bookmark-sheet-handle" />}
-          
-          <div className="bookmark-panel-header">
-            <div className="bookmark-panel-title">
-              <BookmarkIcon size={18} color="var(--bmp-accent)" />
-              <h2>Bookmarks ({bookmarks.length})</h2>
-            </div>
-            <div className="bookmark-panel-actions">
-              <button 
-                type="button"
-                onClick={onAdd}
-                className="bookmark-new-btn"
-                title="Create a bookmark"
-              >
-                + New
-              </button>
-              <button 
-                type="button"
-                onClick={onClose}
-                className="bookmark-close-btn"
-                title="Close"
-                aria-label="Close bookmarks panel"
-              >
-                <X size={15} />
-              </button>
-            </div>
-          </div>
-
+          {renderHeader()}
+          {renderAddButton()}
           {renderBookmarkList()}
         </div>
       </div>
@@ -295,31 +330,8 @@ export const BookmarkPanel: React.FC<BookmarkPanelProps> = ({ bookmarks, onJump,
     >
       {/* Hover bridge spacer to keep popover open when cursor moves from button to popover */}
       <div style={{ position: 'absolute', bottom: '-25px', left: 0, right: 0, height: '25px', background: 'transparent', pointerEvents: 'auto' }} />
-      
-      <div className="bookmark-panel-header">
-        <div className="bookmark-panel-title">
-          <BookmarkIcon size={18} color="var(--bmp-accent)" />
-          <h2>Bookmarks ({bookmarks.length})</h2>
-        </div>
-        <div className="bookmark-panel-actions">
-          <button 
-            type="button"
-            onClick={onAdd}
-            className="bookmark-new-btn"
-          >
-            + New
-          </button>
-          <button 
-            type="button"
-            onClick={onClose}
-            className="bookmark-close-btn"
-            title="Close Panel"
-          >
-            <X size={15} />
-          </button>
-        </div>
-      </div>
-
+      {renderHeader()}
+      {renderAddButton()}
       {renderBookmarkList()}
     </div>
   );

@@ -5,10 +5,11 @@ import { CustomSelect } from '../CustomSelect';
 import { BottomSheet } from '../ui/BottomSheet';
 
 interface LibraryToolbarProps {
-  activeTab: 'movies' | 'series';
-  onTabChange: (tab: 'movies' | 'series') => void;
+  activeTab: 'movies' | 'series' | 'playlists';
+  onTabChange: (tab: 'movies' | 'series' | 'playlists') => void;
   moviesCount: number;
   seriesCount: number;
+  playlistsCount?: number;
   searchQuery: string;
   onSearchChange: (q: string) => void;
   sortBy: SortOption;
@@ -32,6 +33,7 @@ export const LibraryToolbar: React.FC<LibraryToolbarProps> = ({
   onTabChange,
   moviesCount,
   seriesCount,
+  playlistsCount = 0,
   searchQuery,
   onSearchChange,
   sortBy,
@@ -135,6 +137,35 @@ export const LibraryToolbar: React.FC<LibraryToolbarProps> = ({
               color: 'inherit'
             }}>
               {seriesCount}
+            </span>
+          </button>
+          <button
+            role="tab"
+            aria-selected={activeTab === 'playlists'}
+            onClick={() => onTabChange('playlists')}
+            style={{
+              background: activeTab === 'playlists' ? 'var(--ac, var(--accent))' : 'transparent',
+              color: activeTab === 'playlists' ? 'var(--on, #fff)' : 'var(--tx, var(--text-2))',
+              border: 'none',
+              borderRadius: '9px',
+              padding: '6px 12px',
+              fontSize: '13px',
+              fontWeight: 600,
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px'
+            }}
+          >
+            <span>Playlists</span>
+            <span style={{
+              fontSize: '11px',
+              padding: '1px 5px',
+              borderRadius: '6px',
+              background: activeTab === 'playlists' ? 'rgba(0,0,0,0.2)' : 'var(--surface-3)',
+              color: 'inherit'
+            }}>
+              {playlistsCount}
             </span>
           </button>
         </div>
@@ -318,6 +349,40 @@ export const LibraryToolbar: React.FC<LibraryToolbarProps> = ({
               fontVariantNumeric: 'tabular-nums'
             }}>
               {seriesCount}
+            </span>
+          </button>
+
+          <button
+            role="tab"
+            aria-selected={activeTab === 'playlists'}
+            onClick={() => onTabChange('playlists')}
+            style={{
+              background: activeTab === 'playlists' ? 'var(--surface-3)' : 'transparent',
+              color: activeTab === 'playlists' ? 'var(--text-1)' : 'var(--text-2)',
+              border: '1px solid',
+              borderColor: activeTab === 'playlists' ? 'var(--control-border)' : 'transparent',
+              borderRadius: 'var(--radius-sm)',
+              padding: '6px 14px',
+              fontSize: '0.9rem',
+              fontWeight: activeTab === 'playlists' ? 600 : 500,
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px',
+              transition: 'all 0.15s ease-out'
+            }}
+          >
+            <span>Playlists</span>
+            <span style={{
+              fontSize: '0.75rem',
+              fontWeight: 600,
+              padding: '1px 7px',
+              borderRadius: '10px',
+              background: activeTab === 'playlists' ? 'var(--accent-soft)' : 'var(--surface-2)',
+              color: activeTab === 'playlists' ? 'var(--accent)' : 'var(--text-3)',
+              fontVariantNumeric: 'tabular-nums'
+            }}>
+              {playlistsCount}
             </span>
           </button>
         </div>

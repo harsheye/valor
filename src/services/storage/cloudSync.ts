@@ -1,4 +1,7 @@
 import type { VideoItem, Bookmark } from '../../types/media';
+import { deduplicateBookmarks, mergeBookmarksList } from '../../utils/bookmarkUtils';
+
+export { deduplicateBookmarks, mergeBookmarksList };
 
 /**
  * Scan localStorage for all bookmarks saved across all keys (valor_bookmarks_*).
@@ -46,36 +49,10 @@ export function collectAllLocalBookmarks(userIdsToScan: string[] = ['local']): {
 
   // Deduplicate and sort bookmarks per video
   for (const vid in result) {
-    const map = new Map<string, Bookmark>();
-    for (const bm of result[vid]) {
-      if (!bm) continue;
-      const id = bm.id || `bm_${bm.time}_${Math.random().toString(36).substring(2, 7)}`;
-      map.set(id, { ...bm, id });
-    }
-    result[vid] = Array.from(map.values()).sort((a, b) => a.time - b.time);
+    result[vid] = deduplicateBookmarks(result[vid]);
   }
 
   return result;
-}
-
-/**
- * Merge two bookmark lists safely by id or timestamp.
- */
-export function mergeBookmarksList(b1?: Bookmark[], b2?: Bookmark[]): Bookmark[] {
-  const map = new Map<string, Bookmark>();
-  (b1 || []).forEach(bm => {
-    if (bm) {
-      const id = bm.id || `bm_${bm.time}`;
-      map.set(id, { ...bm, id });
-    }
-  });
-  (b2 || []).forEach(bm => {
-    if (bm) {
-      const id = bm.id || `bm_${bm.time}`;
-      map.set(id, { ...bm, id });
-    }
-  });
-  return Array.from(map.values()).sort((a, b) => a.time - b.time);
 }
 
 /**

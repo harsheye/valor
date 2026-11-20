@@ -52,6 +52,20 @@ export function parseEmbedControlsFromParams(params: URLSearchParams): ControlsC
     return defaultVal;
   };
 
+  // Helper to check for negative flags (e.g. ?hideOverlay or ?hideOverlay=1 or ?hideOverlay=true)
+  const hasNegativeFlag = (keys: string[]): boolean => {
+    for (const key of keys) {
+      const val = params.get(key);
+      if (val !== null) {
+        const lower = val.toLowerCase().trim();
+        if (lower === '' || lower === 'true' || lower === '1' || lower === 'yes' || lower === 'on') {
+          return true;
+        }
+      }
+    }
+    return false;
+  };
+
   // Direct URL attributes overrides
   config.time = parseBool(['time', 'showTime', 'timeDisplay'], config.time ?? true);
   config.bookmarks = parseBool(['bookmarks', 'showBookmarks', 'bookmark'], config.bookmarks ?? true);
@@ -73,6 +87,24 @@ export function parseEmbedControlsFromParams(params: URLSearchParams): ControlsC
   config.speed = parseBool(['speed', 'showSpeed'], config.speed ?? true);
   config.settings = parseBool(['settings', 'showSettings'], config.settings ?? true);
   config.pip = parseBool(['pip', 'showPip'], config.pip ?? true);
+
+  // Overlay control: allow overlay to be hidden via query params
+  // Examples: ?overlay=false, ?overlay=0, ?overlay=hide, ?hideOverlay=true, ?pauseOverlay=false, ?hidePauseOverlay=1
+  config.overlay = parseBool(['overlay', 'showOverlay', 'pauseOverlay', 'showPauseOverlay'], config.overlay ?? true);
+  if (hasNegativeFlag(['hideOverlay', 'hide_overlay', 'hidePauseOverlay', 'hide_pause_overlay', 'noOverlay', 'no_overlay'])) {
+    config.overlay = false;
+  }
+
+  // Allow choosing time for overlay to become active via embed query as well
+  const timeParam = params.get('overlayActiveTime') || params.get('overlayTime') || params.get('overlayDelay');
+  if (timeParam !== null) {
+    const parsedTime = parseInt(timeParam, 10);
+    if (!isNaN(parsedTime) && parsedTime >= 0) {
+      config.overlayActiveTime = parsedTime;
+    }
+  }
+
+  config.hideUIOverlays = parseBool(['hideUIOverlays', 'hideOverlays', 'hideUiOverlays'], config.hideUIOverlays ?? false);
 
   return config;
 }
@@ -714,6 +746,13 @@ export const EmbedPlayerPage: React.FC = () => {
         subFileOnly={controls.subFileOnly === true}
         allowSubUpload={controls.allowSubUpload !== false}
         showCloseButton={controls.closeButton === true}
+        hideUIOverlays={controls.hideUIOverlays || false}
+        getOverlayDataFromTmdb={controls.overlay !== false && embedSettings?.getOverlayDataFromTmdb !== false}
+        overlayPosition={embedSettings?.overlayPosition || 'middle-left'}
+        overlayShowBackground={embedSettings?.overlayShowBackground !== false}
+        overlayShowRating={embedSettings?.overlayShowRating !== false}
+        overlayShowOverview={embedSettings?.overlayShowOverview !== false}
+        overlayActiveTime={controls.overlayActiveTime !== undefined ? controls.overlayActiveTime : (typeof embedSettings?.overlayActiveTime === 'number' ? embedSettings.overlayActiveTime : 10)}
         subSettings={subSettings}
         onUpdateSubSettings={handleUpdateSubSettings}
         openSubtitlesApiKey={embedSettings.openSubtitlesApiKey || ''}

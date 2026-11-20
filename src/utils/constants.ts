@@ -100,6 +100,8 @@ export const defaultSettings = {
   autoSkipOutro: false,
   autoPip: false,
   autoPlayNext: false,
+  whenFinished: 'home' as 'home' | 'stay' | 'replay',
+  playbackFinishDelay: 5,
   autoPauseOnTabSwitch: true,
   defaultPlaybackRate: 1.0,
   volumeStep: 5,

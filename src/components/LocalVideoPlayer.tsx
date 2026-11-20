@@ -3,8 +3,21 @@ import {
   Play, Pause, RotateCcw, RotateCw, Cast, X, ArrowLeft, 
   MessageSquare, MessageSquareText, CircleGauge, Maximize, Minimize, MonitorPlay,
   Volume2, Volume1, VolumeX, AlertCircle, Lock, Unlock,
-  Layers, Type, Clock, Sliders, SkipForward, Ban, FastForward, Zap, Coffee, ChevronRight, ChevronLeft, Eye, Settings, Bookmark as BookmarkIcon, Activity, Terminal, Sparkles, Sun
+  Layers, Type, Clock, Sliders, SkipForward, Ban, FastForward, Zap, Coffee, ChevronRight, ChevronLeft, Eye, Settings, Bookmark as BookmarkIcon, Activity, Terminal, Sparkles, Sun, Star,
+  List as PlaylistIcon, SkipBack, SkipForward as SkipForwardIcon, CheckCircle, LogOut
 } from 'lucide-react';
+import type { PlaylistState } from '../hooks/usePlaylist';
+import { saveCarriedTrackPreferences, getCarriedTrackPreferences } from '../utils/trackPreferences';
+
+let activePlayerDispose: (() => Promise<void>) | null = null;
+
+export async function disposeActiveLocalPlayer(): Promise<void> {
+  if (activePlayerDispose) {
+    const fn = activePlayerDispose;
+    activePlayerDispose = null;
+    await fn();
+  }
+}
 import { Button } from './ui/button';
 import type { VideoItem, CustomAudioTrack, CustomSubtitleTrack, Bookmark } from '../types/media';
 import { SubtitleOverlay } from './SubtitleOverlay';
@@ -52,6 +65,7 @@ import { ConsoleOverlay } from './ConsoleOverlay';
 import { SpeedPopover } from './SpeedPopover';
 import { EsportsLiveOverlay } from './EsportsLiveOverlay';
 import { trimSubtitleName, saveEmbedSubtitles, getEmbedSubtitlesSync, getEmbedSubtitlesAsync } from '../utils/embedSubtitleStorage';
+import { mergeBookmarksList, isIntroBookmark, isOutroBookmark, deduplicateBookmarks } from '../utils/bookmarkUtils';
 
 interface VideoPlayerProps {
   video: VideoItem;
@@ -85,6 +99,7 @@ interface VideoPlayerProps {
   overlayShowBackground?: boolean;
   overlayShowRating?: boolean;
   overlayShowOverview?: boolean;
+  overlayActiveTime?: number;
   openSubtitlesApiKey?: string;
   onUpdateSettings?: (settings: Partial<any>) => void;
   allowUiSkipping?: boolean;
@@ -97,8 +112,30 @@ interface VideoPlayerProps {
   uiHideTimeout?: number;
   onReassociate?: (videoId: string) => void;
   isEmbed?: boolean;
+  isPermissionExpired?: boolean;
+  onContinueWhereLeftOff?: () => void;
   cacheSettings?: CacheSettings;
   onUpdateCacheSettings?: (settings: Partial<CacheSettings>) => void;
+  children?: React.ReactNode;
+  isPlaylistOpen?: boolean;
+  onClosePlaylistPanel?: () => void;
+  // ── Playlist props ──────────────────────────────────────────────────────
+  playlist?: PlaylistState;
+  playlistIndex?: number;             // index of this item in the playlist
+  onPlaylistEnded?: () => void;       // called when video ends → auto-advance
+  onPlaylistNext?: () => void;        // called by N key / next button
+  onPlaylistPrev?: () => void;        // called by P key / prev button
+  onTogglePlaylistPanel?: () => void; // called by playlist button in controls
+  onTimelineOnlyChange?: (isTimelineOnly: boolean) => void;
+  onPlaylistPrefetchNext?: () => void;
+  autoNextCountdown?: number;         // countdown in seconds (default 5, 0 = instant)
+  onFinishSession?: () => Promise<void> | void; // called when collection ends and returns home
+  whenFinished?: 'home' | 'stay' | 'replay';
+  playbackFinishDelay?: number;
+  onOpenFile?: () => void;
+  onOpenNetworkStream?: () => void;
+  onAddToPlaylist?: () => void;
+  onPlayIndex?: (index: number) => void;
 }
 
 const OdometerDigit: React.FC<{ val: string }> = ({ val }) => {
@@ -322,6 +359,7 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
   overlayShowBackground = true,
   overlayShowRating = true,
   overlayShowOverview = true,
+  overlayActiveTime = 10,
   openSubtitlesApiKey = '',
   onUpdateSettings,
   allowUiSkipping = true,
@@ -334,8 +372,30 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
   uiHideTimeout = 1.5,
   onReassociate,
   isEmbed = false,
+  isPermissionExpired = false,
+  onContinueWhereLeftOff,
   cacheSettings,
-  onUpdateCacheSettings
+  onUpdateCacheSettings,
+  children,
+  isPlaylistOpen,
+  onClosePlaylistPanel,
+  // ── Playlist ────────────────────────────────────────────────────────────
+  playlist,
+  playlistIndex = -1,
+  onPlaylistEnded,
+  onPlaylistNext,
+  onPlaylistPrev,
+  onTogglePlaylistPanel,
+  onTimelineOnlyChange,
+  onPlaylistPrefetchNext,
+  autoNextCountdown = 5,
+  onFinishSession,
+  whenFinished = 'home',
+  playbackFinishDelay = 5,
+  onOpenFile,
+  onOpenNetworkStream,
+  onAddToPlaylist,
+  onPlayIndex,
 }) => {
   const isEffectiveEmbed = isEmbed || (typeof window !== 'undefined' && window.location.pathname.startsWith('/embed'));
   const island = usePlayerIsland();
@@ -374,6 +434,19 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
 
   const activeFile = isFile(video.file) ? video.file : resolvedFile;
 
+  // Switch Toast Notification
+  const [switchToast, setSwitchToast] = useState<{ text: string; visible: boolean; duration?: number }>({ text: '', visible: false });
+  const switchToastTimeoutRef = useRef<any>(null);
+
+  const triggerSwitchToast = useCallback((text: string, customDuration?: number) => {
+    if (switchToastTimeoutRef.current) clearTimeout(switchToastTimeoutRef.current);
+    const dur = customDuration || toastDuration;
+    setSwitchToast({ text, visible: true, duration: dur });
+    switchToastTimeoutRef.current = setTimeout(() => {
+      setSwitchToast(prev => ({ ...prev, visible: false }));
+    }, dur * 1000);
+  }, [toastDuration]);
+
   useEffect(() => {
     setHasFileAccessError(false);
     if (isFile(video.file)) {
@@ -400,6 +473,121 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
   const showPauseMetadataOverlayRef = useRef(false);
   showPauseMetadataOverlayRef.current = showPauseMetadataOverlay;
   const pauseOverlayTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // ── Watch Credits vs Auto-Skip Outro state ──────────────────────────────
+  const [isWatchingCreds, setIsWatchingCreds] = useState(false);
+  const autoSkipTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const autoSkipTriggeredRef = useRef(false);
+
+  useEffect(() => {
+    setIsWatchingCreds(false);
+    autoSkipTriggeredRef.current = false;
+    if (autoSkipTimerRef.current) {
+      clearTimeout(autoSkipTimerRef.current);
+      autoSkipTimerRef.current = null;
+    }
+  }, [video.id]);
+
+  // ── Auto-next countdown & prefetch ──────────────────────────────────────
+  const [showAutoNextCard, setShowAutoNextCard] = useState(false);
+  const [autoNextRemaining, setAutoNextRemaining] = useState(autoNextCountdown);
+  const hasPrefetchedNextRef = useRef(false);
+
+  useEffect(() => {
+    setShowAutoNextCard(false);
+    setAutoNextRemaining(autoNextCountdown);
+    hasPrefetchedNextRef.current = false;
+  }, [video.id, autoNextCountdown]);
+
+  useEffect(() => {
+    if (!showAutoNextCard) return;
+    if (autoNextRemaining <= 0) {
+      setShowAutoNextCard(false);
+      onPlaylistEnded?.();
+      return;
+    }
+    const timer = setTimeout(() => {
+      setAutoNextRemaining(r => r - 1);
+    }, 1000);
+    return () => clearTimeout(timer);
+  }, [showAutoNextCard, autoNextRemaining, onPlaylistEnded]);
+
+  // ── End of playback finish countdown ────────────────────────────────────
+  const [showFinishedCard, setShowFinishedCard] = useState(false);
+  const [finishRemaining, setFinishRemaining] = useState(playbackFinishDelay ?? 5);
+  const isFinishingSessionRef = useRef(false);
+
+  useEffect(() => {
+    setShowFinishedCard(false);
+    setFinishRemaining(playbackFinishDelay ?? 5);
+    isFinishingSessionRef.current = false;
+  }, [video.id, playbackFinishDelay]);
+
+  const handleFinishSessionAndGoHome = useCallback(async () => {
+    if (isFinishingSessionRef.current) return;
+    isFinishingSessionRef.current = true;
+
+    // Exit fullscreen and PiP
+    if (typeof document !== 'undefined') {
+      if (document.fullscreenElement) {
+        try { await document.exitFullscreen(); } catch {}
+      }
+      if (document.pictureInPictureElement) {
+        try { await document.exitPictureInPicture(); } catch {}
+      }
+    }
+
+    if (onFinishSession) {
+      await onFinishSession();
+    } else {
+      onBack();
+    }
+  }, [onFinishSession, onBack]);
+
+  useEffect(() => {
+    if (!showFinishedCard) return;
+    if (finishRemaining <= 0) {
+      setShowFinishedCard(false);
+      handleFinishSessionAndGoHome();
+      return;
+    }
+    const timer = setTimeout(() => {
+      setFinishRemaining(r => r - 1);
+    }, 1000);
+    return () => clearTimeout(timer);
+  }, [showFinishedCard, finishRemaining, handleFinishSessionAndGoHome]);
+
+  const nextItemTitle = useMemo(() => {
+    if (!playlist || playlist.items.length === 0) return null;
+    const normVidId = video.id.replace(/^local-/, '');
+    const curIdx = playlistIndex >= 0 ? playlistIndex : playlist.items.findIndex(it =>
+      (it.id || it.fingerprint) === video.id ||
+      (it.id || it.fingerprint) === normVidId ||
+      (video.title && (it.title === video.title || it.name === video.title)) ||
+      ((video as any).fileName && (it.name === (video as any).fileName || it.title === (video as any).fileName))
+    );
+    if (curIdx < 0) return null;
+    let nextIdx = -1;
+    if (playlist.repeat === 'one') {
+      nextIdx = curIdx;
+    } else if (playlist.repeat === 'all') {
+      nextIdx = (curIdx + 1) % playlist.items.length;
+    } else {
+      nextIdx = curIdx + 1 < playlist.items.length ? curIdx + 1 : -1;
+    }
+    if (nextIdx >= 0 && nextIdx < playlist.items.length) {
+      const item = playlist.items[nextIdx];
+      return item.title || item.name || item.fileName;
+    }
+    return null;
+  }, [playlist, playlistIndex, video.id]);
+
+  const isSeries = useMemo(() => {
+    const rawTitle = video.title || (video as any).fileName || '';
+    const info = classifyVideoTitle(rawTitle);
+    return info.type === 'series' || Boolean(playlist && playlist.items && playlist.items.some(it => classifyVideoTitle(it.title || it.name || '').type === 'series'));
+  }, [video.title, (video as any).fileName, playlist]);
+
   const [mediaDetails, setMediaDetails] = useState<MediaDetails | null>(() => {
     const rawTitle = video.title || (video as any).fileName || '';
     const seriesInfo = classifyVideoTitle(rawTitle);
@@ -722,7 +910,7 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
   const [showSettingsPanel, setShowSettingsPanel] = useState(false);
   const [showAddDialog, setShowAddDialog] = useState(false);
   const [showBookmarksPopover, setShowBookmarksPopover] = useState(false);
-  const [bookmarks, setBookmarks] = useState<any[]>(() => video.bookmarks || []);
+  const [bookmarks, setBookmarks] = useState<any[]>(() => deduplicateBookmarks(video.bookmarks || []));
   const [editingBookmark, setEditingBookmark] = useState<Bookmark | undefined>(undefined);
   const [markingStartTime, setMarkingStartTime] = useState<number | null>(null);
 
@@ -965,8 +1153,8 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
       const seriesInfo = classifyVideoTitle(video.title);
       if (seriesInfo.type === 'series' && seriesInfo.seriesTitle) {
         const currentBookmarks = video.bookmarks || [];
-        const hasIntro = currentBookmarks.some((b: any) => b.isIntro);
-        const hasOutro = currentBookmarks.some((b: any) => b.isOutro);
+        const hasIntro = currentBookmarks.some((b: any) => isIntroBookmark(b));
+        const hasOutro = currentBookmarks.some((b: any) => isOutroBookmark(b));
 
         if (!hasIntro || !hasOutro) {
           const otherEpisodes = videos.filter(
@@ -979,9 +1167,9 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
 
           for (const ep of otherEpisodes) {
             const epBms = ep.bookmarks || [];
-            if (!introToCopy) introToCopy = epBms.find((b: any) => b.isIntro);
+            if (!introToCopy) introToCopy = epBms.find((b: any) => isIntroBookmark(b));
             if (!outroToCopy) {
-              outroToCopy = epBms.find((b: any) => b.isOutro);
+              outroToCopy = epBms.find((b: any) => isOutroBookmark(b));
               if (outroToCopy) outroSourceEp = ep;
             }
             if (introToCopy && outroToCopy) break;
@@ -1004,7 +1192,7 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
           }
 
           if (updated) {
-            const sortedBms = newBms.sort((a, b) => a.time - b.time);
+            const sortedBms = mergeBookmarksList(newBms);
             setBookmarks(sortedBms);
             onUpdateVideo((prev: any) => ({
               ...prev,
@@ -1245,7 +1433,10 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
     setShowAddDialog(false);
     setEditingBookmark(undefined);
     if (videoRef.current && isPlaying) {
-      videoRef.current.play().catch(console.error);
+      videoRef.current.play().catch(err => {
+        if (err?.name === 'AbortError') return;
+        console.error(err);
+      });
     }
   };
 
@@ -1281,7 +1472,17 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
   const sessionStartRef = useRef<number | null>(null);
   const mountTimeRef = useRef<number>(Date.now());
   const [showRatingPrompt, setShowRatingPrompt] = useState(false);
-  const [userRating, setUserRating] = useState<number | null>((video as any).rating || null);
+  const [userRating, setUserRating] = useState<number | null>(() => {
+    const r = (video as any).rating;
+    if (typeof r === 'number' && r > 0) return r;
+    try {
+      const stored = JSON.parse(localStorage.getItem('valor_ratings') || '{}');
+      if (video.id && stored[video.id]) return Number(stored[video.id]);
+      if (video.title && stored[video.title]) return Number(stored[video.title]);
+    } catch {}
+    return null;
+  });
+  const [hoverRating, setHoverRating] = useState<number | null>(null);
   const ratingPromptedRef = useRef<boolean>(!!(video as any).rating);
 
   const tmdbIdRef = useRef<number | null>(null);
@@ -1688,15 +1889,8 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
       }
 
       // Merge local, server, and tidb bookmarks
-      const mergeBookmarks = (existing: any[], newBms: any[]) => {
-        const map = new Map<string, any>();
-        existing.forEach(bm => map.set(bm.id, bm));
-        newBms.forEach(bm => map.set(bm.id, bm));
-        return Array.from(map.values()).sort((a, b) => a.time - b.time);
-      };
-
       const initialBms = video.bookmarks || [];
-      const merged = mergeBookmarks(mergeBookmarks(initialBms, serverBms), tidbBms);
+      const merged = mergeBookmarksList(initialBms, [...serverBms, ...tidbBms]);
       
       setBookmarks(merged);
       onUpdateVideo((prev: any) => ({
@@ -1762,6 +1956,9 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
     prevVlcVisibleRef.current = vlcContextMenuState.visible;
   }, [vlcContextMenuState.visible]);
   const [timelineOnlyMode, setTimelineOnlyMode] = useState(false);
+  useEffect(() => {
+    onTimelineOnlyChange?.(timelineOnlyMode);
+  }, [timelineOnlyMode, onTimelineOnlyChange]);
   const [aspectRatio, setAspectRatio] = useState<string>('default');
   const [hoverTime, setHoverTime] = useState<string | null>(null);
   const [hoverPercent, setHoverPercent] = useState(0);
@@ -2065,18 +2262,32 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
     triggerSwitchToast(`Ambiance Opacity: ${Math.round(opacity * 100)}%`);
   }, []);
 
-  // Switch Toast Notification
-  const [switchToast, setSwitchToast] = useState<{ text: string; visible: boolean; duration?: number }>({ text: '', visible: false });
-  const switchToastTimeoutRef = useRef<any>(null);
-
-  const triggerSwitchToast = useCallback((text: string, customDuration?: number) => {
-    if (switchToastTimeoutRef.current) clearTimeout(switchToastTimeoutRef.current);
-    const dur = customDuration || toastDuration;
-    setSwitchToast({ text, visible: true, duration: dur });
-    switchToastTimeoutRef.current = setTimeout(() => {
-      setSwitchToast(prev => ({ ...prev, visible: false }));
-    }, dur * 1000);
-  }, [toastDuration]);
+  const handleSelectRating = useCallback((star: number) => {
+    setUserRating(star);
+    onUpdateVideo((prev: any) => ({ ...prev, rating: star }));
+    try {
+      const savedSettings = localStorage.getItem('valor_settings');
+      if (savedSettings) {
+        const parsed = JSON.parse(savedSettings);
+        if (parsed.traktAccessToken) {
+          syncTraktRating({ ...video, tmdbId: video.tmdbId || tmdbIdRef.current }, star, parsed.traktAccessToken).then(res => {
+            if (res.ok) {
+              triggerSwitchToast(`Trakt Rating: Synced ${star * 2}/10`);
+            }
+          }).catch(() => {});
+        }
+      }
+    } catch {}
+    try {
+      const currentRatings = JSON.parse(localStorage.getItem('valor_ratings') || '{}');
+      if (video.id) currentRatings[video.id] = star;
+      if (video.title) currentRatings[video.title] = star;
+      localStorage.setItem('valor_ratings', JSON.stringify(currentRatings));
+    } catch {}
+    setTimeout(() => {
+      setShowRatingPrompt(false);
+    }, 1500);
+  }, [video, onUpdateVideo, triggerSwitchToast]);
 
   // HDR Tone Mapping State & Persistence
   const [toneMappingMode, setToneMappingMode] = useState<ToneMappingMode>(() => {
@@ -2488,6 +2699,19 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
               timecodeScale
             };
             onUpdateVideoRef.current(updatedVideo);
+
+            const audioStreams = (result.streams || []).filter((s: any) => s.type === 'audio');
+            const isNonNative = audioStreams.some((s: any) => !isBrowserPlayableAudioCodec(s.codec));
+            if (activeAudioStreamIndex === null && (audioStreams.length >= 2 || isNonNative)) {
+              const prefs = getSavedMediaPreferences();
+              const preferredIdx = getPreferredAudioStreamIndex(result.streams, prefs.defaultAudio);
+              if (preferredIdx !== null) {
+                setActiveAudioStreamIndex(preferredIdx);
+                if (playbackControllerRef.current) {
+                  void playbackControllerRef.current.switchAudioTrack(preferredIdx);
+                }
+              }
+            }
           } catch (err) {
             logger.error('Auto probe streams failed:', err);
             probingVideoIdRef.current = null; // allow retry
@@ -2496,6 +2720,7 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
           }
         } else if (video.url || (video as any).localFilePath) {
           const targetUrl = (video as any).localFilePath || video.url;
+          if (video.type === 'local' && targetUrl?.startsWith('blob:') && !activeFile) return;
           if ((video as any).streams && (video as any).streams.length > 0) return;
           if (probingVideoIdRef.current === video.id) return;
           probingVideoIdRef.current = video.id;
@@ -2582,6 +2807,8 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
       videoRef.current.volume = volume;
       if (!playbackControllerRef.current || activeAudioStreamIndex === null) {
         videoRef.current.muted = isMuted;
+      } else {
+        videoRef.current.muted = true;
       }
     }
 
@@ -2634,26 +2861,28 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
       clearTimeout(pauseOverlayTimerRef.current);
       pauseOverlayTimerRef.current = null;
     }
-    if (!isPlaying) {
+    if (!isPlaying && getOverlayDataFromTmdb !== false) {
       showPauseMetadataOverlayRef.current = false;
       setShowPauseMetadataOverlay(false);
+      const delayMs = Math.max(0, (overlayActiveTime ?? 10) * 1000);
       pauseOverlayTimerRef.current = setTimeout(() => {
         showPauseMetadataOverlayRef.current = true;
         setShowPauseMetadataOverlay(true);
         setShowControls(false);
-      }, 10000);
+      }, delayMs);
     }
-  }, [isPlaying]);
+  }, [isPlaying, getOverlayDataFromTmdb, overlayActiveTime]);
 
   useEffect(() => {
-    if (!isPlaying) {
+    if (!isPlaying && getOverlayDataFromTmdb !== false) {
       showPauseMetadataOverlayRef.current = false;
       setShowPauseMetadataOverlay(false);
+      const delayMs = Math.max(0, (overlayActiveTime ?? 10) * 1000);
       pauseOverlayTimerRef.current = setTimeout(() => {
         showPauseMetadataOverlayRef.current = true;
         setShowPauseMetadataOverlay(true);
         setShowControls(false);
-      }, 10000);
+      }, delayMs);
     } else {
       if (pauseOverlayTimerRef.current) {
         clearTimeout(pauseOverlayTimerRef.current);
@@ -2669,7 +2898,7 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
         pauseOverlayTimerRef.current = null;
       }
     };
-  }, [isPlaying]);
+  }, [isPlaying, getOverlayDataFromTmdb, overlayActiveTime]);
 
   // Controls Auto-Hide
   const resetControlsTimeout = () => {
@@ -2680,7 +2909,7 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
     }
     const hideDelay = (uiHideTimeout || 1.5) * 1000;
     controlsTimeoutRef.current = setTimeout(() => {
-      if (!showAudioSubMenu && !showSettingsPanel && !showBookmarksPopover && !showAddDialog) {
+      if (!showAudioSubMenu && !showSettingsPanel && !showBookmarksPopover && !showAddDialog && !isPlaylistOpen) {
         setShowControls(false);
       }
     }, hideDelay);
@@ -2705,7 +2934,16 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
     return () => {
       if (controlsTimeoutRef.current) clearTimeout(controlsTimeoutRef.current);
     };
-  }, [isPlaying, uiHideTimeout, showAudioSubMenu, showSettingsPanel, showBookmarksPopover, showAddDialog]);
+  }, [isPlaying, uiHideTimeout, showAudioSubMenu, showSettingsPanel, showBookmarksPopover, showAddDialog, isPlaylistOpen]);
+
+  // Auto-close playlist panel on playback start (transition from paused to playing)
+  const prevIsPlayingForPanelRef = useRef(isPlaying);
+  useEffect(() => {
+    if (!prevIsPlayingForPanelRef.current && isPlaying && isPlaylistOpen) {
+      onClosePlaylistPanel?.();
+    }
+    prevIsPlayingForPanelRef.current = isPlaying;
+  }, [isPlaying, isPlaylistOpen, onClosePlaylistPanel]);
 
   const parseDurationToSeconds = (dur: any): number => {
     if (!dur) return 0;
@@ -3056,6 +3294,8 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
 
   const handleVideoSeeked = async () => {
     setIsBuffering(false);
+    setShowFinishedCard(false);
+    setShowAutoNextCard(false);
     if (!videoRef.current) return;
     const newTime = videoRef.current.currentTime;
 
@@ -3126,6 +3366,7 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
       audioDebounceTimeoutRef.current = null;
     }
     setActiveAudioStreamIndex(streamIndex);
+    saveCarriedTrackPreferences({ audioLang: language, audioTitle: title });
     if (playbackControllerRef.current) {
       playbackControllerRef.current.switchAudioTrack(streamIndex);
     }
@@ -3169,6 +3410,8 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
       subDebounceTimeoutRef.current = null;
     }
     setActiveSubStreamIndex(streamIndex);
+    userExplicitlyTurnedOffSubRef.current = false;
+    saveCarriedTrackPreferences({ subLang: language, subTitle: undefined });
     const label = getLangLabel(language, `Track #${streamIndex}`);
     setSelectedSubTrack({
       id: `remote-sub-${streamIndex}`,
@@ -3225,21 +3468,28 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
       }
     }
     if (!videoRef.current) return;
-    if (isPlaying) {
+    const isActuallyPlaying = videoRef.current ? !videoRef.current.paused : isPlaying;
+    if (isActuallyPlaying) {
       if (playbackControllerRef.current) {
         playbackControllerRef.current.pause();
       } else {
         videoRef.current.pause();
       }
       setIsPlaying(false);
+      isPlayingRef.current = false;
       triggerPlayPauseFeedback('pause');
     } else {
+      const handlePlayErr = (err: any) => {
+        if (err?.name === 'AbortError') return;
+        console.error(err);
+      };
       if (playbackControllerRef.current) {
-        playbackControllerRef.current.play().catch(console.error);
-      } else {
-        videoRef.current.play().catch(console.error);
+        playbackControllerRef.current.play().catch(handlePlayErr);
+      } else if (videoRef.current) {
+        videoRef.current.play().catch(handlePlayErr);
       }
       setIsPlaying(true);
+      isPlayingRef.current = true;
       triggerPlayPauseFeedback('play');
     }
     resetControlsTimeout();
@@ -3335,6 +3585,7 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
       '.bookmarks-popover, .bookmark-mobile-panel, .bookmark-mobile-backdrop, .bookmark-dialog-box, .bookmark-dialog-overlay, ' +
       '.audio-sub-popover, .asp-pop, .asp-sheet, .asp-sheet-backdrop, ' +
       '.ui-settings-slideout-drawer, .ui-settings-drawer-card, .ui-settings-drawer-backdrop, .ui-settings-unified-handle, ' +
+      '.playlist-panel-container, .playlist-panel-backdrop, ' +
       '.popover-wrapper, .vlc-context-menu, .marking-hud-button-controls, button, input, select, textarea, [role="dialog"], [role="menu"]'
     )) {
       return;
@@ -3609,13 +3860,15 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
         language: s.language
       });
     });
-    subtitleTracks.forEach((t) => {
-      list.push({
-        type: 'custom',
-        name: t.name,
-        track: t
+    subtitleTracks
+      .filter((t) => t.streamIndex === undefined || !subtitleStreams.some((s) => s.index === t.streamIndex))
+      .forEach((t) => {
+        list.push({
+          type: 'custom',
+          name: t.name,
+          track: t
+        });
       });
-    });
     return list;
   };
 
@@ -3635,13 +3888,15 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
         language: s.language
       });
     });
-    audioTracks.forEach((t) => {
-      list.push({
-        type: 'custom',
-        name: t.name,
-        track: t
+    audioTracks
+      .filter((t) => t.streamIndex === undefined || !audioStreams.some((s) => s.index === t.streamIndex))
+      .forEach((t) => {
+        list.push({
+          type: 'custom',
+          name: t.name,
+          track: t
+        });
       });
-    });
     return list;
   };
 
@@ -3724,10 +3979,13 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
     }
     if (track === null) {
       userExplicitlyTurnedOffSubRef.current = true;
+      saveCarriedTrackPreferences({ subLang: 'off', subTitle: undefined });
       if (!showAudioSubMenu && !vlcContextMenuState.visible) {
         island.notify({ type: 'subtitle', language: null });
       }
     } else {
+      userExplicitlyTurnedOffSubRef.current = false;
+      saveCarriedTrackPreferences({ subLang: track.language, subTitle: track.name });
       userExplicitlyTurnedOffSubRef.current = false;
       if (!showAudioSubMenu && !vlcContextMenuState.visible) {
         if (track.streamIndex !== undefined) {
@@ -3881,14 +4139,17 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
     if (e.repeat) return;
     const pressedKey = e.key.toLowerCase();
     
-    // If add bookmark dialog or settings panel is open, ignore player hotkeys
+    // If add bookmark dialog or settings panel or playlist panel is open, ignore player hotkeys
     // (Except Escape to close the dialog/panel)
-    if (showAddDialog || showSettingsPanel) {
+    if (showAddDialog || showSettingsPanel || isPlaylistOpen) {
       if (pressedKey === 'escape') {
         e.preventDefault();
         setShowAddDialog(false);
         setShowSettingsPanel(false);
         setIsSettingsExpanded(false);
+        if (isPlaylistOpen && onClosePlaylistPanel) {
+          onClosePlaylistPanel();
+        }
       }
       return;
     }
@@ -3901,7 +4162,14 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
       return;
     }
 
-    // Ignore browser/system shortcuts
+    // Handle Ctrl+O / Cmd+O to open media file
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'o') {
+      e.preventDefault();
+      onOpenFile?.();
+      return;
+    }
+
+    // Ignore other browser/system shortcuts
     if (e.ctrlKey || e.metaKey || e.altKey) {
       return;
     }
@@ -4037,12 +4305,44 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
       const isBoostKey = matchesKey(audioBoostKey);
       const isScreenshotKey = matchesKey(screenshotKey);
       const isSkipKey = pressedKey === 'c';
+      const isRatingKey = pressedKey === 'r';
+      if (isRatingKey) {
+        e.preventDefault();
+        e.stopPropagation();
+        setShowRatingPrompt(prev => !prev);
+        return;
+      }
+      if (showRatingPrompt && ['1', '2', '3', '4', '5'].includes(pressedKey)) {
+        e.preventDefault();
+        e.stopPropagation();
+        handleSelectRating(parseInt(pressedKey, 10));
+        return;
+      }
       if (!isVolumeKey && !isBoostKey && !isScreenshotKey && !isSkipKey) {
         e.preventDefault();
         e.stopPropagation();
         triggerSwitchToast("Controls are Locked");
         return;
       }
+    }
+
+    if (pressedKey === 'r') {
+      e.preventDefault();
+      e.stopPropagation();
+      setShowRatingPrompt(prev => !prev);
+      return;
+    }
+    if (showRatingPrompt && ['1', '2', '3', '4', '5'].includes(pressedKey)) {
+      e.preventDefault();
+      e.stopPropagation();
+      handleSelectRating(parseInt(pressedKey, 10));
+      return;
+    }
+    if (showRatingPrompt && pressedKey === 'escape') {
+      e.preventDefault();
+      e.stopPropagation();
+      setShowRatingPrompt(false);
+      return;
     }
     const playPauseKey = keybinds.playPause || ' ';
     const rewindKey = keybinds.rewind || 'arrowleft';
@@ -4217,6 +4517,27 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
           return nextVol;
         });
       }
+    } else if (pressedKey === 'n' && onPlaylistNext) {
+      // Next in playlist (only when not locked)
+      e.preventDefault();
+      if (!isLocked) {
+        onPlaylistNext();
+        triggerSwitchToast('Next in playlist');
+      }
+    } else if (pressedKey === 'p' && onPlaylistPrev) {
+      // Previous in playlist — restart if > 3s, otherwise go to previous
+      e.preventDefault();
+      if (!isLocked) {
+        const curTime = videoRef.current ? videoRef.current.currentTime : 0;
+        if (curTime > 3) {
+          if (videoRef.current) videoRef.current.currentTime = 0;
+          if (playbackControllerRef.current) playbackControllerRef.current.seek?.(0);
+          triggerSwitchToast('Restarted');
+        } else {
+          onPlaylistPrev();
+          triggerSwitchToast('Previous in playlist');
+        }
+      }
     }
   };
 
@@ -4325,17 +4646,29 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
           if (active) setIsBuffering(buffering);
         });
 
-        controller.setOnErrorCallback((err) => {
+        controller.setOnErrorCallback(async (err) => {
           if (!active) return;
           console.error(`[LocalVideoPlayer] PlaybackController reported error:`, err);
-          const errMsg = err?.message || String(err);
-          const isFileAccessError = errMsg.includes('FileReaderSync') || 
+          const errMsg = (err?.message || String(err)).toLowerCase();
+          const isFileAccessError = errMsg.includes('filereadersync') || 
                                     errMsg.includes('could not be found') || 
-                                    errMsg.includes('NotFoundError') ||
+                                    errMsg.includes('notfounderror') ||
                                     errMsg.includes('revoked');
           if (isFileAccessError) {
-            console.warn('[LocalVideoPlayer] File access error detected. Showing restore access overlay.');
-            setHasFileAccessError(true);
+            let isStillReadable = false;
+            try {
+              if (activeFile && isFile(activeFile)) {
+                await activeFile.slice(0, 16).arrayBuffer();
+                isStillReadable = true;
+              }
+            } catch {}
+
+            if (!isStillReadable) {
+              console.warn('[LocalVideoPlayer] File access truly lost. Showing restore access overlay.');
+              setHasFileAccessError(true);
+            } else {
+              console.warn('[LocalVideoPlayer] Local file is still readable in memory; suppressing false-positive restore access modal.');
+            }
           }
         });
 
@@ -4570,36 +4903,90 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
     }
   }, [isPlaying, duration, ratingThreshold]);
 
-  // Session Logging on Mount/Unmount
+  // Registered player dispose function complying with strict Requirement 3 order:
+  // 1) Persist outgoing timestamp and watch history
+  // 2) End Trakt scrobble
+  // 3) Fully dispose PlaybackController and cancel scheduled AudioBufferSourceNodes and in-flight FFmpeg decode jobs
+  // 4) Reset BufferScheduler & video element
+  // 5) Revoke old blob URL
+  const currentVideoRef = useRef(video);
+  currentVideoRef.current = video;
+
+  const hasDisposedRef = useRef(false);
+  const performOrderedDispose = useCallback(async () => {
+    if (hasDisposedRef.current) return;
+    hasDisposedRef.current = true;
+
+    const curVideo = currentVideoRef.current;
+    const exitTime = Date.now();
+    const sessionDuration = (exitTime - mountTimeRef.current) / 1000;
+    const newSession = {
+      startedAt: new Date(mountTimeRef.current).toISOString(),
+      endedAt: new Date(exitTime).toISOString(),
+      durationWatched: Math.round(sessionDuration)
+    };
+
+    const existingSessions = (curVideo as any).sessions || [];
+    const updatedSessions = [...existingSessions, newSession];
+
+    let timeToFinish = (curVideo as any).timeToFinish;
+    const currentDuration = durationRef.current || (videoRef.current ? videoRef.current.duration : 0);
+    const currentTimeVal = latestTimeRef.current || (videoRef.current ? videoRef.current.currentTime : 0);
+    if (!timeToFinish && currentDuration > 0 && (currentTimeVal / currentDuration) >= 0.95) {
+      const firstPlay = (curVideo as any).firstPlayTimestamp || mountTimeRef.current;
+      timeToFinish = (exitTime - firstPlay) / 1000;
+    }
+
+    // 1. Persist outgoing timestamp and watch history
+    const isCompleted = currentDuration > 0 && (
+      (currentDuration - currentTimeVal <= 300) || 
+      (currentTimeVal >= currentDuration - 300) ||
+      (currentDuration > 300 && currentTimeVal >= currentDuration * 0.90)
+    );
+    saveMediaTimestamp(curVideo, currentTimeVal, currentDuration, curVideo.title, isCompleted);
+    onUpdateVideoRef.current((prev: any) => ({
+      ...prev,
+      duration: prev.duration || currentDuration,
+      currentTime: currentTimeVal,
+      completed: prev.completed || isCompleted,
+      totalTimeWatched: Math.round(totalTimeWatchedRef.current),
+      sessions: updatedSessions,
+      timeToFinish: timeToFinish ? Math.round(timeToFinish) : prev.timeToFinish,
+      firstPlayTimestamp: prev.firstPlayTimestamp || mountTimeRef.current
+    }), true, curVideo.id, true);
+
+    // 2. End Trakt scrobble
+    await scrobbleToTrakt().catch(() => {});
+
+    // 3. Fully dispose PlaybackController and cancel scheduled AudioBufferSourceNodes and in-flight FFmpeg decode jobs
+    if (playbackControllerRef.current) {
+      const ctrl = playbackControllerRef.current;
+      playbackControllerRef.current = null;
+      await ctrl.destroy().catch(() => {});
+    }
+
+    // 4. Pause video elements safely
+    if (videoRef.current) {
+      try {
+        videoRef.current.pause();
+      } catch {}
+    }
+    if (previewVideoRef.current) {
+      try {
+        previewVideoRef.current.pause();
+      } catch {}
+    }
+  }, []);
+
+  const performOrderedDisposeRef = useRef(performOrderedDispose);
+  performOrderedDisposeRef.current = performOrderedDispose;
+
+  // Lifecycle registration: only runs on mount & natural unmount
   useEffect(() => {
+    activePlayerDispose = () => performOrderedDisposeRef.current();
     return () => {
-      const exitTime = Date.now();
-      const sessionDuration = (exitTime - mountTimeRef.current) / 1000;
-      const newSession = {
-        startedAt: new Date(mountTimeRef.current).toISOString(),
-        endedAt: new Date(exitTime).toISOString(),
-        durationWatched: Math.round(sessionDuration)
-      };
-
-      const existingSessions = (video as any).sessions || [];
-      const updatedSessions = [...existingSessions, newSession];
-
-      let timeToFinish = (video as any).timeToFinish;
-      const currentDuration = durationRef.current;
-      if (!timeToFinish && currentDuration > 0 && (latestTimeRef.current / currentDuration) >= 0.95) {
-        const firstPlay = (video as any).firstPlayTimestamp || mountTimeRef.current;
-        timeToFinish = (exitTime - firstPlay) / 1000;
-        scrobbleToTrakt();
-      }
-
-      onUpdateVideoRef.current((prev: any) => ({
-        ...prev,
-        currentTime: latestTimeRef.current,
-        totalTimeWatched: Math.round(totalTimeWatchedRef.current),
-        sessions: updatedSessions,
-        timeToFinish: timeToFinish ? Math.round(timeToFinish) : prev.timeToFinish,
-        firstPlayTimestamp: prev.firstPlayTimestamp || mountTimeRef.current
-      }), true, video.id);
+      activePlayerDispose = null;
+      performOrderedDisposeRef.current();
     };
   }, []);
 
@@ -4625,10 +5012,19 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
           scrobbleToTrakt();
         }
 
-        saveMediaTimestamp(video, latestTimeRef.current, durationRef.current || (videoRef.current ? videoRef.current.duration : 0), video.title);
+        const curDur = durationRef.current || (videoRef.current ? videoRef.current.duration : 0);
+        const curTime = latestTimeRef.current;
+        const isDone = curDur > 0 && (
+          (curDur - curTime <= 300) ||
+          (curTime >= curDur - 300) ||
+          (curDur > 300 && curTime >= curDur * 0.90)
+        );
+        saveMediaTimestamp(video, curTime, curDur, video.title, isDone);
         onUpdateVideoRef.current((prev: any) => ({
           ...prev,
-          currentTime: latestTimeRef.current,
+          duration: prev.duration || curDur,
+          currentTime: curTime,
+          completed: prev.completed || isDone,
           totalTimeWatched: Math.round(totalTimeWatchedRef.current),
           sessions: updatedSessions,
           timeToFinish: timeToFinish ? Math.round(timeToFinish) : prev.timeToFinish,
@@ -4664,15 +5060,23 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
       try {
         const saved = localStorage.getItem('valor_settings');
         const settings = saved ? JSON.parse(saved) : { defaultAudio: 'ENG', defaultSub: 'ENG' };
-        const targetAudio = settings.defaultAudio || 'ENG';
-        const targetSub = settings.defaultSub || 'ENG';
+        const carried = getCarriedTrackPreferences();
+        
+        // Track preferences carry over by matching language or title, falling back to defaults:
+        const targetAudio = carried.audioLang || carried.audioTitle || settings.defaultAudio || 'ENG';
+        const targetSub = carried.subLang !== undefined ? carried.subLang : (settings.defaultSub || 'ENG');
 
         // Auto-select audio stream if media has 2+ audio tracks OR if the audio track is non-native (e.g. AC3/EAC3/DTS)
         const isSingleTrackNonNative = audioStreams.length === 1 && !isBrowserPlayableAudioCodec(audioStreams[0]?.codec);
         if (audioStreams.length >= 2 || isSingleTrackNonNative) {
           let audioSelected = false;
           if (targetAudio !== 'Original' && !selectedAudioTrack) {
-            const stream = findPreferredStream(audioStreams, targetAudio, 'audio');
+            let stream = carried.audioTitle
+              ? audioStreams.find(s => s.title && s.title.toLowerCase() === carried.audioTitle?.toLowerCase())
+              : undefined;
+            if (!stream) {
+              stream = findPreferredStream(audioStreams, targetAudio, 'audio');
+            }
             if (stream) {
               audioSelected = true;
               logger.player(`Auto-selecting audio track: ${stream.language || stream.title}`);
@@ -4700,8 +5104,13 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
           logger.player(`Media has 1 native audio track (${audioStreams[0]?.codec}). Using native HTML5 audio.`);
         }
         // Auto-select subtitle stream
-        if (targetSub !== 'Off' && !selectedSubTrack) {
-          const stream = findPreferredStream(subtitleStreams, targetSub, 'subtitle');
+        if (targetSub !== 'Off' && targetSub !== 'off' && !selectedSubTrack && !userExplicitlyTurnedOffSubRef.current) {
+          let stream = carried.subTitle
+            ? subtitleStreams.find(s => s.title && s.title.toLowerCase() === carried.subTitle?.toLowerCase())
+            : undefined;
+          if (!stream) {
+            stream = findPreferredStream(subtitleStreams, targetSub, 'subtitle');
+          }
           if (stream) {
             logger.player(`Auto-selecting subtitle track: ${stream.language || stream.title}`);
             handleSelectEmbeddedSubtitle(stream.index, stream.codec, stream.language, false, true);
@@ -5087,8 +5496,66 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
   const activeSkipBookmarkRef = useRef<Bookmark | null>(null);
   activeSkipBookmarkRef.current = activeSkipBookmark;
 
+  const isEndCredits = useMemo(() => {
+    const isOutroBm = Boolean(activeSkipBookmark && (activeSkipBookmark.isOutro || activeSkipBookmark.category === 'Outro'));
+    const isNearEnd = Boolean(duration > 60 && (duration - currentTime <= 90) && (duration - currentTime > 2));
+    return isOutroBm || isNearEnd;
+  }, [activeSkipBookmark, duration, currentTime]);
+
+  // Auto skip outro to next episode unless user chooses Watch Creds
+  useEffect(() => {
+    if (isEndCredits && isSeries && onPlaylistNext && !isWatchingCreds) {
+      if (autoSkipTriggeredRef.current) return;
+      if (autoSkipTimerRef.current) clearTimeout(autoSkipTimerRef.current);
+
+      autoSkipTimerRef.current = setTimeout(() => {
+        autoSkipTriggeredRef.current = true;
+        onPlaylistNext();
+      }, 7000);
+
+      return () => {
+        if (autoSkipTimerRef.current) {
+          clearTimeout(autoSkipTimerRef.current);
+          autoSkipTimerRef.current = null;
+        }
+      };
+    } else {
+      if (autoSkipTimerRef.current) {
+        clearTimeout(autoSkipTimerRef.current);
+        autoSkipTimerRef.current = null;
+      }
+    }
+  }, [isEndCredits, isSeries, onPlaylistNext, isWatchingCreds]);
+
+  const [activeBlobUrl, setActiveBlobUrl] = useState<string | null>(() => {
+    if (activeFile && isFile(activeFile)) {
+      try {
+        return URL.createObjectURL(activeFile);
+      } catch {}
+    }
+    return null;
+  });
+
+  useEffect(() => {
+    if (activeFile && isFile(activeFile)) {
+      try {
+        const url = URL.createObjectURL(activeFile);
+        setActiveBlobUrl(url);
+        return () => {
+          URL.revokeObjectURL(url);
+        };
+      } catch {}
+    } else {
+      setActiveBlobUrl(null);
+    }
+  }, [activeFile]);
+
+  const effectiveVideoSrc = activeBlobUrl || video.url;
   const isFileAccessBlocked = video.type === 'local' && (!activeFile || hasFileAccessError) && video.playbackMode !== 'advanced';
+  const isDeadBlob = video.type === 'local' && effectiveVideoSrc && effectiveVideoSrc.startsWith('blob:') && !activeFile;
+  const safeVideoSrc = (isDeadBlob || (video.type === 'local' && !activeFile && !video.localFilePath)) ? undefined : effectiveVideoSrc;
   const controlsVisible = (showControls && !isLocked && !showPauseMetadataOverlay) || isFileAccessBlocked;
+  const isAnyPopupOpen = showAudioSubMenu || showSpeedMenu || showBookmarksPopover || showSettingsPanel;
   const effectiveDuration = duration || parseDurationToSeconds(video.duration) || 0;
   const displayTime = (isScrubbing && scrubTime !== null) 
     ? scrubTime 
@@ -5096,7 +5563,7 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
 
   const handleWheel = (e: React.WheelEvent) => {
     if (e.ctrlKey || e.metaKey) return;
-    if (showSettingsPanel || showAddDialog || showBookmarksPopover || showAudioSubMenu || showConsoleOverlay) return;
+    if (showSettingsPanel || showAddDialog || showBookmarksPopover || showAudioSubMenu || showConsoleOverlay || isPlaylistOpen) return;
     
     const target = e.target as HTMLElement;
     if (
@@ -5105,6 +5572,8 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
       target.closest('.audio-sub-popover') || 
       target.closest('.audio-sub-popover-center') || 
       target.closest('.speed-popover-container') ||
+      target.closest('.playlist-panel-container') ||
+      target.closest('.playlist-panel-backdrop') ||
       target.closest('.vlc-context-menu')
     ) return;
 
@@ -5165,6 +5634,7 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
           '.bookmarks-popover, .bookmark-mobile-panel, .bookmark-mobile-backdrop, .bookmark-dialog-box, .bookmark-dialog-overlay, ' +
           '.audio-sub-popover, .asp-pop, .asp-sheet, .asp-sheet-backdrop, ' +
           '.ui-settings-slideout-drawer, .ui-settings-drawer-card, .ui-settings-drawer-backdrop, .ui-settings-unified-handle, ' +
+      '.playlist-panel-container, .playlist-panel-backdrop, ' +
           '.popover-wrapper, .vlc-context-menu, .marking-hud-button-controls, button, input, select, textarea, [role="dialog"], [role="menu"]'
         )) {
           return;
@@ -5232,6 +5702,68 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
 
 
 
+      {/* Top Banner: Access to your files expired */}
+      {isPermissionExpired && (
+        <div
+          className="access-expired-top-banner"
+          style={{
+            position: 'absolute',
+            top: '20px',
+            left: '50%',
+            transform: 'translateX(-50%)',
+            zIndex: 700,
+            background: 'rgba(15, 23, 42, 0.94)',
+            backdropFilter: 'blur(12px)',
+            WebkitBackdropFilter: 'blur(12px)',
+            border: '1px solid rgba(245, 158, 11, 0.35)',
+            boxShadow: '0 8px 30px rgba(0, 0, 0, 0.65)',
+            borderRadius: '12px',
+            padding: '10px 20px',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '14px',
+            color: '#ffffff',
+            maxWidth: '90%',
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <Lock size={18} color="#f59e0b" />
+            <span style={{ fontWeight: 700, fontSize: '0.92rem', color: '#fef3c7' }}>
+              Access to your files expired
+            </span>
+          </div>
+          <button
+            type="button"
+            className="btn btn-primary btn-sm"
+            style={{
+              background: '#f59e0b',
+              border: 'none',
+              color: '#000000',
+              fontWeight: 700,
+              fontSize: '0.85rem',
+              padding: '6px 14px',
+              borderRadius: '6px',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px',
+              boxShadow: '0 2px 8px rgba(245, 158, 11, 0.3)',
+            }}
+            onClick={(e) => {
+              e.stopPropagation();
+              if (onContinueWhereLeftOff) {
+                onContinueWhereLeftOff();
+              } else if (onReassociate) {
+                onReassociate(video.id);
+              }
+            }}
+          >
+            <Play size={14} fill="currentColor" />
+            <span>Continue where you left off</span>
+          </button>
+        </div>
+      )}
+
       {isFileAccessBlocked && (
         <div 
           className="file-access-blocked-overlay"
@@ -5269,8 +5801,8 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
             gap: '1.25rem',
             cursor: 'default'
           }}>
-            <Lock size={48} color="#ff7a00" />
-            <h2 style={{ fontSize: '1.5rem', fontWeight: 800, margin: 0, color: '#ffffff' }}>Restore Access to File</h2>
+            <Lock size={48} color="#f59e0b" />
+            <h2 style={{ fontSize: '1.5rem', fontWeight: 800, margin: 0, color: '#ffffff' }}>Access to your files expired</h2>
             <p style={{ 
               fontSize: '0.92rem', 
               color: 'rgba(255, 255, 255, 0.75)', 
@@ -5279,14 +5811,14 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
               wordBreak: 'break-word',
               maxWidth: '420px'
             }}>
-              To resume watching <strong style={{ color: '#ffffff', display: 'inline' }}>{video.title}</strong>, please restore permission to access the local file.
+              Refreshing makes the browser forget file access. Restore permission to continue watching <strong style={{ color: '#ffffff', display: 'inline' }}>{video.title}</strong> right where you left off.
             </p>
             <button 
               className="btn btn-primary"
               style={{
-                background: '#ff7a00',
+                background: '#f59e0b',
                 border: 'none',
-                color: 'var(--text-primary, #ffffff)',
+                color: '#000000',
                 fontWeight: 700,
                 padding: '0.75rem 2rem',
                 fontSize: '1rem',
@@ -5295,19 +5827,21 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
                 display: 'flex',
                 alignItems: 'center',
                 gap: '8px',
-                boxShadow: '0 4px 14px rgba(255, 122, 0, 0.4)',
+                boxShadow: '0 4px 14px rgba(245, 158, 11, 0.4)',
                 marginTop: '0.5rem',
                 transition: 'transform 0.15s ease, background 0.15s'
               }}
               onClick={(e) => {
                 e.stopPropagation();
-                if (onReassociate) {
+                if (onContinueWhereLeftOff) {
+                  onContinueWhereLeftOff();
+                } else if (onReassociate) {
                   onReassociate(video.id);
                 }
               }}
             >
-              <Play size={16} fill="white" />
-              <span>Resume Playback</span>
+              <Play size={16} fill="currentColor" />
+              <span>Continue where you left off</span>
             </button>
             <button
               className="btn btn-secondary btn-sm"
@@ -5334,7 +5868,9 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
         style={{ 
           position: 'absolute', 
           inset: 0, 
-          zIndex: 10 
+          zIndex: 10,
+          isolation: 'isolate',
+          overflow: 'hidden'
         }}
         onDoubleClick={handlePlayerDoubleClick}
         onClick={(e) => {
@@ -5345,6 +5881,7 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
             '.bookmarks-popover, .bookmark-mobile-panel, .bookmark-mobile-backdrop, .bookmark-dialog-box, .bookmark-dialog-overlay, ' +
             '.audio-sub-popover, .asp-pop, .asp-sheet, .asp-sheet-backdrop, ' +
             '.ui-settings-slideout-drawer, .ui-settings-drawer-card, .ui-settings-drawer-backdrop, .ui-settings-unified-handle, ' +
+      '.playlist-panel-container, .playlist-panel-backdrop, ' +
             '.popover-wrapper, .vlc-context-menu, .marking-hud-button-controls, button, input, select, textarea, [role="dialog"], [role="menu"]'
           )) {
             return;
@@ -5402,18 +5939,21 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
           isEnabled={isAmbianceEnabled}
           blur={ambianceBlur}
           opacity={ambianceOpacity}
+          style={{ zIndex: 0 }}
         />
         <ToneMappingSvgDefs />
         <video
           ref={videoRef}
+          autoPlay
           onContextMenu={(e) => e.preventDefault()}
-          src={video.url}
+          src={safeVideoSrc}
           controls={false}
           crossOrigin={video.playbackMode === 'advanced' ? 'anonymous' : undefined}
           className="main-video-element"
           style={{
             position: 'relative',
-            zIndex: 1,
+            zIndex: 2,
+            backgroundColor: '#000',
             filter: toneMappingMode !== 'off' ? getToneMappingCssFilter(toneMappingMode) : undefined,
             objectFit: aspectRatio === 'cover' ? 'cover' : (aspectRatio === '16:9' || aspectRatio === '4:3' ? 'fill' : 'contain'),
             aspectRatio: aspectRatio === '16:9' ? '16/9' : (aspectRatio === '4:3' ? '4/3' : undefined)
@@ -5422,10 +5962,15 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
             if (videoRef.current) {
               const videoDuration = videoRef.current.duration;
               setDuration(videoDuration);
+              durationRef.current = videoDuration;
+              onUpdateVideoRef.current((prev: any) => ({
+                ...prev,
+                duration: videoDuration
+              }), false, video.id);
 
               // 1. Check site storage for exact saved timestamp
               const storedTime = getMediaTimestamp(video, videoDuration);
-              const targetResume = (video.currentTime && video.currentTime > 0) ? video.currentTime : storedTime;
+              const targetResume = (video.currentTime && video.currentTime > 0) ? video.currentTime : (storedTime > 0 ? storedTime : (video.resumeTime || 0));
 
               const directResumeTime = video.resumeTime || 0;
               if (directResumeTime > 5 && videoDuration - directResumeTime > 10 && !targetResume) {
@@ -5435,7 +5980,7 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
                 return;
               }
 
-              if (targetResume > 0 && !hasSeekedRef.current) {
+              if (targetResume > 0) {
                 const remainingTime = videoDuration - targetResume;
                 if (remainingTime > 3) {
                   logger.player(`Resume site storage location met: seeking to ${targetResume}s`);
@@ -5454,6 +5999,71 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
                 }
                 hasSeekedRef.current = true;
               }
+
+              if (videoRef.current) {
+                const startPlayback = () => {
+                  if (isPlayingRef.current) return;
+                  if (playbackControllerRef.current) {
+                    playbackControllerRef.current.play()
+                      .then(() => {
+                        setIsPlaying(true);
+                        isPlayingRef.current = true;
+                      })
+                      .catch(() => {
+                        videoRef.current?.play().then(() => {
+                          setIsPlaying(true);
+                          isPlayingRef.current = true;
+                        }).catch(() => {});
+                      });
+                  } else if (videoRef.current) {
+                    const playPromise = videoRef.current.play();
+                    if (playPromise !== undefined) {
+                      playPromise
+                        .then(() => {
+                          setIsPlaying(true);
+                          isPlayingRef.current = true;
+                        })
+                        .catch((err) => {
+                          logger.player('Autoplay on metadata blocked, retrying muted:', err);
+                          if (videoRef.current && !videoRef.current.muted) {
+                            videoRef.current.muted = true;
+                            videoRef.current.play().then(() => {
+                              setIsPlaying(true);
+                              isPlayingRef.current = true;
+                              const unmute = () => {
+                                if (videoRef.current) videoRef.current.muted = false;
+                                window.removeEventListener('pointerdown', unmute, true);
+                                window.removeEventListener('keydown', unmute, true);
+                              };
+                              window.addEventListener('pointerdown', unmute, { once: true, capture: true });
+                              window.addEventListener('keydown', unmute, { once: true, capture: true });
+                            }).catch(() => {
+                              setIsPlaying(false);
+                              isPlayingRef.current = false;
+                            });
+                          }
+                        });
+                    }
+                  }
+                };
+                startPlayback();
+              }
+            }
+          }}
+          onCanPlay={() => {
+            setIsBuffering(false);
+            if (videoRef.current && videoRef.current.paused && !isPlayingRef.current) {
+              if (playbackControllerRef.current) {
+                playbackControllerRef.current.play().then(() => {
+                  setIsPlaying(true);
+                  isPlayingRef.current = true;
+                }).catch(() => {});
+              } else {
+                videoRef.current.play().then(() => {
+                  setIsPlaying(true);
+                  isPlayingRef.current = true;
+                }).catch(() => {});
+              }
             }
           }}
           onTimeUpdate={() => {
@@ -5469,22 +6079,27 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
                   lastStorageSaveTimeRef.current = now;
                   saveMediaTimestamp(video, time, durationRef.current || videoRef.current.duration, video.title);
                 }
+
+                if (isBuffering && (!playbackControllerRef.current || !playbackControllerRef.current.state.isBuffering)) {
+                  setIsBuffering(false);
+                }
+
+                // Metadata prefetch for next playlist item in last 60 seconds
+                const dur = durationRef.current || videoRef.current.duration;
+                if (dur > 60 && (dur - time) <= 60 && !hasPrefetchedNextRef.current) {
+                  hasPrefetchedNextRef.current = true;
+                  onPlaylistPrefetchNext?.();
+                }
               }
             }
           }}
           onPlay={() => {
             setIsPlaying(true);
             isPlayingRef.current = true;
+            setShowFinishedCard(false);
+            setShowAutoNextCard(false);
           }}
           onPause={() => {
-            // If focus loss auto-pause is disabled and this pause was triggered by browser 
-            // background tab throttling, ignore it — don't update UI state.
-            if (!pauseOnFocusChangeRef.current && document.visibilityState === 'hidden') {
-              return;
-            }
-            if (pauseOnFocusChangeRef.current && (document.visibilityState === 'hidden' || !document.hasFocus())) {
-              wasPausedByFocusLossRef.current = true;
-            }
             setIsPlaying(false);
             isPlayingRef.current = false;
             const timeToSave = latestTimeRef.current;
@@ -5498,7 +6113,11 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
           onWaiting={() => setIsBuffering(true)}
           onPlaying={() => setIsBuffering(false)}
           onSeeked={handleVideoSeeked}
-          onSeeking={() => setIsBuffering(true)}
+          onSeeking={() => {
+            setIsBuffering(true);
+            setShowFinishedCard(false);
+            setShowAutoNextCard(false);
+          }}
           onError={handleVideoError}
           onEnded={() => {
             saveMediaTimestamp(video, 0, durationRef.current || duration, video.title, true);
@@ -5526,11 +6145,14 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
 
             onUpdateVideoRef.current((prev: any) => ({
               ...prev,
-              currentTime: duration,
+              currentTime: 0,
+              isWatched: true,
               totalTimeWatched: Math.round(totalTimeWatchedRef.current),
               sessions: updatedSessions,
               timeToFinish: timeToFinish ? Math.round(timeToFinish) : prev.timeToFinish,
-              firstPlayTimestamp: prev.firstPlayTimestamp || mountTimeRef.current
+              firstPlayTimestamp: prev.firstPlayTimestamp || mountTimeRef.current,
+              lastPlayedDate: new Date().toISOString(),
+              lastPlayedAt: Date.now()
             }), true, video.id, true);
 
             // Auto-submit bookmarks to TheIntroDB when video finishes
@@ -5538,6 +6160,46 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
               logger.player('[TheIntroDB] Video ended. Auto-submitting existing bookmarks to TIDB...');
               autoSubmitBookmarksToTidb(bookmarks);
             }
+
+            // 1. Repeat "one" replays
+            const repeatMode = playlist?.repeat || 'off';
+            if (repeatMode === 'one') {
+              if (videoRef.current) {
+                videoRef.current.currentTime = 0;
+                void videoRef.current.play();
+              }
+              return;
+            }
+
+            // 2. Repeat "all" wraps; check if next item exists
+            const hasNext = Boolean(
+              playlist &&
+              playlist.items.length > 0 &&
+              (repeatMode === 'all' || (playlistIndex >= 0 && nextItemTitle !== null))
+            );
+
+            if (hasNext && onPlaylistEnded) {
+              setTimeout(onPlaylistEnded, 100);
+              return;
+            }
+
+            // 3. NO-NEXT CASE: end of collection (repeat off; single file is collection of one)
+            const finishAction = whenFinished || 'home';
+            if (finishAction === 'replay') {
+              if (videoRef.current) {
+                videoRef.current.currentTime = 0;
+                void videoRef.current.play();
+              }
+              return;
+            }
+
+            if (finishAction === 'stay') {
+              // Stay on finished frame
+              return;
+            }
+
+            // Stay on finished frame - do not auto-redirect or boot user out to home screen
+            return;
           }}
           playsInline
         />
@@ -5858,21 +6520,61 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
             pointerEvents: 'auto'
           }}
         >
-          {/* Lock Indicator Button */}
-          <button 
-            className="player-lock-indicator"
-            onClick={(e) => {
-              e.stopPropagation();
-              setIsLocked(false);
-              triggerSwitchToast(`Controls Unlocked (${getLockShortcutKey()})`);
-            }}
-            title={`Unlock Controls (Shortcut: ${getLockShortcutKey()})`}
+          {/* Lock Screen Top Right Action Buttons (Unlock & Rate) */}
+          <div 
             style={{
+              position: 'absolute',
+              top: '1.5rem',
+              right: '1.5rem',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px',
+              zIndex: 10000,
               pointerEvents: 'auto'
             }}
           >
-            <Lock size={20} />
-          </button>
+            <button 
+              className="player-lock-indicator"
+              onClick={(e) => {
+                e.stopPropagation();
+                setShowRatingPrompt(prev => !prev);
+              }}
+              title="Rate this video (Shortcut: R)"
+              style={{
+                position: 'static',
+                pointerEvents: 'auto',
+                background: 'transparent',
+                backgroundColor: 'transparent',
+                border: 'none',
+                boxShadow: 'none',
+                outline: 'none',
+                cursor: 'pointer'
+              }}
+            >
+              <Star size={19} color={userRating ? "#fbbf24" : "#ffffff"} fill={userRating ? "#fbbf24" : "none"} />
+            </button>
+            <button 
+              className="player-lock-indicator"
+              onClick={(e) => {
+                e.stopPropagation();
+                setIsLocked(false);
+                triggerSwitchToast(`Controls Unlocked (${getLockShortcutKey()})`);
+              }}
+              title={`Unlock Controls (Shortcut: ${getLockShortcutKey()})`}
+              style={{
+                position: 'static',
+                pointerEvents: 'auto',
+                background: 'transparent',
+                backgroundColor: 'transparent',
+                border: 'none',
+                boxShadow: 'none',
+                outline: 'none',
+                cursor: 'pointer'
+              }}
+            >
+              <Lock size={20} />
+            </button>
+          </div>
         </div>
       )}
 
@@ -5903,10 +6605,38 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
 
           {/* Top Actions: PiP and Chromecast */}
           <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
-            <button className="cast-btn" onClick={togglePiP} title="Picture in Picture">
+            {onTogglePlaylistPanel && playlist && playlist.items && playlist.items.length > 0 && (
+              <button
+                className="cast-btn"
+                onClick={onTogglePlaylistPanel}
+                title={`Playlist (${playlist.items.length} items)`}
+                style={{ position: 'relative', background: 'transparent', backgroundColor: 'transparent', border: 'none', boxShadow: 'none' }}
+              >
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/>
+                  <line x1="8" y1="18" x2="21" y2="18"/>
+                  <line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/>
+                  <line x1="3" y1="18" x2="3.01" y2="18"/>
+                </svg>
+                {playlist.items.length > 0 && (
+                  <span style={{
+                    position: 'absolute', top: -4, right: -4,
+                    background: 'var(--accent-color, #e50914)',
+                    color: '#fff', borderRadius: 10,
+                    fontSize: '0.6rem', fontWeight: 700,
+                    padding: '0 4px', minWidth: 14,
+                    textAlign: 'center', lineHeight: '14px',
+                    pointerEvents: 'none',
+                  }}>
+                    {playlist.items.length}
+                  </span>
+                )}
+              </button>
+            )}
+            <button className="cast-btn" onClick={togglePiP} title="Picture in Picture" style={{ background: 'transparent', backgroundColor: 'transparent', border: 'none', boxShadow: 'none' }}>
               <MonitorPlay size={24} />
             </button>
-            <button className="cast-btn" onClick={handleCast} title="Cast to TV / Chromecast">
+            <button className="cast-btn" onClick={handleCast} title="Cast to TV / Chromecast" style={{ background: 'transparent', backgroundColor: 'transparent', border: 'none', boxShadow: 'none' }}>
               <Cast size={24} />
             </button>
           </div>
@@ -5917,45 +6647,115 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
 
       {/* Floating Rating Prompt Overlay */}
       {showRatingPrompt && !isEffectiveEmbed && (
-        <div className="floating-rating-prompt animate-slide-in" onClick={(e) => e.stopPropagation()}>
+        <div 
+          className="floating-rating-prompt animate-slide-in" 
+          onClick={(e) => e.stopPropagation()}
+          onMouseDown={(e) => e.stopPropagation()}
+          onMouseUp={(e) => e.stopPropagation()}
+          onPointerDown={(e) => e.stopPropagation()}
+          style={{ zIndex: 10001, pointerEvents: 'auto' }}
+        >
           <div className="rating-header">
-            <span>Enjoying this video? Rate it:</span>
-            <button className="rating-close" onClick={() => setShowRatingPrompt(false)}>
+            <span>
+              {hoverRating !== null
+                ? `Rate: ${hoverRating} / 5`
+                : userRating !== null
+                ? `Your Rating: ${userRating} / 5`
+                : 'Enjoying this video? Rate it:'}
+            </span>
+            <button 
+              className="rating-close" 
+              onClick={() => setShowRatingPrompt(false)}
+              title="Close"
+              type="button"
+            >
               <X size={14} />
             </button>
           </div>
-          <div className="rating-stars">
+          <div 
+            className="rating-stars"
+            onMouseLeave={() => setHoverRating(null)}
+          >
             {[1, 2, 3, 4, 5].map((star) => {
-              const active = userRating !== null && star <= userRating;
+              const displayVal = hoverRating !== null ? hoverRating : userRating;
+              const isFull = displayVal !== null && displayVal >= star;
+              const isHalf = displayVal !== null && !isFull && displayVal >= star - 0.5;
+
               return (
-                <button
+                <div
                   key={star}
-                  type="button"
-                  className={`star-btn ${active ? 'active' : ''}`}
-                  onClick={() => {
-                    setUserRating(star);
-                    onUpdateVideo((prev: any) => ({ ...prev, rating: star }));
-                    try {
-                      const savedSettings = localStorage.getItem('valor_settings');
-                      if (savedSettings) {
-                        const parsed = JSON.parse(savedSettings);
-                        if (parsed.traktAccessToken) {
-                          syncTraktRating({ ...video, tmdbId: video.tmdbId || tmdbIdRef.current }, star, parsed.traktAccessToken).then(res => {
-                            if (res.ok) {
-                              triggerSwitchToast(`Trakt Rating: Synced ${star * 2}/10`);
-                            }
-                          }).catch(() => {});
-                        }
-                      }
-                    } catch {}
-                    // Show a quick thank you message and then close
-                    setTimeout(() => {
-                      setShowRatingPrompt(false);
-                    }, 1500);
-                  }}
+                  className={`rating-star-wrapper ${isFull ? 'full' : isHalf ? 'half' : ''}`}
+                  title={`${displayVal !== null ? displayVal : star} / 5`}
                 >
-                  ★
-                </button>
+                  {/* Empty background star */}
+                  <Star 
+                    size={26} 
+                    color="rgba(255, 255, 255, 0.25)" 
+                    fill="rgba(255, 255, 255, 0.05)" 
+                  />
+
+                  {/* Filled star overlay: Full or Half */}
+                  {isFull ? (
+                    <div 
+                      style={{ 
+                        position: 'absolute', 
+                        inset: 0, 
+                        display: 'flex', 
+                        alignItems: 'center', 
+                        justifyContent: 'center', 
+                        pointerEvents: 'none' 
+                      }}
+                    >
+                      <Star 
+                        size={26} 
+                        color="#fbbf24" 
+                        fill="#fbbf24" 
+                        style={{ filter: 'drop-shadow(0 0 6px rgba(251, 191, 36, 0.5))' }} 
+                      />
+                    </div>
+                  ) : isHalf ? (
+                    <div 
+                      style={{ 
+                        position: 'absolute', 
+                        inset: 0, 
+                        display: 'flex', 
+                        alignItems: 'center', 
+                        justifyContent: 'center', 
+                        pointerEvents: 'none',
+                        clipPath: 'inset(0 50% 0 0)'
+                      }}
+                    >
+                      <Star 
+                        size={26} 
+                        color="#fbbf24" 
+                        fill="#fbbf24" 
+                        style={{ filter: 'drop-shadow(0 0 6px rgba(251, 191, 36, 0.5))' }} 
+                      />
+                    </div>
+                  ) : null}
+
+                  {/* Left 50% hit target for half-star (e.g. star - 0.5) */}
+                  <div
+                    className="star-hit-left"
+                    title={`${star - 0.5} Stars`}
+                    onMouseEnter={() => setHoverRating(star - 0.5)}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleSelectRating(star - 0.5);
+                    }}
+                  />
+
+                  {/* Right 50% hit target for whole-star (e.g. star) */}
+                  <div
+                    className="star-hit-right"
+                    title={`${star} Stars`}
+                    onMouseEnter={() => setHoverRating(star)}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleSelectRating(star);
+                    }}
+                  />
+                </div>
               );
             })}
           </div>
@@ -5968,23 +6768,22 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
       {/* Resume Button for direct URL/path opens with saved progress */}
       {resumePromptTime !== null && currentTime < 3 && !activeSkipBookmark && (
         <button 
-          className="skip-btn resume-playback-btn"
+          className="skip-btn resume-playback-btn animate-fade-in-pure"
           style={{
             position: 'absolute',
             bottom: controlsVisible ? '160px' : '40px',
             right: '40px',
             zIndex: 90,
-            background: 'rgba(0,0,0,0.7)',
-            color: 'white',
-            border: '1px solid rgba(255,255,255,0.2)',
-            padding: '12px 24px',
+            background: '#ffffff',
+            color: '#000000',
+            border: '1px solid #ffffff',
+            padding: '10px 22px',
             borderRadius: '8px',
-            fontSize: '16px',
-            fontWeight: '600',
+            fontSize: '15px',
+            fontWeight: 700,
             cursor: 'pointer',
-            transition: 'all 0.2s',
-            backdropFilter: 'blur(8px)',
-            boxShadow: '0 4px 12px rgba(0,0,0,0.5)',
+            transition: 'all 0.18s ease',
+            boxShadow: '0 4px 20px rgba(255, 255, 255, 0.35)',
             display: 'flex',
             alignItems: 'center',
             gap: '8px'
@@ -6002,37 +6801,167 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
             }
           }}
         >
-          Resume from {formatTime(resumePromptTime)}
+          <span style={{ color: '#000000' }}>Resume from {formatTime(resumePromptTime)}</span>
+          <Play size={15} fill="#000000" color="#000000" />
         </button>
       )}
 
-      {/* Skip Button */}
-      {activeSkipBookmark && (
-        <Button
-          key={activeSkipBookmark.id}
-          variant='destructive'
-          className="skip-btn-premium animate-fade-in-pure"
-          onClick={(e: React.MouseEvent) => {
-            e.stopPropagation();
-            const targetTime = (activeSkipBookmark.isOutro || activeSkipBookmark.category === 'Outro') 
-              ? duration 
-              : (activeSkipBookmark.endTime !== undefined && activeSkipBookmark.endTime !== null ? activeSkipBookmark.endTime : activeSkipBookmark.time + 90);
-            if (videoRef.current) {
-              videoRef.current.currentTime = targetTime;
-              setCurrentTime(targetTime);
-              triggerSwitchToast(`Skipped ${activeSkipBookmark.label || activeSkipBookmark.title || activeSkipBookmark.category || 'Scene'}`);
-            }
+      {/* Skip Intro/Outro or Series End Credits Buttons */}
+      {isEndCredits && isSeries && onPlaylistNext && nextItemTitle && !isWatchingCreds ? (
+        <div
+          className="series-credits-actions animate-fade-in-pure"
+          style={{
+            position: 'absolute',
+            bottom: controlsVisible ? 100 : 36,
+            right: 32,
+            zIndex: 6000,
+            display: 'flex',
+            alignItems: 'center',
+            gap: 12,
+            fontFamily: 'Outfit, sans-serif',
           }}
+          onClick={(e) => e.stopPropagation()}
         >
-          <span>Skip {
-            activeSkipBookmark.category === 'Intro' || activeSkipBookmark.isIntro ? 'Intro' 
-            : activeSkipBookmark.category === 'Outro' || activeSkipBookmark.isOutro ? 'Outro' 
-            : activeSkipBookmark.label || activeSkipBookmark.category || 'Scene'
-          } (C)</span>
-          <FastForward size={18} />
-          <div className="skip-progress-bar" />
-        </Button>
-      )}
+          <button
+            type="button"
+            className="skip-btn-premium skip-btn-grey"
+            style={{
+              position: 'relative',
+              right: 'auto',
+              bottom: 'auto',
+              background: 'rgba(65, 65, 72, 0.88)',
+              backdropFilter: 'blur(16px)',
+              WebkitBackdropFilter: 'blur(16px)',
+              border: '1px solid rgba(255, 255, 255, 0.25)',
+              color: '#ffffff',
+              fontWeight: 600,
+              padding: '10px 18px',
+              borderRadius: 8,
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8,
+              boxShadow: '0 4px 16px rgba(0, 0, 0, 0.5)',
+              transition: 'all 0.18s ease'
+            }}
+            onClick={(e: React.MouseEvent) => {
+              e.stopPropagation();
+              setIsWatchingCreds(true);
+              if (autoSkipTimerRef.current) {
+                clearTimeout(autoSkipTimerRef.current);
+                autoSkipTimerRef.current = null;
+              }
+              triggerSwitchToast('Watching Credits');
+            }}
+          >
+            <span>Watch Creds</span>
+            <Eye size={16} />
+          </button>
+
+          <button
+            type="button"
+            className="skip-btn-premium skip-btn-white"
+            style={{
+              position: 'relative',
+              right: 'auto',
+              bottom: 'auto',
+              background: '#ffffff',
+              border: '1px solid #ffffff',
+              color: '#000000',
+              fontWeight: 700,
+              padding: '10px 22px',
+              borderRadius: 8,
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8,
+              boxShadow: '0 4px 20px rgba(255, 255, 255, 0.35)',
+              transition: 'all 0.18s ease',
+              overflow: 'hidden'
+            }}
+            onClick={(e: React.MouseEvent) => {
+              e.stopPropagation();
+              if (autoSkipTimerRef.current) clearTimeout(autoSkipTimerRef.current);
+              onPlaylistNext();
+            }}
+          >
+            <span style={{ color: '#000000', zIndex: 1 }}>Next Episode</span>
+            <Play size={15} fill="#000000" color="#000000" style={{ zIndex: 1 }} />
+            <div className="skip-progress-bar" style={{ background: '#000000' }} />
+          </button>
+        </div>
+      ) : activeSkipBookmark && !(isWatchingCreds && (activeSkipBookmark.isOutro || activeSkipBookmark.category === 'Outro')) ? (
+        (() => {
+          const isOutro = activeSkipBookmark.category === 'Outro' || activeSkipBookmark.isOutro;
+          return (
+            <button
+              key={activeSkipBookmark.id}
+              type="button"
+              className={`skip-btn-premium animate-fade-in-pure ${isOutro ? 'skip-btn-grey' : 'skip-btn-white'}`}
+              style={{
+                position: 'absolute',
+                bottom: controlsVisible ? 100 : 36,
+                right: 32,
+                zIndex: 6000,
+                ...(isOutro ? {
+                  background: 'rgba(65, 65, 72, 0.88)',
+                  backdropFilter: 'blur(16px)',
+                  WebkitBackdropFilter: 'blur(16px)',
+                  border: '1px solid rgba(255, 255, 255, 0.25)',
+                  color: '#ffffff',
+                  fontWeight: 600,
+                  padding: '10px 18px',
+                  borderRadius: 8,
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 8,
+                  boxShadow: '0 4px 16px rgba(0, 0, 0, 0.5)',
+                  transition: 'all 0.18s ease'
+                } : {
+                  background: '#ffffff',
+                  border: '1px solid #ffffff',
+                  color: '#000000',
+                  fontWeight: 700,
+                  padding: '10px 22px',
+                  borderRadius: 8,
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 8,
+                  boxShadow: '0 4px 20px rgba(255, 255, 255, 0.35)',
+                  transition: 'all 0.18s ease',
+                  overflow: 'hidden'
+                })
+              }}
+              onClick={(e: React.MouseEvent) => {
+                e.stopPropagation();
+                if (isOutro) {
+                  setIsWatchingCreds(true);
+                  triggerSwitchToast('Watching Credits');
+                } else {
+                  const targetTime = (activeSkipBookmark.endTime !== undefined && activeSkipBookmark.endTime !== null ? activeSkipBookmark.endTime : activeSkipBookmark.time + 90);
+                  if (videoRef.current) {
+                    videoRef.current.currentTime = targetTime;
+                    setCurrentTime(targetTime);
+                    triggerSwitchToast(`Skipped ${activeSkipBookmark.label || activeSkipBookmark.title || activeSkipBookmark.category || 'Scene'}`);
+                  }
+                }
+              }}
+            >
+              <span style={{ color: isOutro ? '#ffffff' : '#000000' }}>
+                {isOutro ? 'Watch Creds' : `Skip ${activeSkipBookmark.category === 'Intro' || activeSkipBookmark.isIntro ? 'Intro' : activeSkipBookmark.label || activeSkipBookmark.category || 'Scene'} (C)`}
+              </span>
+              {isOutro ? (
+                <Eye size={16} color="#ffffff" />
+              ) : (
+                <FastForward size={16} color="#000000" />
+              )}
+              {!isOutro && <div className="skip-progress-bar" style={{ background: '#000000' }} />}
+            </button>
+          );
+        })()
+      ) : null}
 
       {/* Bottom Controls Overlay */}
       {!isLocked && (((!hideUIOverlays && (showPlayBar || showTimeDisplay || showVolumeControl || showFullscreen || video.isRemote)) ||
@@ -6049,16 +6978,17 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
           {/* Seekbar timeline row */}
           {(showPlayBar || showTimeDisplay || hoveredSetting === 'showPlayBar' || hoveredSetting === 'showTimeDisplay') && (
             <div 
-              className={`seekbar-row ${isVolumeHovered ? 'hide-for-volume' : ''}`}
+              className={`seekbar-row ${isAnyPopupOpen ? 'hide-for-popup' : ''}`}
               style={{
-                opacity: isVolumeHovered ? 0 : 1,
-                pointerEvents: isVolumeHovered ? 'none' : 'auto',
-                transition: 'opacity 0.22s cubic-bezier(0.16, 1, 0.3, 1)'
+                opacity: isAnyPopupOpen ? 0 : 1,
+                pointerEvents: isAnyPopupOpen ? 'none' : 'auto',
+                visibility: isAnyPopupOpen ? 'hidden' : 'visible',
+                transition: 'opacity 0.22s cubic-bezier(0.16, 1, 0.3, 1), visibility 0.22s ease'
               }}
             >
               {(showPlayBar || hoveredSetting === 'showPlayBar') && (
                 <div 
-                  className={`scrub-container-premium ${uiConfig.blockSeekingCompletely ? 'seeking-blocked' : ''} ${getHighlightClass('showPlayBar') || getHighlightClass('blockSeekingCompletely')}`}
+                  className={`scrub-container-premium ${isScrubbing ? 'is-scrubbing' : ''} ${uiConfig.blockSeekingCompletely ? 'seeking-blocked' : ''} ${getHighlightClass('showPlayBar') || getHighlightClass('blockSeekingCompletely')}`}
                   style={{
                     opacity: showPlayBarMode === 'enable' ? 1 : 0.5,
                     pointerEvents: showPlayBarMode === 'enable' ? 'auto' : 'none'
@@ -6067,6 +6997,10 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
                   <div className="scrub-track-bg"></div>
                   <div className="scrub-track-buffered" style={{ width: `${effectiveDuration > 0 ? Math.min(100, Math.max(0, bufferedPercent)) : 0}%` }}></div>
                   <div className="scrub-track-progress" style={{ width: `${effectiveDuration > 0 ? Math.min(100, Math.max(0, (displayTime / effectiveDuration) * 100)) : 0}%` }}></div>
+                  <div 
+                    className="scrub-progress-dot" 
+                    style={{ left: `${effectiveDuration > 0 ? Math.min(100, Math.max(0, (displayTime / effectiveDuration) * 100)) : 0}%` }} 
+                  />
 
                   {/* Bookmark Timeline Dots */}
                   {effectiveDuration > 0 && bookmarks.map((bm) => {
@@ -6157,7 +7091,7 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
                     <div className="scrub-hover-preview-box">
                       <video
                         ref={previewVideoRef}
-                        src={video.url}
+                        src={safeVideoSrc}
                         crossOrigin={video.playbackMode === 'advanced' ? 'anonymous' : undefined}
                         className="scrub-hover-preview-video"
                         muted
@@ -6823,9 +7757,9 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
         <div className="play-pause-feedback-overlay">
           <div key={playPauseFeedback.id} className="play-pause-feedback-circle animate-play-pause-feedback">
             {playPauseFeedback.action === 'play' ? (
-              <Play size={40} fill="white" strokeWidth={0} style={{ marginLeft: '4px' }} />
+              <Play size={52} fill="white" strokeWidth={0} style={{ marginLeft: '6px', filter: 'drop-shadow(0 4px 16px rgba(0, 0, 0, 0.85))' }} />
             ) : (
-              <Pause size={40} fill="white" strokeWidth={0} />
+              <Pause size={52} fill="white" strokeWidth={0} style={{ filter: 'drop-shadow(0 4px 16px rgba(0, 0, 0, 0.85))' }} />
             )}
           </div>
         </div>
@@ -6907,31 +7841,63 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
           90% { opacity: 1; transform: translateY(0) scale(1); }
           100% { opacity: 0; transform: translateY(0) scale(1); pointer-events: none; }
         }
-        .skip-btn-premium {
+        .series-credits-actions {
           position: absolute;
-          right: 40px;
-          bottom: 140px;
-          z-index: 90;
-          padding: 14px 28px;
-          border-radius: 4px;
-          font-size: 16px;
-          font-weight: 500;
-          cursor: pointer;
-          background: rgba(0, 0, 0, 0.6);
-          color: white;
-          border: 1px solid rgba(255, 255, 255, 0.2);
-          backdrop-filter: blur(10px);
-          -webkit-backdrop-filter: blur(10px);
+          right: 32px;
+          bottom: 36px;
+          z-index: 6000;
           display: flex;
           align-items: center;
           gap: 12px;
-          overflow: hidden;
-          transition: all 0.2s;
+          font-family: 'Outfit', sans-serif;
+          transition: bottom 0.22s cubic-bezier(0.16, 1, 0.3, 1);
         }
-        .skip-btn-premium:hover {
-          background: white;
-          color: black;
-          border-color: white;
+        .series-credits-actions .skip-btn-premium {
+          position: relative !important;
+          right: auto !important;
+          bottom: auto !important;
+          z-index: auto !important;
+        }
+        .skip-btn-premium {
+          position: absolute;
+          right: 32px;
+          bottom: 36px;
+          z-index: 6000;
+          padding: 11px 22px;
+          border-radius: 8px;
+          font-size: 15px;
+          font-weight: 700;
+          cursor: pointer;
+          display: flex;
+          align-items: center;
+          gap: 9px;
+          overflow: hidden;
+          transition: transform 0.18s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.18s ease, background 0.18s ease, bottom 0.22s cubic-bezier(0.16, 1, 0.3, 1);
+          user-select: none;
+        }
+        .skip-btn-premium.skip-btn-white {
+          background: #ffffff !important;
+          color: #000000 !important;
+          border: 1px solid #ffffff !important;
+          box-shadow: 0 4px 20px rgba(255, 255, 255, 0.35) !important;
+        }
+        .skip-btn-premium.skip-btn-white:hover {
+          background: #f2f2f2 !important;
+          transform: scale(1.04);
+          box-shadow: 0 6px 24px rgba(255, 255, 255, 0.5) !important;
+        }
+        .skip-btn-premium.skip-btn-grey {
+          background: rgba(65, 65, 72, 0.88) !important;
+          color: #ffffff !important;
+          border: 1px solid rgba(255, 255, 255, 0.25) !important;
+          backdrop-filter: blur(16px);
+          -webkit-backdrop-filter: blur(16px);
+          box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5) !important;
+        }
+        .skip-btn-premium.skip-btn-grey:hover {
+          background: rgba(85, 85, 95, 0.95) !important;
+          color: #ffffff !important;
+          transform: scale(1.04);
         }
         .skip-btn-premium:hover .skip-progress-bar {
           animation-play-state: paused;
@@ -7609,9 +8575,10 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
           border-color: #fff;
           background: rgba(255, 255, 255, 0.08);
         }
-        .cast-btn, .close-btn {
-          background: none;
-          border: none;
+        .cast-btn, .close-btn, .player-header-actions button {
+          background: transparent !important;
+          background-color: transparent !important;
+          border: none !important;
           color: var(--text-primary, white);
           cursor: pointer;
           padding: calc(6px * var(--player-ui-scale, 1));
@@ -7620,31 +8587,38 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
           justify-content: center;
           transition: transform 0.18s cubic-bezier(0.175, 0.885, 0.32, 1.275), opacity 0.18s ease, color 0.18s ease;
           flex-shrink: 0;
+          box-shadow: none !important;
+          outline: none !important;
         }
-        .cast-btn svg, .close-btn svg {
+        .cast-btn svg, .close-btn svg, .player-header-actions button svg {
           width: calc(24px * var(--player-ui-scale, 1)) !important;
           height: calc(24px * var(--player-ui-scale, 1)) !important;
+          filter: drop-shadow(0 2px 4px rgba(0,0,0,0.6));
         }
-        .cast-btn:hover, .close-btn:hover {
+        .cast-btn:hover, .close-btn:hover, .player-header-actions button:hover,
+        .cast-btn:focus, .close-btn:focus, .player-header-actions button:focus,
+        .cast-btn:active, .close-btn:active, .player-header-actions button:active {
           transform: scale(1.22);
           opacity: 1;
-        }
-        .cast-btn:active, .close-btn:active {
-          transform: scale(0.95);
+          background: transparent !important;
+          background-color: transparent !important;
+          box-shadow: none !important;
+          outline: none !important;
         }
         .floating-rating-prompt {
           position: absolute;
           top: 80px;
           right: 20px;
-          background: rgba(10, 10, 10, 0.88);
-          border: 1px solid rgba(255, 255, 255, 0.15);
-          border-radius: 10px;
+          background: rgba(10, 10, 10, 0.92);
+          border: 1px solid rgba(255, 255, 255, 0.18);
+          border-radius: 12px;
           padding: 0.9rem 1.1rem;
-          z-index: 200;
-          box-shadow: 0 10px 25px rgba(0,0,0,0.6);
-          backdrop-filter: blur(12px);
-          -webkit-backdrop-filter: blur(12px);
-          width: 250px;
+          z-index: 10001 !important;
+          pointer-events: auto !important;
+          box-shadow: 0 12px 30px rgba(0, 0, 0, 0.7);
+          backdrop-filter: blur(14px);
+          -webkit-backdrop-filter: blur(14px);
+          width: 255px;
           display: flex;
           flex-direction: column;
           gap: 0.5rem;
@@ -7656,7 +8630,8 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
           justify-content: space-between;
           font-size: 0.82rem;
           font-weight: 600;
-          color: rgba(255,255,255,0.85);
+          color: rgba(255, 255, 255, 0.9);
+          user-select: none;
         }
         .rating-close {
           background: none;
@@ -7666,33 +8641,52 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
           padding: 2px;
           display: flex;
           align-items: center;
+          transition: color 0.15s ease;
         }
         .rating-close:hover {
           color: #ffffff;
         }
         .rating-stars {
           display: flex;
-          gap: 0.35rem;
+          gap: 0.45rem;
           justify-content: center;
-          margin-top: 0.25rem;
+          align-items: center;
+          margin-top: 0.35rem;
+          user-select: none;
         }
-        .star-btn {
-          background: none;
-          border: none;
-          font-size: 1.8rem;
-          color: rgba(255, 255, 255, 0.15);
+        .rating-star-wrapper {
+          position: relative;
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          width: 32px;
+          height: 32px;
           cursor: pointer;
-          padding: 0;
-          line-height: 1;
-          transition: transform 0.15s, color 0.15s, text-shadow 0.15s;
+          transition: transform 0.15s ease;
         }
-        .star-btn:hover, .star-btn.active {
-          color: #f1c40f;
-          text-shadow: 0 0 8px rgba(241, 196, 15, 0.6);
-          transform: scale(1.18);
+        .rating-star-wrapper:hover {
+          transform: scale(1.15);
+        }
+        .star-hit-left {
+          position: absolute;
+          left: 0;
+          top: 0;
+          width: 50%;
+          height: 100%;
+          z-index: 4;
+          cursor: pointer;
+        }
+        .star-hit-right {
+          position: absolute;
+          right: 0;
+          top: 0;
+          width: 50%;
+          height: 100%;
+          z-index: 4;
+          cursor: pointer;
         }
         .rating-thanks {
-          font-size: 0.75rem;
+          font-size: 0.78rem;
           color: #2ecc71;
           text-align: center;
           font-weight: 600;
@@ -7701,8 +8695,8 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
           position: absolute;
           top: 1.5rem;
           right: 1.5rem;
-          background: rgba(0, 0, 0, 0.6);
-          border: 1px solid rgba(255, 255, 255, 0.15);
+          background: transparent !important;
+          border: none !important;
           color: #ffffff;
           padding: 0.55rem;
           border-radius: 50%;
@@ -7712,12 +8706,15 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
           justify-content: center;
           transition: all 0.2s ease;
           z-index: 200;
-          box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+          box-shadow: none !important;
+          filter: drop-shadow(0 2px 6px rgba(0,0,0,0.85));
         }
         .player-lock-indicator:hover {
-          background: rgba(229, 9, 20, 0.95);
-          border-color: rgba(229, 9, 20, 0.95);
-          transform: scale(1.1);
+          background: transparent !important;
+          border-color: transparent !important;
+          transform: scale(1.18);
+          color: #ffffff;
+          filter: drop-shadow(0 2px 8px rgba(0,0,0,0.95));
         }
 
         .bottom-overlay {
@@ -7813,6 +8810,12 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
           align-items: center;
           width: 100%;
           gap: calc(1.5rem * var(--player-ui-scale, 1));
+          transition: opacity 0.22s cubic-bezier(0.16, 1, 0.3, 1), visibility 0.22s ease;
+        }
+        .seekbar-row.hide-for-popup {
+          opacity: 0 !important;
+          pointer-events: none !important;
+          visibility: hidden !important;
         }
         .time-display-clean {
           font-size: calc(0.95rem * var(--player-ui-scale, 1));
@@ -7854,6 +8857,25 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
           border-radius: calc(2px * var(--player-ui-scale, 1)) 0 0 calc(2px * var(--player-ui-scale, 1));
           z-index: 3;
         }
+        .scrub-progress-dot {
+          position: absolute;
+          top: 50%;
+          width: calc(10px * var(--player-ui-scale, 1));
+          height: calc(10px * var(--player-ui-scale, 1));
+          border-radius: 50%;
+          background: #ffffff;
+          transform: translate(-50%, -50%) scale(1);
+          box-shadow: 0 1px 4px rgba(0, 0, 0, 0.7), 0 0 6px rgba(255, 255, 255, 0.4);
+          z-index: 5;
+          pointer-events: none;
+          transition: transform 0.15s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.15s ease;
+        }
+        .scrub-container-premium:hover .scrub-progress-dot,
+        .scrub-container-premium.is-scrubbing .scrub-progress-dot,
+        .scrub-bar-premium:active ~ .scrub-progress-dot {
+          transform: translate(-50%, -50%) scale(1.4);
+          box-shadow: 0 2px 8px rgba(0, 0, 0, 0.9), 0 0 10px rgba(255, 255, 255, 0.9);
+        }
         .scrub-bar-premium {
           position: absolute;
           width: 100%;
@@ -7869,39 +8891,38 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
         .scrub-bar-premium::-webkit-slider-thumb {
           -webkit-appearance: none;
           appearance: none;
-          width: calc(22px * var(--player-ui-scale, 1));
-          height: calc(22px * var(--player-ui-scale, 1));
+          width: calc(24px * var(--player-ui-scale, 1));
+          height: calc(24px * var(--player-ui-scale, 1));
           border-radius: 50%;
-          background: var(--player-accent, #e50914);
+          background: transparent !important;
+          border: none !important;
+          box-shadow: none !important;
           cursor: pointer;
-          transform: scale(0);
-          opacity: 0;
-          transition: transform 0.15s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.15s ease;
-          box-shadow: 0 0 10px rgba(229, 9, 20, 0.8);
-          z-index: 10;
+          opacity: 0 !important;
         }
         .scrub-container-premium:hover .scrub-bar-premium::-webkit-slider-thumb,
         .scrub-bar-premium:active::-webkit-slider-thumb {
-          transform: scale(1.4);
-          opacity: 1;
+          opacity: 0 !important;
+          background: transparent !important;
+          box-shadow: none !important;
+          transform: none !important;
         }
         .scrub-bar-premium::-moz-range-thumb {
-          width: calc(22px * var(--player-ui-scale, 1));
-          height: calc(22px * var(--player-ui-scale, 1));
-          border: none;
+          width: calc(24px * var(--player-ui-scale, 1));
+          height: calc(24px * var(--player-ui-scale, 1));
+          border: none !important;
           border-radius: 50%;
-          background: var(--player-accent, #e50914);
+          background: transparent !important;
+          box-shadow: none !important;
           cursor: pointer;
-          transform: scale(0);
-          opacity: 0;
-          transition: transform 0.15s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.15s ease;
-          box-shadow: 0 0 10px rgba(229, 9, 20, 0.8);
-          z-index: 10;
+          opacity: 0 !important;
         }
         .scrub-container-premium:hover .scrub-bar-premium::-moz-range-thumb,
         .scrub-bar-premium:active::-moz-range-thumb {
-          transform: scale(1.4);
-          opacity: 1;
+          opacity: 0 !important;
+          background: transparent !important;
+          box-shadow: none !important;
+          transform: none !important;
         }
         .scrub-container-premium:hover .scrub-track-bg,
         .scrub-container-premium:hover .scrub-track-buffered,
@@ -8698,18 +9719,16 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
           z-index: 120;
         }
         .play-pause-feedback-circle {
-          width: 78px;
-          height: 78px;
-          border-radius: 50%;
-          background: rgba(0, 0, 0, 0.68);
-          backdrop-filter: blur(16px);
-          -webkit-backdrop-filter: blur(16px);
-          border: 1.5px solid rgba(255, 255, 255, 0.25);
           display: flex;
           align-items: center;
           justify-content: center;
           color: #ffffff;
-          box-shadow: 0 12px 36px rgba(0, 0, 0, 0.7);
+          background: transparent !important;
+          border: none !important;
+          backdrop-filter: none !important;
+          -webkit-backdrop-filter: none !important;
+          box-shadow: none !important;
+          filter: drop-shadow(0 4px 16px rgba(0, 0, 0, 0.85));
           pointer-events: none;
         }
         .animate-play-pause-feedback {
@@ -8785,14 +9804,11 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
         }
           /* Touch-safety thumb size scaling */
           .scrub-container-premium:hover .scrub-bar-premium::-webkit-slider-thumb,
-          .scrub-bar-premium:active::-webkit-slider-thumb {
-            transform: scale(1.4) !important;
-            opacity: 1 !important;
-          }
+          .scrub-bar-premium:active::-webkit-slider-thumb,
           .scrub-container-premium:hover .scrub-bar-premium::-moz-range-thumb,
           .scrub-bar-premium:active::-moz-range-thumb {
-            transform: scale(1.4) !important;
-            opacity: 1 !important;
+            opacity: 0 !important;
+            background: transparent !important;
           }
 
         @media (max-width: 600px) {
@@ -8825,22 +9841,27 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
           cursor: default !important;
         }
         .cast-btn {
-          background: transparent;
-          border: none;
+          background: transparent !important;
+          background-color: transparent !important;
+          border: none !important;
+          box-shadow: none !important;
           color: rgba(255, 255, 255, 0.85);
           cursor: pointer;
           display: flex;
           align-items: center;
           justify-content: center;
           padding: 6px;
-          border-radius: 50%;
-          transition: color 0.15s ease, background 0.15s ease, transform 0.15s ease;
-          outline: none;
+          border-radius: 0;
+          transition: color 0.15s ease, transform 0.15s ease;
+          outline: none !important;
         }
-        .cast-btn:hover {
+        .cast-btn:hover, .cast-btn:focus, .cast-btn:active {
           color: #ffffff;
-          background: rgba(255, 255, 255, 0.15);
-          transform: scale(1.1);
+          background: transparent !important;
+          background-color: transparent !important;
+          box-shadow: none !important;
+          outline: none !important;
+          transform: scale(1.15);
         }
         .control-btn-volume:hover {
           color: white !important;
@@ -9255,6 +10276,22 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
             vlcContextMenuClosedTimestampRef.current = Date.now();
             setVlcContextMenuState({ visible: false, x: 0, y: 0 });
           }}
+          onOpenFile={onOpenFile}
+          onOpenNetworkStream={onOpenNetworkStream}
+          onAddToPlaylist={onAddToPlaylist}
+          playlist={playlist?.items?.map((it, idx) => ({
+            id: it.id || it.fingerprint || `track-${idx}`,
+            title: it.title || it.name,
+            name: it.name,
+            duration: it.durationSec || (it.duration ? it.duration.split(':').reduce((acc, v, i, arr) => acc + parseFloat(v) * Math.pow(60, arr.length - 1 - i), 0) : undefined),
+            isPlaying: (it.id || it.fingerprint) === video.id,
+            originalIndex: idx
+          }))}
+          onSelectPlaylistItem={(item: any) => {
+            if (typeof item.originalIndex === 'number' && onPlayIndex) {
+              onPlayIndex(item.originalIndex);
+            }
+          }}
           isPlaying={isPlaying}
           onPlayPause={togglePlay}
           onStop={() => {
@@ -9366,6 +10403,9 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
       {showConsoleOverlay && (
         <ConsoleOverlay onClose={() => setShowConsoleOverlay(false)} />
       )}
+
+      {/* Children elements rendered inside player container (e.g. PlaylistPanel in fullscreen) */}
+      {children}
     </div>
   );
 };

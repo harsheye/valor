@@ -208,7 +208,6 @@ export class FFmpegService {
     const ext = file.name.substring(file.name.lastIndexOf('.')) || '.mkv';
     const cleanName = `input${ext}`;
     const inputPath = `${mountPoint}/${cleanName}`;
-    const cleanFile = new File([file], cleanName, { type: file.type });
 
     try {
       await ff.createDir(mountPoint);
@@ -218,13 +217,23 @@ export class FFmpegService {
 
     try {
       // Use string literal — FFFSType.WORKERFS is undefined in ESM builds
-      await ff.mount("WORKERFS" as any, { files: [cleanFile] }, mountPoint);
+      await ff.mount("WORKERFS" as any, {
+        blobs: [{ name: cleanName, data: file }]
+      }, mountPoint);
       logger.success(`[ffmpeg] WORKERFS mounted successfully at ${inputPath}`);
     } catch (workerFsError) {
-      // WORKERFS unavailable in this environment — fall back to MEMFS write
-      logger.warn("[ffmpeg] WORKERFS unavailable, falling back to fetchFile:", workerFsError);
-      const data = await fetchFile(file);
-      await ff.writeFile(inputPath, data);
+      try {
+        await ff.mount("WORKERFS" as any, { files: [file] }, mountPoint);
+        return `${mountPoint}/${file.name}`;
+      } catch (err2) {
+        if (file.size < 64 * 1024 * 1024) {
+          logger.warn("[ffmpeg] WORKERFS unavailable, falling back to fetchFile:", err2);
+          const data = await fetchFile(file);
+          await ff.writeFile(inputPath, data);
+        } else {
+          throw err2;
+        }
+      }
     }
 
     return inputPath;

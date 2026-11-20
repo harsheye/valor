@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { 
   UploadCloud, Play, Sparkles, Film, Loader2, 
-  ExternalLink, Clock, Radio, CheckCircle2, Shield, Zap,
+  ExternalLink, Clock, Radio, CheckCircle2, CheckCircle, RotateCcw, Shield, Zap,
   HardDrive, Server, Globe
 } from 'lucide-react';
 import { getVideoSourceType, type VideoItem } from '../types/media';
@@ -13,6 +13,7 @@ interface HomePageProps {
   handleDrag: (e: React.DragEvent) => void;
   handleDrop: (e: React.DragEvent) => void;
   handleSelectLocalFile: () => void;
+  handleSelectDirectory?: () => void;
   fileInputRef: React.RefObject<HTMLInputElement | null>;
   handleFileSelect: (e: React.ChangeEvent<HTMLInputElement>) => void;
   historyVideoInputRef: React.RefObject<HTMLInputElement | null>;
@@ -37,6 +38,7 @@ export const HomePage: React.FC<HomePageProps> = ({
   handleDrag,
   handleDrop,
   handleSelectLocalFile,
+  handleSelectDirectory,
   fileInputRef,
   handleFileSelect,
   historyVideoInputRef,
@@ -309,8 +311,21 @@ export const HomePage: React.FC<HomePageProps> = ({
           >
             <div style={{ flex: 1, minWidth: '0', paddingRight: '1rem' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '0.4rem', flexWrap: 'wrap' }}>
-                <span style={{ fontSize: '0.7rem', fontWeight: 800, letterSpacing: '0.08em', background: 'var(--surface-2)', color: 'var(--text-2)', padding: '2px 8px', borderRadius: 'var(--radius-sm)', textTransform: 'uppercase' }}>
-                  RESUME PLAYBACK
+                <span style={{
+                  fontSize: '0.7rem',
+                  fontWeight: 800,
+                  letterSpacing: '0.08em',
+                  background: primaryContinue.isWatched ? 'rgba(74, 222, 128, 0.15)' : 'var(--surface-2)',
+                  color: primaryContinue.isWatched ? '#4ade80' : 'var(--text-2)',
+                  padding: '2px 8px',
+                  borderRadius: 'var(--radius-sm)',
+                  textTransform: 'uppercase',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 4
+                }}>
+                  {primaryContinue.isWatched && <CheckCircle size={11} color="#4ade80" />}
+                  {primaryContinue.isWatched ? 'COMPLETED' : 'RESUME PLAYBACK'}
                 </span>
                 {(() => {
                   const src = getVideoSourceType(primaryContinue);
@@ -338,7 +353,11 @@ export const HomePage: React.FC<HomePageProps> = ({
               </h3>
               
               <p style={{ margin: '6px 0 0 0', fontSize: '0.85rem', color: 'var(--text-2)' }}>
-                Position: <b style={{ fontVariantNumeric: 'tabular-nums', color: 'var(--text-1)' }}>{formatTime(primaryContinue.currentTime || 0)}</b>
+                {primaryContinue.isWatched ? (
+                  <span style={{ color: '#4ade80', fontWeight: 600 }}>Completed • Ready to restart from 0:00</span>
+                ) : (
+                  <>Position: <b style={{ fontVariantNumeric: 'tabular-nums', color: 'var(--text-1)' }}>{formatTime(primaryContinue.currentTime || 0)}</b></>
+                )}
               </p>
 
               {/* Progress bar */}
@@ -372,10 +391,17 @@ export const HomePage: React.FC<HomePageProps> = ({
               }}
             >
               {isInstantlyPlayable(primaryContinue) ? (
-                <>
-                  <Play size={16} fill="currentColor" stroke="currentColor" />
-                  <span>Resume</span>
-                </>
+                primaryContinue.isWatched ? (
+                  <>
+                    <RotateCcw size={16} />
+                    <span>Restart</span>
+                  </>
+                ) : (
+                  <>
+                    <Play size={16} fill="currentColor" stroke="currentColor" />
+                    <span>Resume</span>
+                  </>
+                )
               ) : (
                 <>
                   <UploadCloud size={16} stroke="currentColor" />
@@ -442,6 +468,7 @@ export const HomePage: React.FC<HomePageProps> = ({
             ref={fileInputRef} 
             style={{ display: 'none' }} 
             accept="video/*" 
+            multiple
             onChange={handleFileSelect}
           />
           <input 
@@ -481,22 +508,42 @@ export const HomePage: React.FC<HomePageProps> = ({
                 Tap to browse video files
               </p>
             </div>
-            <button 
-              className="btn btn-secondary btn-sm browse-files-btn" 
-              onClick={(e) => { e.stopPropagation(); handleSelectLocalFile(); }}
-              style={{
-                marginTop: '6px',
-                padding: '8px 20px',
-                background: 'transparent',
-                border: '1px solid var(--control-border)',
-                borderRadius: 'var(--radius-sm)',
-                color: 'var(--text-1)',
-                fontWeight: 600,
-                cursor: 'pointer'
-              }}
-            >
-              Browse Files
-            </button>
+            <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', justifyContent: 'center' }}>
+              <button 
+                className="btn btn-secondary btn-sm browse-files-btn" 
+                onClick={(e) => { e.stopPropagation(); handleSelectLocalFile(); }}
+                style={{
+                  marginTop: '6px',
+                  padding: '8px 20px',
+                  background: 'transparent',
+                  border: '1px solid var(--control-border)',
+                  borderRadius: 'var(--radius-sm)',
+                  color: 'var(--text-1)',
+                  fontWeight: 600,
+                  cursor: 'pointer'
+                }}
+              >
+                Browse Files
+              </button>
+              {handleSelectDirectory && typeof window !== 'undefined' && 'showDirectoryPicker' in window && (
+                <button 
+                  className="btn btn-secondary btn-sm browse-folder-btn" 
+                  onClick={(e) => { e.stopPropagation(); handleSelectDirectory(); }}
+                  style={{
+                    marginTop: '6px',
+                    padding: '8px 20px',
+                    background: 'transparent',
+                    border: '1px solid var(--control-border)',
+                    borderRadius: 'var(--radius-sm)',
+                    color: 'var(--text-1)',
+                    fontWeight: 600,
+                    cursor: 'pointer'
+                  }}
+                >
+                  Open Folder
+                </button>
+              )}
+            </div>
           </div>
 
           <div style={{ display: 'flex', alignItems: 'center', width: '80%', maxWidth: '500px', gap: '1rem' }} onClick={(e) => e.stopPropagation()}>
@@ -628,12 +675,17 @@ export const HomePage: React.FC<HomePageProps> = ({
                     <span className={`sidebar-source-tag history-source-${getVideoSourceType(video)}`} style={{ fontSize: '0.62rem', padding: '1px 5px' }}>
                       {getVideoSourceType(video)}
                     </span>
+                    {video.isWatched && (
+                      <span style={{ background: 'rgba(74, 222, 128, 0.15)', color: '#4ade80', fontSize: '0.62rem', padding: '1px 6px', borderRadius: 3, fontWeight: 700, display: 'inline-flex', alignItems: 'center', gap: 3 }}>
+                        <CheckCircle size={9} /> Completed
+                      </span>
+                    )}
                     <h4 style={{ margin: 0, fontSize: '0.9rem', fontWeight: 700, color: 'var(--text-1)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
                       {classifyVideoTitle(video.title).displayTitle}
                     </h4>
                   </div>
                   <p style={{ margin: '3px 0 0 0', fontSize: '0.75rem', color: 'var(--text-2)' }}>
-                    {video.currentTime ? `At ${formatTime(video.currentTime)}` : 'Ready to play'}
+                    {video.isWatched ? 'Watched • Completed' : (video.currentTime ? `At ${formatTime(video.currentTime)}` : 'Ready to play')}
                   </p>
                 </div>
               </div>

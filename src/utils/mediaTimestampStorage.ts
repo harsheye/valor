@@ -119,11 +119,19 @@ export function getMediaStorageKeys(media: MediaIdentifier): { primaryKey: strin
   // 3. File name
   if (fileName) {
     keys.push(`${STORAGE_PREFIX}file_${encodeURIComponent(fileName)}`);
+    const cleanName = fileName.replace(/\.[^/.]+$/, '').trim();
+    if (cleanName && cleanName !== fileName) {
+      keys.push(`${STORAGE_PREFIX}file_${encodeURIComponent(cleanName)}`);
+    }
   }
 
   // 4. Custom ID (if stable)
   if (id && !id.startsWith('embed-') && !id.startsWith('url-') && !id.startsWith('local-blob')) {
     keys.push(`${STORAGE_PREFIX}id_${encodeURIComponent(id)}`);
+    const stripped = id.replace(/^local-/, '');
+    if (stripped && stripped !== id) {
+      keys.push(`${STORAGE_PREFIX}id_${encodeURIComponent(stripped)}`);
+    }
   }
 
   // 5. Title (if distinct)
@@ -195,8 +203,8 @@ export function saveMediaTimestamp(
     const { primaryKey, allKeys } = getMediaStorageKeys(media);
     const numDur = typeof duration === 'number' && isFinite(duration) && duration > 0 ? duration : undefined;
     
-    // Media is only considered completed when explicitly signaled (e.g. video onEnded) or within the last 5 seconds of playback
-    const completionThreshold = 5;
+    // Media is considered completed when explicitly signaled or within 5 minutes (300 seconds) of playback end
+    const completionThreshold = numDur !== undefined && numDur > 600 ? 300 : (numDur !== undefined && numDur > 120 ? 60 : 15);
     const isCompleted = Boolean(forceCompleted) || (numDur !== undefined && numDur > 10 && (numDur - currentTime <= completionThreshold));
 
     const record: SavedMediaTimestamp = {
@@ -236,6 +244,34 @@ export function saveMediaTimestamp(
  * Synchronously retrieves the exact media timestamp location from browser site storage.
  * Returns 0 if none is found or if the media was already completed.
  */
+export function getMediaTimestampRecord(media: MediaIdentifier): SavedMediaTimestamp | null {
+  if (!media) return null;
+  try {
+    const { primaryKey, allKeys } = getMediaStorageKeys(media);
+    for (const key of allKeys) {
+      const raw = localStorage.getItem(key);
+      if (raw) {
+        try {
+          const parsed = JSON.parse(raw) as SavedMediaTimestamp;
+          if (parsed && typeof parsed.currentTime === 'number') {
+            return parsed;
+          }
+        } catch {}
+      }
+    }
+    const lastPosRaw = localStorage.getItem('valor_last_media_pos');
+    if (lastPosRaw) {
+      try {
+        const lastPos = JSON.parse(lastPosRaw);
+        if (lastPos && (allKeys.includes(lastPos.key) || lastPos.key === primaryKey)) {
+          return lastPos;
+        }
+      } catch {}
+    }
+  } catch {}
+  return null;
+}
+
 export function getMediaTimestamp(media: MediaIdentifier, duration?: number): number {
   if (!media) return 0;
 

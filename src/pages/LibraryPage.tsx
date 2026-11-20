@@ -1,6 +1,8 @@
 import React from 'react';
 import { LibraryView } from '../components/LibraryView';
 import type { VideoItem } from '../types/media';
+import type { PlaylistState } from '../hooks/usePlaylist';
+import type { StoredPlaylist } from '../utils/indexedDB';
 
 interface LibraryPageProps {
   videos: VideoItem[];
@@ -12,6 +14,12 @@ interface LibraryPageProps {
   setVideos?: React.Dispatch<React.SetStateAction<VideoItem[]>>;
   onSelectMedia?: (media: any) => void;
   tmdbApiKey?: string;
+  playlist?: PlaylistState;
+  allPlaylists?: StoredPlaylist[];
+  onSwitchPlaylist?: (id: string) => Promise<any> | void;
+  onDeletePlaylist?: (id: string) => Promise<void> | void;
+  onCreatePlaylist?: (name?: string) => void;
+  onPlayIndex?: (index: number) => void;
 }
 
 export const LibraryPage: React.FC<LibraryPageProps> = ({
@@ -23,7 +31,13 @@ export const LibraryPage: React.FC<LibraryPageProps> = ({
   addToast,
   setVideos,
   onSelectMedia,
-  tmdbApiKey
+  tmdbApiKey,
+  playlist,
+  allPlaylists,
+  onSwitchPlaylist,
+  onDeletePlaylist,
+  onCreatePlaylist,
+  onPlayIndex
 }) => {
   return (
     <LibraryView 
@@ -36,6 +50,12 @@ export const LibraryPage: React.FC<LibraryPageProps> = ({
       setVideos={setVideos}
       onSelectMedia={onSelectMedia}
       tmdbApiKey={tmdbApiKey}
+      playlist={playlist}
+      allPlaylists={allPlaylists}
+      onSwitchPlaylist={onSwitchPlaylist}
+      onDeletePlaylist={onDeletePlaylist}
+      onCreatePlaylist={onCreatePlaylist}
+      onPlayIndex={onPlayIndex}
     />
   );
 };

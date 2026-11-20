@@ -505,6 +505,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
       overlayShowBackground: true,
       overlayShowRating: true,
       overlayShowOverview: true,
+      overlayActiveTime: 10,
       saveHistory: true,
       saveTrackPreferences: true,
       saveVolume: true,
@@ -1161,6 +1162,39 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                           />
                         }
                       />
+
+                      <SettingRow
+                        title="When playback finishes"
+                        description="Action to take when a single video or the final item of a collection ends."
+                        control={
+                          <Select
+                            value={settings.whenFinished || 'home'}
+                            onChange={(val) => updateSetting('whenFinished', val)}
+                            options={[
+                              { value: 'home', label: 'Return to home page' },
+                              { value: 'stay', label: 'Stay on ended frame' },
+                              { value: 'replay', label: 'Replay video' },
+                            ]}
+                          />
+                        }
+                      />
+
+                      <SettingRow
+                        title="Finish countdown delay"
+                        description="Delay before automatically returning home when finished."
+                        control={
+                          <Select
+                            value={settings.playbackFinishDelay ?? 5}
+                            onChange={(val) => updateSetting('playbackFinishDelay', Number(val))}
+                            options={[
+                              { value: 0, label: 'Instant (0s)' },
+                              { value: 3, label: '3 seconds' },
+                              { value: 5, label: '5 seconds (Default)' },
+                              { value: 10, label: '10 seconds' },
+                            ]}
+                          />
+                        }
+                      />
                     </SettingsCard>
                   </div>
                 )}
@@ -1480,7 +1514,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
             )}
 
             {/* ─── 3. PAUSE OVERLAY SECTION ─── */}
-            {(isSearching ? matchesSearch('pause overlay', 'pause', 'overlay', 'dim', 'rating', 'overview', 'position') : activeSection === 'pause-overlay') && (
+            {(isSearching ? matchesSearch('pause overlay', 'pause', 'overlay', 'dim', 'rating', 'overview', 'position', 'activation', 'delay', 'time', 'active') : activeSection === 'pause-overlay') && (
               <SettingsCard
                 title="Pause overlay"
                 description="Metadata presentation, corner positioning, and backdrop dimming when playback pauses"
@@ -1499,6 +1533,28 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
 
                 {settings.getOverlayDataFromTmdb !== false && (
                   <>
+                    <SettingRow
+                      title="Activation time"
+                      description="Time before the overlay becomes active after pausing playback"
+                      control={
+                        <Select
+                          value={settings.overlayActiveTime ?? 10}
+                          onChange={(val) => updateSetting('overlayActiveTime', parseInt(String(val), 10))}
+                          options={[
+                            { value: 0, label: 'Immediately (0s)' },
+                            { value: 2, label: '2 seconds' },
+                            { value: 3, label: '3 seconds' },
+                            { value: 5, label: '5 seconds' },
+                            { value: 10, label: '10 seconds (default)' },
+                            { value: 15, label: '15 seconds' },
+                            { value: 20, label: '20 seconds' },
+                            { value: 30, label: '30 seconds' },
+                            { value: 60, label: '1 minute' },
+                          ]}
+                        />
+                      }
+                    />
+
                     <SettingRow
                       title="Position"
                       description="Screen corner or side position for the pause card"

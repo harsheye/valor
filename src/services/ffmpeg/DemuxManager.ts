@@ -42,21 +42,36 @@ export class DemuxManager {
       const ext = this.videoFileOrSource.name.substring(this.videoFileOrSource.name.lastIndexOf('.')) || '.mkv';
       const cleanName = `input${ext}`;
       const inputPath = `${mountPoint}/${cleanName}`;
-      const cleanFile = new File([this.videoFileOrSource], cleanName, { type: this.videoFileOrSource.type });
 
       try {
         await ff.createDir(mountPoint);
       } catch {}
 
       try {
-        await ff.mount('WORKERFS' as any, { files: [cleanFile] }, mountPoint);
+        // Mount original native File directly via WORKERFS blobs options
+        // This avoids creating a synthetic composite File wrapper that fails FileReaderSync in workers
+        await ff.mount('WORKERFS' as any, {
+          blobs: [{ name: cleanName, data: this.videoFileOrSource }]
+        }, mountPoint);
         this.mountedPath = inputPath;
         logger.success(`[DemuxManager] WORKERFS mounted at ${inputPath}`);
       } catch (err) {
-        logger.warn('[DemuxManager] WORKERFS mount failed, writing to MEMFS:', err);
-        const buffer = await new Response(this.videoFileOrSource).arrayBuffer();
-        await ff.writeFile(inputPath, new Uint8Array(buffer));
-        this.mountedPath = inputPath;
+        logger.warn('[DemuxManager] WORKERFS blobs mount failed, trying direct files array:', err);
+        try {
+          await ff.mount('WORKERFS' as any, { files: [this.videoFileOrSource] }, mountPoint);
+          this.mountedPath = `${mountPoint}/${this.videoFileOrSource.name}`;
+          logger.success(`[DemuxManager] WORKERFS mounted directly at ${this.mountedPath}`);
+        } catch (filesErr) {
+          logger.error('[DemuxManager] WORKERFS mount failed:', filesErr);
+          // Only attempt MEMFS for small files (under 64MB) to prevent browser memory exhaustion
+          if (this.videoFileOrSource.size < 64 * 1024 * 1024) {
+            const buffer = await new Response(this.videoFileOrSource).arrayBuffer();
+            await ff.writeFile(inputPath, new Uint8Array(buffer));
+            this.mountedPath = inputPath;
+          } else {
+            throw filesErr;
+          }
+        }
       }
     } else {
       // Remote source fallback

@@ -48,7 +48,11 @@ export interface VideoItem {
   playbackMode?: 'advanced' | 'native' | 'server' | 'simple';
   auth?: { username: string; password?: string };
   isCinema?: boolean;
+  isWatched?: boolean;
+  completed?: boolean;
   lastPlayedDate?: string;
+  lastPlayedAt?: number;
+  hasScrobbledTrakt?: boolean;
   localFilePath?: string;
   playedDates?: string[];
   rating?: number;
@@ -64,8 +68,6 @@ export interface VideoItem {
   posterPath?: string;
   season?: number;
   episode?: number;
-  hasScrobbledTrakt?: boolean;
-  completed?: boolean;
 }
 
 export interface Bookmark {

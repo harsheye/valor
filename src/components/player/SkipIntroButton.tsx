@@ -10,7 +10,8 @@ export interface SkipIntroButtonProps {
 }
 
 export const SkipIntroButton: React.FC<SkipIntroButtonProps> = ({ bookmark, onSkip, label, shortcutHint }) => {
-  const displayLabel = label || bookmark?.label || bookmark?.category || 'Intro';
+  const isOutro = label === 'Outro' || label === 'Watch Creds' || bookmark?.isOutro || bookmark?.category === 'Outro';
+  const displayLabel = isOutro ? 'Watch Creds' : `Skip ${label || bookmark?.label || bookmark?.category || 'Intro'}`;
 
   return (
     <button
@@ -24,38 +25,44 @@ export const SkipIntroButton: React.FC<SkipIntroButtonProps> = ({ bookmark, onSk
         bottom: '90px',
         right: '32px',
         zIndex: 3500,
-        background: 'var(--surface, rgba(18, 18, 28, 0.88))',
-        border: '1px solid var(--border-color, rgba(255, 255, 255, 0.25))',
-        backdropFilter: 'blur(12px)',
-        WebkitBackdropFilter: 'blur(12px)',
-        color: 'var(--text-primary, #ffffff)',
+        background: isOutro ? 'rgba(65, 65, 72, 0.88)' : '#ffffff',
+        border: isOutro ? '1px solid rgba(255, 255, 255, 0.25)' : '1px solid #ffffff',
+        backdropFilter: isOutro ? 'blur(16px)' : 'none',
+        WebkitBackdropFilter: isOutro ? 'blur(16px)' : 'none',
+        color: isOutro ? '#ffffff' : '#000000',
         padding: '10px 22px',
-        borderRadius: '30px',
-        fontSize: '14px',
+        borderRadius: '8px',
+        fontSize: '15px',
         fontWeight: 700,
         cursor: 'pointer',
         display: 'flex',
         alignItems: 'center',
         gap: '8px',
-        boxShadow: 'var(--shadow-lg, 0 8px 24px rgba(0, 0, 0, 0.6))',
-        transition: 'all 0.2s ease',
+        boxShadow: isOutro ? '0 4px 16px rgba(0, 0, 0, 0.5)' : '0 4px 20px rgba(255, 255, 255, 0.35)',
+        transition: 'all 0.18s ease',
         fontFamily: 'var(--font-sans)'
       }}
       onMouseEnter={e => {
         e.currentTarget.style.transform = 'scale(1.04)';
-        e.currentTarget.style.borderColor = 'var(--accent)';
       }}
       onMouseLeave={e => {
         e.currentTarget.style.transform = 'scale(1)';
-        e.currentTarget.style.borderColor = 'var(--border-color, rgba(255, 255, 255, 0.25))';
       }}
     >
-      <SkipForward size={16} color="var(--accent)" />
-      Skip {displayLabel}
+      <SkipForward size={16} color={isOutro ? '#ffffff' : '#000000'} />
+      {displayLabel}
       {shortcutHint && (
         <span
           className="shortcut-hint-badge desktop-only-setting"
-          style={{ fontSize: '11px', opacity: 0.6, marginLeft: '4px', padding: '2px 5px', borderRadius: '4px', background: 'rgba(255,255,255,0.1)' }}
+          style={{ 
+            fontSize: '11px', 
+            opacity: 0.75, 
+            marginLeft: '4px', 
+            padding: '2px 5px', 
+            borderRadius: '4px', 
+            background: isOutro ? 'rgba(255,255,255,0.15)' : 'rgba(0,0,0,0.1)',
+            color: isOutro ? '#ffffff' : '#000000'
+          }}
         >
           {shortcutHint}
         </span>

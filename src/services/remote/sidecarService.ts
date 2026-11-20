@@ -29,6 +29,7 @@ class SidecarService {
   private port = 45454;
   private listeners: Set<SidecarListener> = new Set();
   private pollTimer: any = null;
+  private consecutiveFailures = 0;
   private status: SidecarStatus = {
     isAvailable: false,
     checking: false,
@@ -126,6 +127,7 @@ class SidecarService {
           latencyMs: latency,
           lastChecked: Date.now()
         };
+        this.consecutiveFailures = 0;
         this.notify();
         return true;
       } else {
@@ -139,6 +141,10 @@ class SidecarService {
         lastChecked: Date.now(),
         error: err?.message || 'Connection failed'
       };
+      this.consecutiveFailures++;
+      if (this.consecutiveFailures >= 2) {
+        this.stopPolling();
+      }
       this.notify();
       return false;
     }

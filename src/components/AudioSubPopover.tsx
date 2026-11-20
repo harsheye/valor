@@ -274,83 +274,106 @@ export const AudioSubPopover: React.FC<AudioSubPopoverProps> = ({
 
   // --- CONTENT SECTION RENDERERS ---
 
-  const renderAudioContent = () => (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-      <div className="asp-section-label">
-        <span>Audio</span>
-      </div>
-      <div className="asp-chips">
-        {/* Default / Original Track */}
-        <button
-          type="button"
-          className={`asp-chip ${selectedAudioTrack === null ? 'selected' : ''}`}
-          aria-pressed={selectedAudioTrack === null}
-          onClick={() => {
-            setSelectedAudioTrack(null);
-            setActiveAudioStreamIndex(null);
-            if (!isMobile && isFolded) setShowAudioSubMenu(false);
-          }}
-        >
-          <span>Original</span>
-          {selectedAudioTrack === null && <Check size={13} className="asp-check" />}
-        </button>
+  const renderAudioContent = () => {
+    // Deduplicate: custom audio tracks should only be tracks that are NOT embedded streams
+    const displayCustomAudioTracks = audioTracks.filter(
+      (track) => track.streamIndex === undefined || !audioStreams.some((s) => s.index === track.streamIndex)
+    );
 
-        {/* Embedded Audio Streams */}
-        {audioStreams.map((s) => {
-          const active = selectedAudioTrack?.streamIndex === s.index;
-          const label = getLangLabel(s.language, (s as any).title || `Track #${s.index}`, (s as any).title);
-          return (
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+        <div className="asp-section-label">
+          <span>Audio</span>
+        </div>
+        <div className="asp-chips">
+          {/* Default / Original Track */}
+          <button
+            type="button"
+            className={`asp-chip ${!selectedAudioTrack ? 'selected' : ''}`}
+            aria-pressed={!selectedAudioTrack}
+            onClick={() => {
+              setSelectedAudioTrack(null);
+              setActiveAudioStreamIndex(null);
+              if (!isMobile && isFolded) setShowAudioSubMenu(false);
+            }}
+          >
+            <span>Original</span>
+            {!selectedAudioTrack && <Check size={13} className="asp-check" />}
+          </button>
+
+          {/* Embedded Audio Streams */}
+          {audioStreams.map((s) => {
+            const active = selectedAudioTrack !== null && (
+              selectedAudioTrack.streamIndex === s.index ||
+              selectedAudioTrack.id === `embed-aud-${s.index}` ||
+              selectedAudioTrack.id === `remote-aud-${s.index}` ||
+              selectedAudioTrack.id === String(s.index)
+            );
+            const label = getLangLabel(s.language, (s as any).title || `Track #${s.index}`, (s as any).title);
+            return (
+              <button
+                key={`embed-aud-${s.index}`}
+                type="button"
+                className={`asp-chip ${active ? 'selected' : ''}`}
+                aria-pressed={active}
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  handleSelectEmbeddedAudio(s.index, s.codec, s.language);
+                  if (!isMobile && isFolded) setShowAudioSubMenu(false);
+                }}
+              >
+                <span>{label}</span>
+                {active && <Check size={13} className="asp-check" />}
+              </button>
+            );
+          })}
+
+          {/* Custom Uploaded Audio Tracks */}
+          {displayCustomAudioTracks.map((track) => {
+            const active = selectedAudioTrack !== null && (
+              selectedAudioTrack.id === track.id ||
+              (track.streamIndex !== undefined && selectedAudioTrack.streamIndex === track.streamIndex)
+            );
+            return (
+              <button
+                key={track.id}
+                type="button"
+                className={`asp-chip ${active ? 'selected' : ''}`}
+                aria-pressed={active}
+                onClick={() => {
+                  setSelectedAudioTrack(track);
+                  if (!isMobile && isFolded) setShowAudioSubMenu(false);
+                }}
+              >
+                <span>{track.name}</span>
+                {active && <Check size={13} className="asp-check" />}
+              </button>
+            );
+          })}
+
+          {/* + File Button */}
+          {customAudioInputRef && (
             <button
-              key={`embed-aud-${s.index}`}
               type="button"
-              className={`asp-chip ${active ? 'selected' : ''}`}
-              aria-pressed={active}
-              onClick={(e) => {
-                e.preventDefault();
-                e.stopPropagation();
-                handleSelectEmbeddedAudio(s.index, s.codec, s.language);
-                if (!isMobile && isFolded) setShowAudioSubMenu(false);
-              }}
+              className="asp-chip dashed"
+              onClick={() => customAudioInputRef.current?.click()}
             >
-              <span>{label}</span>
-              {active && <Check size={13} className="asp-check" />}
+              + File
             </button>
-          );
-        })}
-
-        {/* Custom Uploaded Audio Tracks */}
-        {audioTracks.map((track) => {
-          const active = selectedAudioTrack?.id === track.id;
-          return (
-            <button
-              key={track.id}
-              type="button"
-              className={`asp-chip ${active ? 'selected' : ''}`}
-              aria-pressed={active}
-              onClick={() => {
-                setSelectedAudioTrack(track);
-                if (!isMobile && isFolded) setShowAudioSubMenu(false);
-              }}
-            >
-              <span>{track.name}</span>
-              {active && <Check size={13} className="asp-check" />}
-            </button>
-          );
-        })}
-
-        {/* + File Button */}
-        <button
-          type="button"
-          className="asp-chip dashed"
-          onClick={() => customAudioInputRef.current?.click()}
-        >
-          + File
-        </button>
+          )}
+        </div>
       </div>
-    </div>
-  );
+    );
+  };
 
-  const renderSubsContent = () => (
+  const renderSubsContent = () => {
+    // Deduplicate: custom subtitle tracks should only be tracks that are NOT embedded streams
+    const displayCustomSubTracks = subtitleTracks.filter(
+      (track) => track.streamIndex === undefined || !subtitleStreams.some((s) => s.index === track.streamIndex)
+    );
+
+    return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
       <div className="asp-section-label">
         <span>Subtitles</span>
@@ -370,22 +393,26 @@ export const AudioSubPopover: React.FC<AudioSubPopoverProps> = ({
         {/* Off Row */}
         <button
           type="button"
-          className={`asp-row ${selectedSubTrack === null ? 'selected' : ''}`}
-          aria-pressed={selectedSubTrack === null}
+          className={`asp-row ${!selectedSubTrack ? 'selected' : ''}`}
+          aria-pressed={!selectedSubTrack}
           onClick={() => {
             setSelectedSubTrack(null);
             setActiveSubStreamIndex(null);
             if (!isMobile && isFolded) setShowAudioSubMenu(false);
           }}
         >
-          <span className="asp-lang-tag">OFF</span>
           <span className="asp-row-name">Off</span>
-          {selectedSubTrack === null && <Check size={14} className="asp-check" />}
+          {!selectedSubTrack && <Check size={14} className="asp-check" />}
         </button>
 
         {/* Embedded Subtitle Streams */}
         {subtitleStreams.map((s) => {
-          const active = selectedSubTrack?.streamIndex === s.index;
+          const active = selectedSubTrack !== null && (
+            selectedSubTrack.streamIndex === s.index ||
+            selectedSubTrack.id === `embed-sub-${s.index}` ||
+            selectedSubTrack.id === `remote-sub-${s.index}` ||
+            selectedSubTrack.id === String(s.index)
+          );
           const label = getLangLabel(s.language, (s as any).title || `Track #${s.index}`, (s as any).title);
           const langTag = getLangCode(s.language);
           return (
@@ -410,8 +437,11 @@ export const AudioSubPopover: React.FC<AudioSubPopoverProps> = ({
         })}
 
         {/* Custom Uploaded Subtitle Tracks */}
-        {subtitleTracks.map((track) => {
-          const active = selectedSubTrack?.id === track.id;
+        {displayCustomSubTracks.map((track) => {
+          const active = selectedSubTrack !== null && (
+            selectedSubTrack.id === track.id ||
+            (track.streamIndex !== undefined && selectedSubTrack.streamIndex === track.streamIndex)
+          );
           const langTag = getLangCode(track.language, 'CUS');
           return (
             <button
@@ -628,7 +658,8 @@ export const AudioSubPopover: React.FC<AudioSubPopoverProps> = ({
         </div>
       )}
     </div>
-  );
+    );
+  };
 
   const renderTranscriptContent = () => (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0 }}>

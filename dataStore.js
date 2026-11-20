@@ -3723,14 +3723,35 @@ export class DataStore {
       }
     }
 
-    // 4. Cache in Multi-Tier Cache (1 hour TTL)
-    if (rows.length > 0) {
+    // 4. Deduplicate bookmarks by ID or segment / time
+    const dedupedRows = [];
+    for (const r of rows) {
+      const isDup = dedupedRows.some(e => {
+        if (e.id && r.id && e.id === r.id) return true;
+        const eTime = Number(e.time ?? e.startTime ?? 0);
+        const rTime = Number(r.time ?? r.startTime ?? 0);
+        const timeDiff = Math.abs(eTime - rTime);
+        const eIntro = Boolean(e.isIntro || e.category === 'Intro' || e.category === 'Preview' || (e.label && e.label.toLowerCase().includes('intro')));
+        const rIntro = Boolean(r.isIntro || r.category === 'Intro' || r.category === 'Preview' || (r.label && r.label.toLowerCase().includes('intro')));
+        if (eIntro && rIntro && timeDiff <= 3.5) return true;
+        const eOutro = Boolean(e.isOutro || e.category === 'Outro' || (e.label && (e.label.toLowerCase().includes('outro') || e.label.toLowerCase().includes('credit'))));
+        const rOutro = Boolean(r.isOutro || r.category === 'Outro' || (r.label && (r.label.toLowerCase().includes('outro') || r.label.toLowerCase().includes('credit'))));
+        if (eOutro && rOutro && timeDiff <= 3.5) return true;
+        if (timeDiff <= 1.5 && (e.category === r.category || e.label === r.label)) return true;
+        return false;
+      });
+      if (!isDup) dedupedRows.push(r);
+    }
+    const finalRows = dedupedRows.sort((a, b) => (Number(a.time) || 0) - (Number(b.time) || 0));
+
+    // 5. Cache in Multi-Tier Cache (1 hour TTL)
+    if (finalRows.length > 0) {
       try {
-        await this.cacheSet(cacheKey, rows, this.CACHE_TTL.BOOKMARKS || 3600);
+        await this.cacheSet(cacheKey, finalRows, this.CACHE_TTL.BOOKMARKS || 3600);
       } catch (e) {}
     }
 
-    return rows;
+    return finalRows;
   }
 
   /**
