@@ -2,6 +2,7 @@ pub mod stream;
 pub mod probe;
 pub mod embed;
 pub mod ws;
+pub mod webapp;
 
 use std::net::SocketAddr;
 use axum::{
@@ -42,6 +43,7 @@ pub fn create_router(db: Database) -> Router {
         .allow_headers(Any);
 
     Router::new()
+        .route("/", get(webapp::handle_index))
         .route("/api/status", get(handle_status))
         .route("/api/stream", get(stream::handle_stream))
         .route("/api/probe", get(probe::handle_probe))

@@ -40,5 +40,8 @@ target/
 *.dll
 *.blob
 *.mp4
+*.7z
+libmpv/
+download-mpv.ps1
 .valor_data/
 valor/

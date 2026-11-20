@@ -4,7 +4,7 @@ members = [
     "crates/valor-server",
     "crates/valor-engine",
     "crates/valor-db",
-    "crates/valor-net",
+    "crates/valor-net", "test-mpv-link",
 ]
 resolver = "2"
 
