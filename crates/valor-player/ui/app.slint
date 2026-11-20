@@ -2,8 +2,8 @@ import { Slider, Button } from "std-widgets.slint";
 
 export component MainWindow inherits Window {
     title: "Valor Player";
-    min-width: 800px;
-    min-height: 500px;
+    min-width: 900px;
+    min-height: 560px;
     background: #000000;
 
     in-out property <string> media_title: "Valor - No Media Loaded";
@@ -11,15 +11,54 @@ export component MainWindow inherits Window {
     in-out property <float> progress: 0.0;
     in-out property <bool> is_playing: false;
     in-out property <float> volume: 1.0;
-    in-out property <string> audio_track_label: "Original";
+    in-out property <string> audio_track_label: "Default (WASAPI)";
     in-out property <string> sub_track_label: "Off";
+    in-out property <string> active_subtitle_text: "";
+    in-out property <bool> show_recent_panel: false;
+    in-out property <string> speed_label: "1.0x";
 
     callback toggle_play();
     callback open_file();
     callback seek(float);
     callback change_volume(float);
+    callback toggle_mute();
+    callback step_forward();
+    callback step_backward();
     callback toggle_audio_menu();
     callback toggle_sub_menu();
+    callback toggle_speed();
+    callback toggle_recent();
+
+    forward-focus: key_handler;
+    key_handler := FocusScope {
+        key-pressed(event) => {
+            if (event.text == " ") {
+                root.toggle_play();
+                return accept;
+            }
+            if (event.text == "m" || event.text == "M") {
+                root.toggle_mute();
+                return accept;
+            }
+            if (event.text == "s" || event.text == "S") {
+                root.toggle_sub_menu();
+                return accept;
+            }
+            if (event.text == "b" || event.text == "B") {
+                root.toggle_audio_menu();
+                return accept;
+            }
+            if (event.text == Key.RightArrow) {
+                root.step_forward();
+                return accept;
+            }
+            if (event.text == Key.LeftArrow) {
+                root.step_backward();
+                return accept;
+            }
+            return reject;
+        }
+    }
 
     VerticalLayout {
         padding: 0px;
@@ -37,9 +76,9 @@ export component MainWindow inherits Window {
                 padding-right: 16px;
                 alignment: space-between;
 
-                // Logo & Title
+                // Logo & Media Title
                 HorizontalLayout {
-                    spacing: 12px;
+                    spacing: 14px;
                     alignment: start;
 
                     Text {
@@ -60,20 +99,45 @@ export component MainWindow inherits Window {
                     }
                 }
 
-                // Open File Button
+                // Action Buttons (History + Open File)
                 HorizontalLayout {
+                    spacing: 8px;
                     alignment: end;
 
+                    // History Button
+                    Rectangle {
+                        width: 76px;
+                        height: 30px;
+                        background: hist-area.has-hover ? #242430 : #14141c;
+                        border-radius: 6px;
+                        border-width: 1px;
+                        border-color: #262634;
+
+                        Text {
+                            text: "History";
+                            color: #d4d4d8;
+                            font-size: 11px;
+                            font-weight: 600;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                        }
+
+                        hist-area := TouchArea {
+                            clicked => { root.toggle_recent(); }
+                        }
+                    }
+
+                    // Open File Button
                     Rectangle {
                         width: 90px;
                         height: 30px;
-                        background: open-area.has-hover ? #2a2a36 : #181820;
+                        background: open-area.has-hover ? #e11d2e : #1c1c26;
                         border-radius: 6px;
                         border-width: 1px;
-                        border-color: #2c2c3a;
+                        border-color: #2c2c3e;
 
                         Text {
-                            text: "Open File";
+                            text: "+ Open File";
                             color: #ffffff;
                             font-size: 12px;
                             font-weight: 600;
@@ -89,35 +153,104 @@ export component MainWindow inherits Window {
             }
         }
 
-        // Center Video Surface Area
-        video_area := Rectangle {
+        // Center Viewport & Subtitle Surface
+        Rectangle {
             background: #000000;
 
+            // Empty state placeholder
             if media_title == "Valor - No Media Loaded": Rectangle {
                 VerticalLayout {
                     alignment: center;
                     spacing: 16px;
 
                     Text {
-                        text: "Drag and drop video here or click Open File";
+                        text: "Drag and drop media here or click Open File";
                         color: #71717a;
-                        font-size: 14px;
+                        font-size: 15px;
                         horizontal-alignment: center;
                     }
 
                     Text {
-                        text: "Supports MP4, MKV, WebM, AVI, TS with WASAPI Audio Output";
+                        text: "Pure Rust Native Engine with Symphonia Demuxer & WASAPI Audio";
                         color: #52525b;
                         font-size: 12px;
                         horizontal-alignment: center;
+                    }
+
+                    HorizontalLayout {
+                        alignment: center;
+                        spacing: 8px;
+
+                        Rectangle {
+                            height: 24px;
+                            background: #14141c;
+                            border-radius: 4px;
+                            HorizontalLayout {
+                                padding-left: 8px;
+                                padding-right: 8px;
+                                Text { text: "Space: Play/Pause"; color: #888; font-size: 11px; vertical-alignment: center; }
+                            }
+                        }
+                        Rectangle {
+                            height: 24px;
+                            background: #14141c;
+                            border-radius: 4px;
+                            HorizontalLayout {
+                                padding-left: 8px;
+                                padding-right: 8px;
+                                Text { text: "←/→: Seek ±5s"; color: #888; font-size: 11px; vertical-alignment: center; }
+                            }
+                        }
+                        Rectangle {
+                            height: 24px;
+                            background: #14141c;
+                            border-radius: 4px;
+                            HorizontalLayout {
+                                padding-left: 8px;
+                                padding-right: 8px;
+                                Text { text: "M: Mute"; color: #888; font-size: 11px; vertical-alignment: center; }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Real-Time Subtitle Text Overlay
+            if active_subtitle_text != "": Rectangle {
+                y: parent.height - 48px;
+                x: 32px;
+                width: parent.width - 64px;
+
+                HorizontalLayout {
+                    alignment: center;
+
+                    Rectangle {
+                        background: rgba(0, 0, 0, 0.75);
+                        border-radius: 6px;
+
+                        HorizontalLayout {
+                            padding-left: 12px;
+                            padding-right: 12px;
+                            padding-top: 4px;
+                            padding-bottom: 4px;
+
+                            Text {
+                                text: root.active_subtitle_text;
+                                color: #ffffff;
+                                font-size: 18px;
+                                font-weight: 700;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                            }
+                        }
                     }
                 }
             }
         }
 
-        // Bottom Controls Bar
+        // Bottom Playback Controls Bar
         Rectangle {
-            height: 64px;
+            height: 68px;
             background: #0a0a0c;
             border-width: 1px;
             border-color: #1a1a22;
@@ -129,7 +262,7 @@ export component MainWindow inherits Window {
                 padding-bottom: 8px;
                 spacing: 6px;
 
-                // Seekbar
+                // Scrub / Seekbar
                 HorizontalLayout {
                     spacing: 8px;
 
@@ -145,9 +278,9 @@ export component MainWindow inherits Window {
                 HorizontalLayout {
                     alignment: space-between;
 
-                    // Play/Pause & Time
+                    // Play/Pause, Step & Time
                     HorizontalLayout {
-                        spacing: 16px;
+                        spacing: 12px;
                         alignment: start;
 
                         // Play/Pause Button
@@ -170,20 +303,89 @@ export component MainWindow inherits Window {
                             }
                         }
 
+                        // Step Backward -5s
+                        Rectangle {
+                            width: 28px;
+                            height: 28px;
+                            background: bwd-area.has-hover ? #282834 : transparent;
+                            border-radius: 14px;
+
+                            Text {
+                                text: "↺ 5";
+                                color: #a1a1aa;
+                                font-size: 10px;
+                                font-weight: 700;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                            }
+
+                            bwd-area := TouchArea {
+                                clicked => { root.step_backward(); }
+                            }
+                        }
+
+                        // Step Forward +5s
+                        Rectangle {
+                            width: 28px;
+                            height: 28px;
+                            background: fwd-area.has-hover ? #282834 : transparent;
+                            border-radius: 14px;
+
+                            Text {
+                                text: "5 ↻";
+                                color: #a1a1aa;
+                                font-size: 10px;
+                                font-weight: 700;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                            }
+
+                            fwd-area := TouchArea {
+                                clicked => { root.step_forward(); }
+                            }
+                        }
+
+                        // Time Display
                         Text {
                             text: root.time_display;
                             color: #a1a1aa;
                             font-size: 12px;
+                            font-weight: 500;
                             vertical-alignment: center;
                         }
                     }
 
-                    // Audio & Subtitle Chips
+                    // Right Controls: Speed, Audio, Subtitles, Volume
                     HorizontalLayout {
                         spacing: 10px;
                         alignment: end;
 
-                        // Audio Track Indicator
+                        // Playback Speed Toggle
+                        Rectangle {
+                            height: 26px;
+                            background: #14141c;
+                            border-radius: 6px;
+                            border-width: 1px;
+                            border-color: #262632;
+
+                            HorizontalLayout {
+                                padding-left: 8px;
+                                padding-right: 8px;
+                                Text {
+                                    text: root.speed_label;
+                                    color: #a1a1aa;
+                                    font-size: 11px;
+                                    font-weight: 600;
+                                    vertical-alignment: center;
+                                }
+                            }
+
+                            TouchArea {
+                                clicked => { root.toggle_speed(); }
+                            }
+                        }
+
+                        // Audio Track Chip
                         Rectangle {
                             height: 26px;
                             background: #14141c;
@@ -209,7 +411,7 @@ export component MainWindow inherits Window {
                             }
                         }
 
-                        // Subtitle Track Indicator
+                        // Subtitle Track Chip
                         Rectangle {
                             height: 26px;
                             background: #14141c;
@@ -232,6 +434,25 @@ export component MainWindow inherits Window {
 
                             TouchArea {
                                 clicked => { root.toggle_sub_menu(); }
+                            }
+                        }
+
+                        // Mute / Unmute Button
+                        Rectangle {
+                            width: 28px;
+                            height: 28px;
+                            background: mute-area.has-hover ? #282834 : #14141c;
+                            border-radius: 14px;
+
+                            Text {
+                                text: root.volume > 0.0 ? "🔊" : "🔇";
+                                font-size: 12px;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                            }
+
+                            mute-area := TouchArea {
+                                clicked => { root.toggle_mute(); }
                             }
                         }
                     }

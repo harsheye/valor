@@ -1,3 +1,6 @@
+pub mod audio;
+pub use audio::AudioEngine;
+
 use std::fs::File;
 use std::path::Path;
 use serde::{Deserialize, Serialize};
