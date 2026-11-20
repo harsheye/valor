@@ -17,7 +17,7 @@ pub enum NetError {
 /// Watches an actively downloading file (`.part` / `.fdmdownload`) for size growth
 pub struct GrowingFileWatcher {
     _watcher: RecommendedWatcher,
-    tx: broadcast::Sender<u64>,
+    _tx: broadcast::Sender<u64>,
 }
 
 impl GrowingFileWatcher {
@@ -41,7 +41,7 @@ impl GrowingFileWatcher {
         Ok((
             Self {
                 _watcher: watcher,
-                tx,
+                _tx: tx,
             },
             rx,
         ))

@@ -5944,7 +5944,6 @@ dependencies = [
 name = "valor-engine"
 version = "0.1.0"
 dependencies = [
- "parking_lot",
  "rodio",
  "serde",
  "symphonia",

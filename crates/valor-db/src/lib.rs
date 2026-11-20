@@ -99,7 +99,7 @@ impl Database {
                 title TEXT NOT NULL,
                 file_path TEXT NOT NULL,
                 duration REAL NOT NULL DEFAULT 0.0,
-                current_time REAL NOT NULL DEFAULT 0.0,
+                current_time_sec REAL NOT NULL DEFAULT 0.0,
                 last_played_date TEXT NOT NULL,
                 is_remote INTEGER NOT NULL DEFAULT 0
             );
@@ -125,13 +125,13 @@ impl Database {
     pub fn save_media(&self, item: &MediaRecord) -> Result<(), DbError> {
         let conn = self.conn.lock();
         conn.execute(
-            "INSERT INTO media_history (id, title, file_path, duration, current_time, last_played_date, is_remote)
+            "INSERT INTO media_history (id, title, file_path, duration, current_time_sec, last_played_date, is_remote)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
              ON CONFLICT(id) DO UPDATE SET
                 title = excluded.title,
                 file_path = excluded.file_path,
                 duration = excluded.duration,
-                current_time = excluded.current_time,
+                current_time_sec = excluded.current_time_sec,
                 last_played_date = excluded.last_played_date,
                 is_remote = excluded.is_remote;",
             params![
@@ -151,7 +151,7 @@ impl Database {
         let conn = self.conn.lock();
         let now = chrono::Utc::now().to_rfc3339();
         conn.execute(
-            "UPDATE media_history SET current_time = ?1, last_played_date = ?2 WHERE id = ?3;",
+            "UPDATE media_history SET current_time_sec = ?1, last_played_date = ?2 WHERE id = ?3;",
             params![current_time, now, id],
         )?;
         Ok(())
@@ -160,7 +160,7 @@ impl Database {
     pub fn get_media(&self, id: &str) -> Result<Option<MediaRecord>, DbError> {
         let conn = self.conn.lock();
         let mut stmt = conn.prepare(
-            "SELECT id, title, file_path, duration, current_time, last_played_date, is_remote
+            "SELECT id, title, file_path, duration, current_time_sec, last_played_date, is_remote
              FROM media_history WHERE id = ?1;",
         )?;
         let mut rows = stmt.query(params![id])?;
@@ -183,7 +183,7 @@ impl Database {
     pub fn list_history(&self, limit: usize) -> Result<Vec<MediaRecord>, DbError> {
         let conn = self.conn.lock();
         let mut stmt = conn.prepare(
-            "SELECT id, title, file_path, duration, current_time, last_played_date, is_remote
+            "SELECT id, title, file_path, duration, current_time_sec, last_played_date, is_remote
              FROM media_history ORDER BY last_played_date DESC LIMIT ?1;",
         )?;
         let rows = stmt.query_map(params![limit as i64], |row| {

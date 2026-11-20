@@ -1,9 +1,23 @@
-import { Slider, Button } from "std-widgets.slint";
+import { Slider, Button, ScrollView } from "std-widgets.slint";
+
+export struct TrackItem {
+    id: string,
+    name: string,
+    badge: string,
+    is_active: bool,
+}
+
+export struct HistoryItem {
+    id: string,
+    title: string,
+    time_str: string,
+    progress: float,
+}
 
 export component MainWindow inherits Window {
     title: "Valor Player";
     min-width: 900px;
-    min-height: 560px;
+    min-height: 580px;
     background: #000000;
 
     in-out property <string> media_title: "Valor - No Media Loaded";
@@ -14,9 +28,28 @@ export component MainWindow inherits Window {
     in-out property <string> audio_track_label: "Default (WASAPI)";
     in-out property <string> sub_track_label: "Off";
     in-out property <string> active_subtitle_text: "";
-    in-out property <bool> show_recent_panel: false;
     in-out property <string> speed_label: "1.0x";
 
+    // Modals / Panels
+    in-out property <bool> show_audio_sub_popover: false;
+    in-out property <bool> show_recent_panel: false;
+    in-out property <bool> is_folded: true;
+
+    // Track state (Mutually exclusive selection, deduplicated)
+    in-out property <[TrackItem]> audio_tracks: [];
+    in-out property <[TrackItem]> sub_tracks: [];
+    in-out property <bool> is_sub_off: true;
+
+    // Subtitle Customization
+    in-out property <int> sub_font_size: 20;
+    in-out property <string> sub_color: "#ffffff";
+    in-out property <float> sub_delay: 0.0;
+    in-out property <string> sub_delay_label: "0.0s";
+
+    // Recent History
+    in-out property <[HistoryItem]> history_items: [];
+
+    // Callbacks
     callback toggle_play();
     callback open_file();
     callback seek(float);
@@ -28,6 +61,23 @@ export component MainWindow inherits Window {
     callback toggle_sub_menu();
     callback toggle_speed();
     callback toggle_recent();
+    callback close_popovers();
+
+    // Track callbacks
+    callback select_audio_track(string);
+    callback select_sub_track(string);
+    callback set_sub_off();
+    callback add_audio_file();
+    callback add_sub_file();
+    callback toggle_fold();
+
+    // Subtitle style callbacks
+    callback set_sub_font_size(int);
+    callback set_sub_color(string);
+    callback adjust_sub_delay(float);
+
+    // History callback
+    callback play_history_item(string);
 
     forward-focus: key_handler;
     key_handler := FocusScope {
@@ -54,6 +104,10 @@ export component MainWindow inherits Window {
             }
             if (event.text == Key.LeftArrow) {
                 root.step_backward();
+                return accept;
+            }
+            if (event.text == Key.Escape) {
+                root.close_popovers();
                 return accept;
             }
             return reject;
@@ -108,10 +162,10 @@ export component MainWindow inherits Window {
                     Rectangle {
                         width: 76px;
                         height: 30px;
-                        background: hist-area.has-hover ? #242430 : #14141c;
+                        background: hist-area.has-hover ? #242430 : (root.show_recent_panel ? #2a2a3c : #14141c);
                         border-radius: 6px;
                         border-width: 1px;
-                        border-color: #262634;
+                        border-color: root.show_recent_panel ? #e11d2e : #262634;
 
                         Text {
                             text: "History";
@@ -153,7 +207,7 @@ export component MainWindow inherits Window {
             }
         }
 
-        // Center Viewport & Subtitle Surface
+        // Center Viewport, Overlay, Subtitles & Popovers
         Rectangle {
             background: #000000;
 
@@ -208,7 +262,7 @@ export component MainWindow inherits Window {
                             HorizontalLayout {
                                 padding-left: 8px;
                                 padding-right: 8px;
-                                Text { text: "M: Mute"; color: #888; font-size: 11px; vertical-alignment: center; }
+                                Text { text: "S / B: Audio & Subs"; color: #888; font-size: 11px; vertical-alignment: center; }
                             }
                         }
                     }
@@ -217,7 +271,7 @@ export component MainWindow inherits Window {
 
             // Real-Time Subtitle Text Overlay
             if active_subtitle_text != "": Rectangle {
-                y: parent.height - 48px;
+                y: parent.height - 56px;
                 x: 32px;
                 width: parent.width - 64px;
 
@@ -225,22 +279,543 @@ export component MainWindow inherits Window {
                     alignment: center;
 
                     Rectangle {
-                        background: rgba(0, 0, 0, 0.75);
+                        background: rgba(0, 0, 0, 0.78);
                         border-radius: 6px;
 
                         HorizontalLayout {
-                            padding-left: 12px;
-                            padding-right: 12px;
-                            padding-top: 4px;
-                            padding-bottom: 4px;
+                            padding-left: 14px;
+                            padding-right: 14px;
+                            padding-top: 6px;
+                            padding-bottom: 6px;
 
                             Text {
                                 text: root.active_subtitle_text;
-                                color: #ffffff;
-                                font-size: 18px;
+                                color: root.sub_color == "#ffffff" ? #ffffff : (root.sub_color == "#fef08a" ? #fef08a : #67e8f9);
+                                font-size: root.sub_font_size * 1px;
                                 font-weight: 700;
                                 horizontal-alignment: center;
                                 vertical-alignment: center;
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Backdrop click handler to dismiss popovers
+            if show_audio_sub_popover || show_recent_panel: TouchArea {
+                x: 0px;
+                y: 0px;
+                width: parent.width;
+                height: parent.height;
+                clicked => {
+                    root.close_popovers();
+                }
+            }
+
+            // --- AUDIO & SUBTITLES POPOVER PANEL ---
+            if show_audio_sub_popover: Rectangle {
+                x: parent.width - 480px;
+                y: parent.height - (root.is_folded ? 240px : 350px);
+                width: 460px;
+                height: root.is_folded ? 230px : 340px;
+                background: #10141d;
+                border-radius: 12px;
+                border-width: 1px;
+                border-color: #1f293d;
+
+                VerticalLayout {
+                    padding: 16px;
+                    spacing: 12px;
+
+                    // Header row: AUDIO section
+                    VerticalLayout {
+                        spacing: 8px;
+
+                        HorizontalLayout {
+                            alignment: space-between;
+
+                            Text {
+                                text: "AUDIO";
+                                color: #8e9cb0;
+                                font-size: 11px;
+                                font-weight: 700;
+                                vertical-alignment: center;
+                            }
+
+                            Text {
+                                text: "Single Active Selection";
+                                color: #475569;
+                                font-size: 10px;
+                                font-weight: 500;
+                                vertical-alignment: center;
+                            }
+                        }
+
+                        // Audio Chips Row
+                        HorizontalLayout {
+                            spacing: 8px;
+                            alignment: start;
+
+                            for track in root.audio_tracks: Rectangle {
+                                height: 28px;
+                                background: track.is_active ? #1e293b : (aud-item-touch.has-hover ? #1c2331 : #141923);
+                                border-width: 1px;
+                                border-color: track.is_active ? #3b82f6 : #263043;
+                                border-radius: 6px;
+
+                                HorizontalLayout {
+                                    padding-left: 10px;
+                                    padding-right: 10px;
+                                    spacing: 6px;
+                                    alignment: center;
+
+                                    Text {
+                                        text: track.name;
+                                        color: track.is_active ? #ffffff : #cbd5e1;
+                                        font-size: 11px;
+                                        font-weight: track.is_active ? 700 : 500;
+                                        vertical-alignment: center;
+                                    }
+
+                                    if track.is_active: Text {
+                                        text: "✓";
+                                        color: #3b82f6;
+                                        font-size: 11px;
+                                        font-weight: 800;
+                                        vertical-alignment: center;
+                                    }
+                                }
+
+                                aud-item-touch := TouchArea {
+                                    clicked => {
+                                        root.select_audio_track(track.id);
+                                    }
+                                }
+                            }
+
+                            // + File Button (Add External Audio)
+                            Rectangle {
+                                width: 56px;
+                                height: 28px;
+                                background: aud-file-touch.has-hover ? #1c2331 : #141923;
+                                border-width: 1px;
+                                border-color: #334155;
+                                border-radius: 6px;
+
+                                Text {
+                                    text: "+ File";
+                                    color: #94a3b8;
+                                    font-size: 11px;
+                                    font-weight: 600;
+                                    horizontal-alignment: center;
+                                    vertical-alignment: center;
+                                }
+
+                                aud-file-touch := TouchArea {
+                                    clicked => {
+                                        root.add_audio_file();
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // Divider
+                    Rectangle {
+                        height: 1px;
+                        background: #1b2230;
+                    }
+
+                    // SUBTITLES section
+                    VerticalLayout {
+                        spacing: 8px;
+
+                        HorizontalLayout {
+                            alignment: space-between;
+
+                            Text {
+                                text: "SUBTITLES";
+                                color: #8e9cb0;
+                                font-size: 11px;
+                                font-weight: 700;
+                                vertical-alignment: center;
+                            }
+
+                            // Unfold / Fold Button
+                            Rectangle {
+                                height: 22px;
+                                background: fold-touch.has-hover ? #1e293b : #141923;
+                                border-radius: 4px;
+                                border-width: 1px;
+                                border-color: #263043;
+
+                                HorizontalLayout {
+                                    padding-left: 8px;
+                                    padding-right: 8px;
+                                    spacing: 4px;
+
+                                    Text {
+                                        text: root.is_folded ? "◨ Unfold" : "◧ Fold";
+                                        color: #94a3b8;
+                                        font-size: 10px;
+                                        font-weight: 600;
+                                        vertical-alignment: center;
+                                    }
+                                }
+
+                                fold-touch := TouchArea {
+                                    clicked => {
+                                        root.toggle_fold();
+                                    }
+                                }
+                            }
+                        }
+
+                        // Subtitles Chips Row (Off + Tracks + File)
+                        HorizontalLayout {
+                            spacing: 8px;
+                            alignment: start;
+
+                            // Off Chip (SINGLE, clean Off, with checkmark when no sub is active)
+                            Rectangle {
+                                height: 28px;
+                                background: root.is_sub_off ? #1e293b : (off-touch.has-hover ? #1c2331 : #141923);
+                                border-width: 1px;
+                                border-color: root.is_sub_off ? #3b82f6 : #263043;
+                                border-radius: 6px;
+
+                                HorizontalLayout {
+                                    padding-left: 10px;
+                                    padding-right: 10px;
+                                    spacing: 6px;
+                                    alignment: center;
+
+                                    Text {
+                                        text: "Off";
+                                        color: root.is_sub_off ? #ffffff : #cbd5e1;
+                                        font-size: 11px;
+                                        font-weight: root.is_sub_off ? 700 : 500;
+                                        vertical-alignment: center;
+                                    }
+
+                                    if root.is_sub_off: Text {
+                                        text: "✓";
+                                        color: #3b82f6;
+                                        font-size: 11px;
+                                        font-weight: 800;
+                                        vertical-alignment: center;
+                                    }
+                                }
+
+                                off-touch := TouchArea {
+                                    clicked => {
+                                        root.set_sub_off();
+                                    }
+                                }
+                            }
+
+                            // Subtitle Tracks
+                            for track in root.sub_tracks: Rectangle {
+                                height: 28px;
+                                background: track.is_active ? #1e293b : (sub-item-touch.has-hover ? #1c2331 : #141923);
+                                border-width: 1px;
+                                border-color: track.is_active ? #3b82f6 : #263043;
+                                border-radius: 6px;
+
+                                HorizontalLayout {
+                                    padding-left: 10px;
+                                    padding-right: 10px;
+                                    spacing: 6px;
+                                    alignment: center;
+
+                                    Text {
+                                        text: track.name;
+                                        color: track.is_active ? #ffffff : #cbd5e1;
+                                        font-size: 11px;
+                                        font-weight: track.is_active ? 700 : 500;
+                                        vertical-alignment: center;
+                                    }
+
+                                    if track.is_active: Text {
+                                        text: "✓";
+                                        color: #3b82f6;
+                                        font-size: 11px;
+                                        font-weight: 800;
+                                        vertical-alignment: center;
+                                    }
+                                }
+
+                                sub-item-touch := TouchArea {
+                                    clicked => {
+                                        root.select_sub_track(track.id);
+                                    }
+                                }
+                            }
+
+                            // + File Button (Add External Subtitle)
+                            Rectangle {
+                                width: 56px;
+                                height: 28px;
+                                background: sub-file-touch.has-hover ? #1c2331 : #141923;
+                                border-width: 1px;
+                                border-color: #334155;
+                                border-radius: 6px;
+
+                                Text {
+                                    text: "+ File";
+                                    color: #94a3b8;
+                                    font-size: 11px;
+                                    font-weight: 600;
+                                    horizontal-alignment: center;
+                                    vertical-alignment: center;
+                                }
+
+                                sub-file-touch := TouchArea {
+                                    clicked => {
+                                        root.add_sub_file();
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // UNFOLDED STYLE & TIMING CONTROLS
+                    if !root.is_folded: VerticalLayout {
+                        spacing: 8px;
+
+                        Rectangle {
+                            height: 1px;
+                            background: #1b2230;
+                        }
+
+                        // Size & Color row
+                        HorizontalLayout {
+                            spacing: 12px;
+                            alignment: space-between;
+
+                            // Size selection
+                            HorizontalLayout {
+                                spacing: 4px;
+                                alignment: start;
+
+                                Text {
+                                    text: "Size:";
+                                    color: #64748b;
+                                    font-size: 11px;
+                                    vertical-alignment: center;
+                                }
+
+                                Rectangle {
+                                    width: 38px;
+                                    height: 22px;
+                                    background: root.sub_font_size == 16 ? #1e293b : #141923;
+                                    border-radius: 4px;
+                                    border-width: 1px;
+                                    border-color: root.sub_font_size == 16 ? #3b82f6 : #263043;
+                                    Text { text: "16px"; color: #cbd5e1; font-size: 10px; horizontal-alignment: center; vertical-alignment: center; }
+                                    TouchArea { clicked => { root.set_sub_font_size(16); } }
+                                }
+                                Rectangle {
+                                    width: 38px;
+                                    height: 22px;
+                                    background: root.sub_font_size == 20 ? #1e293b : #141923;
+                                    border-radius: 4px;
+                                    border-width: 1px;
+                                    border-color: root.sub_font_size == 20 ? #3b82f6 : #263043;
+                                    Text { text: "20px"; color: #cbd5e1; font-size: 10px; horizontal-alignment: center; vertical-alignment: center; }
+                                    TouchArea { clicked => { root.set_sub_font_size(20); } }
+                                }
+                                Rectangle {
+                                    width: 38px;
+                                    height: 22px;
+                                    background: root.sub_font_size == 24 ? #1e293b : #141923;
+                                    border-radius: 4px;
+                                    border-width: 1px;
+                                    border-color: root.sub_font_size == 24 ? #3b82f6 : #263043;
+                                    Text { text: "24px"; color: #cbd5e1; font-size: 10px; horizontal-alignment: center; vertical-alignment: center; }
+                                    TouchArea { clicked => { root.set_sub_font_size(24); } }
+                                }
+                            }
+
+                            // Color presets
+                            HorizontalLayout {
+                                spacing: 6px;
+                                alignment: end;
+
+                                Text {
+                                    text: "Color:";
+                                    color: #64748b;
+                                    font-size: 11px;
+                                    vertical-alignment: center;
+                                }
+
+                                Rectangle {
+                                    width: 20px;
+                                    height: 20px;
+                                    background: #ffffff;
+                                    border-radius: 10px;
+                                    border-width: root.sub_color == "#ffffff" ? 2px : 0px;
+                                    border-color: #3b82f6;
+                                    TouchArea { clicked => { root.set_sub_color("#ffffff"); } }
+                                }
+                                Rectangle {
+                                    width: 20px;
+                                    height: 20px;
+                                    background: #fef08a;
+                                    border-radius: 10px;
+                                    border-width: root.sub_color == "#fef08a" ? 2px : 0px;
+                                    border-color: #3b82f6;
+                                    TouchArea { clicked => { root.set_sub_color("#fef08a"); } }
+                                }
+                                Rectangle {
+                                    width: 20px;
+                                    height: 20px;
+                                    background: #67e8f9;
+                                    border-radius: 10px;
+                                    border-width: root.sub_color == "#67e8f9" ? 2px : 0px;
+                                    border-color: #3b82f6;
+                                    TouchArea { clicked => { root.set_sub_color("#67e8f9"); } }
+                                }
+                            }
+                        }
+
+                        // Delay / Sync row
+                        HorizontalLayout {
+                            spacing: 8px;
+                            alignment: start;
+
+                            Text {
+                                text: "Sync Delay: " + root.sub_delay_label;
+                                color: #64748b;
+                                font-size: 11px;
+                                vertical-alignment: center;
+                            }
+
+                            Rectangle {
+                                width: 44px;
+                                height: 22px;
+                                background: #141923;
+                                border-radius: 4px;
+                                border-width: 1px;
+                                border-color: #263043;
+                                Text { text: "-0.5s"; color: #94a3b8; font-size: 10px; horizontal-alignment: center; vertical-alignment: center; }
+                                TouchArea { clicked => { root.adjust_sub_delay(-0.5); } }
+                            }
+                            Rectangle {
+                                width: 44px;
+                                height: 22px;
+                                background: #141923;
+                                border-radius: 4px;
+                                border-width: 1px;
+                                border-color: #263043;
+                                Text { text: "Reset"; color: #94a3b8; font-size: 10px; horizontal-alignment: center; vertical-alignment: center; }
+                                TouchArea { clicked => { root.adjust_sub_delay(0.0); } }
+                            }
+                            Rectangle {
+                                width: 44px;
+                                height: 22px;
+                                background: #141923;
+                                border-radius: 4px;
+                                border-width: 1px;
+                                border-color: #263043;
+                                Text { text: "+0.5s"; color: #94a3b8; font-size: 10px; horizontal-alignment: center; vertical-alignment: center; }
+                                TouchArea { clicked => { root.adjust_sub_delay(0.5); } }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // --- RECENT MEDIA HISTORY SLIDE-OVER DRAWER ---
+            if show_recent_panel: Rectangle {
+                x: parent.width - 320px;
+                y: 0px;
+                width: 320px;
+                height: parent.height;
+                background: #0d0d12;
+                border-width: 1px;
+                border-color: #1f1f2e;
+
+                VerticalLayout {
+                    padding: 16px;
+                    spacing: 12px;
+
+                    // Drawer Header
+                    HorizontalLayout {
+                        alignment: space-between;
+
+                        Text {
+                            text: "Media History";
+                            color: #ffffff;
+                            font-size: 14px;
+                            font-weight: 700;
+                            vertical-alignment: center;
+                        }
+
+                        Rectangle {
+                            width: 24px;
+                            height: 24px;
+                            background: close-hist.has-hover ? #28283a : transparent;
+                            border-radius: 12px;
+
+                            Text {
+                                text: "✕";
+                                color: #a1a1aa;
+                                font-size: 12px;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                            }
+
+                            close-hist := TouchArea {
+                                clicked => { root.close_popovers(); }
+                            }
+                        }
+                    }
+
+                    // History list
+                    for item in root.history_items: Rectangle {
+                        height: 52px;
+                        background: item-touch.has-hover ? #181824 : #12121a;
+                        border-radius: 6px;
+                        border-width: 1px;
+                        border-color: #1e1e2d;
+
+                        VerticalLayout {
+                            padding-left: 10px;
+                            padding-right: 10px;
+                            padding-top: 6px;
+                            padding-bottom: 6px;
+                            spacing: 4px;
+
+                            Text {
+                                text: item.title;
+                                color: #f4f4f5;
+                                font-size: 12px;
+                                font-weight: 600;
+                                overflow: elide;
+                            }
+
+                            HorizontalLayout {
+                                alignment: space-between;
+
+                                Text {
+                                    text: item.time_str;
+                                    color: #71717a;
+                                    font-size: 10px;
+                                }
+
+                                Text {
+                                    text: "Resume ▶";
+                                    color: #e11d2e;
+                                    font-size: 10px;
+                                    font-weight: 600;
+                                }
+                            }
+                        }
+
+                        item-touch := TouchArea {
+                            clicked => {
+                                root.play_history_item(item.id);
                             }
                         }
                     }
@@ -385,13 +960,13 @@ export component MainWindow inherits Window {
                             }
                         }
 
-                        // Audio Track Chip
+                        // Audio Track Chip (Click to open Popover)
                         Rectangle {
                             height: 26px;
-                            background: #14141c;
+                            background: root.show_audio_sub_popover ? #1e293b : #14141c;
                             border-radius: 6px;
                             border-width: 1px;
-                            border-color: #262632;
+                            border-color: root.show_audio_sub_popover ? #3b82f6 : #263043;
 
                             HorizontalLayout {
                                 padding-left: 10px;
@@ -411,13 +986,13 @@ export component MainWindow inherits Window {
                             }
                         }
 
-                        // Subtitle Track Chip
+                        // Subtitle Track Chip (Click to open Popover)
                         Rectangle {
                             height: 26px;
-                            background: #14141c;
+                            background: root.show_audio_sub_popover ? #1e293b : #14141c;
                             border-radius: 6px;
                             border-width: 1px;
-                            border-color: #262632;
+                            border-color: root.show_audio_sub_popover ? #3b82f6 : #263043;
 
                             HorizontalLayout {
                                 padding-left: 10px;
