@@ -1,0 +1,242 @@
+import { Slider, Button } from "std-widgets.slint";
+
+export component MainWindow inherits Window {
+    title: "Valor Player";
+    min-width: 800px;
+    min-height: 500px;
+    background: #000000;
+
+    in-out property <string> media_title: "Valor - No Media Loaded";
+    in-out property <string> time_display: "00:00 / 00:00";
+    in-out property <float> progress: 0.0;
+    in-out property <bool> is_playing: false;
+    in-out property <float> volume: 1.0;
+    in-out property <string> audio_track_label: "Original";
+    in-out property <string> sub_track_label: "Off";
+
+    callback toggle_play();
+    callback open_file();
+    callback seek(float);
+    callback change_volume(float);
+    callback toggle_audio_menu();
+    callback toggle_sub_menu();
+
+    VerticalLayout {
+        padding: 0px;
+        spacing: 0px;
+
+        // Top Navigation Bar
+        Rectangle {
+            height: 48px;
+            background: #0a0a0c;
+            border-width: 1px;
+            border-color: #1a1a22;
+
+            HorizontalLayout {
+                padding-left: 16px;
+                padding-right: 16px;
+                alignment: space-between;
+
+                // Logo & Title
+                HorizontalLayout {
+                    spacing: 12px;
+                    alignment: start;
+
+                    Text {
+                        text: "VALOR";
+                        color: #e11d2e;
+                        font-size: 16px;
+                        font-weight: 800;
+                        vertical-alignment: center;
+                    }
+
+                    Text {
+                        text: root.media_title;
+                        color: #ffffff;
+                        font-size: 13px;
+                        font-weight: 500;
+                        overflow: elide;
+                        vertical-alignment: center;
+                    }
+                }
+
+                // Open File Button
+                HorizontalLayout {
+                    alignment: end;
+
+                    Rectangle {
+                        width: 90px;
+                        height: 30px;
+                        background: open-area.has-hover ? #2a2a36 : #181820;
+                        border-radius: 6px;
+                        border-width: 1px;
+                        border-color: #2c2c3a;
+
+                        Text {
+                            text: "Open File";
+                            color: #ffffff;
+                            font-size: 12px;
+                            font-weight: 600;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                        }
+
+                        open-area := TouchArea {
+                            clicked => { root.open_file(); }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Center Video Surface Area
+        video_area := Rectangle {
+            background: #000000;
+
+            if media_title == "Valor - No Media Loaded": Rectangle {
+                VerticalLayout {
+                    alignment: center;
+                    spacing: 16px;
+
+                    Text {
+                        text: "Drag and drop video here or click Open File";
+                        color: #71717a;
+                        font-size: 14px;
+                        horizontal-alignment: center;
+                    }
+
+                    Text {
+                        text: "Supports MP4, MKV, WebM, AVI, TS with WASAPI Audio Output";
+                        color: #52525b;
+                        font-size: 12px;
+                        horizontal-alignment: center;
+                    }
+                }
+            }
+        }
+
+        // Bottom Controls Bar
+        Rectangle {
+            height: 64px;
+            background: #0a0a0c;
+            border-width: 1px;
+            border-color: #1a1a22;
+
+            VerticalLayout {
+                padding-left: 16px;
+                padding-right: 16px;
+                padding-top: 6px;
+                padding-bottom: 8px;
+                spacing: 6px;
+
+                // Seekbar
+                HorizontalLayout {
+                    spacing: 8px;
+
+                    Slider {
+                        minimum: 0.0;
+                        maximum: 1.0;
+                        value: root.progress;
+                        changed(val) => { root.seek(val); }
+                    }
+                }
+
+                // Controls Row
+                HorizontalLayout {
+                    alignment: space-between;
+
+                    // Play/Pause & Time
+                    HorizontalLayout {
+                        spacing: 16px;
+                        alignment: start;
+
+                        // Play/Pause Button
+                        Rectangle {
+                            width: 32px;
+                            height: 32px;
+                            background: play-area.has-hover ? #e11d2e : #1c1c24;
+                            border-radius: 16px;
+
+                            Text {
+                                text: root.is_playing ? "❚❚" : "▶";
+                                color: #ffffff;
+                                font-size: 13px;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                            }
+
+                            play-area := TouchArea {
+                                clicked => { root.toggle_play(); }
+                            }
+                        }
+
+                        Text {
+                            text: root.time_display;
+                            color: #a1a1aa;
+                            font-size: 12px;
+                            vertical-alignment: center;
+                        }
+                    }
+
+                    // Audio & Subtitle Chips
+                    HorizontalLayout {
+                        spacing: 10px;
+                        alignment: end;
+
+                        // Audio Track Indicator
+                        Rectangle {
+                            height: 26px;
+                            background: #14141c;
+                            border-radius: 6px;
+                            border-width: 1px;
+                            border-color: #262632;
+
+                            HorizontalLayout {
+                                padding-left: 10px;
+                                padding-right: 10px;
+
+                                Text {
+                                    text: "Audio: " + root.audio_track_label;
+                                    color: #d4d4d8;
+                                    font-size: 11px;
+                                    font-weight: 500;
+                                    vertical-alignment: center;
+                                }
+                            }
+
+                            TouchArea {
+                                clicked => { root.toggle_audio_menu(); }
+                            }
+                        }
+
+                        // Subtitle Track Indicator
+                        Rectangle {
+                            height: 26px;
+                            background: #14141c;
+                            border-radius: 6px;
+                            border-width: 1px;
+                            border-color: #262632;
+
+                            HorizontalLayout {
+                                padding-left: 10px;
+                                padding-right: 10px;
+
+                                Text {
+                                    text: "Subs: " + root.sub_track_label;
+                                    color: #d4d4d8;
+                                    font-size: 11px;
+                                    font-weight: 500;
+                                    vertical-alignment: center;
+                                }
+                            }
+
+                            TouchArea {
+                                clicked => { root.toggle_sub_menu(); }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

@@ -1,0 +1,20 @@
+[package]
+name = "valor-player"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+valor-db = { path = "../valor-db" }
+valor-engine = { path = "../valor-engine" }
+valor-net = { path = "../valor-net" }
+slint = "1.9"
+tokio = { version = "1.43", features = ["full"] }
+tracing = "0.1"
+tracing-subscriber = "0.3"
+chrono = "0.4"
+rfd = "0.15"
+
+[build-dependencies]
+slint-build = "1.9"

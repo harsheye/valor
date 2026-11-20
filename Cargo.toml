@@ -1,0 +1,21 @@
+[workspace]
+members = [
+    "crates/valor-player",
+    "crates/valor-engine",
+    "crates/valor-db",
+    "crates/valor-net",
+]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+authors = ["Valor Team"]
+license = "MIT"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+panic = "abort"
+strip = true

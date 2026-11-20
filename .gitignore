@@ -35,6 +35,7 @@ dist-ssr
 *.sw?
 
 # Executables, binaries, and local data
+target/
 *.exe
 *.dll
 *.blob
