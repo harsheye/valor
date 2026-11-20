@@ -42,6 +42,12 @@ struct PlaybackState {
     sub_font_size: i32,
     sub_color: String,
     sub_delay: f64,
+
+    // 3 Players Mode State
+    player_mode: String,
+    remote_url: String,
+    overlay_timeout_secs: i32,
+    hide_overlay: bool,
 }
 
 impl Default for PlaybackState {
@@ -60,14 +66,70 @@ impl Default for PlaybackState {
             sub_font_size: 20,
             sub_color: "#ffffff".to_string(),
             sub_delay: 0.0,
+            player_mode: "local".to_string(),
+            remote_url: "http://localhost:8080/api/stream".to_string(),
+            overlay_timeout_secs: 3,
+            hide_overlay: false,
         }
+    }
+}
+
+struct CliConfig {
+    mode: String,
+    url: Option<String>,
+    overlay_timeout: i32,
+    hide_overlay: bool,
+}
+
+fn parse_cli_args() -> CliConfig {
+    let args: Vec<String> = std::env::args().collect();
+    let mut mode = "local".to_string();
+    let mut url = None;
+    let mut overlay_timeout = 3;
+    let mut hide_overlay = false;
+
+    let mut i = 1;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--mode" if i + 1 < args.len() => {
+                mode = args[i + 1].to_lowercase();
+                i += 1;
+            }
+            "--local" => mode = "local".to_string(),
+            "--remote" => mode = "remote".to_string(),
+            "--embed" => mode = "embed".to_string(),
+            "--url" if i + 1 < args.len() => {
+                url = Some(args[i + 1].clone());
+                i += 1;
+            }
+            "--overlay-timeout" if i + 1 < args.len() => {
+                if let Ok(v) = args[i + 1].parse::<i32>() {
+                    overlay_timeout = v;
+                }
+                i += 1;
+            }
+            "--hide-overlay" => {
+                hide_overlay = true;
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+
+    CliConfig {
+        mode,
+        url,
+        overlay_timeout,
+        hide_overlay,
     }
 }
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::fmt::init();
-    tracing::info!("Starting Valor Pure Rust Native Player");
+    tracing::info!("Starting Valor Pure Rust 3-in-1 Native Player (Local, Remote, Embed)");
+
+    let cli_config = parse_cli_args();
 
     // Initialize local database
     let db_path = dirs_or_local_db_path();
@@ -94,13 +156,142 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let main_window = MainWindow::new()?;
     let handle = main_window.as_weak();
 
-    let state = Arc::new(Mutex::new(PlaybackState::default()));
+    let state = Arc::new(Mutex::new(PlaybackState {
+        player_mode: cli_config.mode.clone(),
+        overlay_timeout_secs: cli_config.overlay_timeout,
+        hide_overlay: cli_config.hide_overlay,
+        ..Default::default()
+    }));
     let is_playing = Arc::new(AtomicBool::new(false));
 
-    // Initialize empty UI models
+    // Configure initial UI state
+    main_window.set_player_mode(cli_config.mode.clone().into());
+    main_window.set_overlay_timeout_secs(cli_config.overlay_timeout);
+    main_window.set_hide_overlay(cli_config.hide_overlay);
+    main_window.set_embed_query_url(format_embed_query(cli_config.overlay_timeout, cli_config.hide_overlay).into());
+
+    if let Some(ref initial_url) = cli_config.url {
+        main_window.set_remote_url(initial_url.clone().into());
+        main_window.set_media_title(format!("Loaded: {}", initial_url).into());
+    }
+
     main_window.set_audio_tracks(ModelRc::from(Rc::new(VecModel::<TrackItem>::default())));
     main_window.set_sub_tracks(ModelRc::from(Rc::new(VecModel::<TrackItem>::default())));
     main_window.set_history_items(ModelRc::from(Rc::new(VecModel::<HistoryItem>::default())));
+
+    // Mode Switcher Callback (Local / Remote / Embed)
+    let state_mode = state.clone();
+    let handle_mode = handle.clone();
+    main_window.on_switch_mode(move |new_mode| {
+        let mut st = state_mode.lock();
+        st.player_mode = new_mode.to_string();
+        if let Some(ui) = handle_mode.upgrade() {
+            ui.set_player_mode(new_mode);
+            ui.set_show_embed_settings(false);
+            ui.set_show_recent_panel(false);
+            ui.set_show_audio_sub_popover(false);
+        }
+    });
+
+    // Remote Stream Connection Callback
+    let state_remote = state.clone();
+    let handle_remote = handle.clone();
+    let is_playing_remote = is_playing.clone();
+    main_window.on_connect_remote(move |url| {
+        let url_str = url.to_string();
+        let handle_inner = handle_remote.clone();
+        let state_inner = state_remote.clone();
+        let is_playing_inner = is_playing_remote.clone();
+
+        tokio::spawn(async move {
+            let _ = slint::invoke_from_event_loop({
+                let h = handle_inner.clone();
+                move || {
+                    if let Some(ui) = h.upgrade() {
+                        ui.set_remote_status("Connecting...".into());
+                    }
+                }
+            });
+
+            // Perform HTTP check / probe
+            let client = reqwest::Client::builder()
+                .timeout(Duration::from_secs(5))
+                .build()
+                .unwrap_or_default();
+
+            match client.head(&url_str).send().await {
+                Ok(resp) => {
+                    let accepts_ranges = resp.headers().get("accept-ranges").is_some();
+                    let status_text = if accepts_ranges {
+                        "Connected (HTTP Range Seekable)".to_string()
+                    } else {
+                        "Connected (Direct Stream)".to_string()
+                    };
+
+                    {
+                        let mut st = state_inner.lock();
+                        st.remote_url = url_str.clone();
+                        st.duration = 3600.0; // Streaming duration
+                    }
+                    is_playing_inner.store(true, Ordering::SeqCst);
+
+                    let title = format!("Remote: {}", url_str);
+                    let _ = slint::invoke_from_event_loop(move || {
+                        if let Some(ui) = handle_inner.upgrade() {
+                            ui.set_remote_status(status_text.into());
+                            ui.set_is_remote_connected(true);
+                            ui.set_media_title(title.into());
+                            ui.set_is_playing(true);
+                        }
+                    });
+                }
+                Err(e) => {
+                    let err_msg = format!("Failed: {}", e);
+                    let _ = slint::invoke_from_event_loop(move || {
+                        if let Some(ui) = handle_inner.upgrade() {
+                            ui.set_remote_status(err_msg.into());
+                            ui.set_is_remote_connected(false);
+                        }
+                    });
+                }
+            }
+        });
+    });
+
+    // Embed Settings Toggle & Controls
+    let handle_embed_toggle = handle.clone();
+    main_window.on_toggle_embed_settings(move || {
+        if let Some(ui) = handle_embed_toggle.upgrade() {
+            let cur = ui.get_show_embed_settings();
+            ui.set_show_embed_settings(!cur);
+            ui.set_show_recent_panel(false);
+            ui.set_show_audio_sub_popover(false);
+        }
+    });
+
+    let state_embed_timeout = state.clone();
+    let handle_embed_timeout = handle.clone();
+    main_window.on_set_overlay_timeout(move |timeout| {
+        let mut st = state_embed_timeout.lock();
+        st.overlay_timeout_secs = timeout;
+        let query_url = format_embed_query(timeout, st.hide_overlay);
+        if let Some(ui) = handle_embed_timeout.upgrade() {
+            ui.set_overlay_timeout_secs(timeout);
+            ui.set_embed_query_url(query_url.into());
+        }
+    });
+
+    let state_embed_hide = state.clone();
+    let handle_embed_hide = handle.clone();
+    main_window.on_toggle_hide_overlay(move || {
+        let mut st = state_embed_hide.lock();
+        st.hide_overlay = !st.hide_overlay;
+        let query_url = format_embed_query(st.overlay_timeout_secs, st.hide_overlay);
+        if let Some(ui) = handle_embed_hide.upgrade() {
+            ui.set_hide_overlay(st.hide_overlay);
+            ui.set_embed_query_url(query_url.into());
+        }
+    });
 
     // Play/Pause callback
     let is_playing_toggle = is_playing.clone();
@@ -172,7 +363,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     });
 
-    // Speed Toggle (1.0x -> 1.25x -> 1.5x -> 2.0x -> 0.75x)
+    // Speed Toggle
     let speeds = [1.0f32, 1.25, 1.5, 2.0, 0.75];
     let speed_labels = ["1.0x", "1.25x", "1.5x", "2.0x", "0.75x"];
     let state_speed = state.clone();
@@ -191,7 +382,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     });
 
-    // Open File
+    // Open File (Local Player)
     let state_open = state.clone();
     let audio_open = audio_engine.clone();
     let is_playing_open = is_playing.clone();
@@ -247,36 +438,36 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     });
 
-    // Toggle Audio Menu (Popover)
+    // Popover Toggles
     let handle_aud_menu = handle.clone();
     main_window.on_toggle_audio_menu(move || {
         if let Some(ui) = handle_aud_menu.upgrade() {
             let cur = ui.get_show_audio_sub_popover();
             ui.set_show_audio_sub_popover(!cur);
             ui.set_show_recent_panel(false);
+            ui.set_show_embed_settings(false);
         }
     });
 
-    // Toggle Subtitle Menu (Popover)
     let handle_sub_menu = handle.clone();
     main_window.on_toggle_sub_menu(move || {
         if let Some(ui) = handle_sub_menu.upgrade() {
             let cur = ui.get_show_audio_sub_popover();
             ui.set_show_audio_sub_popover(!cur);
             ui.set_show_recent_panel(false);
+            ui.set_show_embed_settings(false);
         }
     });
 
-    // Close Popovers
     let handle_close = handle.clone();
     main_window.on_close_popovers(move || {
         if let Some(ui) = handle_close.upgrade() {
             ui.set_show_audio_sub_popover(false);
             ui.set_show_recent_panel(false);
+            ui.set_show_embed_settings(false);
         }
     });
 
-    // Toggle Fold
     let handle_fold = handle.clone();
     main_window.on_toggle_fold(move || {
         if let Some(ui) = handle_fold.upgrade() {
@@ -285,7 +476,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     });
 
-    // Select Audio Track (strictly mutually exclusive single selection)
+    // Audio Track Selection
     let state_sel_aud = state.clone();
     let audio_sel_aud = audio_engine.clone();
     let handle_sel_aud = handle.clone();
@@ -294,7 +485,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let track_id_str = track_id.to_string();
         st.active_audio_id = track_id_str.clone();
 
-        // Find track
         if let Some(track) = st.audio_tracks.iter().find(|t| t.id == track_id_str) {
             let track_name = track.name.clone();
             if let Some(ref path) = track.path {
@@ -314,7 +504,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     });
 
-    // Add External Audio File (+ File button)
+    // Add External Audio File
     let state_add_aud = state.clone();
     let audio_add_aud = audio_engine.clone();
     let handle_add_aud = handle.clone();
@@ -340,7 +530,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let track_id = format!("ext-aud-{}", hash_path(&path));
                 let mut st = state_inner.lock();
 
-                // Deduplicate: remove if already present
                 st.audio_tracks.retain(|t| t.id != track_id);
                 st.audio_tracks.push(InternalAudioTrack {
                     id: track_id.clone(),
@@ -400,7 +589,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     });
 
-    // Add External Subtitle File (+ File button)
+    // Add External Subtitle File
     let state_add_sub = state.clone();
     let handle_add_sub = handle.clone();
     main_window.on_add_sub_file(move || {
@@ -426,7 +615,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     let track_id = format!("ext-sub-{}", hash_path(&path));
                     let mut st = state_inner.lock();
 
-                    // Deduplicate
                     st.sub_tracks.retain(|t| t.id != track_id);
                     st.sub_tracks.push(InternalSubTrack {
                         id: track_id.clone(),
@@ -450,7 +638,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         });
     });
 
-    // Subtitle Style Customization Callbacks
+    // Subtitle Style Customization
     let state_sub_size = state.clone();
     let handle_sub_size = handle.clone();
     main_window.on_set_sub_font_size(move |size| {
@@ -496,6 +684,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let next = !cur;
             ui.set_show_recent_panel(next);
             ui.set_show_audio_sub_popover(false);
+            ui.set_show_embed_settings(false);
 
             if next {
                 if let Ok(history) = db_recent.list_history(10) {
@@ -570,7 +759,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     let dur_str = format_seconds(st.duration);
                     let time_display = format!("{} / {}", cur_str, dur_str);
 
-                    // Find matching subtitle cue with sync delay applied
                     let effective_time = st.current_time + st.sub_delay;
                     let active_sub = if let Some(ref sub_id) = st.active_sub_id {
                         if let Some(track) = st.sub_tracks.iter().find(|t| &t.id == sub_id) {
@@ -614,6 +802,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+fn format_embed_query(timeout_secs: i32, hide_overlay: bool) -> String {
+    format!(
+        "http://localhost:8080/embed?overlayTimeout={}&hideOverlay={}",
+        timeout_secs * 1000,
+        hide_overlay
+    )
+}
+
 async fn load_and_play_media(
     path: PathBuf,
     state: Arc<Mutex<PlaybackState>>,
@@ -632,7 +828,6 @@ async fn load_and_play_media(
     let meta = probe_media(&path);
     let dur = meta.as_ref().ok().and_then(|m| m.duration_seconds).unwrap_or(0.0);
 
-    // Build deduplicated audio tracks
     let mut audio_tracks = vec![
         InternalAudioTrack {
             id: "default".to_string(),
@@ -654,7 +849,6 @@ async fn load_and_play_media(
         }
     }
 
-    // Auto-detect sibling subtitles (e.g. video.srt or video.vtt)
     let mut sub_tracks = Vec::new();
     let mut active_sub_id = None;
     let mut sub_label = "Off".to_string();
@@ -677,7 +871,6 @@ async fn load_and_play_media(
         }
     }
 
-    // Start audio playback
     if let Some(ref audio) = audio_engine {
         let _ = audio.play_file(&path);
     }

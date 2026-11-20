@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "crates/valor-player",
+    "crates/valor-server",
     "crates/valor-engine",
     "crates/valor-db",
     "crates/valor-net",

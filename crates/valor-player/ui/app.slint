@@ -16,8 +16,8 @@ export struct HistoryItem {
 
 export component MainWindow inherits Window {
     title: "Valor Player";
-    min-width: 900px;
-    min-height: 580px;
+    min-width: 960px;
+    min-height: 600px;
     background: #000000;
 
     in-out property <string> media_title: "Valor - No Media Loaded";
@@ -29,6 +29,20 @@ export component MainWindow inherits Window {
     in-out property <string> sub_track_label: "Off";
     in-out property <string> active_subtitle_text: "";
     in-out property <string> speed_label: "1.0x";
+
+    // --- 3 PLAYBACK MODES: "local" (Legacy), "remote" (Remote), "embed" (Embed) ---
+    in-out property <string> player_mode: "local";
+
+    // Remote Player properties
+    in-out property <string> remote_url: "http://localhost:8080/api/stream";
+    in-out property <string> remote_status: "Disconnected";
+    in-out property <bool> is_remote_connected: false;
+
+    // Embed Player properties & settings (Overlay timeout + Hide Overlay)
+    in-out property <int> overlay_timeout_secs: 3;
+    in-out property <bool> hide_overlay: false;
+    in-out property <bool> show_embed_settings: false;
+    in-out property <string> embed_query_url: "http://localhost:8080/embed?overlayTimeout=3000&hideOverlay=false";
 
     // Modals / Panels
     in-out property <bool> show_audio_sub_popover: false;
@@ -62,6 +76,13 @@ export component MainWindow inherits Window {
     callback toggle_speed();
     callback toggle_recent();
     callback close_popovers();
+
+    // 3 Player Mode callbacks
+    callback switch_mode(string);
+    callback connect_remote(string);
+    callback toggle_embed_settings();
+    callback set_overlay_timeout(int);
+    callback toggle_hide_overlay();
 
     // Track callbacks
     callback select_audio_track(string);
@@ -120,19 +141,19 @@ export component MainWindow inherits Window {
 
         // Top Navigation Bar
         Rectangle {
-            height: 48px;
-            background: #0a0a0c;
+            height: 52px;
+            background: #0a0a0e;
             border-width: 1px;
-            border-color: #1a1a22;
+            border-color: #1a1a24;
 
             HorizontalLayout {
                 padding-left: 16px;
                 padding-right: 16px;
                 alignment: space-between;
 
-                // Logo & Media Title
+                // Brand & Title
                 HorizontalLayout {
-                    spacing: 14px;
+                    spacing: 12px;
                     alignment: start;
 
                     Text {
@@ -153,7 +174,82 @@ export component MainWindow inherits Window {
                     }
                 }
 
-                // Action Buttons (History + Open File)
+                // 3 Players Segment Switcher (Local / Remote / Embed)
+                HorizontalLayout {
+                    spacing: 4px;
+                    alignment: center;
+
+                    // 1. Local (Legacy) Player
+                    Rectangle {
+                        height: 28px;
+                        background: root.player_mode == "local" ? #e11d2e : #14141c;
+                        border-radius: 6px;
+                        border-width: 1px;
+                        border-color: root.player_mode == "local" ? #e11d2e : #262634;
+
+                        HorizontalLayout {
+                            padding-left: 12px;
+                            padding-right: 12px;
+                            Text {
+                                text: "Local Player";
+                                color: root.player_mode == "local" ? #ffffff : #a1a1aa;
+                                font-size: 11px;
+                                font-weight: 600;
+                                vertical-alignment: center;
+                            }
+                        }
+
+                        TouchArea { clicked => { root.switch_mode("local"); } }
+                    }
+
+                    // 2. Remote Player
+                    Rectangle {
+                        height: 28px;
+                        background: root.player_mode == "remote" ? #2563eb : #14141c;
+                        border-radius: 6px;
+                        border-width: 1px;
+                        border-color: root.player_mode == "remote" ? #3b82f6 : #262634;
+
+                        HorizontalLayout {
+                            padding-left: 12px;
+                            padding-right: 12px;
+                            Text {
+                                text: "Remote Player";
+                                color: root.player_mode == "remote" ? #ffffff : #a1a1aa;
+                                font-size: 11px;
+                                font-weight: 600;
+                                vertical-alignment: center;
+                            }
+                        }
+
+                        TouchArea { clicked => { root.switch_mode("remote"); } }
+                    }
+
+                    // 3. Embed Player
+                    Rectangle {
+                        height: 28px;
+                        background: root.player_mode == "embed" ? #7c3aed : #14141c;
+                        border-radius: 6px;
+                        border-width: 1px;
+                        border-color: root.player_mode == "embed" ? #8b5cf6 : #262634;
+
+                        HorizontalLayout {
+                            padding-left: 12px;
+                            padding-right: 12px;
+                            Text {
+                                text: "Embed Player";
+                                color: root.player_mode == "embed" ? #ffffff : #a1a1aa;
+                                font-size: 11px;
+                                font-weight: 600;
+                                vertical-alignment: center;
+                            }
+                        }
+
+                        TouchArea { clicked => { root.switch_mode("embed"); } }
+                    }
+                }
+
+                // Action Buttons
                 HorizontalLayout {
                     spacing: 8px;
                     alignment: end;
@@ -181,9 +277,9 @@ export component MainWindow inherits Window {
                         }
                     }
 
-                    // Open File Button
-                    Rectangle {
-                        width: 90px;
+                    // Open File Button (Local)
+                    if root.player_mode == "local": Rectangle {
+                        width: 92px;
                         height: 30px;
                         background: open-area.has-hover ? #e11d2e : #1c1c26;
                         border-radius: 6px;
@@ -203,6 +299,168 @@ export component MainWindow inherits Window {
                             clicked => { root.open_file(); }
                         }
                     }
+
+                    // Embed Settings Button (Embed Mode)
+                    if root.player_mode == "embed": Rectangle {
+                        width: 110px;
+                        height: 30px;
+                        background: embed-btn-area.has-hover ? #6d28d9 : #5b21b6;
+                        border-radius: 6px;
+                        border-width: 1px;
+                        border-color: #7c3aed;
+
+                        Text {
+                            text: "⚙ Embed Setup";
+                            color: #ffffff;
+                            font-size: 11px;
+                            font-weight: 600;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                        }
+
+                        embed-btn-area := TouchArea {
+                            clicked => { root.toggle_embed_settings(); }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Subheader Bar: Remote Player Stream URL Connection
+        if root.player_mode == "remote": Rectangle {
+            height: 38px;
+            background: #0f1522;
+            border-width: 1px;
+            border-color: #1e293b;
+
+            HorizontalLayout {
+                padding-left: 16px;
+                padding-right: 16px;
+                spacing: 12px;
+                alignment: space-between;
+
+                HorizontalLayout {
+                    spacing: 8px;
+                    alignment: start;
+
+                    Text {
+                        text: "Remote Stream:";
+                        color: #94a3b8;
+                        font-size: 11px;
+                        font-weight: 600;
+                        vertical-alignment: center;
+                    }
+
+                    Rectangle {
+                        width: 440px;
+                        height: 26px;
+                        background: #090d16;
+                        border-radius: 4px;
+                        border-width: 1px;
+                        border-color: #1e293b;
+
+                        HorizontalLayout {
+                            padding-left: 8px;
+                            padding-right: 8px;
+                            Text {
+                                text: root.remote_url;
+                                color: #38bdf8;
+                                font-size: 11px;
+                                overflow: elide;
+                                vertical-alignment: center;
+                            }
+                        }
+                    }
+
+                    Rectangle {
+                        width: 90px;
+                        height: 26px;
+                        background: rem-conn.has-hover ? #1d4ed8 : #2563eb;
+                        border-radius: 4px;
+
+                        Text {
+                            text: "▶ Connect";
+                            color: #ffffff;
+                            font-size: 11px;
+                            font-weight: 700;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                        }
+
+                        rem-conn := TouchArea {
+                            clicked => { root.connect_remote(root.remote_url); }
+                        }
+                    }
+                }
+
+                HorizontalLayout {
+                    spacing: 6px;
+                    alignment: end;
+
+                    Rectangle {
+                        width: 8px;
+                        height: 8px;
+                        border-radius: 4px;
+                        background: root.is_remote_connected ? #22c55e : #ef4444;
+                        y: 15px;
+                    }
+
+                    Text {
+                        text: root.remote_status;
+                        color: root.is_remote_connected ? #86efac : #f87171;
+                        font-size: 11px;
+                        font-weight: 600;
+                        vertical-alignment: center;
+                    }
+                }
+            }
+        }
+
+        // Subheader Bar: Embed Mode Indicator & Overlay Status
+        if root.player_mode == "embed": Rectangle {
+            height: 34px;
+            background: #170d2a;
+            border-width: 1px;
+            border-color: #3b1d64;
+
+            HorizontalLayout {
+                padding-left: 16px;
+                padding-right: 16px;
+                alignment: space-between;
+
+                HorizontalLayout {
+                    spacing: 8px;
+                    alignment: start;
+
+                    Text {
+                        text: "Embed Player Mode Active";
+                        color: #c4b5fd;
+                        font-size: 11px;
+                        font-weight: 700;
+                        vertical-alignment: center;
+                    }
+
+                    Text {
+                        text: "• Inactivity Timeout: " + root.overlay_timeout_secs + "s";
+                        color: #a78bfa;
+                        font-size: 11px;
+                        vertical-alignment: center;
+                    }
+
+                    if root.hide_overlay: Text {
+                        text: "• Overlay: HIDDEN IN QUERY";
+                        color: #f43f5e;
+                        font-size: 11px;
+                        font-weight: 700;
+                        vertical-alignment: center;
+                    }
+                }
+
+                Text {
+                    text: "Embed Protocol Active (PostMessage + WS)";
+                    color: #8b5cf6;
+                    font-size: 10px;
+                    vertical-alignment: center;
                 }
             }
         }
@@ -218,14 +476,16 @@ export component MainWindow inherits Window {
                     spacing: 16px;
 
                     Text {
-                        text: "Drag and drop media here or click Open File";
+                        text: root.player_mode == "local" ? "Local Player Mode: Open file or drag media here" :
+                              (root.player_mode == "remote" ? "Remote Player Mode: Connect to Valor Remote Server" :
+                               "Embed Player Mode: Embed Query & Minimalist Player Active");
                         color: #71717a;
                         font-size: 15px;
                         horizontal-alignment: center;
                     }
 
                     Text {
-                        text: "Pure Rust Native Engine with Symphonia Demuxer & WASAPI Audio";
+                        text: "Pure Rust 3-in-1 Architecture: Symphonia Engine + Axum HTTP Streaming + Embed Protocol";
                         color: #52525b;
                         font-size: 12px;
                         horizontal-alignment: center;
@@ -302,13 +562,178 @@ export component MainWindow inherits Window {
             }
 
             // Backdrop click handler to dismiss popovers
-            if show_audio_sub_popover || show_recent_panel: TouchArea {
+            if show_audio_sub_popover || show_recent_panel || show_embed_settings: TouchArea {
                 x: 0px;
                 y: 0px;
                 width: parent.width;
                 height: parent.height;
                 clicked => {
                     root.close_popovers();
+                }
+            }
+
+            // --- EMBED SETTINGS DRAWER / POPOVER ---
+            if show_embed_settings: Rectangle {
+                x: parent.width - 440px;
+                y: 12px;
+                width: 420px;
+                height: 380px;
+                background: #110924;
+                border-radius: 12px;
+                border-width: 1px;
+                border-color: #3b1d64;
+
+                VerticalLayout {
+                    padding: 18px;
+                    spacing: 14px;
+
+                    HorizontalLayout {
+                        alignment: space-between;
+                        Text {
+                            text: "EMBED PLAYER SETTINGS";
+                            color: #c4b5fd;
+                            font-size: 12px;
+                            font-weight: 800;
+                            vertical-alignment: center;
+                        }
+
+                        Rectangle {
+                            width: 22px;
+                            height: 22px;
+                            background: transparent;
+                            Text { text: "✕"; color: #94a3b8; font-size: 12px; horizontal-alignment: center; vertical-alignment: center; }
+                            TouchArea { clicked => { root.close_popovers(); } }
+                        }
+                    }
+
+                    // Setting 1: Overlay Inactivity Timeout
+                    VerticalLayout {
+                        spacing: 6px;
+                        Text {
+                            text: "Overlay Inactivity Timer (Time until overlay hides):";
+                            color: #e2e8f0;
+                            font-size: 11px;
+                            font-weight: 600;
+                        }
+
+                        HorizontalLayout {
+                            spacing: 8px;
+                            alignment: start;
+
+                            Rectangle {
+                                width: 50px;
+                                height: 26px;
+                                background: root.overlay_timeout_secs == 1 ? #7c3aed : #1e1338;
+                                border-radius: 4px;
+                                border-width: 1px;
+                                border-color: root.overlay_timeout_secs == 1 ? #a78bfa : #37235a;
+                                Text { text: "1s"; color: #fff; font-size: 11px; horizontal-alignment: center; vertical-alignment: center; }
+                                TouchArea { clicked => { root.set_overlay_timeout(1); } }
+                            }
+                            Rectangle {
+                                width: 50px;
+                                height: 26px;
+                                background: root.overlay_timeout_secs == 3 ? #7c3aed : #1e1338;
+                                border-radius: 4px;
+                                border-width: 1px;
+                                border-color: root.overlay_timeout_secs == 3 ? #a78bfa : #37235a;
+                                Text { text: "3s"; color: #fff; font-size: 11px; horizontal-alignment: center; vertical-alignment: center; }
+                                TouchArea { clicked => { root.set_overlay_timeout(3); } }
+                            }
+                            Rectangle {
+                                width: 50px;
+                                height: 26px;
+                                background: root.overlay_timeout_secs == 5 ? #7c3aed : #1e1338;
+                                border-radius: 4px;
+                                border-width: 1px;
+                                border-color: root.overlay_timeout_secs == 5 ? #a78bfa : #37235a;
+                                Text { text: "5s"; color: #fff; font-size: 11px; horizontal-alignment: center; vertical-alignment: center; }
+                                TouchArea { clicked => { root.set_overlay_timeout(5); } }
+                            }
+                            Rectangle {
+                                width: 50px;
+                                height: 26px;
+                                background: root.overlay_timeout_secs == 10 ? #7c3aed : #1e1338;
+                                border-radius: 4px;
+                                border-width: 1px;
+                                border-color: root.overlay_timeout_secs == 10 ? #a78bfa : #37235a;
+                                Text { text: "10s"; color: #fff; font-size: 11px; horizontal-alignment: center; vertical-alignment: center; }
+                                TouchArea { clicked => { root.set_overlay_timeout(10); } }
+                            }
+                        }
+                    }
+
+                    // Setting 2: Allow Overlay to be Hidden in Embed Query
+                    VerticalLayout {
+                        spacing: 6px;
+                        Text {
+                            text: "Embed Query Overlay Visibility:";
+                            color: #e2e8f0;
+                            font-size: 11px;
+                            font-weight: 600;
+                        }
+
+                        Rectangle {
+                            height: 32px;
+                            background: root.hide_overlay ? #be123c : #1e1338;
+                            border-radius: 6px;
+                            border-width: 1px;
+                            border-color: root.hide_overlay ? #f43f5e : #37235a;
+
+                            HorizontalLayout {
+                                padding-left: 12px;
+                                padding-right: 12px;
+                                alignment: space-between;
+
+                                Text {
+                                    text: root.hide_overlay ? "Overlay Hidden Completely (hideOverlay=true)" : "Normal Overlay with Timer";
+                                    color: #ffffff;
+                                    font-size: 11px;
+                                    font-weight: 600;
+                                    vertical-alignment: center;
+                                }
+
+                                Text {
+                                    text: root.hide_overlay ? "HIDDEN" : "VISIBLE";
+                                    color: root.hide_overlay ? #fecdd3 : #a78bfa;
+                                    font-size: 10px;
+                                    font-weight: 700;
+                                    vertical-alignment: center;
+                                }
+                            }
+
+                            TouchArea { clicked => { root.toggle_hide_overlay(); } }
+                        }
+                    }
+
+                    // Setting 3: Live Embed Query URL Output
+                    VerticalLayout {
+                        spacing: 6px;
+                        Text {
+                            text: "Generated Embed URL (with query params):";
+                            color: #c4b5fd;
+                            font-size: 11px;
+                            font-weight: 600;
+                        }
+
+                        Rectangle {
+                            height: 48px;
+                            background: #090514;
+                            border-radius: 6px;
+                            border-width: 1px;
+                            border-color: #3b1d64;
+
+                            VerticalLayout {
+                                padding: 6px;
+                                Text {
+                                    text: root.embed_query_url;
+                                    color: #a78bfa;
+                                    font-size: 10px;
+                                    wrap: word-wrap;
+                                }
+                            }
+                        }
+                    }
                 }
             }
 
@@ -823,8 +1248,8 @@ export component MainWindow inherits Window {
             }
         }
 
-        // Bottom Playback Controls Bar
-        Rectangle {
+        // Bottom Playback Controls Bar (Hidden if hide_overlay is true in embed mode)
+        if !(root.player_mode == "embed" && root.hide_overlay): Rectangle {
             height: 68px;
             background: #0a0a0c;
             border-width: 1px;
