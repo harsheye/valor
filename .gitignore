@@ -34,14 +34,20 @@ dist-ssr
 *.sln
 *.sw?
 
-# Executables, binaries, and local data
+# Build targets and temporary test data
 target/
+tests/fixtures/media/
+libmpv/
+mpv-dev.7z
+.valor_data/
 *.exe
 *.dll
 *.blob
-*.mp4
 *.7z
 libmpv/
-download-mpv.ps1
+target/
 .valor_data/
+tests/fixtures/media/*.mkv
+tests/fixtures/media/*.mp4
+tests/fixtures/media/*.wav
 valor/

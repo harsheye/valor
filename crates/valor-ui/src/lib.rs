@@ -1,0 +1,11 @@
+pub mod auto_next_card;
+pub mod bookmarks_modal;
+pub mod components;
+pub mod context_menu;
+pub mod dashboard;
+pub mod enhancement_studio;
+pub mod icons;
+pub mod peek;
+pub mod playlist_drawer;
+pub mod shortcuts;
+pub mod theme;

@@ -1,17 +1,17 @@
 [workspace]
 members = [
+    "crates/valor-core",
+    "crates/valor-library",
     "crates/valor-player",
-    "crates/valor-server",
-    "crates/valor-engine",
-    "crates/valor-db",
-    "crates/valor-net", "test-mpv-link",
+    "crates/valor-skins",
+    "crates/valor-ui",
+    "crates/valor-app",
 ]
 resolver = "2"
 
 [workspace.package]
 version = "0.1.0"
 edition = "2021"
-authors = ["Valor Team"]
 license = "MIT"
 
 [profile.release]

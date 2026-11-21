@@ -1,0 +1,20 @@
+[package]
+name = "valor-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+rusqlite = { version = "0.32", features = ["bundled", "modern-full"] }
+blake3 = "1.5"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+toml = "0.8"
+directories = "5.0"
+thiserror = "2.0"
+tracing = "0.1"
+chrono = { version = "0.4", features = ["serde"] }
+parking_lot = "0.12"
+
+[dev-dependencies]
+tempfile = "3.10"
