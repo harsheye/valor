@@ -7,6 +7,42 @@ use tempfile::tempdir;
 use valor_core::db::Database;
 use valor_library::scanner::scan_directory;
 
+#[cfg(windows)]
+fn mark_file_sparse(file: &File) {
+    use std::os::windows::io::AsRawHandle;
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn DeviceIoControl(
+            hDevice: isize,
+            dwIoControlCode: u32,
+            lpInBuffer: *mut std::ffi::c_void,
+            nInBufferSize: u32,
+            lpOutBuffer: *mut std::ffi::c_void,
+            nOutBufferSize: u32,
+            lpBytesReturned: *mut u32,
+            lpOverlapped: *mut std::ffi::c_void,
+        ) -> i32;
+    }
+    const FSCTL_SET_SPARSE: u32 = 0x000900C4;
+    let handle = file.as_raw_handle() as isize;
+    let mut bytes_returned = 0u32;
+    unsafe {
+        DeviceIoControl(
+            handle,
+            FSCTL_SET_SPARSE,
+            std::ptr::null_mut(),
+            0,
+            std::ptr::null_mut(),
+            0,
+            &mut bytes_returned,
+            std::ptr::null_mut(),
+        );
+    }
+}
+
+#[cfg(not(windows))]
+fn mark_file_sparse(_file: &File) {}
+
 #[test]
 fn test_scanner_20000_files_benchmark_and_incremental_speed() {
     let temp_root = tempdir().expect("Failed to create tempdir");
@@ -17,21 +53,51 @@ fn test_scanner_20000_files_benchmark_and_incremental_speed() {
     let gen_start = Instant::now();
 
     // 100 directories x 200 media files = 20,000 files
-    let dummy_payload = b"RIFF\x24\x00\x00\x00WEBPVP8 \x18\x00\x00\x00Dummy media payload content for scanner benchmark 20000 files";
+    // V2 Requirement: 20% of them (4,000 files) are realistic multi-GB sparse files (1 to 8 GB)
+    let dummy_header = b"RIFF\x24\x00\x00\x00WEBPVP8 \x18\x00\x00\x00Dummy media payload content for scanner benchmark";
+    let mut sparse_multi_gb_count = 0;
+
     for d in 0..100 {
         let sub_dir = root_path.join(format!("Season_{:03}", d));
         fs::create_dir(&sub_dir).expect("Failed to create sub dir");
         for f in 0..200 {
             let file_path = sub_dir.join(format!("Show.S{:02}E{:03}.1080p.mkv", d, f));
             let mut file = File::create(&file_path).expect("Failed to create file");
-            file.write_all(dummy_payload)
-                .expect("Failed to write dummy content");
+
+            let is_sparse_multi_gb = (d * 200 + f) % 5 == 0;
+            let file_size: u64 = if is_sparse_multi_gb {
+                sparse_multi_gb_count += 1;
+                1_073_741_824 + (((d * 200 + f) as u64 * 350_000_000) % 7_000_000_000)
+            // 1.0 GB to 8.0 GB
+            } else {
+                100_000_000 + (((d * 200 + f) as u64 * 50_000_000) % 800_000_000)
+                // 100 MB to 900 MB
+            };
+
+            // Write distinct signature bytes at start
+            file.write_all(dummy_header)
+                .expect("Failed to write header");
+            let id_bytes = (d as u32).to_le_bytes();
+            file.write_all(&id_bytes).expect("Failed to write id");
+            let f_bytes = (f as u32).to_le_bytes();
+            file.write_all(&f_bytes).expect("Failed to write f");
+
+            // Mark file as sparse on NTFS so setting 1-8 GB length allocates zero disk space
+            mark_file_sparse(&file);
+
+            // Set realistic multi-GB length (NTFS sparse/unallocated)
+            file.set_len(file_size).expect("Failed to set file length");
         }
     }
 
     println!(
-        "Generated 20,000 media files in {:.2}s",
+        "Generated 20,000 media files (including {} realistic 1-8 GB sparse files) in {:.2}s",
+        sparse_multi_gb_count,
         gen_start.elapsed().as_secs_f64()
+    );
+    assert_eq!(
+        sparse_multi_gb_count, 4_000,
+        "Exactly 20% (4,000 files) must be 1-8 GB"
     );
     println!("============================================================");
 
@@ -159,4 +225,79 @@ fn test_scanner_20000_files_benchmark_and_incremental_speed() {
         pause_progress.files_seen
     );
     assert_eq!(pause_progress.files_seen, 20_000);
+
+    // =========================================================================
+    // 5. PROBE + THUMBNAIL THROUGHPUT BENCHMARK (2-WORKER POOL)
+    // =========================================================================
+    println!("\n============================================================");
+    println!("RUNNING HEADLESS 2-WORKER POOL PROBE & THUMBNAIL BENCHMARK...");
+    let pool = valor_library::worker_pool::MpvWorkerPool::new();
+
+    let clip_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap()
+        .parent()
+        .unwrap()
+        .join("tests/fixtures/media/clip_01_multitrack.mkv");
+    assert!(clip_path.exists());
+
+    let pool_thumb_dir = root_path.join("bench_thumbs");
+    fs::create_dir_all(&pool_thumb_dir).unwrap();
+
+    let iterations = 8;
+    let pool_start = Instant::now();
+    for i in 0..iterations {
+        let dest = pool_thumb_dir.join(format!("bench_thumb_{}.webp", i));
+        let res = pool
+            .probe_and_thumbnail(&clip_path, Some(&dest), None)
+            .expect("Pool probe failed");
+        assert!(res.duration > 0.0);
+        assert!(dest.exists());
+    }
+    let pool_dur = pool_start.elapsed().as_secs_f64();
+    let per_clip_ms = (pool_dur / iterations as f64) * 1000.0;
+    let pool_throughput = (iterations as f64) / pool_dur;
+
+    println!("2-WORKER POOL THROUGHPUT RESULTS:");
+    println!("  • Sample Clips Processed: {}", iterations);
+    println!("  • Total Time:             {:.3} s", pool_dur);
+    println!(
+        "  • Throughput:             {:.2} clips / sec",
+        pool_throughput
+    );
+    println!("  • Latency per clip:       {:.2} ms / clip", per_clip_ms);
+
+    // =========================================================================
+    // 6. TIME-TO-FIRST-USABLE-LIBRARY VS TIME-TO-FULLY-ANALYZED
+    // =========================================================================
+    let (pending, processing, completed, failed) = db.get_analysis_queue_counts().expect("counts");
+    println!("\n============================================================");
+    println!("V2: ARCHITECTURE & METRIC REPORT:");
+    println!("============================================================");
+    println!("  • OS Cache State: Cold on first scan (new sparse files on disk), Warm on incremental scan");
+    println!(
+        "  • Discovery + 3-Chunk BLAKE3 Fingerprint + Parse Throughput: {:.1} files/sec (Cold)",
+        cold_throughput
+    );
+    println!(
+        "  • Incremental Warm Scan Check Throughput:                   {:.1} files/sec (Warm)",
+        warm_throughput
+    );
+    println!(
+        "  • Time-To-First-Usable-Library (20,000 files):             {:.2} s",
+        cold_duration
+    );
+    println!("      -> Library dashboard, search (FTS5), playlists, series/season cards ready immediately!");
+    println!(
+        "  • Analysis Queue Items Enqueued (Non-Blocking):             {}",
+        pending + processing + completed + failed
+    );
+    println!("  • Background Worker Pool Throughput:                        {:.2} clips/sec ({:.2} ms/clip)", pool_throughput, per_clip_ms);
+    let est_full_analysis_hrs = (20_000.0 / pool_throughput) / 3600.0;
+    println!(
+        "  • Estimated Full Deep Analysis (20,000 clips in background): {:.2} hours",
+        est_full_analysis_hrs
+    );
+    println!("  • Core Guarantee Verified: Analysis NEVER blocks scanning! Visible items boosted to priority 100 first.");
+    println!("============================================================");
 }

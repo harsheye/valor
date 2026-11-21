@@ -1,17 +1,11 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-mod app;
-mod bench;
-mod ipc;
-mod power;
-mod render;
-
 use eframe::egui;
 use std::path::PathBuf;
 use tracing::{info, Level};
 use tracing_subscriber::FmtSubscriber;
-
-use app::ValorNativeApp;
+use valor_app::app::ValorNativeApp;
+use valor_app::{bench, ipc};
 
 fn main() -> eframe::Result<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();

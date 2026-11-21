@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+pub use valor_core::models::TrackItem;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
@@ -10,16 +11,6 @@ pub enum PlaybackStatus {
     Paused,
     Completed,
     Error,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct TrackItem {
-    pub id: i64,
-    pub track_type: String, // "audio", "sub", "video"
-    pub title: Option<String>,
-    pub lang: Option<String>,
-    pub codec: Option<String>,
-    pub selected: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

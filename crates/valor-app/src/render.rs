@@ -5,6 +5,11 @@ use std::time::Instant;
 use tracing::info;
 use valor_player::RenderGlContext;
 
+/// Resolves an OpenGL procedure address by name for libmpv render context.
+///
+/// # Safety
+///
+/// Caller must ensure `name` points to a valid null-terminated C string.
 pub unsafe extern "C" fn get_proc_address(_ctx: *mut c_void, name: *const c_char) -> *mut c_void {
     #[cfg(windows)]
     {

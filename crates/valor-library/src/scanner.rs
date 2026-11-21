@@ -228,7 +228,7 @@ where
 
         progress.files_new += 1;
 
-        // 8. Commit batch if reaching BATCH_SIZE
+        // 8. Commit batch if reaching BATCH_SIZE (atomically writes files, items, and analysis_queue)
         if batch.len() >= BATCH_SIZE {
             if let Err(e) = db.batch_upsert_scanned_files(&batch) {
                 error!("Batch upsert failed: {:?}", e);

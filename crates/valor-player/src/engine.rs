@@ -565,7 +565,12 @@ impl PlayerEngine {
 
     pub fn get_dropped_frames(&self) -> Result<i64, PlayerError> {
         let mpv = self.mpv.lock();
-        let dropped = mpv.get_property::<i64>("drop-frame-count").unwrap_or(0);
+        // Verified against pinned libmpv: 'frame-drop-count' is the active property returning Ok(0)
+        let dropped = mpv
+            .get_property::<i64>("frame-drop-count")
+            .or_else(|_| mpv.get_property::<i64>("drop-frame-count"))
+            .or_else(|_| mpv.get_property::<i64>("vo-drop-frame-count"))
+            .unwrap_or(0);
         Ok(dropped)
     }
 
@@ -595,12 +600,24 @@ impl PlayerEngine {
                 .get_property(&format!("{}/external", prefix))
                 .unwrap_or(false);
 
+            let channels: Option<i64> =
+                mpv.get_property(&format!("{}/audio-channels", prefix)).ok();
+            let is_default: bool = mpv
+                .get_property(&format!("{}/default", prefix))
+                .unwrap_or(false);
+            let is_forced: bool = mpv
+                .get_property(&format!("{}/forced", prefix))
+                .unwrap_or(false);
+
             tracks.push(TrackItem {
                 id,
                 track_type,
                 title,
                 lang,
                 codec,
+                channels,
+                is_default,
+                is_forced,
                 is_selected: selected,
                 is_external: external,
             });

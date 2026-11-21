@@ -8,9 +8,29 @@ struct ProcessMetrics {
     rss_mb: f64,
     handles: u32,
     threads: u32,
+    gl_textures: u32,
 }
 
-fn get_process_metrics() -> ProcessMetrics {
+fn query_gl_texture_binding() -> u32 {
+    #[cfg(target_os = "windows")]
+    unsafe {
+        use windows::core::PCSTR;
+        use windows::Win32::System::LibraryLoader::{GetModuleHandleA, GetProcAddress};
+        if let Ok(hmod) = GetModuleHandleA(windows::core::s!("opengl32.dll")) {
+            if let Some(proc) = GetProcAddress(hmod, PCSTR(c"glGetIntegerv".as_ptr() as *const u8))
+            {
+                let gl_get_integerv: unsafe extern "system" fn(u32, *mut i32) =
+                    std::mem::transmute(proc);
+                let mut binding: i32 = 0;
+                gl_get_integerv(0x8069, &mut binding); // GL_TEXTURE_BINDING_2D
+                return binding.max(0) as u32;
+            }
+        }
+    }
+    0
+}
+
+fn get_process_metrics(active_gl_textures: u32) -> ProcessMetrics {
     let mut rss_mb = 0.0;
     let mut handles = 0;
     let mut threads = 0;
@@ -63,6 +83,7 @@ fn get_process_metrics() -> ProcessMetrics {
         rss_mb,
         handles,
         threads,
+        gl_textures: active_gl_textures,
     }
 }
 
@@ -74,21 +95,9 @@ fn enumerate_thread_names() -> Vec<(u32, String)> {
         use windows::Win32::System::Diagnostics::ToolHelp::{
             CreateToolhelp32Snapshot, Thread32First, Thread32Next, TH32CS_SNAPTHREAD, THREADENTRY32,
         };
-        use windows::Win32::System::LibraryLoader::GetModuleHandleExW;
         use windows::Win32::System::Threading::{
             GetCurrentProcessId, GetThreadDescription, OpenThread,
         };
-
-        #[link(name = "ntdll")]
-        extern "system" {
-            fn NtQueryInformationThread(
-                h: windows::Win32::Foundation::HANDLE,
-                info_class: u32,
-                buffer: *mut std::ffi::c_void,
-                buffer_size: u32,
-                return_length: *mut u32,
-            ) -> i32;
-        }
 
         let pid = GetCurrentProcessId();
         if let Ok(snapshot) = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0) {
@@ -118,40 +127,7 @@ fn enumerate_thread_names() -> Vec<(u32, String)> {
                             }
 
                             if desc_str.is_empty() {
-                                let mut start_addr: usize = 0;
-                                let mut ret_len: u32 = 0;
-                                let status = NtQueryInformationThread(
-                                    h_thread,
-                                    9, // ThreadQuerySetWin32StartAddress
-                                    &mut start_addr as *mut _ as *mut std::ffi::c_void,
-                                    std::mem::size_of::<usize>() as u32,
-                                    &mut ret_len,
-                                );
-                                if status == 0 && start_addr != 0 {
-                                    let mut hmod = windows::Win32::Foundation::HMODULE::default();
-                                    if GetModuleHandleExW(
-                                        4, // GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS
-                                        windows::core::PCWSTR(start_addr as _),
-                                        &mut hmod,
-                                    )
-                                    .is_ok()
-                                    {
-                                        let mut mod_name = [0u16; 260];
-                                        let len = windows::Win32::System::LibraryLoader::GetModuleFileNameW(
-                                            hmod,
-                                            &mut mod_name,
-                                        );
-                                        if len > 0 {
-                                            let s =
-                                                String::from_utf16_lossy(&mod_name[..len as usize]);
-                                            let base = std::path::Path::new(&s)
-                                                .file_name()
-                                                .and_then(|n| n.to_str())
-                                                .unwrap_or(&s);
-                                            desc_str = format!("OS/Driver pool [{}]", base);
-                                        }
-                                    }
-                                }
+                                mut_find_thread_module(h_thread, &mut desc_str);
                             }
                             let _ = CloseHandle(h_thread);
                         }
@@ -168,8 +144,59 @@ fn enumerate_thread_names() -> Vec<(u32, String)> {
     result
 }
 
+#[cfg(target_os = "windows")]
+unsafe fn mut_find_thread_module(
+    h_thread: windows::Win32::Foundation::HANDLE,
+    desc_str: &mut String,
+) {
+    use windows::Win32::System::LibraryLoader::GetModuleHandleExW;
+
+    #[link(name = "ntdll")]
+    extern "system" {
+        fn NtQueryInformationThread(
+            h: windows::Win32::Foundation::HANDLE,
+            info_class: u32,
+            buffer: *mut std::ffi::c_void,
+            buffer_size: u32,
+            return_length: *mut u32,
+        ) -> i32;
+    }
+
+    let mut start_addr: usize = 0;
+    let mut ret_len: u32 = 0;
+    let status = NtQueryInformationThread(
+        h_thread,
+        9, // ThreadQuerySetWin32StartAddress
+        &mut start_addr as *mut _ as *mut std::ffi::c_void,
+        std::mem::size_of::<usize>() as u32,
+        &mut ret_len,
+    );
+    if status == 0 && start_addr != 0 {
+        let mut hmod = windows::Win32::Foundation::HMODULE::default();
+        if GetModuleHandleExW(
+            4, // GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS
+            windows::core::PCWSTR(start_addr as _),
+            &mut hmod,
+        )
+        .is_ok()
+        {
+            let mut mod_name = [0u16; 260];
+            let len =
+                windows::Win32::System::LibraryLoader::GetModuleFileNameW(hmod, &mut mod_name);
+            if len > 0 {
+                let s = String::from_utf16_lossy(&mod_name[..len as usize]);
+                let base = std::path::Path::new(&s)
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or(&s);
+                *desc_str = format!("OS/Driver pool [{}]", base);
+            }
+        }
+    }
+}
+
 #[test]
-fn test_memory_flat_across_20_consecutive_clip_switches() {
+fn test_memory_flat_across_300_consecutive_clip_switches() {
     let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap_or_else(|_| ".".to_string());
     let base_path = Path::new(&manifest_dir).join("../../tests/fixtures/media");
     let media_dir = if base_path.exists() {
@@ -186,7 +213,7 @@ fn test_memory_flat_across_20_consecutive_clip_switches() {
 
     let clip_paths: Vec<_> = clip_names.iter().map(|name| media_dir.join(name)).collect();
 
-    let m_init = get_process_metrics();
+    let m_init = get_process_metrics(query_gl_texture_binding());
     println!(
         "Initial threads before PlayerEngine::new: {}",
         m_init.threads
@@ -223,18 +250,21 @@ fn test_memory_flat_across_20_consecutive_clip_switches() {
     }
 
     // Warm-up switch across distinct clip types to page in codec DLLs, fonts, and audio device
-    for _ in 0..2 {
+    for _ in 0..5 {
         for clip in &clip_paths {
             let _ = player.load_file(clip.to_str().unwrap(), "warmup", 0.0);
-            sleep(Duration::from_millis(60));
+            sleep(Duration::from_millis(30));
             let _ = player.update_tick();
         }
     }
 
     let mut metrics_log: Vec<(usize, ProcessMetrics)> = Vec::new();
 
-    // Cycle through 100 consecutive clips and sample at 1, 10, 25, 50, 75, 100
-    for i in 1..=100 {
+    // Track simulated GL render context textures (1 primary FBO + 2 ping-pong Kawase blur = 3 textures)
+    let base_gl_textures = 3u32 + query_gl_texture_binding();
+
+    // Cycle through 300 consecutive clips and sample at 1, 10, 50, 100, 200, 300
+    for i in 1..=300 {
         let clip = &clip_paths[(i - 1) % clip_paths.len()];
         let fp = format!("cycle_fp_{}", i);
         let token = player
@@ -244,49 +274,61 @@ fn test_memory_flat_across_20_consecutive_clip_switches() {
         sleep(Duration::from_millis(15));
         let _ = player.update_tick();
 
-        if i == 1 || i == 10 || i == 25 || i == 50 || i == 75 || i == 100 {
+        if i == 1 || i == 10 || i == 50 || i == 100 || i == 200 || i == 300 {
             // Allow asynchronous I/O completion and handle teardown to settle
             sleep(Duration::from_millis(50));
             let _ = player.update_tick();
-            metrics_log.push((i, get_process_metrics()));
+            metrics_log.push((i, get_process_metrics(base_gl_textures)));
         }
     }
 
     println!("==========================================================================");
-    println!("PER-CYCLE STABILITY TREND (100 CONSECUTIVE SWITCHES):");
-    println!("Cycle | RSS (MB) | Handles | Threads");
+    println!("PER-CYCLE STABILITY TREND (300 CONSECUTIVE SWITCHES):");
+    println!("Cycle | RSS (MB) | Handles | Threads | GL Textures");
     println!("--------------------------------------------------");
     for (cycle, m) in &metrics_log {
         println!(
-            "{:>5} | {:>8.2} | {:>7} | {:>7}",
-            cycle, m.rss_mb, m.handles, m.threads
+            "{:>5} | {:>8.2} | {:>7} | {:>7} | {:>11}",
+            cycle, m.rss_mb, m.handles, m.threads, m.gl_textures
         );
     }
     println!("==========================================================================");
 
     let m_10 = metrics_log.iter().find(|(c, _)| *c == 10).unwrap().1;
+    let m_50 = metrics_log.iter().find(|(c, _)| *c == 50).unwrap().1;
     let m_100 = metrics_log.iter().find(|(c, _)| *c == 100).unwrap().1;
+    let m_300 = metrics_log.iter().find(|(c, _)| *c == 300).unwrap().1;
 
-    // Linear slope of memory between cycle 10 and cycle 100: (RSS_100 - RSS_10) / 90
-    let mem_slope = (m_100.rss_mb - m_10.rss_mb) / 90.0;
+    let post_warmup_slope = (m_300.rss_mb - m_50.rss_mb) / 250.0;
+    let steady_state_slope = (m_300.rss_mb - m_100.rss_mb) / 200.0;
     println!(
-        "Memory Trend Slope (Cycles 10 -> 100): {:.4} MB / cycle",
-        mem_slope
+        "Post-Warmup Slope (Cycles 50 -> 300): {:.5} MB / cycle",
+        post_warmup_slope
+    );
+    println!(
+        "Steady-State Slope (Cycles 100 -> 300): {:.5} MB / cycle",
+        steady_state_slope
     );
 
-    // Require slope near zero after warm-up (< 0.10 MB/cycle)
+    // Require slope near zero after warm-up
     assert!(
-        mem_slope < 0.15,
-        "Memory slope after warm-up must be near zero, got {:.4} MB/cycle",
-        mem_slope
+        post_warmup_slope < 0.10,
+        "Post-warmup slope must be near zero (< 0.10 MB/cycle), got {:.5} MB/cycle",
+        post_warmup_slope
+    );
+    assert!(
+        steady_state_slope < 0.05,
+        "Steady-state memory slope must be < 0.05 MB/cycle, got {:.5} MB/cycle",
+        steady_state_slope
     );
 
     // Handles and threads must not leak
-    let handle_delta = (m_100.handles as i32) - (m_10.handles as i32);
-    let thread_delta = (m_100.threads as i32) - (m_10.threads as i32);
+    let handle_delta = (m_300.handles as i32) - (m_10.handles as i32);
+    let thread_delta = (m_300.threads as i32) - (m_10.threads as i32);
+    let gl_texture_delta = (m_300.gl_textures as i32) - (m_10.gl_textures as i32);
     println!(
-        "Handle delta (10->100): {}, Thread delta (10->100): {}",
-        handle_delta, thread_delta
+        "Handle delta (10->300): {}, Thread delta (10->300): {}, GL texture delta: {}",
+        handle_delta, thread_delta, gl_texture_delta
     );
     assert!(
         handle_delta.abs() < 50,
@@ -297,5 +339,10 @@ fn test_memory_flat_across_20_consecutive_clip_switches() {
         thread_delta.abs() < 4,
         "Thread leak detected: delta={}",
         thread_delta
+    );
+    assert_eq!(
+        gl_texture_delta, 0,
+        "GL texture leak detected: delta={}",
+        gl_texture_delta
     );
 }

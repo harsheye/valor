@@ -4,15 +4,22 @@ use std::path::Path;
 use std::sync::LazyLock;
 
 static RE_TV: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?i)\b(?:s(\d{1,2})e(\d{1,3})(?:[-_eE](\d{1,3}))?|(\d{1,2})x(\d{1,3}))\b").unwrap()
+    Regex::new(r"(?i)\b(?:s(\d{1,2})e(\d{1,3})(?:[-_eE](\d{1,3}))?|(\d{1,2})x(\d{1,3})(?:[-_](\d{1,3}))?)\b").unwrap()
 });
 static RE_EP_STANDALONE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?i)\b(?:episode|ep)\s*(\d{1,3})\b").unwrap());
 static RE_ANIME: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^\[(.*?)\]\s*(.*?)\s*-\s*(\d{1,4})(?:v\d+)?\b").unwrap());
+static RE_CRC: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\[([a-fA-F0-9]{8})\]").unwrap());
+static RE_TMDB: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?i)\{(?:tmdb|id)-(\d+)\}").unwrap());
 static RE_PAREN_YEAR: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"[\(\[]\s*(19\d{2}|20\d{2})\s*[\)\]]").unwrap());
 static RE_YEAR: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\b(19\d{2}|20\d{2})\b").unwrap());
+static RE_AMBIGUOUS_3DIGIT: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?i)^[a-z0-9_\.-]+\.(\d{3})$").unwrap());
+static RE_SEASON_DIR: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?i)\b(?:season|s)\s*(\d{1,2})\b").unwrap());
 static RE_STRIP: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?i)\b(2160p|1080p|720p|480p|uhd|bluray|web-dl|webrip|hdtv|hevc|x265|x264|h\.264|h\.265)\b.*").unwrap()
 });
@@ -28,6 +35,12 @@ static RE_ACODEC: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?i)\b(TrueHD|Atmos|DTS-HD|DTS-X|DTS|DDP5\.1|DD5\.1|AC3|AAC|FLAC)\b").unwrap()
 });
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ConfidenceLevel {
+    High,
+    Low,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ParsedFilename {
     pub title: String,
@@ -40,18 +53,46 @@ pub struct ParsedFilename {
     pub video_codec: Option<String>,
     pub audio_codec: Option<String>,
     pub release_group: Option<String>,
+    pub tmdb_id: Option<u32>,
+    pub confidence: ConfidenceLevel,
+    pub is_ambiguous: bool,
 }
 
 pub fn parse_media_filename(file_path: &str) -> ParsedFilename {
-    let filename = Path::new(file_path)
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .unwrap_or(file_path);
+    let p = Path::new(file_path);
+    let stem = p.file_stem().and_then(|s| s.to_str()).unwrap_or(file_path);
+
+    // Check for ambiguous patterns: e.g. "show.102.mkv" without explicit SxxExx or Ep tokens
+    // Requirement V7: "show.102.mkv" (ambiguous: flag low confidence, do not guess)
+    if RE_AMBIGUOUS_3DIGIT.is_match(stem)
+        && !RE_TV.is_match(stem)
+        && !RE_EP_STANDALONE.is_match(stem)
+    {
+        let clean = stem.replace(['.', '_'], " ");
+        return ParsedFilename {
+            title: clean,
+            year: None,
+            season: None,
+            episode: None,
+            episode_end: None,
+            resolution: None,
+            source: None,
+            video_codec: None,
+            audio_codec: None,
+            release_group: None,
+            tmdb_id: None,
+            confidence: ConfidenceLevel::Low,
+            is_ambiguous: true,
+        };
+    }
+
+    // Extract {tmdb-12345} tag if present
+    let (stem_without_tmdb, tmdb_id) = extract_tmdb_tag(stem);
 
     // 1. Extract Release Group if at end (e.g. "-Spidey", "-FLUX", "-SPHD")
-    let (clean_without_group, release_group) = extract_release_group(filename);
+    let (clean_without_group, release_group) = extract_release_group(&stem_without_tmdb);
 
-    // 2. Extract Anime Group and Episode if formatted like "[SubsPlease] Title - 05 (1080p)"
+    // 2. Extract Anime Group and Episode if formatted like "[SubsPlease] Title - 05 (1080p) [A1B2C3D4]"
     if clean_without_group.starts_with('[') {
         if let Some(parsed) = parse_anime_format(&clean_without_group, release_group.as_deref()) {
             return parsed;
@@ -67,7 +108,7 @@ pub fn parse_media_filename(file_path: &str) -> ParsedFilename {
     let video_codec = extract_video_codec(&clean);
     let audio_codec = extract_audio_codec(&clean);
 
-    // 5. Check for TV episode: S01E02, S01E02-E03, S01E02E03, 1x02
+    // 5. Check for TV episode: S01E02, S01E02-E03, S01E02E03, 1x02, 2x03-04
     if let Some(caps) = RE_TV.captures(&clean) {
         let match_start = caps.get(0).unwrap().start();
         let raw_title = clean[..match_start].trim();
@@ -80,12 +121,23 @@ pub fn parse_media_filename(file_path: &str) -> ParsedFilename {
             .get(2)
             .or_else(|| caps.get(5))
             .and_then(|m| m.as_str().parse().ok());
-        let episode_end = caps.get(3).and_then(|m| m.as_str().parse().ok());
+        let episode_end = caps
+            .get(3)
+            .or_else(|| caps.get(6))
+            .and_then(|m| m.as_str().parse().ok());
 
         let (title, year) = extract_year_from_title(raw_title);
+        let mut final_title = clean_title_str(&title, stem);
+
+        // If title is empty or just the episode token (e.g. S01E03.mkv inside /Severance/Season 1/)
+        if raw_title.is_empty() || final_title == stem || RE_TV.is_match(&final_title) {
+            if let Some(series) = get_parent_series_title(p) {
+                final_title = series;
+            }
+        }
 
         return ParsedFilename {
-            title: clean_title_str(&title, filename),
+            title: final_title,
             year,
             season,
             episode,
@@ -95,27 +147,72 @@ pub fn parse_media_filename(file_path: &str) -> ParsedFilename {
             video_codec,
             audio_codec,
             release_group,
+            tmdb_id,
+            confidence: ConfidenceLevel::High,
+            is_ambiguous: false,
         };
     }
 
-    // 6. Check for Season folder / Episode standalone: "Episode 05" or "Ep 05"
+    // 6. Check for Season folder / Episode standalone: "Episode 05" or "Ep 05" or folder-based season
+    let mut detected_season = None;
+    let mut detected_episode = None;
+    let mut raw_ep_title = clean.as_str();
+
     if let Some(caps) = RE_EP_STANDALONE.captures(&clean) {
+        detected_episode = caps.get(1).and_then(|m| m.as_str().parse().ok());
         let match_start = caps.get(0).unwrap().start();
-        let raw_title = clean[..match_start].trim();
-        let episode = caps.get(1).and_then(|m| m.as_str().parse().ok());
-        let (title, year) = extract_year_from_title(raw_title);
+        raw_ep_title = clean[..match_start].trim();
+    }
+
+    // Check parent folder for Season XX if season is not yet known
+    if let Some(parent) = p.parent() {
+        if let Some(parent_name) = parent.file_name().and_then(|s| s.to_str()) {
+            if let Some(s_caps) = RE_SEASON_DIR.captures(parent_name) {
+                detected_season = s_caps.get(1).and_then(|m| m.as_str().parse().ok());
+            }
+        }
+    }
+
+    // If season folder found and filename is like "01", extract episode
+    if detected_season.is_some() && detected_episode.is_none() {
+        let trimmed_stem = stem.trim();
+        if let Ok(ep) = trimmed_stem.parse::<u32>() {
+            detected_episode = Some(ep);
+        }
+    }
+
+    if detected_season.is_some() || detected_episode.is_some() {
+        let (title, year) = extract_year_from_title(raw_ep_title);
+        let mut final_title = clean_title_str(&title, stem);
+
+        // If filename was just "01" or "Episode 04" or empty, inherit series title from parent/grandparent directory
+        if final_title
+            .chars()
+            .all(|c| c.is_ascii_digit() || c.is_whitespace())
+            || final_title.is_empty()
+            || final_title.to_lowercase().starts_with("episode")
+            || final_title.to_lowercase().starts_with("ep ")
+            || final_title == stem
+        {
+            if let Some(series) = get_parent_series_title(p) {
+                final_title = series;
+            }
+        }
 
         return ParsedFilename {
-            title: clean_title_str(&title, filename),
+            title: final_title,
             year,
-            season: Some(1),
-            episode,
+            season: detected_season.or(Some(1)),
+            episode: detected_episode,
             episode_end: None,
             resolution,
             source,
             video_codec,
             audio_codec,
             release_group,
+            tmdb_id,
+            confidence: ConfidenceLevel::High,
+            is_ambiguous: false,
         };
     }
 
@@ -123,7 +220,7 @@ pub fn parse_media_filename(file_path: &str) -> ParsedFilename {
     let (title, year) = extract_year_from_title(&clean);
 
     ParsedFilename {
-        title: clean_title_str(&title, filename),
+        title: clean_title_str(&title, stem),
         year,
         season: None,
         episode: None,
@@ -133,6 +230,32 @@ pub fn parse_media_filename(file_path: &str) -> ParsedFilename {
         video_codec,
         audio_codec,
         release_group,
+        tmdb_id,
+        confidence: ConfidenceLevel::High,
+        is_ambiguous: false,
+    }
+}
+
+fn get_parent_series_title(p: &Path) -> Option<String> {
+    let parent = p.parent()?;
+    let parent_name = parent.file_name()?.to_str()?;
+    if RE_SEASON_DIR.is_match(parent_name) {
+        let grand = parent.parent()?;
+        let grand_name = grand.file_name()?.to_str()?;
+        if !grand_name.is_empty() {
+            return Some(grand_name.to_string());
+        }
+    }
+    None
+}
+
+fn extract_tmdb_tag(input: &str) -> (String, Option<u32>) {
+    if let Some(caps) = RE_TMDB.captures(input) {
+        let tmdb_id = caps.get(1).and_then(|m| m.as_str().parse().ok());
+        let cleaned = RE_TMDB.replace_all(input, "").trim().to_string();
+        (cleaned, tmdb_id)
+    } else {
+        (input.to_string(), None)
     }
 }
 
@@ -153,15 +276,18 @@ fn extract_release_group(input: &str) -> (String, Option<String>) {
 }
 
 fn parse_anime_format(input: &str, release_group: Option<&str>) -> Option<ParsedFilename> {
-    // Matches: "[Group] Title - 05 (1080p)" or "[Group] Title - Episode 05"
+    // Matches: "[Group] Title - 05 (1080p) [CRC]"
     if let Some(caps) = RE_ANIME.captures(input) {
         let group = caps.get(1).map(|m| m.as_str().to_string());
         let raw_title = caps.get(2).map(|m| m.as_str().trim()).unwrap_or("");
         let episode = caps.get(3).and_then(|m| m.as_str().parse().ok());
 
+        // Remove CRC if present: [A1B2C3D4]
+        let title_without_crc = RE_CRC.replace_all(raw_title, "").trim().to_string();
+
         let clean_for_tags = input.replace(['.', '_'], " ");
         return Some(ParsedFilename {
-            title: raw_title.to_string(),
+            title: title_without_crc,
             year: None,
             season: Some(1),
             episode,
@@ -171,6 +297,9 @@ fn parse_anime_format(input: &str, release_group: Option<&str>) -> Option<Parsed
             video_codec: extract_video_codec(&clean_for_tags),
             audio_codec: extract_audio_codec(&clean_for_tags),
             release_group: group.or_else(|| release_group.map(|s| s.to_string())),
+            tmdb_id: None,
+            confidence: ConfidenceLevel::High,
+            is_ambiguous: false,
         });
     }
     None
@@ -180,7 +309,7 @@ fn extract_year_from_title(input: &str) -> (String, Option<u32>) {
     // 1. First look for parenthesized / bracketed year: (2017) or [2017]
     if let Some(caps) = RE_PAREN_YEAR.captures(input) {
         if let Some(m) = caps.get(1) {
-            let year = m.as_str().parse().ok();
+            let year: Option<u32> = m.as_str().parse().ok();
             let entire_match = caps.get(0).unwrap();
             let title = input[..entire_match.start()]
                 .trim()
@@ -191,22 +320,32 @@ fn extract_year_from_title(input: &str) -> (String, Option<u32>) {
         }
     }
 
-    // 2. Otherwise look for standalone year (prefer not at index 0)
+    // 2. Otherwise look for valid release year (1900..=2030, prefer not at index 0)
+    // If multiple years are present (e.g. "Blade Runner 2049 2017"), 2049 is > 2030 (sci-fi title!),
+    // while 2017 is the genuine release year.
+    let mut year_candidates: Vec<(usize, u32)> = Vec::new();
     for caps in RE_YEAR.captures_iter(input) {
         if let Some(m) = caps.get(1) {
-            if m.start() > 0 {
-                let year = m.as_str().parse().ok();
-                let title = input[..m.start()]
-                    .trim()
-                    .trim_end_matches(['(', '[', '-', ' '])
-                    .trim()
-                    .to_string();
-                if !title.is_empty() {
-                    return (title, year);
+            if let Ok(y) = m.as_str().parse::<u32>() {
+                if (1900..=2030).contains(&y) {
+                    year_candidates.push((m.start(), y));
                 }
             }
         }
     }
+
+    // Pick the year candidate that appears latest in the title (after index 0)
+    if let Some(&(start_idx, year)) = year_candidates.iter().rfind(|(idx, _)| *idx > 0) {
+        let title = input[..start_idx]
+            .trim()
+            .trim_end_matches(['(', '[', '-', ' '])
+            .trim()
+            .to_string();
+        if !title.is_empty() {
+            return (title, Some(year));
+        }
+    }
+
     (input.trim().to_string(), None)
 }
 
@@ -405,5 +544,421 @@ mod tests {
             pass_count, 100,
             "All 100 real-world filename patterns passed!"
         );
+    }
+
+    #[test]
+    fn test_v7_held_out_40_new_filenames() {
+        println!(
+            "================================================================================"
+        );
+        println!("V7: HELD-OUT 40+ NEW FILENAME PARSER BENCHMARK & ACCURACY REPORT");
+        println!(
+            "================================================================================"
+        );
+
+        // 1. Mandatory requirement test cases
+        let mandatory_cases = [
+            (
+                "Blade.Runner.2049.2017.mkv",
+                "Blade Runner 2049",
+                Some(2017),
+                None,
+                None,
+                false,
+            ),
+            (
+                "2001.A.Space.Odyssey.1968.1080p.mkv",
+                "2001 A Space Odyssey",
+                Some(1968),
+                None,
+                None,
+                false,
+            ),
+            (
+                "The.100.S03E01.mkv",
+                "The 100",
+                None,
+                Some(3),
+                Some(1),
+                false,
+            ),
+            (
+                "[SubsPlease] Frieren - 12 (1080p) [A1B2C3D4].mkv",
+                "Frieren",
+                None,
+                Some(1),
+                Some(12),
+                false,
+            ),
+            ("Show.S01E01E02.mkv", "Show", None, Some(1), Some(1), false),
+            ("Show.2x03-04.mkv", "Show", None, Some(2), Some(3), false),
+            (
+                "Movie (2010) {tmdb-12345}.mkv",
+                "Movie",
+                Some(2010),
+                None,
+                None,
+                false,
+            ),
+        ];
+
+        let mut pass_count = 0;
+        let mut fail_count = 0;
+
+        for (input, exp_title, exp_year, exp_season, exp_episode, _) in mandatory_cases {
+            let parsed = parse_media_filename(input);
+            let ok_title = parsed.title == exp_title;
+            let ok_year = parsed.year == exp_year;
+            let ok_season = parsed.season == exp_season;
+            let ok_episode = parsed.episode == exp_episode;
+
+            if ok_title && ok_year && ok_season && ok_episode {
+                println!(
+                    "  [PASS] '{}' -> title='{}', year={:?}, s={:?}, e={:?}",
+                    input, parsed.title, parsed.year, parsed.season, parsed.episode
+                );
+                pass_count += 1;
+            } else {
+                println!("  [FAIL] '{}' -> got (title='{}', year={:?}, s={:?}, e={:?}), exp (title='{}', year={:?}, s={:?}, e={:?})",
+                    input, parsed.title, parsed.year, parsed.season, parsed.episode, exp_title, exp_year, exp_season, exp_episode);
+                fail_count += 1;
+            }
+        }
+
+        // Special test for Show.S01E01E02 multi-episode end
+        let parsed_multi1 = parse_media_filename("Show.S01E01E02.mkv");
+        assert_eq!(
+            parsed_multi1.episode_end,
+            Some(2),
+            "Multi-episode end must be 2"
+        );
+        let parsed_multi2 = parse_media_filename("Show.2x03-04.mkv");
+        assert_eq!(
+            parsed_multi2.episode_end,
+            Some(4),
+            "Multi-episode end must be 4"
+        );
+
+        // Special test for tmdb tag extraction
+        let parsed_tmdb = parse_media_filename("Movie (2010) {tmdb-12345}.mkv");
+        assert_eq!(
+            parsed_tmdb.tmdb_id,
+            Some(12345),
+            "TMDB ID must be extracted"
+        );
+
+        // Special test for ambiguous filename "show.102.mkv"
+        let parsed_ambiguous = parse_media_filename("show.102.mkv");
+        println!("  [VERIFY AMBIGUOUS] 'show.102.mkv': confidence={:?}, is_ambiguous={}, season={:?}, episode={:?}",
+            parsed_ambiguous.confidence, parsed_ambiguous.is_ambiguous, parsed_ambiguous.season, parsed_ambiguous.episode);
+        assert_eq!(
+            parsed_ambiguous.confidence,
+            ConfidenceLevel::Low,
+            "Must flag low confidence"
+        );
+        assert!(
+            parsed_ambiguous.is_ambiguous,
+            "Must flag is_ambiguous = true"
+        );
+        assert_eq!(parsed_ambiguous.season, None, "Must not guess season");
+        assert_eq!(parsed_ambiguous.episode, None, "Must not guess episode");
+        pass_count += 1;
+
+        // 2. Non-ASCII titles
+        let non_ascii_cases = [
+            (
+                "千と千尋の神隠し.2001.1080p.mkv",
+                "千と千尋の神隠し",
+                Some(2001),
+            ),
+            ("Amélie.2001.mkv", "Amélie", Some(2001)),
+            ("기생충.2019.mkv", "기생충", Some(2019)),
+            ("Das.Boot.1981.mkv", "Das Boot", Some(1981)),
+            ("La.Vita.è.Bella.1997.mkv", "La Vita è Bella", Some(1997)),
+            ("Roma.2018.mkv", "Roma", Some(2018)),
+            ("Oldboy.올드보이.2003.mkv", "Oldboy 올드보이", Some(2003)),
+            ("Город.бога.2002.mkv", "Город бога", Some(2002)),
+            (
+                "Crouching.Tiger.Hidden.Dragon.臥虎藏龍.2000.mkv",
+                "Crouching Tiger Hidden Dragon 臥虎藏龍",
+                Some(2000),
+            ),
+            (
+                "Pans.Labyrinth.El.Laberinto.del.Fauno.2006.mkv",
+                "Pans Labyrinth El Laberinto del Fauno",
+                Some(2006),
+            ),
+            (
+                "Cinema.Paradiso.Nuovo.Cinema.Paradiso.1988.mkv",
+                "Cinema Paradiso Nuovo Cinema Paradiso",
+                Some(1988),
+            ),
+            (
+                "Seven.Samurai.七人の侍.1954.mkv",
+                "Seven Samurai 七人の侍",
+                Some(1954),
+            ),
+        ];
+
+        for (input, exp_title, exp_year) in non_ascii_cases {
+            let parsed = parse_media_filename(input);
+            if parsed.title == exp_title && parsed.year == exp_year {
+                println!(
+                    "  [PASS Non-ASCII] '{}' -> title='{}', year={:?}",
+                    input, parsed.title, parsed.year
+                );
+                pass_count += 1;
+            } else {
+                println!(
+                    "  [FAIL Non-ASCII] '{}' -> got ('{}', {:?}), exp ('{}', {:?})",
+                    input, parsed.title, parsed.year, exp_title, exp_year
+                );
+                fail_count += 1;
+            }
+        }
+
+        // 3. Folder-based season info
+        let folder_cases = [
+            (
+                "/media/The Wire/Season 3/Episode 04.mkv",
+                "The Wire",
+                Some(3),
+                Some(4),
+            ),
+            (
+                "/media/Breaking Bad/Season 02/05.mkv",
+                "Breaking Bad",
+                Some(2),
+                Some(5),
+            ),
+            (
+                "/media/Severance/Season 1/S01E03.mkv",
+                "Severance",
+                Some(1),
+                Some(3),
+            ),
+            ("/media/Fargo/Season 5/5x02.mkv", "Fargo", Some(5), Some(2)),
+            (
+                "/media/Succession/Season 04/Episode 03.mkv",
+                "Succession",
+                Some(4),
+                Some(3),
+            ),
+        ];
+
+        for (input, exp_title, exp_season, exp_episode) in folder_cases {
+            let parsed = parse_media_filename(input);
+            if parsed.title == exp_title
+                && parsed.season == exp_season
+                && parsed.episode == exp_episode
+            {
+                println!(
+                    "  [PASS Folder-Based] '{}' -> title='{}', s={:?}, e={:?}",
+                    input, parsed.title, parsed.season, parsed.episode
+                );
+                pass_count += 1;
+            } else {
+                println!(
+                    "  [FAIL Folder-Based] '{}' -> got ('{}', {:?}, {:?}), exp ('{}', {:?}, {:?})",
+                    input,
+                    parsed.title,
+                    parsed.season,
+                    parsed.episode,
+                    exp_title,
+                    exp_season,
+                    exp_episode
+                );
+                fail_count += 1;
+            }
+        }
+
+        // 4. Held-out 2023-2024 recent Cinema and TV Releases
+        let held_out_recent = [
+            (
+                "Civil.War.2024.2160p.UHD.BluRay.x265-FLUX.mkv",
+                "Civil War",
+                Some(2024),
+                None,
+                None,
+            ),
+            (
+                "Poor.Things.2023.1080p.BluRay.x264-ROVERS.mkv",
+                "Poor Things",
+                Some(2023),
+                None,
+                None,
+            ),
+            (
+                "Killers.of.the.Flower.Moon.2023.2160p.WEB-DL.mkv",
+                "Killers of the Flower Moon",
+                Some(2023),
+                None,
+                None,
+            ),
+            (
+                "Alien.Romulus.2024.1080p.WEBRip.x264.mkv",
+                "Alien Romulus",
+                Some(2024),
+                None,
+                None,
+            ),
+            (
+                "Fallout.S01E01.The.End.2160p.AMZN.WEB-DL.mkv",
+                "Fallout",
+                None,
+                Some(1),
+                Some(1),
+            ),
+            (
+                "Shogun.2024.S01E01.Anjin.2160p.HULU.WEB-DL.mkv",
+                "Shogun",
+                Some(2024),
+                Some(1),
+                Some(1),
+            ),
+            (
+                "The.Penguin.S01E01.After.Hours.1080p.MAX.WEB-DL.mkv",
+                "The Penguin",
+                None,
+                Some(1),
+                Some(1),
+            ),
+            (
+                "Baby.Reindeer.S01E01.1080p.NF.WEB-DL.mkv",
+                "Baby Reindeer",
+                None,
+                Some(1),
+                Some(1),
+            ),
+            (
+                "Presumed.Innocent.S01E08.The.Verdict.1080p.mkv",
+                "Presumed Innocent",
+                None,
+                Some(1),
+                Some(8),
+            ),
+            (
+                "Industry.S03E01.Il.Sogno.1080p.mkv",
+                "Industry",
+                None,
+                Some(3),
+                Some(1),
+            ),
+            (
+                "Slow.Horses.S04E01.Identity.Theft.1080p.mkv",
+                "Slow Horses",
+                None,
+                Some(4),
+                Some(1),
+            ),
+            (
+                "[Erai-raws] Dandadan - 01 [1080p][Multiple Subtitle].mkv",
+                "Dandadan",
+                None,
+                Some(1),
+                Some(1),
+            ),
+            (
+                "[SubsPlease] Bleach - Thousand-Year Blood War - 27 (1080p).mkv",
+                "Bleach - Thousand-Year Blood War",
+                None,
+                Some(1),
+                Some(27),
+            ),
+            (
+                "[ASW] Blue Box - 01 [1080p].mkv",
+                "Blue Box",
+                None,
+                Some(1),
+                Some(1),
+            ),
+            (
+                "[Erai-raws] Re Zero Season 3 - 01 [1080p].mkv",
+                "Re Zero Season 3",
+                None,
+                Some(1),
+                Some(1),
+            ),
+            (
+                "A.Real.Pain.2024.1080p.WEB-DL.mkv",
+                "A Real Pain",
+                Some(2024),
+                None,
+                None,
+            ),
+            (
+                "Anora.2024.2160p.WEB-DL.DDP5.1.mkv",
+                "Anora",
+                Some(2024),
+                None,
+                None,
+            ),
+            (
+                "Conclave.2024.1080p.BluRay.x264.mkv",
+                "Conclave",
+                Some(2024),
+                None,
+                None,
+            ),
+            (
+                "Gladiator.II.2024.2160p.WEB-DL.mkv",
+                "Gladiator II",
+                Some(2024),
+                None,
+                None,
+            ),
+            (
+                "Wicked.2024.1080p.WEB-DL.mkv",
+                "Wicked",
+                Some(2024),
+                None,
+                None,
+            ),
+            (
+                "The.Substance.2024.1080p.MUBI.WEB-DL.mkv",
+                "The Substance",
+                Some(2024),
+                None,
+                None,
+            ),
+            (
+                "Nosferatu.2024.2160p.UHD.BluRay.mkv",
+                "Nosferatu",
+                Some(2024),
+                None,
+                None,
+            ),
+        ];
+
+        for (input, exp_title, exp_year, exp_season, exp_episode) in held_out_recent {
+            let parsed = parse_media_filename(input);
+            if parsed.title == exp_title
+                && parsed.year == exp_year
+                && parsed.season == exp_season
+                && parsed.episode == exp_episode
+            {
+                println!(
+                    "  [PASS Recent] '{}' -> title='{}', year={:?}, s={:?}, e={:?}",
+                    input, parsed.title, parsed.year, parsed.season, parsed.episode
+                );
+                pass_count += 1;
+            } else {
+                println!("  [FAIL Recent] '{}' -> got ('{}', {:?}, {:?}, {:?}), exp ('{}', {:?}, {:?}, {:?})", input, parsed.title, parsed.year, parsed.season, parsed.episode, exp_title, exp_year, exp_season, exp_episode);
+                fail_count += 1;
+            }
+        }
+
+        println!(
+            "--------------------------------------------------------------------------------"
+        );
+        println!("TOTAL HELD-OUT CASES TESTED: {}", pass_count + fail_count);
+        println!("PASSED:                      {}", pass_count);
+        println!("FAILED:                      {}", fail_count);
+        println!(
+            "================================================================================"
+        );
+
+        assert_eq!(fail_count, 0, "All held-out test cases must pass!");
+        assert!(pass_count >= 40, "Must test at least 40 new filenames");
     }
 }

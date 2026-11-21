@@ -10,10 +10,12 @@ use std::time::Instant;
 use tracing::info;
 
 use valor_core::db::Database;
+use valor_core::fingerprint::compute_fingerprint;
 use valor_core::models::{
     Bookmark, ChapterItem, Collection, HistoryEntry, MediaItem, PlaybackPosition,
 };
 use valor_core::settings::Settings;
+use valor_core::tracks::{find_preferred_track, find_sidecar_subtitles, TrackPreferencesManager};
 use valor_library::parser::parse_media_filename;
 use valor_library::scanner::scan_directory;
 use valor_library::thumbnails::ThumbnailManager;
@@ -133,6 +135,13 @@ pub struct ValorNativeApp {
     pub all_items: Vec<MediaItem>,
     pub all_collections: Vec<Collection>,
     pub history_entries: Vec<HistoryEntry>,
+
+    // Phase 3: Track preferences, delays, and A-B loop
+    pub track_prefs_mgr: TrackPreferencesManager,
+    pub current_audio_delay: f64,
+    pub current_sub_delay: f64,
+    pub ab_loop_a: Option<f64>,
+    pub ab_loop_b: Option<f64>,
 }
 
 impl ValorNativeApp {
@@ -312,6 +321,11 @@ impl ValorNativeApp {
             all_items,
             all_collections,
             history_entries,
+            track_prefs_mgr: TrackPreferencesManager::new(),
+            current_audio_delay: 0.0,
+            current_sub_delay: 0.0,
+            ab_loop_a: None,
+            ab_loop_b: None,
         }
     }
 
@@ -350,6 +364,9 @@ impl ValorNativeApp {
         if expanded.is_empty() {
             return;
         }
+
+        let is_single_file = paths.len() == 1 && expanded.len() == 1;
+
         for p in &expanded {
             let path_str = p.to_string_lossy().to_string();
             if path_str.ends_with(".ass")
@@ -358,32 +375,62 @@ impl ValorNativeApp {
             {
                 let _ = self.player.add_external_subtitle(&path_str);
             } else {
-                let parsed = parse_media_filename(&path_str);
-                let item = MediaItem {
-                    id: format!("item_{}", Utc::now().timestamp_nanos_opt().unwrap_or(0)),
-                    fingerprint: format!("fp_{}", Utc::now().timestamp_nanos_opt().unwrap_or(0)),
-                    file_path: path_str,
-                    title: parsed.title,
-                    duration: 0.0,
-                    size_bytes: 0,
-                    width: Some(1920),
-                    height: Some(1080),
-                    is_hdr: false,
-                    video_codec: None,
-                    audio_codec: None,
-                    series_id: None,
-                    season_number: parsed.season,
-                    episode_number: parsed.episode,
-                    is_missing: false,
-                    created_at: Utc::now(),
-                    updated_at: Utc::now(),
+                let fingerprint = match compute_fingerprint(p) {
+                    Ok(fp) => fp,
+                    Err(_) => format!("fp_{}", Utc::now().timestamp_nanos_opt().unwrap_or(0)),
                 };
-                let _ = self.db.upsert_item(&item);
-                self.playlist_items.push(item);
+
+                let existing = self
+                    .db
+                    .find_item_by_fingerprint(&fingerprint)
+                    .ok()
+                    .flatten();
+
+                let item = if let Some(mut it) = existing {
+                    it.file_path = path_str;
+                    let _ = self.db.upsert_item(&it);
+                    it
+                } else {
+                    let parsed = parse_media_filename(&path_str);
+                    let item = MediaItem {
+                        id: format!("item_{}", Utc::now().timestamp_nanos_opt().unwrap_or(0)),
+                        fingerprint,
+                        file_path: path_str,
+                        title: parsed.title,
+                        duration: 0.0,
+                        size_bytes: std::fs::metadata(p).map(|m| m.len()).unwrap_or(0),
+                        width: Some(1920),
+                        height: Some(1080),
+                        is_hdr: false,
+                        video_codec: None,
+                        audio_codec: None,
+                        series_id: None,
+                        season_number: parsed.season,
+                        episode_number: parsed.episode,
+                        is_missing: false,
+                        created_at: Utc::now(),
+                        updated_at: Utc::now(),
+                    };
+                    let _ = self.db.upsert_item(&item);
+                    item
+                };
+
+                if is_single_file {
+                    self.collection_name = item.title.clone();
+                    self.playlist_items = vec![item];
+                } else {
+                    self.playlist_items.push(item);
+                }
             }
         }
+
         if !self.playlist_items.is_empty() {
-            self.play_playlist_item(self.playlist_items.len() - 1);
+            let target_idx = if is_single_file {
+                0
+            } else {
+                self.playlist_items.len() - 1
+            };
+            self.play_playlist_item(target_idx);
             self.current_view = AppView::Player;
         }
     }
@@ -397,12 +444,46 @@ impl ValorNativeApp {
 
         self.current_playlist_index = index;
         let item = &self.playlist_items[index];
+
+        // 1. Auto-discover external sidecar subtitles (.srt, .ass, .vtt) in same folder
+        let sidecar_subs = find_sidecar_subtitles(&item.file_path);
+        for sub_path in sidecar_subs {
+            if let Some(s) = sub_path.to_str() {
+                let _ = self.player.add_external_subtitle(s);
+            }
+        }
+
+        // 2. Apply Carried Track Preferences across playlist/series
+        let carried = self.track_prefs_mgr.get(&self.collection_name);
+        let _ = self.player.set_sub_font_size(carried.style.font_size);
+        let _ = self.player.set_sub_color(&carried.style.text_color);
+        let _ = self
+            .player
+            .set_sub_ass_override(if carried.style.ass_override {
+                "yes"
+            } else {
+                "no"
+            });
+        let _ = self.player.set_subtitle_delay(carried.sub_offset_secs);
+        let _ = self.player.set_audio_delay(carried.audio_offset_secs);
+        self.current_sub_delay = carried.sub_offset_secs;
+        self.current_audio_delay = carried.audio_offset_secs;
+
+        // 3. Zero-click resume calculation: saved position or start from 0 if completed / remaining < 15s
         let resume = self
             .db
             .get_playback_position(&item.fingerprint)
             .ok()
             .flatten();
-        let start_secs = resume.map(|p| p.position_secs).unwrap_or(0.0);
+
+        let mut start_secs = 0.0;
+        if let Some(pos) = resume {
+            let is_near_completion =
+                pos.duration_secs > 30.0 && (pos.duration_secs - pos.position_secs) <= 15.0;
+            if !pos.completed && !is_near_completion && pos.position_secs > 0.0 {
+                start_secs = pos.position_secs;
+            }
+        }
 
         info!(
             "Switching to playlist item #{}: {} (resume: {}s)",
@@ -424,29 +505,67 @@ impl ValorNativeApp {
 
         self.current_bookmarks = self.db.get_bookmarks(&item.fingerprint).unwrap_or_default();
 
+        // 4. Track auto-selection based on carried language preferences
+        if let Ok(tracks) = self.player.get_tracks() {
+            let target_audio = carried
+                .audio_lang
+                .as_deref()
+                .unwrap_or(&self._settings.default_audio_lang);
+            if let Some(matched_audio) = find_preferred_track(&tracks, target_audio, "audio") {
+                let _ = self.player.set_track("audio", matched_audio.id);
+            }
+
+            let target_sub = carried
+                .sub_lang
+                .as_deref()
+                .unwrap_or(&self._settings.default_sub_lang);
+            if target_sub.eq_ignore_ascii_case("off") {
+                let _ = self.player.set_track("sub", 0);
+            } else if let Some(matched_sub) = find_preferred_track(&tracks, target_sub, "sub") {
+                let _ = self.player.set_track("sub", matched_sub.id);
+            }
+        }
+
+        // 5. Save Collection: Single file creates/updates a collection of 1; history tracks it identically
+        let is_single = self.playlist_items.len() == 1;
+        let coll_id = if is_single {
+            format!("coll_single_{}", item.fingerprint)
+        } else {
+            format!("coll_{}", self.collection_name.to_lowercase())
+        };
+
         let coll = Collection {
-            id: format!("coll_{}", self.collection_name.to_lowercase()),
+            id: coll_id,
             name: self.collection_name.clone(),
-            collection_type: "playlist".to_string(),
+            collection_type: if is_single {
+                "single".to_string()
+            } else {
+                "playlist".to_string()
+            },
             item_ids: self.playlist_items.iter().map(|i| i.id.clone()).collect(),
             current_index: index,
             last_played_at: Some(Utc::now()),
-            is_pinned: true,
+            is_pinned: !is_single,
         };
         let _ = self.db.save_collection(&coll);
     }
 
-    pub fn persist_current_position(&mut self, completed: bool) {
+    pub fn persist_current_position(&mut self, completed_flag: bool) {
         if let Some(fp) = &self.playback_state.current_fingerprint {
+            let is_completed = completed_flag
+                || (self.playback_state.duration_secs > 30.0
+                    && (self.playback_state.duration_secs - self.playback_state.position_secs)
+                        <= 15.0);
+
             let pos = PlaybackPosition {
                 fingerprint: fp.clone(),
-                position_secs: if completed {
+                position_secs: if is_completed {
                     0.0
                 } else {
                     self.playback_state.position_secs
                 },
                 duration_secs: self.playback_state.duration_secs,
-                completed,
+                completed: is_completed,
                 updated_at: Utc::now(),
             };
             let _ = self.db.save_playback_position(&pos);
@@ -607,11 +726,92 @@ impl eframe::App for ValorNativeApp {
             if i.key_pressed(egui::Key::B) {
                 let current_boost = self.playback_state.audio_boost_tier;
                 let next_boost = match current_boost {
-                    100 => 200,
-                    200 => 400,
+                    100 => 150,
+                    150 => 200,
                     _ => 100,
                 };
                 let _ = self.player.set_audio_boost(next_boost);
+            }
+
+            // Audio Delay (+/- 50ms, bounds: -5.0s .. +5.0s)
+            if i.key_pressed(egui::Key::Z) {
+                self.current_audio_delay = (self.current_audio_delay - 0.05).clamp(-5.0, 5.0);
+                let _ = self.player.set_audio_delay(self.current_audio_delay);
+                self.track_prefs_mgr.update(&self.collection_name, |p| {
+                    p.audio_offset_secs = self.current_audio_delay;
+                });
+                info!("Audio Delay: {:.3}s", self.current_audio_delay);
+            }
+            if i.key_pressed(egui::Key::X) {
+                self.current_audio_delay = (self.current_audio_delay + 0.05).clamp(-5.0, 5.0);
+                let _ = self.player.set_audio_delay(self.current_audio_delay);
+                self.track_prefs_mgr.update(&self.collection_name, |p| {
+                    p.audio_offset_secs = self.current_audio_delay;
+                });
+                info!("Audio Delay: {:.3}s", self.current_audio_delay);
+            }
+
+            // Subtitle Delay (+/- 50ms, bounds: -5.0s .. +5.0s)
+            if i.key_pressed(egui::Key::Minus) {
+                self.current_sub_delay = (self.current_sub_delay - 0.05).clamp(-5.0, 5.0);
+                let _ = self.player.set_subtitle_delay(self.current_sub_delay);
+                self.track_prefs_mgr.update(&self.collection_name, |p| {
+                    p.sub_offset_secs = self.current_sub_delay;
+                });
+                info!("Subtitle Delay: {:.3}s", self.current_sub_delay);
+            }
+            if i.key_pressed(egui::Key::Equals) {
+                self.current_sub_delay = (self.current_sub_delay + 0.05).clamp(-5.0, 5.0);
+                let _ = self.player.set_subtitle_delay(self.current_sub_delay);
+                self.track_prefs_mgr.update(&self.collection_name, |p| {
+                    p.sub_offset_secs = self.current_sub_delay;
+                });
+                info!("Subtitle Delay: {:.3}s", self.current_sub_delay);
+            }
+
+            // A-B Loop (Set A -> Set B -> Clear)
+            if i.key_pressed(egui::Key::R) {
+                if self.ab_loop_a.is_none() {
+                    self.ab_loop_a = Some(self.playback_state.position_secs);
+                    let _ = self.player.set_ab_loop_a(self.ab_loop_a);
+                    info!(
+                        "A-B Loop: Point A set at {:.2}s",
+                        self.playback_state.position_secs
+                    );
+                } else if self.ab_loop_b.is_none() {
+                    self.ab_loop_b = Some(self.playback_state.position_secs);
+                    let _ = self.player.set_ab_loop_b(self.ab_loop_b);
+                    info!(
+                        "A-B Loop: Point B set at {:.2}s (Loop Active)",
+                        self.playback_state.position_secs
+                    );
+                } else {
+                    self.ab_loop_a = None;
+                    self.ab_loop_b = None;
+                    let _ = self.player.clear_ab_loop();
+                    info!("A-B Loop: Cleared");
+                }
+            }
+
+            // Chapter Jump (PageDown -> Next Chapter, PageUp -> Prev Chapter)
+            if i.key_pressed(egui::Key::PageDown) {
+                let cur = self.playback_state.position_secs;
+                if let Some(ch) = self.chapters.iter().find(|c| c.start_secs > cur + 0.5) {
+                    let _ = self.player.seek(ch.start_secs);
+                }
+            }
+            if i.key_pressed(egui::Key::PageUp) {
+                let cur = self.playback_state.position_secs;
+                if let Some(ch) = self
+                    .chapters
+                    .iter()
+                    .rev()
+                    .find(|c| c.start_secs < cur - 1.0)
+                {
+                    let _ = self.player.seek(ch.start_secs);
+                } else {
+                    let _ = self.player.seek(0.0);
+                }
             }
 
             if i.modifiers.ctrl && i.key_pressed(egui::Key::O) {
@@ -936,6 +1136,53 @@ impl eframe::App for ValorNativeApp {
                     ContextMenuAction::SetAudioBoost(tier) => {
                         let _ = self.player.set_audio_boost(tier);
                     }
+                    ContextMenuAction::SelectAudioTrack(id) => {
+                        let _ = self.player.set_track("audio", id);
+                        if let Ok(tracks) = self.player.get_tracks() {
+                            if let Some(t) = tracks
+                                .iter()
+                                .find(|t| t.id == id && t.track_type == "audio")
+                            {
+                                self.track_prefs_mgr.update(&self.collection_name, |p| {
+                                    p.audio_lang = t.lang.clone();
+                                    p.audio_title = t.title.clone();
+                                });
+                            }
+                        }
+                    }
+                    ContextMenuAction::SelectSubtitleTrack(id) => {
+                        let _ = self.player.set_track("sub", id);
+                        self.track_prefs_mgr.update(&self.collection_name, |p| {
+                            if id == 0 {
+                                p.sub_lang = Some("off".to_string());
+                            } else if let Ok(tracks) = self.player.get_tracks() {
+                                if let Some(t) =
+                                    tracks.iter().find(|t| t.id == id && t.track_type == "sub")
+                                {
+                                    p.sub_lang = t.lang.clone();
+                                    p.sub_title = t.title.clone();
+                                }
+                            }
+                        });
+                    }
+                    ContextMenuAction::SetSubtitleDelay(delta) => {
+                        self.current_sub_delay = (self.current_sub_delay + delta).clamp(-5.0, 5.0);
+                        let _ = self.player.set_subtitle_delay(self.current_sub_delay);
+                        self.track_prefs_mgr.update(&self.collection_name, |p| {
+                            p.sub_offset_secs = self.current_sub_delay;
+                        });
+                    }
+                    ContextMenuAction::SetAudioDelay(delta) => {
+                        self.current_audio_delay =
+                            (self.current_audio_delay + delta).clamp(-5.0, 5.0);
+                        let _ = self.player.set_audio_delay(self.current_audio_delay);
+                        self.track_prefs_mgr.update(&self.collection_name, |p| {
+                            p.audio_offset_secs = self.current_audio_delay;
+                        });
+                    }
+                    ContextMenuAction::SetToneMapping(mode) => {
+                        let _ = self.player.set_tone_mapping(&mode);
+                    }
                     ContextMenuAction::ToggleSubtitles => {
                         let _ = self.player.set_track("sub", 0);
                     }
@@ -1025,17 +1272,53 @@ impl eframe::App for ValorNativeApp {
             if events.cycle_audio_boost {
                 let current_boost = self.playback_state.audio_boost_tier;
                 let next_boost = match current_boost {
-                    100 => 200,
-                    200 => 400,
+                    100 => 150,
+                    150 => 200,
                     _ => 100,
                 };
                 let _ = self.player.set_audio_boost(next_boost);
             }
             if events.cycle_audio_track {
-                let _ = self.player.set_track("audio", 0);
+                let audio_tracks: Vec<_> = self
+                    .playback_state
+                    .tracks
+                    .iter()
+                    .filter(|t| t.track_type == "audio")
+                    .collect();
+                if !audio_tracks.is_empty() {
+                    let current_idx = audio_tracks.iter().position(|t| t.is_selected).unwrap_or(0);
+                    let next_track = audio_tracks[(current_idx + 1) % audio_tracks.len()];
+                    let _ = self.player.set_track("audio", next_track.id);
+                    self.track_prefs_mgr.update(&self.collection_name, |p| {
+                        p.audio_lang = next_track.lang.clone();
+                        p.audio_title = next_track.title.clone();
+                    });
+                }
             }
             if events.cycle_subtitle_track {
-                let _ = self.player.set_track("sub", 0);
+                let sub_tracks: Vec<_> = self
+                    .playback_state
+                    .tracks
+                    .iter()
+                    .filter(|t| t.track_type == "sub")
+                    .collect();
+                if !sub_tracks.is_empty() {
+                    let current_idx = sub_tracks.iter().position(|t| t.is_selected);
+                    let next_id = match current_idx {
+                        Some(idx) if idx + 1 < sub_tracks.len() => sub_tracks[idx + 1].id,
+                        Some(_) => 0, // Cycle to Off
+                        None => sub_tracks[0].id,
+                    };
+                    let _ = self.player.set_track("sub", next_id);
+                    self.track_prefs_mgr.update(&self.collection_name, |p| {
+                        if next_id == 0 {
+                            p.sub_lang = Some("off".to_string());
+                        } else if let Some(t) = sub_tracks.iter().find(|t| t.id == next_id) {
+                            p.sub_lang = t.lang.clone();
+                            p.sub_title = t.title.clone();
+                        }
+                    });
+                }
             }
             if events.toggle_fullscreen {
                 let full = ui.input(|inp| inp.viewport().fullscreen.unwrap_or(false));
@@ -1237,6 +1520,17 @@ impl eframe::App for ValorNativeApp {
                 }
             }
         }
+    }
+
+    fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        info!("Valor exiting: saving current playback position");
+        self.persist_current_position(false);
+    }
+}
+
+impl Drop for ValorNativeApp {
+    fn drop(&mut self) {
+        self.persist_current_position(false);
     }
 }
 

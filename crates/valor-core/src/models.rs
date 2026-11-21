@@ -64,6 +64,9 @@ pub struct TrackItem {
     pub title: Option<String>,
     pub lang: Option<String>,
     pub codec: Option<String>,
+    pub channels: Option<i64>,
+    pub is_default: bool,
+    pub is_forced: bool,
     pub is_selected: bool,
     pub is_external: bool,
 }
@@ -101,6 +104,13 @@ pub enum MigrationMatchKind {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum MigrationMatchResult {
+    Matched(Box<MediaItem>, MigrationMatchKind),
+    Ambiguous(Vec<String>),
+    Unmatched,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ScannedFileRecord {
     pub id: String,
     pub path: String,
@@ -109,4 +119,24 @@ pub struct ScannedFileRecord {
     pub fingerprint: String,
     pub legacy_fingerprint: Option<String>,
     pub item: MediaItem,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AnalysisTask {
+    pub id: i64,
+    pub file_id: String,
+    pub fingerprint: String,
+    pub path: String,
+    pub priority: i32,
+    pub status: String,
+    pub retries: i32,
+    pub error_message: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AnalysisQueueItem {
+    pub file_id: String,
+    pub fingerprint: String,
+    pub path: String,
+    pub priority: i32,
 }

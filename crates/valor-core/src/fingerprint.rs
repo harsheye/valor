@@ -12,6 +12,23 @@ pub enum FingerprintError {
     Io(#[from] std::io::Error),
 }
 
+fn hash_bounded_chunk<R: Read>(
+    reader: &mut R,
+    max_bytes: u64,
+    hasher: &mut blake3::Hasher,
+) -> Result<(), std::io::Error> {
+    let mut take = reader.take(max_bytes);
+    let mut buf = [0u8; 64 * 1024]; // 64 KB zero-allocation stack buffer
+    loop {
+        let n = take.read(&mut buf)?;
+        if n == 0 {
+            break;
+        }
+        hasher.update(&buf[..n]);
+    }
+    Ok(())
+}
+
 /// Computes a blake3 fingerprint over:
 /// 1. Version byte (0x01)
 /// 2. File size as 8-byte little-endian integer
@@ -19,7 +36,7 @@ pub enum FingerprintError {
 /// 4. Middle 1 MB (if file > 2 MB)
 /// 5. Last 1 MB (if file > 1 MB)
 ///
-/// Fast, robust against renames and movements across filesystems.
+/// Fast, robust against renames and movements across filesystems. Zero-allocation streaming.
 pub fn compute_fingerprint<P: AsRef<Path>>(path: P) -> Result<String, FingerprintError> {
     let mut file = File::open(path)?;
     let metadata = file.metadata()?;
@@ -30,29 +47,20 @@ pub fn compute_fingerprint<P: AsRef<Path>>(path: P) -> Result<String, Fingerprin
     hasher.update(&size.to_le_bytes());
 
     // 1. First 1MB (or entire file if <= 1MB)
-    let first_to_read = std::cmp::min(size, CHUNK_SIZE as u64) as usize;
-    let mut buffer = vec![0u8; first_to_read];
-    file.read_exact(&mut buffer)?;
-    hasher.update(&buffer);
+    hash_bounded_chunk(&mut file, CHUNK_SIZE as u64, &mut hasher)?;
 
     // 2. Middle 1MB (if file is larger than 2MB)
     if size > (2 * CHUNK_SIZE as u64) {
         let mid_offset = (size / 2).saturating_sub((CHUNK_SIZE / 2) as u64);
         file.seek(SeekFrom::Start(mid_offset))?;
-        let mid_to_read = std::cmp::min(size - mid_offset, CHUNK_SIZE as u64) as usize;
-        buffer.resize(mid_to_read, 0);
-        file.read_exact(&mut buffer)?;
-        hasher.update(&buffer);
+        hash_bounded_chunk(&mut file, CHUNK_SIZE as u64, &mut hasher)?;
     }
 
     // 3. Last 1MB if file is larger than 1MB
     if size > (CHUNK_SIZE as u64) {
         let seek_offset = size.saturating_sub(CHUNK_SIZE as u64);
         file.seek(SeekFrom::Start(seek_offset))?;
-        let last_to_read = std::cmp::min(size - seek_offset, CHUNK_SIZE as u64) as usize;
-        buffer.resize(last_to_read, 0);
-        file.read_exact(&mut buffer)?;
-        hasher.update(&buffer);
+        hash_bounded_chunk(&mut file, CHUNK_SIZE as u64, &mut hasher)?;
     }
 
     Ok(hasher.finalize().to_hex().to_string())

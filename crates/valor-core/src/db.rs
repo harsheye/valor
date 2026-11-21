@@ -18,11 +18,14 @@ pub enum DbError {
 #[derive(Clone)]
 pub struct Database {
     conn: Arc<Mutex<Connection>>,
+    path: Option<std::path::PathBuf>,
 }
 
 impl Database {
     pub fn open<P: AsRef<Path>>(path: P) -> Result<Self, DbError> {
-        let conn = Connection::open(path)?;
+        let path_buf = path.as_ref().to_path_buf();
+        let conn = Connection::open(&path_buf)?;
+        let _ = conn.busy_timeout(std::time::Duration::from_millis(5000));
         let _ = conn.pragma_update(None, "journal_mode", "WAL");
         let _ = conn.pragma_update(None, "synchronous", "NORMAL");
         let _ = conn.pragma_update(None, "foreign_keys", "ON");
@@ -30,6 +33,7 @@ impl Database {
 
         let db = Self {
             conn: Arc::new(Mutex::new(conn)),
+            path: Some(path_buf),
         };
         db.run_migrations()?;
         Ok(db)
@@ -37,12 +41,32 @@ impl Database {
 
     pub fn in_memory() -> Result<Self, DbError> {
         let conn = Connection::open_in_memory()?;
+        let _ = conn.busy_timeout(std::time::Duration::from_millis(5000));
         let _ = conn.pragma_update(None, "foreign_keys", "ON");
         let db = Self {
             conn: Arc::new(Mutex::new(conn)),
+            path: None,
         };
         db.run_migrations()?;
         Ok(db)
+    }
+
+    /// Opens a separate read-only connection with busy_timeout configured (WAL concurrency).
+    pub fn open_reader(&self) -> Result<Connection, DbError> {
+        if let Some(ref path) = self.path {
+            let conn = Connection::open_with_flags(
+                path,
+                rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY
+                    | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
+            )?;
+            conn.busy_timeout(std::time::Duration::from_millis(5000))?;
+            let _ = conn.pragma_update(None, "query_only", "ON");
+            Ok(conn)
+        } else {
+            let conn = Connection::open_in_memory()?;
+            conn.busy_timeout(std::time::Duration::from_millis(5000))?;
+            Ok(conn)
+        }
     }
 
     fn run_migrations(&self) -> Result<(), DbError> {
@@ -274,6 +298,47 @@ impl Database {
                 ORDER BY c.last_played_at DESC;
 
                 INSERT INTO schema_migrations (version, applied_at) VALUES (3, datetime('now'));
+                ",
+            )?;
+        }
+
+        if current_version < 4 {
+            info!("Applying schema migration v4");
+            conn.execute_batch(
+                "
+                -- Persistent analysis queue (V2 requirement)
+                CREATE TABLE IF NOT EXISTS analysis_queue (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    file_id TEXT NOT NULL,
+                    fingerprint TEXT NOT NULL,
+                    path TEXT NOT NULL,
+                    priority INTEGER NOT NULL DEFAULT 0, -- 0 = background, 100 = visible/focused
+                    status TEXT NOT NULL DEFAULT 'pending', -- 'pending', 'processing', 'completed', 'failed'
+                    retries INTEGER NOT NULL DEFAULT 0,
+                    error_message TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_analysis_queue_status ON analysis_queue(status, priority DESC, id ASC);
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_analysis_queue_fp ON analysis_queue(fingerprint);
+
+                -- FTS5 automatic synchronization triggers (V5 requirement)
+                CREATE TRIGGER IF NOT EXISTS trg_items_ai AFTER INSERT ON items BEGIN
+                    INSERT INTO library_fts (item_id, title, series_title)
+                    VALUES (new.id, new.title, COALESCE((SELECT title FROM series WHERE id = new.series_id), ''));
+                END;
+
+                CREATE TRIGGER IF NOT EXISTS trg_items_ad AFTER DELETE ON items BEGIN
+                    DELETE FROM library_fts WHERE item_id = old.id;
+                END;
+
+                CREATE TRIGGER IF NOT EXISTS trg_items_au AFTER UPDATE OF title, series_id ON items BEGIN
+                    DELETE FROM library_fts WHERE item_id = old.id;
+                    INSERT INTO library_fts (item_id, title, series_title)
+                    VALUES (new.id, new.title, COALESCE((SELECT title FROM series WHERE id = new.series_id), ''));
+                END;
+
+                INSERT INTO schema_migrations (version, applied_at) VALUES (4, datetime('now'));
                 ",
             )?;
         }
@@ -526,6 +591,11 @@ impl Database {
             let mut stmt_fts_ins = tx.prepare(
                 "INSERT INTO library_fts (item_id, title, series_title) VALUES (?1, ?2, ?3)",
             )?;
+            let mut stmt_queue = tx.prepare(
+                "INSERT INTO analysis_queue (file_id, fingerprint, path, priority, status, retries, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, 0, 'pending', 0, ?4, ?4)
+                 ON CONFLICT(fingerprint) DO NOTHING;",
+            )?;
 
             let now = Utc::now().to_rfc3339();
 
@@ -561,6 +631,7 @@ impl Database {
 
                 let _ = stmt_fts_del.execute(params![r.item.id]);
                 let _ = stmt_fts_ins.execute(params![r.item.id, r.item.title, ""]);
+                let _ = stmt_queue.execute(params![r.id, r.fingerprint, r.path, now]);
             }
         }
 
@@ -568,13 +639,14 @@ impl Database {
         Ok(())
     }
 
-    /// Finds a media item for migration by legacy fingerprint or filename + size (with mtime tiebreak)
+    /// Finds a media item for migration by legacy fingerprint or filename + size.
+    /// If multiple candidate files match in different folders, returns MigrationMatchResult::Ambiguous and NEVER auto-picks.
     pub fn find_item_for_migration(
         &self,
         legacy_fp: Option<&str>,
         filename: &str,
         size_bytes: Option<u64>,
-    ) -> Result<Option<(MediaItem, MigrationMatchKind)>, DbError> {
+    ) -> Result<MigrationMatchResult, DbError> {
         let conn = self.conn.lock();
 
         // 1. Check legacy fingerprint in media_files
@@ -586,18 +658,25 @@ impl Database {
                  FROM media_files mf
                  JOIN items i ON i.fingerprint = mf.fingerprint
                  WHERE mf.legacy_fingerprint = ?1 OR mf.fingerprint = ?1
-                 LIMIT 1",
+                 LIMIT 2",
             )?;
             let mut rows = stmt.query(params![lfp])?;
-            if let Some(row) = rows.next()? {
-                return Ok(Some((
-                    self.row_to_item(row)?,
+            let mut items = Vec::new();
+            while let Some(row) = rows.next()? {
+                items.push(self.row_to_item(row)?);
+            }
+            if items.len() == 1 {
+                return Ok(MigrationMatchResult::Matched(
+                    Box::new(items.remove(0)),
                     MigrationMatchKind::LegacyFingerprint,
-                )));
+                ));
+            } else if items.len() > 1 {
+                let paths = items.iter().map(|it| it.file_path.clone()).collect();
+                return Ok(MigrationMatchResult::Ambiguous(paths));
             }
         }
 
-        // 2. Check filename + size match (with mtime tiebreak)
+        // 2. Check filename + size match (if ambiguous across multiple folders, NEVER auto-pick!)
         let pattern = format!("%{}", filename);
         if let Some(sz) = size_bytes {
             let mut stmt = conn.prepare(
@@ -606,18 +685,25 @@ impl Database {
                         i.season_number, i.episode_number, i.is_missing, i.created_at, i.updated_at
                  FROM media_files mf
                  JOIN items i ON i.fingerprint = mf.fingerprint
-                 WHERE mf.path LIKE ?1 AND mf.size_bytes = ?2
-                 ORDER BY mf.mtime_secs DESC
-                 LIMIT 1",
+                 WHERE (mf.path LIKE ?1 OR mf.path = ?2) AND mf.size_bytes = ?3
+                 LIMIT 5",
             )?;
-            let mut rows = stmt.query(params![pattern, sz as i64])?;
-            if let Some(row) = rows.next()? {
-                return Ok(Some((
-                    self.row_to_item(row)?,
-                    MigrationMatchKind::FilenameAndSize,
-                )));
+            let mut rows = stmt.query(params![pattern, filename, sz as i64])?;
+            let mut matches = Vec::new();
+            while let Some(row) = rows.next()? {
+                matches.push(self.row_to_item(row)?);
             }
-        } else {
+            if matches.len() == 1 {
+                return Ok(MigrationMatchResult::Matched(
+                    Box::new(matches.remove(0)),
+                    MigrationMatchKind::FilenameAndSize,
+                ));
+            } else if matches.len() > 1 {
+                // Ambiguous match across folders! Report ambiguous paths, do NOT auto-pick!
+                let paths = matches.into_iter().map(|it| it.file_path).collect();
+                return Ok(MigrationMatchResult::Ambiguous(paths));
+            }
+        } else if !filename.is_empty() {
             // Filename only
             let mut stmt = conn.prepare(
                 "SELECT i.id, i.fingerprint, mf.path, i.title, i.duration, mf.size_bytes,
@@ -625,20 +711,26 @@ impl Database {
                         i.season_number, i.episode_number, i.is_missing, i.created_at, i.updated_at
                  FROM media_files mf
                  JOIN items i ON i.fingerprint = mf.fingerprint
-                 WHERE mf.path LIKE ?1
-                 ORDER BY mf.mtime_secs DESC
-                 LIMIT 1",
+                 WHERE (mf.path LIKE ?1 OR mf.path = ?2)
+                 LIMIT 5",
             )?;
-            let mut rows = stmt.query(params![pattern])?;
-            if let Some(row) = rows.next()? {
-                return Ok(Some((
-                    self.row_to_item(row)?,
+            let mut rows = stmt.query(params![pattern, filename])?;
+            let mut matches = Vec::new();
+            while let Some(row) = rows.next()? {
+                matches.push(self.row_to_item(row)?);
+            }
+            if matches.len() == 1 {
+                return Ok(MigrationMatchResult::Matched(
+                    Box::new(matches.remove(0)),
                     MigrationMatchKind::FilenameOnly,
-                )));
+                ));
+            } else if matches.len() > 1 {
+                let paths = matches.into_iter().map(|it| it.file_path).collect();
+                return Ok(MigrationMatchResult::Ambiguous(paths));
             }
         }
 
-        Ok(None)
+        Ok(MigrationMatchResult::Unmatched)
     }
 
     fn row_to_item(&self, row: &rusqlite::Row) -> Result<MediaItem, DbError> {
@@ -713,17 +805,183 @@ impl Database {
             ],
         )?;
 
-        // Update FTS5
-        conn.execute(
-            "DELETE FROM library_fts WHERE item_id = ?1",
-            params![item.id],
-        )?;
-        conn.execute(
-            "INSERT INTO library_fts (item_id, title, series_title) VALUES (?1, ?2, ?3)",
-            params![item.id, item.title, ""],
-        )?;
+        // Note: FTS5 library_fts is kept in sync via SQLite triggers (trg_items_ai, trg_items_au, trg_items_ad)
 
         Ok(())
+    }
+
+    /// Deletes a media item by ID (and triggers trg_items_ad to remove from library_fts).
+    pub fn delete_item(&self, item_id: &str) -> Result<(), DbError> {
+        let conn = self.conn.lock();
+        conn.execute("DELETE FROM items WHERE id = ?1;", params![item_id])?;
+        Ok(())
+    }
+
+    /// Marks a media file and its item as missing without permanently deleting them
+    pub fn mark_file_missing(&self, path: &str) -> Result<(), DbError> {
+        let conn = self.conn.lock();
+        conn.execute(
+            "UPDATE media_files SET is_missing = 1 WHERE path = ?1;",
+            params![path],
+        )?;
+        conn.execute(
+            "UPDATE items SET is_missing = 1 WHERE fingerprint IN (SELECT fingerprint FROM media_files WHERE path = ?1);",
+            params![path],
+        )?;
+        Ok(())
+    }
+
+    /// Finds a media item by exact BLAKE3 fingerprint
+    pub fn find_item_by_fingerprint(
+        &self,
+        fingerprint: &str,
+    ) -> Result<Option<MediaItem>, DbError> {
+        let conn = self.conn.lock();
+        let mut stmt = conn.prepare(
+            "SELECT i.id, i.fingerprint, mf.path, i.title, i.duration, mf.size_bytes,
+                    i.width, i.height, i.is_hdr, i.video_codec, i.audio_codec, i.series_id,
+                    i.season_number, i.episode_number, i.is_missing, i.created_at, i.updated_at
+             FROM media_files mf
+             JOIN items i ON i.fingerprint = mf.fingerprint
+             WHERE mf.fingerprint = ?1
+             LIMIT 1;",
+        )?;
+        let mut rows = stmt.query(params![fingerprint])?;
+        if let Some(row) = rows.next()? {
+            return Ok(Some(self.row_to_item(row)?));
+        }
+        Ok(None)
+    }
+
+    /// Relinks a renamed or moved media file to its new path, clearing is_missing
+    pub fn relink_file_path(
+        &self,
+        _old_path: &str,
+        new_path: &str,
+        fingerprint: &str,
+    ) -> Result<(), DbError> {
+        let conn = self.conn.lock();
+        conn.execute(
+            "UPDATE media_files SET path = ?1, is_missing = 0, last_seen_at = datetime('now') WHERE fingerprint = ?2;",
+            params![new_path, fingerprint],
+        )?;
+        conn.execute(
+            "UPDATE items SET is_missing = 0, updated_at = datetime('now') WHERE fingerprint = ?1;",
+            params![fingerprint],
+        )?;
+        Ok(())
+    }
+
+    /// Enqueues items into the persistent analysis queue using a single high-throughput transaction.
+    pub fn enqueue_analysis(&self, items: &[AnalysisQueueItem]) -> Result<usize, DbError> {
+        if items.is_empty() {
+            return Ok(0);
+        }
+        let mut conn = self.conn.lock();
+        let tx = conn.transaction()?;
+        {
+            let mut stmt = tx.prepare_cached(
+                "INSERT INTO analysis_queue (file_id, fingerprint, path, priority, status, retries, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, 'pending', 0, datetime('now'), datetime('now'))
+                 ON CONFLICT(fingerprint) DO UPDATE SET
+                    priority = MAX(analysis_queue.priority, excluded.priority),
+                    updated_at = datetime('now');",
+            )?;
+            for it in items {
+                stmt.execute(params![it.file_id, it.fingerprint, it.path, it.priority])?;
+            }
+        }
+        tx.commit()?;
+        Ok(items.len())
+    }
+
+    /// Fetches the next pending analysis task with highest priority (visible items boosted to 100 first).
+    /// Atomically marks it as 'processing'.
+    pub fn fetch_next_analysis_task(&self) -> Result<Option<AnalysisTask>, DbError> {
+        let conn = self.conn.lock();
+        let mut stmt = conn.prepare(
+            "SELECT id, file_id, fingerprint, path, priority, status, retries, error_message
+             FROM analysis_queue
+             WHERE status = 'pending'
+             ORDER BY priority DESC, id ASC
+             LIMIT 1;",
+        )?;
+        let mut task = stmt
+            .query_row([], |row| {
+                Ok(AnalysisTask {
+                    id: row.get(0)?,
+                    file_id: row.get(1)?,
+                    fingerprint: row.get(2)?,
+                    path: row.get(3)?,
+                    priority: row.get(4)?,
+                    status: row.get(5)?,
+                    retries: row.get(6)?,
+                    error_message: row.get(7)?,
+                })
+            })
+            .optional()?;
+
+        if let Some(ref mut t) = task {
+            conn.execute(
+                "UPDATE analysis_queue SET status = 'processing', updated_at = datetime('now') WHERE id = ?1;",
+                params![t.id],
+            )?;
+            t.status = "processing".into();
+        }
+        Ok(task)
+    }
+
+    /// Updates status of an analysis queue item (completed, failed, etc.).
+    pub fn update_analysis_status(
+        &self,
+        id: i64,
+        status: &str,
+        error: Option<&str>,
+    ) -> Result<(), DbError> {
+        let conn = self.conn.lock();
+        conn.execute(
+            "UPDATE analysis_queue SET status = ?1, error_message = ?2, updated_at = datetime('now') WHERE id = ?3;",
+            params![status, error, id],
+        )?;
+        Ok(())
+    }
+
+    /// Boosts analysis priority for a fingerprint (e.g. user scrolled item into viewport -> priority 100).
+    pub fn boost_analysis_priority(&self, fingerprint: &str, priority: i32) -> Result<(), DbError> {
+        let conn = self.conn.lock();
+        conn.execute(
+            "UPDATE analysis_queue SET priority = MAX(priority, ?1), updated_at = datetime('now') WHERE fingerprint = ?2;",
+            params![priority, fingerprint],
+        )?;
+        Ok(())
+    }
+
+    /// Resets any tasks left in 'processing' when app shut down or crashed back to 'pending'.
+    /// Ensures persistent queue survives restarts without losing work.
+    pub fn reset_processing_tasks_to_pending(&self) -> Result<usize, DbError> {
+        let conn = self.conn.lock();
+        let affected = conn.execute(
+            "UPDATE analysis_queue SET status = 'pending', updated_at = datetime('now') WHERE status = 'processing';",
+            [],
+        )?;
+        Ok(affected)
+    }
+
+    /// Retrieves analysis queue counts: (pending, processing, completed, failed)
+    pub fn get_analysis_queue_counts(&self) -> Result<(usize, usize, usize, usize), DbError> {
+        let conn = self.conn.lock();
+        let mut stmt = conn.prepare(
+            "SELECT 
+                COALESCE(SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END), 0),
+                COALESCE(SUM(CASE WHEN status = 'processing' THEN 1 ELSE 0 END), 0),
+                COALESCE(SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END), 0),
+                COALESCE(SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END), 0)
+             FROM analysis_queue;",
+        )?;
+        let (p, pr, c, f): (i64, i64, i64, i64) = stmt.query_row([], |row| {
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
+        })?;
+        Ok((p as usize, pr as usize, c as usize, f as usize))
     }
 
     /// Retrieves all items
