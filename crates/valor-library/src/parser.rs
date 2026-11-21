@@ -1,6 +1,32 @@
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
+use std::sync::LazyLock;
+
+static RE_TV: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?i)\b(?:s(\d{1,2})e(\d{1,3})(?:[-_eE](\d{1,3}))?|(\d{1,2})x(\d{1,3}))\b").unwrap()
+});
+static RE_EP_STANDALONE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?i)\b(?:episode|ep)\s*(\d{1,3})\b").unwrap());
+static RE_ANIME: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^\[(.*?)\]\s*(.*?)\s*-\s*(\d{1,4})(?:v\d+)?\b").unwrap());
+static RE_PAREN_YEAR: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"[\(\[]\s*(19\d{2}|20\d{2})\s*[\)\]]").unwrap());
+static RE_YEAR: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\b(19\d{2}|20\d{2})\b").unwrap());
+static RE_STRIP: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?i)\b(2160p|1080p|720p|480p|uhd|bluray|web-dl|webrip|hdtv|hevc|x265|x264|h\.264|h\.265)\b.*").unwrap()
+});
+static RE_RES: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?i)\b(2160p|4k|1080p|720p|480p|576p)\b").unwrap());
+static RE_SRC: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?i)\b(BluRay|BDRip|BRRip|WEB-DL|WEBRip|HDTV|DVDRip|DVD|Remux)\b").unwrap()
+});
+static RE_VCODEC: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?i)\b(HEVC|H\.265|x265|H\.264|x264|AVC|AV1|XviD|DivX)\b").unwrap()
+});
+static RE_ACODEC: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?i)\b(TrueHD|Atmos|DTS-HD|DTS-X|DTS|DDP5\.1|DD5\.1|AC3|AAC|FLAC)\b").unwrap()
+});
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ParsedFilename {
@@ -42,11 +68,7 @@ pub fn parse_media_filename(file_path: &str) -> ParsedFilename {
     let audio_codec = extract_audio_codec(&clean);
 
     // 5. Check for TV episode: S01E02, S01E02-E03, S01E02E03, 1x02
-    let re_tv =
-        Regex::new(r"(?i)\b(?:s(\d{1,2})e(\d{1,3})(?:[-_eE](\d{1,3}))?|(\d{1,2})x(\d{1,3}))\b")
-            .unwrap();
-
-    if let Some(caps) = re_tv.captures(&clean) {
+    if let Some(caps) = RE_TV.captures(&clean) {
         let match_start = caps.get(0).unwrap().start();
         let raw_title = clean[..match_start].trim();
 
@@ -77,8 +99,7 @@ pub fn parse_media_filename(file_path: &str) -> ParsedFilename {
     }
 
     // 6. Check for Season folder / Episode standalone: "Episode 05" or "Ep 05"
-    let re_ep_standalone = Regex::new(r"(?i)\b(?:episode|ep)\s*(\d{1,3})\b").unwrap();
-    if let Some(caps) = re_ep_standalone.captures(&clean) {
+    if let Some(caps) = RE_EP_STANDALONE.captures(&clean) {
         let match_start = caps.get(0).unwrap().start();
         let raw_title = clean[..match_start].trim();
         let episode = caps.get(1).and_then(|m| m.as_str().parse().ok());
@@ -133,8 +154,7 @@ fn extract_release_group(input: &str) -> (String, Option<String>) {
 
 fn parse_anime_format(input: &str, release_group: Option<&str>) -> Option<ParsedFilename> {
     // Matches: "[Group] Title - 05 (1080p)" or "[Group] Title - Episode 05"
-    let re_anime = Regex::new(r"^\[(.*?)\]\s*(.*?)\s*-\s*(\d{1,4})(?:v\d+)?\b").ok()?;
-    if let Some(caps) = re_anime.captures(input) {
+    if let Some(caps) = RE_ANIME.captures(input) {
         let group = caps.get(1).map(|m| m.as_str().to_string());
         let raw_title = caps.get(2).map(|m| m.as_str().trim()).unwrap_or("");
         let episode = caps.get(3).and_then(|m| m.as_str().parse().ok());
@@ -158,8 +178,7 @@ fn parse_anime_format(input: &str, release_group: Option<&str>) -> Option<Parsed
 
 fn extract_year_from_title(input: &str) -> (String, Option<u32>) {
     // 1. First look for parenthesized / bracketed year: (2017) or [2017]
-    let re_paren_year = Regex::new(r"[\(\[]\s*(19\d{2}|20\d{2})\s*[\)\]]").unwrap();
-    if let Some(caps) = re_paren_year.captures(input) {
+    if let Some(caps) = RE_PAREN_YEAR.captures(input) {
         if let Some(m) = caps.get(1) {
             let year = m.as_str().parse().ok();
             let entire_match = caps.get(0).unwrap();
@@ -173,8 +192,7 @@ fn extract_year_from_title(input: &str) -> (String, Option<u32>) {
     }
 
     // 2. Otherwise look for standalone year (prefer not at index 0)
-    let re_year = Regex::new(r"\b(19\d{2}|20\d{2})\b").unwrap();
-    for caps in re_year.captures_iter(input) {
+    for caps in RE_YEAR.captures_iter(input) {
         if let Some(m) = caps.get(1) {
             if m.start() > 0 {
                 let year = m.as_str().parse().ok();
@@ -197,41 +215,34 @@ fn clean_title_str(title: &str, fallback: &str) -> String {
     if t.is_empty() {
         fallback.to_string()
     } else {
-        // Strip common trailing metadata words if leaked into title
-        let re_strip = Regex::new(
-            r"(?i)\b(2160p|1080p|720p|480p|uhd|bluray|web-dl|webrip|hdtv|hevc|x265|x264|h\.264|h\.265)\b.*",
-        )
-        .unwrap();
-        re_strip.replace(t, "").trim().to_string()
+        RE_STRIP.replace(t, "").trim().to_string()
     }
 }
 
 fn extract_resolution(input: &str) -> Option<String> {
-    let re = Regex::new(r"(?i)\b(2160p|4k|1080p|720p|480p|576p)\b").unwrap();
-    re.captures(input)
+    RE_RES
+        .captures(input)
         .and_then(|c| c.get(1))
         .map(|m| m.as_str().to_uppercase())
 }
 
 fn extract_source(input: &str) -> Option<String> {
-    let re =
-        Regex::new(r"(?i)\b(BluRay|BDRip|BRRip|WEB-DL|WEBRip|HDTV|DVDRip|DVD|Remux)\b").unwrap();
-    re.captures(input)
+    RE_SRC
+        .captures(input)
         .and_then(|c| c.get(1))
         .map(|m| m.as_str().to_string())
 }
 
 fn extract_video_codec(input: &str) -> Option<String> {
-    let re = Regex::new(r"(?i)\b(HEVC|H\.265|x265|H\.264|x264|AVC|AV1|XviD|DivX)\b").unwrap();
-    re.captures(input)
+    RE_VCODEC
+        .captures(input)
         .and_then(|c| c.get(1))
         .map(|m| m.as_str().to_uppercase())
 }
 
 fn extract_audio_codec(input: &str) -> Option<String> {
-    let re =
-        Regex::new(r"(?i)\b(TrueHD|Atmos|DTS-HD|DTS-X|DTS|DDP5\.1|DD5\.1|AC3|AAC|FLAC)\b").unwrap();
-    re.captures(input)
+    RE_ACODEC
+        .captures(input)
         .and_then(|c| c.get(1))
         .map(|m| m.as_str().to_string())
 }

@@ -23,12 +23,10 @@ pub struct Database {
 impl Database {
     pub fn open<P: AsRef<Path>>(path: P) -> Result<Self, DbError> {
         let conn = Connection::open(path)?;
-        conn.execute_batch(
-            "PRAGMA journal_mode = WAL;
-             PRAGMA synchronous = NORMAL;
-             PRAGMA foreign_keys = ON;
-             PRAGMA cache_size = -64000;",
-        )?;
+        let _ = conn.pragma_update(None, "journal_mode", "WAL");
+        let _ = conn.pragma_update(None, "synchronous", "NORMAL");
+        let _ = conn.pragma_update(None, "foreign_keys", "ON");
+        let _ = conn.pragma_update(None, "cache_size", -64000);
 
         let db = Self {
             conn: Arc::new(Mutex::new(conn)),
@@ -39,7 +37,7 @@ impl Database {
 
     pub fn in_memory() -> Result<Self, DbError> {
         let conn = Connection::open_in_memory()?;
-        conn.execute_batch("PRAGMA foreign_keys = ON;")?;
+        let _ = conn.pragma_update(None, "foreign_keys", "ON");
         let db = Self {
             conn: Arc::new(Mutex::new(conn)),
         };
@@ -453,6 +451,228 @@ impl Database {
         let conn = self.conn.lock();
         conn.execute("DELETE FROM bookmarks WHERE id = ?1", params![id])?;
         Ok(())
+    }
+
+    /// Queries all cached file records into an in-memory map for instantaneous incremental scanning
+    pub fn get_all_cached_file_info(
+        &self,
+    ) -> Result<std::collections::HashMap<String, CachedFileInfo>, DbError> {
+        let conn = self.conn.lock();
+        let mut stmt =
+            conn.prepare("SELECT path, size_bytes, mtime_secs, fingerprint FROM media_files")?;
+        let mut map = std::collections::HashMap::new();
+        let rows = stmt.query_map([], |row| {
+            let path: String = row.get(0)?;
+            let size_bytes: i64 = row.get(1)?;
+            let mtime_secs: i64 = row.get(2)?;
+            let fingerprint: String = row.get(3)?;
+            Ok((
+                path,
+                CachedFileInfo {
+                    size_bytes: size_bytes as u64,
+                    mtime_secs,
+                    fingerprint,
+                },
+            ))
+        })?;
+        for r in rows {
+            let (path, info) = r?;
+            map.insert(path, info);
+        }
+        Ok(map)
+    }
+
+    /// High-throughput batched upsert of scanned files, items, and FTS entries in a single transaction
+    pub fn batch_upsert_scanned_files(&self, records: &[ScannedFileRecord]) -> Result<(), DbError> {
+        if records.is_empty() {
+            return Ok(());
+        }
+
+        let mut conn = self.conn.lock();
+        let tx = conn.transaction()?;
+
+        {
+            let mut stmt_file = tx.prepare(
+                "INSERT INTO media_files (id, path, size_bytes, mtime_secs, fingerprint, legacy_fingerprint, is_missing, last_seen_at, created_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, 0, ?7, ?8)
+                 ON CONFLICT(path) DO UPDATE SET
+                    size_bytes = excluded.size_bytes,
+                    mtime_secs = excluded.mtime_secs,
+                    fingerprint = excluded.fingerprint,
+                    legacy_fingerprint = excluded.legacy_fingerprint,
+                    is_missing = 0,
+                    last_seen_at = excluded.last_seen_at;"
+            )?;
+
+            let mut stmt_item = tx.prepare(
+                "INSERT INTO items (id, fingerprint, title, duration, width, height, is_hdr, video_codec, audio_codec, series_id, season_number, episode_number, is_missing, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)
+                 ON CONFLICT(id) DO UPDATE SET
+                    title = excluded.title,
+                    duration = excluded.duration,
+                    width = excluded.width,
+                    height = excluded.height,
+                    is_hdr = excluded.is_hdr,
+                    video_codec = excluded.video_codec,
+                    audio_codec = excluded.audio_codec,
+                    series_id = excluded.series_id,
+                    season_number = excluded.season_number,
+                    episode_number = excluded.episode_number,
+                    is_missing = excluded.is_missing,
+                    updated_at = excluded.updated_at;"
+            )?;
+
+            let mut stmt_fts_del = tx.prepare("DELETE FROM library_fts WHERE item_id = ?1")?;
+            let mut stmt_fts_ins = tx.prepare(
+                "INSERT INTO library_fts (item_id, title, series_title) VALUES (?1, ?2, ?3)",
+            )?;
+
+            let now = Utc::now().to_rfc3339();
+
+            for r in records {
+                stmt_file.execute(params![
+                    r.id,
+                    r.path,
+                    r.size_bytes as i64,
+                    r.mtime_secs,
+                    r.fingerprint,
+                    r.legacy_fingerprint,
+                    now,
+                    now,
+                ])?;
+
+                stmt_item.execute(params![
+                    r.item.id,
+                    r.item.fingerprint,
+                    r.item.title,
+                    r.item.duration,
+                    r.item.width,
+                    r.item.height,
+                    r.item.is_hdr as i32,
+                    r.item.video_codec,
+                    r.item.audio_codec,
+                    r.item.series_id,
+                    r.item.season_number,
+                    r.item.episode_number,
+                    r.item.is_missing as i32,
+                    r.item.created_at.to_rfc3339(),
+                    r.item.updated_at.to_rfc3339(),
+                ])?;
+
+                let _ = stmt_fts_del.execute(params![r.item.id]);
+                let _ = stmt_fts_ins.execute(params![r.item.id, r.item.title, ""]);
+            }
+        }
+
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// Finds a media item for migration by legacy fingerprint or filename + size (with mtime tiebreak)
+    pub fn find_item_for_migration(
+        &self,
+        legacy_fp: Option<&str>,
+        filename: &str,
+        size_bytes: Option<u64>,
+    ) -> Result<Option<(MediaItem, MigrationMatchKind)>, DbError> {
+        let conn = self.conn.lock();
+
+        // 1. Check legacy fingerprint in media_files
+        if let Some(lfp) = legacy_fp {
+            let mut stmt = conn.prepare(
+                "SELECT i.id, i.fingerprint, mf.path, i.title, i.duration, mf.size_bytes,
+                        i.width, i.height, i.is_hdr, i.video_codec, i.audio_codec, i.series_id,
+                        i.season_number, i.episode_number, i.is_missing, i.created_at, i.updated_at
+                 FROM media_files mf
+                 JOIN items i ON i.fingerprint = mf.fingerprint
+                 WHERE mf.legacy_fingerprint = ?1 OR mf.fingerprint = ?1
+                 LIMIT 1",
+            )?;
+            let mut rows = stmt.query(params![lfp])?;
+            if let Some(row) = rows.next()? {
+                return Ok(Some((
+                    self.row_to_item(row)?,
+                    MigrationMatchKind::LegacyFingerprint,
+                )));
+            }
+        }
+
+        // 2. Check filename + size match (with mtime tiebreak)
+        let pattern = format!("%{}", filename);
+        if let Some(sz) = size_bytes {
+            let mut stmt = conn.prepare(
+                "SELECT i.id, i.fingerprint, mf.path, i.title, i.duration, mf.size_bytes,
+                        i.width, i.height, i.is_hdr, i.video_codec, i.audio_codec, i.series_id,
+                        i.season_number, i.episode_number, i.is_missing, i.created_at, i.updated_at
+                 FROM media_files mf
+                 JOIN items i ON i.fingerprint = mf.fingerprint
+                 WHERE mf.path LIKE ?1 AND mf.size_bytes = ?2
+                 ORDER BY mf.mtime_secs DESC
+                 LIMIT 1",
+            )?;
+            let mut rows = stmt.query(params![pattern, sz as i64])?;
+            if let Some(row) = rows.next()? {
+                return Ok(Some((
+                    self.row_to_item(row)?,
+                    MigrationMatchKind::FilenameAndSize,
+                )));
+            }
+        } else {
+            // Filename only
+            let mut stmt = conn.prepare(
+                "SELECT i.id, i.fingerprint, mf.path, i.title, i.duration, mf.size_bytes,
+                        i.width, i.height, i.is_hdr, i.video_codec, i.audio_codec, i.series_id,
+                        i.season_number, i.episode_number, i.is_missing, i.created_at, i.updated_at
+                 FROM media_files mf
+                 JOIN items i ON i.fingerprint = mf.fingerprint
+                 WHERE mf.path LIKE ?1
+                 ORDER BY mf.mtime_secs DESC
+                 LIMIT 1",
+            )?;
+            let mut rows = stmt.query(params![pattern])?;
+            if let Some(row) = rows.next()? {
+                return Ok(Some((
+                    self.row_to_item(row)?,
+                    MigrationMatchKind::FilenameOnly,
+                )));
+            }
+        }
+
+        Ok(None)
+    }
+
+    fn row_to_item(&self, row: &rusqlite::Row) -> Result<MediaItem, DbError> {
+        let created_str: String = row.get(15)?;
+        let updated_str: String = row.get(16)?;
+        let created_at = chrono::DateTime::parse_from_rfc3339(&created_str)
+            .map(|dt| dt.with_timezone(&Utc))
+            .unwrap_or_else(|_| Utc::now());
+        let updated_at = chrono::DateTime::parse_from_rfc3339(&updated_str)
+            .map(|dt| dt.with_timezone(&Utc))
+            .unwrap_or_else(|_| Utc::now());
+        let size_bytes: i64 = row.get(5)?;
+        let is_hdr: i32 = row.get(8)?;
+        let is_missing: i32 = row.get(14)?;
+
+        Ok(MediaItem {
+            id: row.get(0)?,
+            fingerprint: row.get(1)?,
+            file_path: row.get(2)?,
+            title: row.get(3)?,
+            duration: row.get(4)?,
+            size_bytes: size_bytes as u64,
+            width: row.get(6)?,
+            height: row.get(7)?,
+            is_hdr: is_hdr != 0,
+            video_codec: row.get(9)?,
+            audio_codec: row.get(10)?,
+            series_id: row.get(11)?,
+            season_number: row.get(12)?,
+            episode_number: row.get(13)?,
+            is_missing: is_missing != 0,
+            created_at,
+            updated_at,
+        })
     }
 
     /// Upserts a media item and syncs with FTS5

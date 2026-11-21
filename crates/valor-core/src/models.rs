@@ -85,3 +85,28 @@ pub struct ChapterItem {
     pub title: String,
     pub start_secs: f64,
 }
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CachedFileInfo {
+    pub size_bytes: u64,
+    pub mtime_secs: i64,
+    pub fingerprint: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum MigrationMatchKind {
+    LegacyFingerprint,
+    FilenameAndSize,
+    FilenameOnly,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ScannedFileRecord {
+    pub id: String,
+    pub path: String,
+    pub size_bytes: u64,
+    pub mtime_secs: i64,
+    pub fingerprint: String,
+    pub legacy_fingerprint: Option<String>,
+    pub item: MediaItem,
+}

@@ -691,7 +691,14 @@ impl eframe::App for ValorNativeApp {
                     DashboardAction::StartScan => {
                         let downloads = r"C:\Users\Admin\Downloads";
                         let cancel_flag = Arc::new(AtomicBool::new(false));
-                        let _ = scan_directory(Path::new(downloads), &self.db, cancel_flag, |_| {});
+                        let pause_flag = Arc::new(AtomicBool::new(false));
+                        let _ = scan_directory(
+                            Path::new(downloads),
+                            &self.db,
+                            cancel_flag,
+                            pause_flag,
+                            |_| {},
+                        );
                         self.all_items = self.db.get_all_items().unwrap_or_default();
                     }
                     DashboardAction::SwitchToPlayer => {

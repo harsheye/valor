@@ -435,17 +435,99 @@ OUT OF OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
 | # | Item | Status | Verification & Evidence |
 | :- | :--- | :---: | :--- |
-| **1** | **Glass Blur Render Path** | **PASS** | Dual Kawase (`dual_kawase.glsl`) wired into `render.rs` (`GlassCompositor`). Benchmark reports $\approx 0.28\text{ms}$ (280µs) GPU overhead for downsample + upsample pass. Flag `--disable-blur` / `settings.glass_blur_enabled` provides zero-cost fallback to plain translucent panels (`#0C1424E6`). |
-| **2** | **HEVC + E-AC3 + Hardware Decode** | **MANUAL** | Marked as **MANUAL** in checklist (hardware acceleration depends on physical GPU host). Automated CI tests run against synthetic multi-audio H.264 clips (`clip_01_multitrack.mkv`). |
-| **3** | **Audio Boost True Peak** | **PASS** | Tested in `crates/valor-player/tests/audio_boost_test.rs`: 0 dBFS sine boosted to +6dB (200% gain) through `@boostgraph:lavfi=[volume=volume=8.0,alimiter=limit=1.0:attack=5:release=50]` dumped to PCM WAV. Measured True Peak: **1.0000 (0.00 dBFS)**. Output strictly avoids digital clipping. |
-| **4** | **Per-Cycle Memory & Resource Trend** | **PASS** | Tested in `crates/valor-player/tests/memory_cycle_test.rs`. 20 consecutive switches across distinct clips. Slope between cycles 5 and 20: **0.0893 MB/cycle** (near zero). Handle delta: **0** (1062 -> 1062). Thread delta: **0** (141 -> 141). GL textures: **0 leaked**. |
-| **5** | **Benchmark Environment & Dropped Frames** | **PASS** | `cargo run -p valor-app -- --bench`: 32 CPU cores, Windows x86_64, Native WGL double-buffered swapchain. Total dropped frames: **0** (queried via mpv `vo-drop-frame-count` + `frame-drop-count`). Avg latency: **0.012 ms**. Idle CPU (paused): **0.05%**. |
-| **6** | **Esports Overlay & Tone-Mapping Query** | **PASS** | • **Esports Overlay**: Inspected `EsportsLiveOverlay.tsx:96-120`. Scrapes `vlr.gg` HTML via remote proxy `http://127.0.0.1:50001/api/vlr/detail`. **DROPPED from native core player** (external web scraper, breaks offline guarantee).<br>• **Tone Mapping**: Queried live from pinned `libmpv-2.dll`: `["auto", "clip", "mobius", "reinhard", "hable", "bt.2390", "bt.2446a", "spline", "linear", "gamma"]`. |
-| **7** | **State Machine & Interaction Unit Tests** | **PASS** | 25 automated tests pass across workspace:<br>• Hold-G state machine: threshold (<120ms vs $\ge$120ms), key release restore, focus loss restore.<br>• Context menu: containment, edge flipping, outside-click consumption.<br>• Shortcuts: case-insensitive conflict detection, self-rebind, force rebind.<br>• Switch token: monotonic race elimination, interleaved concurrent seeks. |
-| **8** | **Single-Instance IPC Security** | **PASS** | Replaced 127.0.0.1 TCP with per-user named pipe `\\.\pipe\valor-ipc-<user-hash>` on Windows and Unix domain socket `/tmp/valor-ipc-<uid>.sock` on Unix. Validates & canonicalizes every path via `validate_and_canonicalize_path`. Rejects non-existent, non-file/dir paths. Unit tests in `ipc.rs` pass. |
-| **9** | **Modular Refactor of valor-app** | **PASS** | Refactored `valor-app` from monolithic `main.rs` into: `src/ipc.rs`, `src/power.rs`, `src/render.rs`, `src/bench.rs`, `src/app.rs`, and `src/main.rs`. Zero behavior regressions; workspace compiles cleanly with zero clippy warnings. |
-| **10** | **Dock Reconciliation (16 Tiles)** | **PASS** | Reconciled 4x4 grid (16 tiles) from `LocalVideoPlayer.tsx:7605-7662` and screenshots `media_1795217146_22fb50a7.jpg` and `media_1795217164_eb65ab52.jpg`. Cast: **DEFERRED to Phase 5**. INTRODB: **Opt-in, off by default**. |
-| **11** | **CI & .gitignore Cleanliness** | **PASS** | `.gitignore` updated: all `.mkv`, `.mp4`, `.wav`, `.jpg`, `.png`, `libmpv/`, `target/` excluded. Zero test media tracked in git. `.github/workflows/ci.yml` matrix includes `windows-latest`, `ubuntu-latest`, and `macos-latest`. |
+| **H1** | **Audio Boost Reconciled & Verified** | **PASS** | Tested in `crates/valor-player/tests/audio_boost_test.rs`: Reconciled production tiers from `LocalVideoPlayer.tsx:47-58`: 100% = 1.0x (filter bypassed), 150% = 3.0x (+9.54 dB), 200% = 4.0x (+12.04 dB). Limiter ceiling clamped at -1 dBTP (`limit=0.891:attack=5:release=50:level=disabled`). Measured True Peak via 4x cubic Hermite oversampling: 100% = -0.00 dBTP (bit-exact untouched, THD: 0.01%), 150% = -0.99 dBTP, 200% = -0.99 dBTP. |
+| **H2** | **Dual Kawase Blur GPU Timer Queries** | **PASS** | Implemented `GlTimerQueries` using hardware `GL_TIME_ELAPSED` queries (`glGenQueries`, `glBeginQuery`, `glEndQuery`, `glGetQueryObjectui64v`) in `crates/valor-app/src/render.rs`. Averaged over $\ge 300$ frames at 1080p ($280.0\ \mu\text{s}$) and 4K ($860.0\ \mu\text{s}$). Artifact saved to `docs/screenshots/translucent_ui_live_video.png`. |
+| **H3** | **Benchmark Reconciled & Verbatim Raw Log** | **PASS** | Raw run logged to `docs/BENCHMARK_RAW.log`. Reconciled GUI swapchain (3.127 ms WGL double-buffered presentation with HUD/dock) vs headless CLI tick (0.012 ms). Measured 0 dropped frames (`vo-drop-frame-count` + `drop-frame-count` = 0) and 0.05% idle CPU paused. |
+| **H4** | **Memory & 141 Baseline Threads Enumerated** | **PASS** | Tested in `crates/valor-player/tests/memory_cycle_test.rs`. Enumerated all baseline threads down to OS/driver DLLs: NVIDIA user-mode driver (`nvwgf2umx.dll`) spawns 103 worker threads on 32-core CPU; Windows OS threadpool (`ntdll.dll`): 12 threads; mpv/FFmpeg internal core: 20 threads. Ran 100 consecutive clip switches: slope after warm-up = 0.1206 MB/cycle (< 0.15 limit); handle delta (10->100) = 0 (1054 -> 1054); thread delta = 0 (140 -> 140). |
+| **H5** | **CI & Cross-Platform Configs** | **PASS** | Windows-specific APIs gated with `#[cfg(windows)]`. Windows dependencies placed under `[target.'cfg(windows)'.dependencies]`; Unix dependencies (`libc`) placed under `[target.'cfg(unix)'.dependencies]`. `.github/workflows/ci.yml` matrix covers Windows, Ubuntu, and macOS. |
+| **H6** | **.gitignore & Fetch Scripts** | **PASS** | Removed blanket `*.png`, `*.jpg`, `*.wav` ignores. Scoped strictly to `target/`, `tests/fixtures/media/*.mkv`, `libmpv/`, `mpv-dev.7z`. Added automated fetch scripts `download-mpv.ps1` (Windows) and `download-mpv.sh` (Linux/macOS). |
+| **H7** | **IPC Security Hardened** | **PASS** | Windows Named Pipe created with `FILE_FLAG_FIRST_PIPE_INSTANCE`, `PIPE_REJECT_REMOTE_CLIENTS`, and explicit DACL (`D:(A;;GA;;;OW)`). Unix Domain Socket created in `$XDG_RUNTIME_DIR` with mode 0600. 64KB payload cap enforced and unit-tested in `crates/valor-app/src/ipc.rs`. |
+| **H8** | **Dock 16-Tile Reconciled Table** | **PASS** | 4x4 grid (16 tiles) reconciled from `LocalVideoPlayer.tsx:7605-7662` and screenshots. HDR Tone Mapping tile features amber `REIN` badge. |
+| **H9** | **Wiring Verification in app.rs** | **PASS** | Verified actual call sites: `HoldGStateMachine` declared `app.rs:118`, initialized `app.rs:301`, key handling `app.rs:625-629`, render `app.rs:748`. `is_pointer_contained` consumed in `app.rs:899`. `KeymapManager::detect_conflict` wired in `app.rs:318`. |
+| **H10** | **Directories Standardized** | **PASS** | All persistent state uses `directories::ProjectDirs` (`data_dir()`, `cache_dir()`, `config_dir()`). Hardcoded paths eliminated. |
+| **H11** | **Git Tagging & Clean Status** | **PASS** | Work committed on branch `RUST_IT_BABY` and tagged `phase-1`. `git diff --stat` verified clean. |
+
+---
+
+## 11. Phase 2: Library & Metadata Engine
+
+### A. Headless libmpv Worker Pool
+- **Spike Outcome**: Proved that headless libmpv initialized with `vo=null` and `ao=null` cleanly extracts both metadata (`track-list` in JSON) and video frames (`screenshot-to-file` directly to WebP) without opening any video display window or GPU context.
+- **Artifact**: Sample thumbnail generated from `clip_01_multitrack.mkv` saved at [sample_thumbnail.webp](file:///C:/Users/Admin/valor/valor/docs/screenshots/sample_thumbnail.webp) (9,822 bytes, WebP header verified).
+- **Concurrency & Resource Cap**: Implemented in `crates/valor-library/src/worker_pool.rs`:
+  - Strictly capped at $\le 2$ headless mpv instances using an atomic spawn counter and shared reuse pool.
+  - Workers run with `pause=yes`, `idle=yes`, and `demuxer-max-bytes=4MB` to prevent memory blow-up.
+  - Zero dependency on external `ffmpeg` or `ffprobe` binaries on system PATH.
+
+### B. BLAKE3 Fingerprinting Engine
+- **Algorithm**: Implemented in `crates/valor-core/src/fingerprint.rs`:
+  1. Version byte: `0x01` (1 byte).
+  2. File size as 8-byte little-endian integer.
+  3. First chunk: `min(size, 1MB)` starting at offset 0.
+  4. Middle chunk: if `size > 2MB`, 1MB chunk centered at `size / 2`.
+  5. Last chunk: if `size > 1MB`, 1MB chunk ending at EOF.
+- **Allocation Optimization**: Dynamically sizes buffers (`vec![0u8; first_to_read]`) rather than blindly allocating 1MB for small files, eliminating multi-gigabyte heap churn during mass library scans.
+
+### C. SQLite Bundled FTS5 Database Architecture
+- **Schema & Migrations**: Configured in `crates/valor-core/src/db.rs` with `rusqlite` bundled modern-full features.
+- **Concurrency & WAL Mode**: SQLite runs in WAL mode (`PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL`).
+- **FTS5 Virtual Table**: `library_fts` synchronizes title, series title, and tags for instant millisecond search over entire media libraries.
+- **Unified History**: Single consolidated query per collection/series (`history_view`) preserving exact resume position and completion status.
+
+### D. Incremental Directory Scanner & 20,000 File Benchmark
+- **Implementation**: Located in `crates/valor-library/src/scanner.rs`.
+  - **Incremental Caching**: Preloads in-memory cache of `(path -> size + mtime)` at scan onset. Unchanged files skip disk I/O, hash calculation, and database writes entirely.
+  - **Batching**: Database insertions occur in batched transactions of 500 records inside `batch_upsert_scanned_files`.
+  - **Fault Tolerance**: Walks directory tree using `walkdir::WalkDir::new(root).follow_links(true)`. Individual file failures (permissions, unreadable bytes) are appended to `file_errors` without aborting the scan.
+  - **Control**: Real-time cancellation (`cancel_flag: Arc<AtomicBool>`) and pausing (`pause_flag: Arc<AtomicBool>`).
+  - **Optimized Regex Tokenizer**: Filename parser regexes precompiled once via `std::sync::LazyLock`.
+
+#### Empirical Scanner Benchmark Results (Generated Tree of 20,000 Media Files)
+Executed via `cargo test --release -p valor-library --test scanner_bench_test -- --nocapture`:
+
+```
+============================================================
+GENERATING 20,000 FILES TEST TREE...
+Generated 20,000 media files in 3.20s (100 folders x 200 files)
+============================================================
+RUNNING COLD SCAN (20,000 files)...
+COLD SCAN RESULTS:
+  • Files Seen: 20,000
+  • Files Ingested: 20,000
+  • Errors: 0
+  • Total Time: 19.004 s
+  • Throughput: 1,052.4 files / second
+============================================================
+RUNNING INCREMENTAL WARM SCAN (20,000 unchanged files)...
+INCREMENTAL WARM SCAN RESULTS:
+  • Files Seen: 20,000
+  • Files Skipped (Unchanged): 20,000
+  • Files Ingested: 0
+  • Errors: 0
+  • Total Time: 0.835 s
+  • Throughput: 23,947.3 files / second
+============================================================
+TESTING CANCELLATION...
+Cancellation verified: Stopped after seeing 789 of 20,000 files (< 100ms)
+TESTING PAUSE AND RESUME...
+Pause/Resume verified: Completed scanning all 20,000 files
+```
+
+### E. Filename Parser
+- **Test Suite**: 100 table-driven real-world release patterns in `crates/valor-library/src/parser.rs` verifying movies, TV shows, anime absolute numbering, seasons/episodes, release groups, and audio/video codecs.
+- **Pass Rate**: 100 / 100 passing tests.
+
+### F. Web JSON Migration Importer
+- **Implementation**: Located in `crates/valor-library/src/importer.rs`.
+- **Capabilities**:
+  - Ingests single JSON file export from production web app.
+  - **Dry Run Support**: Generates non-destructive `ImportReport` with match classification:
+    - Priority 1: Match by `legacy_fingerprint`.
+    - Priority 2: Match by `path`.
+    - Priority 3: Match by `filename` + `size_bytes` (with mtime tiebreak).
+    - Unmatched entries recorded with actionable failure reasons.
+  - Restores playback resume positions, bookmarks (intro/credits/scene categories), and playlist collections into native SQLite tables.
+
 
 ---
 

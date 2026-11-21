@@ -6,8 +6,10 @@ license.workspace = true
 
 [dependencies]
 valor-core = { path = "../valor-core" }
+blake3 = "1.5"
+libmpv2 = "7.0.1"
+libmpv2-sys = "4.0.1"
 walkdir = "2.5"
-rayon = "1.10"
 notify = "6.1"
 regex = "1.11"
 serde = { version = "1.0", features = ["derive"] }
@@ -17,3 +19,6 @@ directories = "5.0"
 parking_lot = "0.12"
 thiserror = "2.0"
 tracing = "0.1"
+
+[dev-dependencies]
+tempfile = "3.10"
