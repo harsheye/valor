@@ -93,10 +93,10 @@ fn test_v5_fts5_triggers_sync_and_20k_row_timing() {
             for i in 0..1000 {
                 let id_num = chunk_idx * 1000 + i;
                 let title = match id_num % 5 {
-                    0 => format!("Devs Season 01 Episode {:02}", (id_num % 8) + 1),
-                    1 => format!("The Matrix Resurrections Part {}", id_num),
-                    2 => format!("Interstellar Special Edition {:04}", id_num),
-                    3 => format!("Blade Runner 2049 Final Cut {:04}", id_num),
+                    0 => format!("Quantum Odyssey Season 01 Episode {:02}", (id_num % 8) + 1),
+                    1 => format!("Cybernetic Simulation Part {}", id_num),
+                    2 => format!("Cosmic Horizon Edition {:04}", id_num),
+                    3 => format!("Neon Future Cut {:04}", id_num),
                     _ => format!("Episode {:05} of Mystery Series", id_num),
                 };
                 let item = MediaItem {
@@ -131,12 +131,12 @@ fn test_v5_fts5_triggers_sync_and_20k_row_timing() {
     // 3. FTS5 Query Benchmark on 20,000 Rows
     println!("\n--- Benchmarking FTS5 Prefix and Exact Queries on 20,000 Rows ---");
     let test_queries = [
-        "Devs",
-        "Devs*",
-        "Matrix",
-        "Interstellar*",
+        "Quantum",
+        "Quantum*",
+        "Cybernetic",
+        "Cosmic*",
         "Episode*",
-        "Blade",
+        "Neon",
     ];
 
     for q in &test_queries {

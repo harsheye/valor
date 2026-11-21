@@ -96,3 +96,88 @@ fn test_v10_mpv_property_names_and_capabilities() {
 
     println!("================================================================================");
 }
+
+#[test]
+fn test_x3_x8_x9_probe_picture_detail_geometry_and_motion() {
+    println!("================================================================================");
+    println!("PROBING PINNED LIBMPV (v2.0) PROPERTIES FOR PICTURE DETAIL, GEOMETRY, MOTION");
+    println!("================================================================================");
+
+    let mpv = Mpv::with_initializer(|init| {
+        init.set_property("vo", "null")?;
+        init.set_property("ao", "null")?;
+        init.set_property("hwdec", "no")?;
+        init.set_property("idle", true)?;
+        Ok(())
+    })
+    .expect("mpv init failed");
+
+    let clip_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap()
+        .parent()
+        .unwrap()
+        .join("tests/fixtures/media/clip_01_multitrack.mkv");
+    let clip_str = clip_path.to_string_lossy().to_string();
+    let _ = mpv.command("loadfile", &[&clip_str, "replace"]);
+    std::thread::sleep(std::time::Duration::from_millis(50));
+
+    let probe_props = [
+        "sharpen",
+        "scale-antiring",
+        "dscale-antiring",
+        "cscale-antiring",
+        "deband",
+        "deband-iterations",
+        "deband-threshold",
+        "deband-range",
+        "deband-grain",
+        "denoise",
+        "glsl-shaders",
+        "display-fps-override",
+        "video-crop",
+        "video-align-x",
+        "video-align-y",
+        "video-pan-x",
+        "video-pan-y",
+        "video-zoom",
+        "video-rotate",
+        "icc-profile-auto",
+        "dither-depth",
+        "vf",
+        "af",
+        "brightness",
+        "contrast",
+        "saturation",
+        "gamma",
+        "hue",
+    ];
+
+    for prop in probe_props {
+        let res_str = mpv.get_property::<String>(prop);
+        let res_f64 = mpv.get_property::<f64>(prop);
+        let res_i64 = mpv.get_property::<i64>(prop);
+        let res_bool = mpv.get_property::<bool>(prop);
+        let status = if res_str.is_ok() || res_f64.is_ok() || res_i64.is_ok() || res_bool.is_ok() {
+            let val = res_str.or_else(|_| res_f64.map(|v| v.to_string()))
+                .or_else(|_| res_i64.map(|v| v.to_string()))
+                .or_else(|_| res_bool.map(|v| v.to_string()))
+                .unwrap();
+            format!("SUPPORTED (current: '{}')", val)
+        } else {
+            format!("UNSUPPORTED / UNAVAILABLE (err: {:?})", res_str.err().unwrap())
+        };
+        println!("  • Property '{:22}': {}", prop, status);
+    }
+
+    // Probe lavfi filter support via vf
+    let vf_unsharp_res = mpv.set_property("vf", "lavfi=[unsharp=5:5:1.0:5:5:0.0]");
+    println!("  • Filter 'vf=lavfi=[unsharp]': {:?}", vf_unsharp_res);
+    let vf_hflip_res = mpv.set_property("vf", "hflip");
+    println!("  • Filter 'vf=hflip':          {:?}", vf_hflip_res);
+    let vf_cropdetect_res = mpv.set_property("vf", "cropdetect");
+    println!("  • Filter 'vf=cropdetect':     {:?}", vf_cropdetect_res);
+    let _ = mpv.set_property("vf", "");
+
+    println!("================================================================================");
+}

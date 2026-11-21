@@ -57,6 +57,20 @@ pub struct HistoryEntry {
     pub last_played_at: DateTime<Utc>,
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct WatchSession {
+    pub id: String,
+    pub fingerprint: String,
+    pub collection_id: Option<String>,
+    pub item_title: String,
+    pub start_time: DateTime<Utc>,
+    pub end_time: DateTime<Utc>,
+    pub start_pos_secs: f64,
+    pub end_pos_secs: f64,
+    pub completed: bool,
+    pub stopped_early: bool,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct TrackItem {
     pub id: i64,

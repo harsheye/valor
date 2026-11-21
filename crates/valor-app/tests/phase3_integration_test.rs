@@ -39,7 +39,7 @@ fn test_phase3_player_database_tracks_resume_history_integration() {
         id: "item_01".into(),
         fingerprint: fp1.clone(),
         file_path: clip1_path.to_str().unwrap().to_string(),
-        title: "Devs S01E01".into(),
+        title: "Anthology S01E01".into(),
         duration: 50.0,
         size_bytes: 1024,
         width: Some(1920),
@@ -58,7 +58,7 @@ fn test_phase3_player_database_tracks_resume_history_integration() {
         id: "item_02".into(),
         fingerprint: fp2.clone(),
         file_path: clip2_path.to_str().unwrap().to_string(),
-        title: "Devs S01E02".into(),
+        title: "Anthology S01E02".into(),
         duration: 50.0,
         size_bytes: 1024,
         width: Some(1920),
@@ -77,7 +77,7 @@ fn test_phase3_player_database_tracks_resume_history_integration() {
         id: "item_03".into(),
         fingerprint: fp3.clone(),
         file_path: clip3_path.to_str().unwrap().to_string(),
-        title: "Devs S01E03".into(),
+        title: "Anthology S01E03".into(),
         duration: 50.0,
         size_bytes: 1024,
         width: Some(1920),
@@ -99,8 +99,8 @@ fn test_phase3_player_database_tracks_resume_history_integration() {
 
     // 2. Open 3 Clips in a Playlist Collection
     let playlist_collection = Collection {
-        id: "coll_devs".into(),
-        name: "Devs".into(),
+        id: "coll_anthology".into(),
+        name: "Anthology".into(),
         collection_type: "playlist".into(),
         item_ids: vec![item1.id.clone(), item2.id.clone(), item3.id.clone()],
         current_index: 0,
@@ -222,12 +222,12 @@ fn test_phase3_player_database_tracks_resume_history_integration() {
     );
     assert_eq!(history[0].collection_id, single_coll_id);
     assert_eq!(history[0].total_items, 1);
-    assert_eq!(history[1].collection_id, "coll_devs");
+    assert_eq!(history[1].collection_id, "coll_anthology");
     assert_eq!(history[1].total_items, 3);
 
     // 6. Track Selection, Matching, Preferences & Subtitle Styling
     let mut track_mgr = TrackPreferencesManager::new();
-    track_mgr.update("Devs", |p| {
+    track_mgr.update("Anthology", |p| {
         p.audio_lang = Some("eng".into());
         p.sub_lang = Some("eng".into());
         p.audio_offset_secs = 0.15; // +150ms
@@ -237,7 +237,7 @@ fn test_phase3_player_database_tracks_resume_history_integration() {
         p.style.ass_override = true;
     });
 
-    let carried = track_mgr.get("Devs");
+    let carried = track_mgr.get("Anthology");
     assert_eq!(carried.audio_lang.as_deref(), Some("eng"));
     assert_eq!(carried.audio_offset_secs, 0.15);
     assert_eq!(carried.sub_offset_secs, -0.10);

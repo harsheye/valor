@@ -230,14 +230,15 @@ pub fn is_playback_completed(position_secs: f64, duration_secs: f64) -> bool {
     }
 }
 
-/// Separate "watched" threshold for scrobbling (e.g. Trakt / history scrobbling):
-/// Marked watched when at least 80% of the media has been played, or remaining time < 2 minutes.
+/// Mathematical "watched" rule (Y7):
+/// Marked watched if: position >= 0.8 * duration OR remaining <= min(120 s, 20% of duration).
 pub fn is_playback_scrobble_watched(position_secs: f64, duration_secs: f64) -> bool {
     if duration_secs <= 0.0 {
         return false;
     }
-    (position_secs / duration_secs >= 0.80)
-        || (duration_secs > 120.0 && duration_secs - position_secs <= 120.0)
+    let remaining = (duration_secs - position_secs).max(0.0);
+    let remaining_threshold = 120.0_f64.min(0.20 * duration_secs);
+    (position_secs >= 0.80 * duration_secs) || (remaining <= remaining_threshold)
 }
 
 /// Subtitle styling configuration ported from SubtitleOverlay.tsx and Phase 3 specifications.
@@ -444,6 +445,36 @@ mod tests {
         assert!(!is_playback_scrobble_watched(1000.0, 2700.0)); // 37%
         assert!(is_playback_scrobble_watched(2160.0, 2700.0)); // 80%
         assert!(is_playback_scrobble_watched(2600.0, 2700.0)); // Remaining 100s < 120s
+    }
+
+    #[test]
+    fn test_y7_watched_rule_mathematical_definition() {
+        // Rule: position >= 0.8 * duration || remaining <= min(120 s, 20% of duration)
+
+        // Case 1: 90 seconds item
+        // 0.8 * 90 = 72s. min(120, 0.20 * 90 = 18s) = 18s.
+        assert!(!is_playback_scrobble_watched(71.0, 90.0), "90s at 71s (remaining 19s > 18s) must not be watched");
+        assert!(is_playback_scrobble_watched(72.0, 90.0), "90s at 72s (80%, remaining 18s) must be watched");
+        assert!(is_playback_scrobble_watched(85.0, 90.0), "90s at 85s must be watched");
+
+        // Case 2: 2 minutes (120 seconds) item
+        // 0.8 * 120 = 96s. min(120, 0.20 * 120 = 24s) = 24s.
+        assert!(!is_playback_scrobble_watched(95.0, 120.0), "120s at 95s (remaining 25s > 24s) must not be watched");
+        assert!(is_playback_scrobble_watched(96.0, 120.0), "120s at 96s (80%, remaining 24s) must be watched");
+        assert!(is_playback_scrobble_watched(110.0, 120.0), "120s at 110s must be watched");
+
+        // Case 3: 25 minutes (1500 seconds) item
+        // 0.8 * 1500 = 1200s (20 min). min(120, 0.20 * 1500 = 300s) = 120s (2 min).
+        assert!(!is_playback_scrobble_watched(1199.0, 1500.0), "1500s at 1199s (remaining 301s > 120s) must not be watched");
+        assert!(is_playback_scrobble_watched(1200.0, 1500.0), "1500s at 1200s (80% threshold) must be watched");
+        assert!(is_playback_scrobble_watched(1380.0, 1500.0), "1500s at 1380s (remaining 120s <= 120s) must be watched");
+        assert!(is_playback_scrobble_watched(1490.0, 1500.0), "1500s at 1490s must be watched");
+
+        // Case 4: 3 hours (10800 seconds) item
+        // 0.8 * 10800 = 8640s (2h 24m). min(120, 0.20 * 10800 = 2160s) = 120s (2 min).
+        assert!(!is_playback_scrobble_watched(8639.0, 10800.0), "10800s at 8639s must not be watched");
+        assert!(is_playback_scrobble_watched(8640.0, 10800.0), "10800s at 8640s (80% threshold) must be watched");
+        assert!(is_playback_scrobble_watched(10680.0, 10800.0), "10800s at 10680s (remaining 120s <= 120s) must be watched");
     }
 
     #[test]

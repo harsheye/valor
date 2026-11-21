@@ -20,7 +20,36 @@ pub struct PlayerEngine {
     mpv: Arc<Mutex<Mpv>>,
     state: Arc<Mutex<PlaybackState>>,
     audio_graph: Arc<Mutex<AudioGraphComposer>>,
+    shader_manager: Arc<Mutex<crate::shaders::ShaderManager>>,
+    saved_comparison_state: Arc<Mutex<Option<(VideoAdjustmentSnapshot, AudioGraphComposer)>>>,
     current_token: AtomicU64,
+}
+
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct VideoAdjustmentSnapshot {
+    pub brightness: i64,
+    pub contrast: i64,
+    pub saturation: i64,
+    pub gamma: i64,
+    pub hue: i64,
+    pub sharpen: f64,
+    pub deband: bool,
+    pub glsl_shaders: String,
+}
+
+impl Default for VideoAdjustmentSnapshot {
+    fn default() -> Self {
+        Self {
+            brightness: 0,
+            contrast: 0,
+            saturation: 0,
+            gamma: 0,
+            hue: 0,
+            sharpen: 0.0,
+            deband: false,
+            glsl_shaders: String::new(),
+        }
+    }
 }
 
 /// Computes the linear audio multiplier matching the production Valor tiers:
@@ -47,15 +76,9 @@ impl PlayerEngine {
 
     /// Builds the lavfi audio boost filter string for a given tier percent.
     pub fn build_audio_boost_filter(tier_percent: u32) -> Option<String> {
-        if tier_percent > 100 {
-            let mult = audio_boost_multiplier(tier_percent);
-            Some(format!(
-                "lavfi=[volume=volume={:.2},alimiter=limit=0.891:attack=5:release=50:level=disabled]",
-                mult
-            ))
-        } else {
-            None
-        }
+        let mut composer = AudioGraphComposer::new();
+        composer.set_boost_tier(tier_percent);
+        composer.build_filter_string()
     }
 
     /// Initializes mpv with custom audio output sink (e.g. PCM file sink for testing).
@@ -104,11 +127,16 @@ impl PlayerEngine {
 
         let state = Arc::new(Mutex::new(PlaybackState::default()));
         let audio_graph = Arc::new(Mutex::new(AudioGraphComposer::default()));
+        let mut shader_manager = crate::shaders::ShaderManager::new();
+        let assets_dir = std::path::Path::new("assets/shaders");
+        let _ = shader_manager.scan_directory(assets_dir);
 
         Ok(Self {
             mpv: Arc::new(Mutex::new(mpv)),
             state,
             audio_graph,
+            shader_manager: Arc::new(Mutex::new(shader_manager)),
+            saved_comparison_state: Arc::new(Mutex::new(None)),
             current_token: AtomicU64::new(1),
         })
     }
@@ -424,6 +452,12 @@ impl PlayerEngine {
     }
 
     // Motion & Interpolation
+    pub fn set_display_fps_override(&self, fps: f64) -> Result<(), PlayerError> {
+        let mpv = self.mpv.lock();
+        mpv.set_property("display-fps-override", fps)?;
+        Ok(())
+    }
+
     pub fn set_interpolation(&self, enable: bool) -> Result<(), PlayerError> {
         let mpv = self.mpv.lock();
         mpv.set_property("interpolation", enable)?;
@@ -562,6 +596,18 @@ impl PlayerEngine {
     }
 
     // Phase 4 Audio Graph Composer Integration
+    fn sync_audio_graph(&self, mpv: &Mpv, graph: &mut AudioGraphComposer) -> Result<Option<String>, PlayerError> {
+        let ch = mpv.get_property::<i64>("audio-params/channel-count")
+            .or_else(|_| mpv.get_property::<i64>("audio-params/channels"))
+            .unwrap_or(2) as u32;
+        graph.set_input_channels(ch);
+        let res = graph.apply_to_mpv_with_resilience(mpv)?;
+        if let Some(ref stage) = res {
+            eprintln!("[Valor Audio] Stage '{}' failed to load in mpv and was safely disabled. Remainder and limiter preserved.", stage);
+        }
+        Ok(res)
+    }
+
     pub fn set_audio_boost(&self, tier_percent: u32) -> Result<(), PlayerError> {
         let mpv = self.mpv.lock();
         // Keep master output volume strictly at 100% so mpv does not amplify after the filter chain
@@ -569,7 +615,7 @@ impl PlayerEngine {
 
         let mut graph = self.audio_graph.lock();
         graph.set_boost_tier(tier_percent);
-        graph.apply_to_mpv(&mpv)?;
+        self.sync_audio_graph(&mpv, &mut graph)?;
 
         self.state.lock().audio_boost_tier = tier_percent;
         Ok(())
@@ -579,7 +625,7 @@ impl PlayerEngine {
         let mpv = self.mpv.lock();
         let mut graph = self.audio_graph.lock();
         graph.set_eq(gains);
-        graph.apply_to_mpv(&mpv)?;
+        self.sync_audio_graph(&mpv, &mut graph)?;
         Ok(())
     }
 
@@ -591,7 +637,7 @@ impl PlayerEngine {
         } else {
             NormalizationMode::None
         });
-        graph.apply_to_mpv(&mpv)?;
+        self.sync_audio_graph(&mpv, &mut graph)?;
         Ok(())
     }
 
@@ -603,7 +649,7 @@ impl PlayerEngine {
         } else {
             NormalizationMode::None
         });
-        graph.apply_to_mpv(&mpv)?;
+        self.sync_audio_graph(&mpv, &mut graph)?;
         Ok(())
     }
 
@@ -615,7 +661,7 @@ impl PlayerEngine {
         } else {
             NormalizationMode::None
         });
-        graph.apply_to_mpv(&mpv)?;
+        self.sync_audio_graph(&mpv, &mut graph)?;
         Ok(())
     }
 
@@ -623,8 +669,87 @@ impl PlayerEngine {
         let mpv = self.mpv.lock();
         let mut graph = self.audio_graph.lock();
         graph.set_dialogue_boost(enable);
-        graph.apply_to_mpv(&mpv)?;
+        self.sync_audio_graph(&mpv, &mut graph)?;
         Ok(())
+    }
+
+    /// Hold-to-compare (X5): Temporarily bypasses ALL enhancements (video adjustments,
+    /// shaders, filters, audio graph) to compare raw original source against enhanced picture.
+    pub fn start_hold_to_compare(&self) -> Result<(), PlayerError> {
+        let mut saved = self.saved_comparison_state.lock();
+        if saved.is_some() {
+            return Ok(()); // Already in comparison mode
+        }
+
+        let mpv = self.mpv.lock();
+        let snap = VideoAdjustmentSnapshot {
+            brightness: mpv.get_property("brightness").unwrap_or(0),
+            contrast: mpv.get_property("contrast").unwrap_or(0),
+            saturation: mpv.get_property("saturation").unwrap_or(0),
+            gamma: mpv.get_property("gamma").unwrap_or(0),
+            hue: mpv.get_property("hue").unwrap_or(0),
+            sharpen: mpv.get_property("sharpen").unwrap_or(0.0),
+            deband: mpv.get_property("deband").unwrap_or(false),
+            glsl_shaders: mpv.get_property("glsl-shaders").unwrap_or_default(),
+        };
+        let audio_snap = self.audio_graph.lock().clone();
+        *saved = Some((snap, audio_snap));
+
+        // Apply neutral raw baseline
+        let _ = mpv.set_property("brightness", 0);
+        let _ = mpv.set_property("contrast", 0);
+        let _ = mpv.set_property("saturation", 0);
+        let _ = mpv.set_property("gamma", 0);
+        let _ = mpv.set_property("hue", 0);
+        let _ = mpv.set_property("sharpen", 0.0);
+        let _ = mpv.set_property("deband", false);
+        let _ = mpv.set_property("glsl-shaders", "");
+        let _ = AudioGraphComposer::bypassed().apply_to_mpv(&mpv);
+
+        Ok(())
+    }
+
+    /// Releases Hold-to-compare and restores exact active enhancement state.
+    pub fn stop_hold_to_compare(&self) -> Result<(), PlayerError> {
+        let mut saved = self.saved_comparison_state.lock();
+        if let Some((video, audio)) = saved.take() {
+            let mpv = self.mpv.lock();
+            let _ = mpv.set_property("brightness", video.brightness);
+            let _ = mpv.set_property("contrast", video.contrast);
+            let _ = mpv.set_property("saturation", video.saturation);
+            let _ = mpv.set_property("gamma", video.gamma);
+            let _ = mpv.set_property("hue", video.hue);
+            let _ = mpv.set_property("sharpen", video.sharpen);
+            let _ = mpv.set_property("deband", video.deband);
+            let _ = mpv.set_property("glsl-shaders", video.glsl_shaders.as_str());
+            let _ = audio.apply_to_mpv(&mpv);
+        }
+        Ok(())
+    }
+
+    /// Toggle comparison mode: returns true if now in comparison (raw baseline), false if restored.
+    pub fn toggle_compare_mode(&self) -> Result<bool, PlayerError> {
+        if self.saved_comparison_state.lock().is_some() {
+            self.stop_hold_to_compare()?;
+            Ok(false)
+        } else {
+            self.start_hold_to_compare()?;
+            Ok(true)
+        }
+    }
+
+    pub fn is_compare_active(&self) -> bool {
+        self.saved_comparison_state.lock().is_some()
+    }
+
+    pub fn shader_manager(&self) -> Arc<Mutex<crate::shaders::ShaderManager>> {
+        self.shader_manager.clone()
+    }
+
+    pub fn apply_shaders(&self) -> Result<Option<String>, PlayerError> {
+        let mpv = self.mpv.lock();
+        let mut mgr = self.shader_manager.lock();
+        mgr.apply_to_mpv(&mpv).map_err(PlayerError::Mpv)
     }
 
     /// Hold-to-compare: temporarily bypasses all active audio filter graph processing

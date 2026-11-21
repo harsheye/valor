@@ -34,6 +34,9 @@ static RE_VCODEC: LazyLock<Regex> = LazyLock::new(|| {
 static RE_ACODEC: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?i)\b(TrueHD|Atmos|DTS-HD|DTS-X|DTS|DDP5\.1|DD5\.1|AC3|AAC|FLAC)\b").unwrap()
 });
+static RE_LEADING_TRACK: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"^(?:(\d{1,3})\s*[-–]\s*|(\d{1,2})\.\s+|(\d{1,3})\s+)").unwrap()
+});
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ConfidenceLevel {
@@ -44,6 +47,7 @@ pub enum ConfidenceLevel {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ParsedFilename {
     pub title: String,
+    pub track_no: Option<u32>,
     pub year: Option<u32>,
     pub season: Option<u32>,
     pub episode: Option<u32>,
@@ -58,9 +62,69 @@ pub struct ParsedFilename {
     pub is_ambiguous: bool,
 }
 
-pub fn parse_media_filename(file_path: &str) -> ParsedFilename {
+pub fn extract_leading_track(stem: &str) -> (String, Option<u32>) {
+    // 4-digit numbers at start (e.g. 2001, 1984, 1917) are titles/years, not track numbers
+    let first4: Vec<char> = stem.chars().take(4).collect();
+    if first4.len() == 4 && first4.iter().all(|c| c.is_ascii_digit()) {
+        return (stem.to_string(), None);
+    }
+    if let Some(caps) = RE_LEADING_TRACK.captures(stem) {
+        let full_match = caps.get(0).unwrap();
+        let track_str = caps
+            .get(1)
+            .or_else(|| caps.get(2))
+            .or_else(|| caps.get(3))
+            .map(|m| m.as_str())
+            .unwrap_or("");
+        if let Ok(track_num) = track_str.parse::<u32>() {
+            if track_num > 0 && track_num <= 500 {
+                let remainder = stem[full_match.end()..].trim().to_string();
+                if !remainder.is_empty() {
+                    return (remainder, Some(track_num));
+                }
+            }
+        }
+    }
+    (stem.to_string(), None)
+}
+
+/// Course / Other parser: lists by folder in leading-number order (no movie-title parsing)
+pub fn parse_course_filename(file_path: &str) -> ParsedFilename {
     let p = Path::new(file_path);
     let stem = p.file_stem().and_then(|s| s.to_str()).unwrap_or(file_path);
+    let (clean_title, track_no) = extract_leading_track(stem);
+    let final_title = if clean_title.is_empty() {
+        stem.to_string()
+    } else {
+        clean_title
+    };
+    ParsedFilename {
+        title: final_title,
+        track_no,
+        year: None,
+        season: None,
+        episode: None,
+        episode_end: None,
+        resolution: None,
+        source: None,
+        video_codec: None,
+        audio_codec: None,
+        release_group: None,
+        tmdb_id: None,
+        confidence: ConfidenceLevel::High,
+        is_ambiguous: false,
+    }
+}
+
+pub fn parse_media_filename(file_path: &str) -> ParsedFilename {
+    let p = Path::new(file_path);
+    let raw_stem = p.file_stem().and_then(|s| s.to_str()).unwrap_or(file_path);
+    let (stem_after_track, track_no) = extract_leading_track(raw_stem);
+    let stem = if !stem_after_track.is_empty() {
+        &stem_after_track
+    } else {
+        raw_stem
+    };
 
     // Check for ambiguous patterns: e.g. "show.102.mkv" without explicit SxxExx or Ep tokens
     // Requirement V7: "show.102.mkv" (ambiguous: flag low confidence, do not guess)
@@ -71,6 +135,7 @@ pub fn parse_media_filename(file_path: &str) -> ParsedFilename {
         let clean = stem.replace(['.', '_'], " ");
         return ParsedFilename {
             title: clean,
+            track_no,
             year: None,
             season: None,
             episode: None,
@@ -138,6 +203,7 @@ pub fn parse_media_filename(file_path: &str) -> ParsedFilename {
 
         return ParsedFilename {
             title: final_title,
+            track_no,
             year,
             season,
             episode,
@@ -201,6 +267,7 @@ pub fn parse_media_filename(file_path: &str) -> ParsedFilename {
 
         return ParsedFilename {
             title: final_title,
+            track_no,
             year,
             season: detected_season.or(Some(1)),
             episode: detected_episode,
@@ -221,6 +288,7 @@ pub fn parse_media_filename(file_path: &str) -> ParsedFilename {
 
     ParsedFilename {
         title: clean_title_str(&title, stem),
+        track_no,
         year,
         season: None,
         episode: None,
@@ -288,6 +356,7 @@ fn parse_anime_format(input: &str, release_group: Option<&str>) -> Option<Parsed
         let clean_for_tags = input.replace(['.', '_'], " ");
         return Some(ParsedFilename {
             title: title_without_crc,
+            track_no: None,
             year: None,
             season: Some(1),
             episode,
@@ -772,158 +841,158 @@ mod tests {
             }
         }
 
-        // 4. Held-out 2023-2024 recent Cinema and TV Releases
+        // 4. Held-out generic synthetic Cinema and TV Releases
         let held_out_recent = [
             (
-                "Civil.War.2024.2160p.UHD.BluRay.x265-FLUX.mkv",
-                "Civil War",
+                "Internal.Conflict.2024.2160p.UHD.BluRay.x265-FLUX.mkv",
+                "Internal Conflict",
                 Some(2024),
                 None,
                 None,
             ),
             (
-                "Poor.Things.2023.1080p.BluRay.x264-ROVERS.mkv",
-                "Poor Things",
+                "Strange.Wonders.2023.1080p.BluRay.x264-ROVERS.mkv",
+                "Strange Wonders",
                 Some(2023),
                 None,
                 None,
             ),
             (
-                "Killers.of.the.Flower.Moon.2023.2160p.WEB-DL.mkv",
-                "Killers of the Flower Moon",
+                "Moonlight.Prairie.2023.2160p.WEB-DL.mkv",
+                "Moonlight Prairie",
                 Some(2023),
                 None,
                 None,
             ),
             (
-                "Alien.Romulus.2024.1080p.WEBRip.x264.mkv",
-                "Alien Romulus",
+                "Deep.Space.Colony.2024.1080p.WEBRip.x264.mkv",
+                "Deep Space Colony",
                 Some(2024),
                 None,
                 None,
             ),
             (
-                "Fallout.S01E01.The.End.2160p.AMZN.WEB-DL.mkv",
-                "Fallout",
+                "Wasteland.Chronicles.S01E01.The.End.2160p.AMZN.WEB-DL.mkv",
+                "Wasteland Chronicles",
                 None,
                 Some(1),
                 Some(1),
             ),
             (
-                "Shogun.2024.S01E01.Anjin.2160p.HULU.WEB-DL.mkv",
-                "Shogun",
+                "Dynasty.Warlords.2024.S01E01.Pilot.2160p.HULU.WEB-DL.mkv",
+                "Dynasty Warlords",
                 Some(2024),
                 Some(1),
                 Some(1),
             ),
             (
-                "The.Penguin.S01E01.After.Hours.1080p.MAX.WEB-DL.mkv",
-                "The Penguin",
+                "Gotham.Underground.S01E01.After.Hours.1080p.MAX.WEB-DL.mkv",
+                "Gotham Underground",
                 None,
                 Some(1),
                 Some(1),
             ),
             (
-                "Baby.Reindeer.S01E01.1080p.NF.WEB-DL.mkv",
-                "Baby Reindeer",
+                "Midnight.Stalker.S01E01.1080p.NF.WEB-DL.mkv",
+                "Midnight Stalker",
                 None,
                 Some(1),
                 Some(1),
             ),
             (
-                "Presumed.Innocent.S01E08.The.Verdict.1080p.mkv",
-                "Presumed Innocent",
+                "Legal.Drama.Court.S01E08.The.Verdict.1080p.mkv",
+                "Legal Drama Court",
                 None,
                 Some(1),
                 Some(8),
             ),
             (
-                "Industry.S03E01.Il.Sogno.1080p.mkv",
-                "Industry",
+                "Finance.Tower.S03E01.Opening.Bell.1080p.mkv",
+                "Finance Tower",
                 None,
                 Some(3),
                 Some(1),
             ),
             (
-                "Slow.Horses.S04E01.Identity.Theft.1080p.mkv",
-                "Slow Horses",
+                "MI6.Agents.S04E01.Identity.Theft.1080p.mkv",
+                "MI6 Agents",
                 None,
                 Some(4),
                 Some(1),
             ),
             (
-                "[Erai-raws] Dandadan - 01 [1080p][Multiple Subtitle].mkv",
-                "Dandadan",
+                "[FansubGroup] Occult Romance - 01 [1080p][Multiple Subtitle].mkv",
+                "Occult Romance",
                 None,
                 Some(1),
                 Some(1),
             ),
             (
-                "[SubsPlease] Bleach - Thousand-Year Blood War - 27 (1080p).mkv",
-                "Bleach - Thousand-Year Blood War",
+                "[FansubGroup] Soul Warriors - Final Arc - 27 (1080p).mkv",
+                "Soul Warriors - Final Arc",
                 None,
                 Some(1),
                 Some(27),
             ),
             (
-                "[ASW] Blue Box - 01 [1080p].mkv",
-                "Blue Box",
+                "[FansubGroup] High School Badminton - 01 [1080p].mkv",
+                "High School Badminton",
                 None,
                 Some(1),
                 Some(1),
             ),
             (
-                "[Erai-raws] Re Zero Season 3 - 01 [1080p].mkv",
-                "Re Zero Season 3",
+                "[FansubGroup] Fantasy Reincarnation Season 3 - 01 [1080p].mkv",
+                "Fantasy Reincarnation Season 3",
                 None,
                 Some(1),
                 Some(1),
             ),
             (
-                "A.Real.Pain.2024.1080p.WEB-DL.mkv",
-                "A Real Pain",
+                "Family.Heritage.Trip.2024.1080p.WEB-DL.mkv",
+                "Family Heritage Trip",
                 Some(2024),
                 None,
                 None,
             ),
             (
-                "Anora.2024.2160p.WEB-DL.DDP5.1.mkv",
-                "Anora",
+                "Golden.Palm.Award.2024.2160p.WEB-DL.DDP5.1.mkv",
+                "Golden Palm Award",
                 Some(2024),
                 None,
                 None,
             ),
             (
-                "Conclave.2024.1080p.BluRay.x264.mkv",
-                "Conclave",
+                "Secret.Conclave.2024.1080p.BluRay.x264.mkv",
+                "Secret Conclave",
                 Some(2024),
                 None,
                 None,
             ),
             (
-                "Gladiator.II.2024.2160p.WEB-DL.mkv",
-                "Gladiator II",
+                "Ancient.Colosseum.II.2024.2160p.WEB-DL.mkv",
+                "Ancient Colosseum II",
                 Some(2024),
                 None,
                 None,
             ),
             (
-                "Wicked.2024.1080p.WEB-DL.mkv",
-                "Wicked",
+                "Enchanted.Witches.2024.1080p.WEB-DL.mkv",
+                "Enchanted Witches",
                 Some(2024),
                 None,
                 None,
             ),
             (
-                "The.Substance.2024.1080p.MUBI.WEB-DL.mkv",
-                "The Substance",
+                "The.Elixir.Experiment.2024.1080p.MUBI.WEB-DL.mkv",
+                "The Elixir Experiment",
                 Some(2024),
                 None,
                 None,
             ),
             (
-                "Nosferatu.2024.2160p.UHD.BluRay.mkv",
-                "Nosferatu",
+                "Vampire.Castle.2024.2160p.UHD.BluRay.mkv",
+                "Vampire Castle",
                 Some(2024),
                 None,
                 None,
@@ -960,5 +1029,40 @@ mod tests {
 
         assert_eq!(fail_count, 0, "All held-out test cases must pass!");
         assert!(pass_count >= 40, "Must test at least 40 new filenames");
+    }
+
+    #[test]
+    fn test_y8_parser_leading_track_numbers_and_course_ordering() {
+        // 1. Strip leading track number into track_no and keep out of title
+        let cases = [
+            ("1. Introduction to Systems.mp4", 1, "Introduction to Systems"),
+            ("01 - Memory Safety and Lifetimes.mkv", 1, "Memory Safety and Lifetimes"),
+            ("02. Concurrency and Channels.mp4", 2, "Concurrency and Channels"),
+            ("03 - Async Await Fundamentals.mp4", 3, "Async Await Fundamentals"),
+            ("12 Advanced Macros.mp4", 12, "Advanced Macros"),
+        ];
+
+        for (input, exp_track, exp_title) in cases {
+            let parsed = parse_media_filename(input);
+            assert_eq!(parsed.track_no, Some(exp_track), "Track number mismatch for {}", input);
+            assert_eq!(parsed.title, exp_title, "Title mismatch for {}", input);
+        }
+
+        // 2. Course folder parser: lists by folder in leading-number order (no movie-title stripping)
+        let course_files = [
+            "02 - Second Lecture.mp4",
+            "01 - First Lecture.mp4",
+            "03 - Third Lecture.mp4",
+        ];
+        let mut parsed_list: Vec<ParsedFilename> = course_files.iter().map(|f| parse_course_filename(f)).collect();
+        // Sort by track number
+        parsed_list.sort_by_key(|p| p.track_no.unwrap_or(9999));
+
+        assert_eq!(parsed_list[0].track_no, Some(1));
+        assert_eq!(parsed_list[0].title, "First Lecture");
+        assert_eq!(parsed_list[1].track_no, Some(2));
+        assert_eq!(parsed_list[1].title, "Second Lecture");
+        assert_eq!(parsed_list[2].track_no, Some(3));
+        assert_eq!(parsed_list[2].title, "Third Lecture");
     }
 }

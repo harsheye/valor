@@ -1,5 +1,6 @@
 use libmpv2_sys::mpv_handle;
 use std::ffi::{c_char, c_int, c_void};
+use std::sync::Arc;
 use thiserror::Error;
 use tracing::{error, info};
 
@@ -72,8 +73,32 @@ extern "C" {
     pub fn mpv_render_context_free(ctx: *mut mpv_render_context);
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct GpuFrameStats {
+    pub last_frame_time_ms: f64,
+    pub avg_frame_time_ms: f64,
+    pub frame_budget_ms: f64, // e.g. 16.66 ms for 60Hz
+    pub is_over_budget: bool,
+    pub over_budget_frames: u32,
+    pub auto_downgrade_triggered: bool,
+}
+
+impl Default for GpuFrameStats {
+    fn default() -> Self {
+        Self {
+            last_frame_time_ms: 0.0,
+            avg_frame_time_ms: 0.0,
+            frame_budget_ms: 16.66,
+            is_over_budget: false,
+            over_budget_frames: 0,
+            auto_downgrade_triggered: false,
+        }
+    }
+}
+
 pub struct RenderGlContext {
     ctx: *mut mpv_render_context,
+    pub stats: Arc<parking_lot::Mutex<GpuFrameStats>>,
 }
 
 unsafe impl Send for RenderGlContext {}
@@ -123,7 +148,10 @@ impl RenderGlContext {
         }
 
         info!("Successfully created mpv OpenGL render context: {:p}", ctx);
-        Ok(Self { ctx })
+        Ok(Self {
+            ctx,
+            stats: Arc::new(parking_lot::Mutex::new(GpuFrameStats::default())),
+        })
     }
 
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
@@ -148,6 +176,7 @@ impl RenderGlContext {
         height: i32,
         flip_y: bool,
     ) -> Result<(), RenderError> {
+        let t_start = std::time::Instant::now();
         let mut gl_fbo = mpv_opengl_fbo {
             fbo,
             w: width,
@@ -173,6 +202,28 @@ impl RenderGlContext {
         ];
 
         let ret = unsafe { mpv_render_context_render(self.ctx, params.as_mut_ptr()) };
+        let elapsed_ms = t_start.elapsed().as_secs_f64() * 1000.0;
+
+        // Update GPU frame stats and budget monitoring
+        {
+            let mut s = self.stats.lock();
+            s.last_frame_time_ms = elapsed_ms;
+            s.avg_frame_time_ms = if s.avg_frame_time_ms == 0.0 {
+                elapsed_ms
+            } else {
+                s.avg_frame_time_ms * 0.95 + elapsed_ms * 0.05
+            };
+            s.is_over_budget = elapsed_ms > s.frame_budget_ms;
+            if s.is_over_budget {
+                s.over_budget_frames += 1;
+                if s.over_budget_frames > 60 {
+                    s.auto_downgrade_triggered = true;
+                }
+            } else {
+                s.over_budget_frames = s.over_budget_frames.saturating_sub(1);
+            }
+        }
+
         if ret < 0 {
             return Err(RenderError::RenderFailed(ret));
         }

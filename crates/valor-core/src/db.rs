@@ -343,6 +343,29 @@ impl Database {
             )?;
         }
 
+        if current_version < 5 {
+            info!("Applying schema migration v5 (watch_sessions)");
+            conn.execute_batch(
+                "
+                CREATE TABLE IF NOT EXISTS watch_sessions (
+                    id TEXT PRIMARY KEY,
+                    fingerprint TEXT NOT NULL,
+                    collection_id TEXT,
+                    item_title TEXT NOT NULL,
+                    start_time TEXT NOT NULL,
+                    end_time TEXT NOT NULL,
+                    start_pos_secs REAL NOT NULL,
+                    end_pos_secs REAL NOT NULL,
+                    completed INTEGER NOT NULL DEFAULT 0,
+                    stopped_early INTEGER NOT NULL DEFAULT 0
+                );
+                CREATE INDEX IF NOT EXISTS idx_watch_sessions_time ON watch_sessions(start_time DESC);
+
+                INSERT INTO schema_migrations (version, applied_at) VALUES (5, datetime('now'));
+                ",
+            )?;
+        }
+
         Ok(())
     }
 
@@ -365,6 +388,65 @@ impl Database {
                 pos.updated_at.to_rfc3339()
             ],
         )?;
+        Ok(())
+    }
+
+    /// Records a discrete watch session in the watch_sessions table (Phase 5 session view)
+    pub fn record_watch_session(&self, session: &crate::models::WatchSession) -> Result<(), DbError> {
+        let conn = self.conn.lock();
+        conn.execute(
+            "INSERT INTO watch_sessions (id, fingerprint, collection_id, item_title, start_time, end_time, start_pos_secs, end_pos_secs, completed, stopped_early)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10);",
+            params![
+                session.id,
+                session.fingerprint,
+                session.collection_id,
+                session.item_title,
+                session.start_time.to_rfc3339(),
+                session.end_time.to_rfc3339(),
+                session.start_pos_secs,
+                session.end_pos_secs,
+                session.completed as i32,
+                session.stopped_early as i32,
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// Retrieves recent watch sessions
+    pub fn get_watch_sessions(&self, limit: usize) -> Result<Vec<crate::models::WatchSession>, DbError> {
+        let conn = self.conn.lock();
+        let mut stmt = conn.prepare(
+            "SELECT id, fingerprint, collection_id, item_title, start_time, end_time, start_pos_secs, end_pos_secs, completed, stopped_early
+             FROM watch_sessions ORDER BY start_time DESC LIMIT ?1;"
+        )?;
+        let rows = stmt.query_map(params![limit as i64], |row| {
+            let start_str: String = row.get(4)?;
+            let end_str: String = row.get(5)?;
+            Ok(crate::models::WatchSession {
+                id: row.get(0)?,
+                fingerprint: row.get(1)?,
+                collection_id: row.get(2)?,
+                item_title: row.get(3)?,
+                start_time: chrono::DateTime::parse_from_rfc3339(&start_str).map(|d| d.with_timezone(&chrono::Utc)).unwrap_or_else(|_| chrono::Utc::now()),
+                end_time: chrono::DateTime::parse_from_rfc3339(&end_str).map(|d| d.with_timezone(&chrono::Utc)).unwrap_or_else(|_| chrono::Utc::now()),
+                start_pos_secs: row.get(6)?,
+                end_pos_secs: row.get(7)?,
+                completed: row.get::<_, i32>(8)? != 0,
+                stopped_early: row.get::<_, i32>(9)? != 0,
+            })
+        })?;
+        let mut res = Vec::new();
+        for r in rows {
+            res.push(r?);
+        }
+        Ok(res)
+    }
+
+    /// Deletes a watch session by ID
+    pub fn delete_watch_session(&self, id: &str) -> Result<(), DbError> {
+        let conn = self.conn.lock();
+        conn.execute("DELETE FROM watch_sessions WHERE id = ?1;", params![id])?;
         Ok(())
     }
 
@@ -1424,17 +1506,17 @@ mod tests {
     }
 
     #[test]
-    fn test_w3_membership_lookup_and_devs_deduplication() {
+    fn test_w3_membership_lookup_and_collection_deduplication() {
         let db = Database::in_memory().expect("in-memory db failed");
         let now = Utc::now();
 
-        // 1. Create series items (Devs S1E1, S1E2, S1E3, S1E4, S1E5, S1E6)
+        // 1. Create series items (Anthology S1E1 to S1E6)
         for i in 1..=6 {
             let item = MediaItem {
-                id: format!("item_devs_s1e{}", i),
-                fingerprint: format!("fp_devs_s1e{}", i),
-                file_path: format!("/path/to/Devs.S01E0{}.1080p.mkv", i),
-                title: format!("Devs S1E{}", i),
+                id: format!("item_anthology_s1e{}", i),
+                fingerprint: format!("fp_anthology_s1e{}", i),
+                file_path: format!("/path/to/Anthology.S01E0{}.1080p.mkv", i),
+                title: format!("Anthology S1E{}", i),
                 duration: 3200.0,
                 size_bytes: 2_000_000_000,
                 width: Some(1920),
@@ -1452,26 +1534,26 @@ mod tests {
             db.upsert_item(&item).expect("upsert item failed");
         }
 
-        // 2. Saved collection "Devs" contains all 6 episodes
-        let devs_coll = Collection {
-            id: "coll_devs".into(),
-            name: "Devs".into(),
+        // 2. Saved collection "Anthology" contains all 6 episodes
+        let coll = Collection {
+            id: "coll_anthology".into(),
+            name: "Anthology Series".into(),
             collection_type: "playlist".into(),
-            item_ids: (1..=6).map(|i| format!("item_devs_s1e{}", i)).collect(),
+            item_ids: (1..=6).map(|i| format!("item_anthology_s1e{}", i)).collect(),
             current_index: 0,
             last_played_at: Some(now),
             is_pinned: true,
         };
-        db.save_collection(&devs_coll)
+        db.save_collection(&coll)
             .expect("save collection failed");
 
         // 3. User plays Episode 4 directly
         let matches_ep4 = db
-            .find_collections_for_item("item_devs_s1e4", "fp_devs_s1e4")
+            .find_collections_for_item("item_anthology_s1e4", "fp_anthology_s1e4")
             .expect("lookup failed");
         assert_eq!(matches_ep4.len(), 1);
         let (coll_found, pos_idx) = &matches_ep4[0];
-        assert_eq!(coll_found.id, "coll_devs");
+        assert_eq!(coll_found.id, "coll_anthology");
         assert_eq!(*pos_idx, 3); // 0-based index of episode 4 in item_ids
 
         // Update collection current_index and last_played_at as playback proceeds
@@ -1483,7 +1565,7 @@ mod tests {
 
         // Save position for Episode 4
         db.save_playback_position(&PlaybackPosition {
-            fingerprint: "fp_devs_s1e4".into(),
+            fingerprint: "fp_anthology_s1e4".into(),
             position_secs: 420.0,
             duration_secs: 3200.0,
             completed: false,
@@ -1493,11 +1575,11 @@ mod tests {
 
         // 4. Later, user plays Episode 6 directly
         let matches_ep6 = db
-            .find_collections_for_item("item_devs_s1e6", "fp_devs_s1e6")
+            .find_collections_for_item("item_anthology_s1e6", "fp_anthology_s1e6")
             .expect("lookup failed");
         assert_eq!(matches_ep6.len(), 1);
         let (coll_found_6, pos_idx_6) = &matches_ep6[0];
-        assert_eq!(coll_found_6.id, "coll_devs");
+        assert_eq!(coll_found_6.id, "coll_anthology");
         assert_eq!(*pos_idx_6, 5); // index of episode 6
 
         let mut coll_update_6 = coll_found_6.clone();
@@ -1506,16 +1588,16 @@ mod tests {
         db.save_collection(&coll_update_6)
             .expect("update collection failed");
 
-        // 5. Query history: MUST be exactly ONE card for "Devs", never duplicate cards!
+        // 5. Query history: MUST be exactly ONE card for the collection, never duplicate cards!
         let history = db.get_history(10).expect("get history failed");
         assert_eq!(
             history.len(),
             1,
-            "Duplicate Devs entries must NOT occur in history!"
+            "Duplicate collection entries must NOT occur in history!"
         );
-        assert_eq!(history[0].collection_name, "Devs");
+        assert_eq!(history[0].collection_name, "Anthology Series");
         assert_eq!(history[0].total_items, 6);
         assert_eq!(history[0].current_index, 5);
-        assert_eq!(history[0].current_item_fingerprint, "fp_devs_s1e6");
+        assert_eq!(history[0].current_item_fingerprint, "fp_anthology_s1e6");
     }
 }

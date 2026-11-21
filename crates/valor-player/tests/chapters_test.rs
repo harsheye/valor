@@ -5,18 +5,15 @@ use valor_player::PlayerEngine;
 
 #[test]
 fn test_w6_chapters_discovery_and_jumping() {
-    let devs_clip =
-        Path::new(r"F:\devs.s1.web.108-pahe.in\Devs.S01E01.1080p.WEB-DL.x265.6CH-Pahe.in.mkv");
-    let clip_path = if devs_clip.exists() {
-        devs_clip.to_path_buf()
-    } else {
+    let env_clip = std::env::var("VALOR_TEST_CLIP").ok().map(std::path::PathBuf::from);
+    let clip_path = env_clip.unwrap_or_else(|| {
         Path::new(env!("CARGO_MANIFEST_DIR"))
             .parent()
             .unwrap()
             .parent()
             .unwrap()
             .join("tests/fixtures/media/clip_01_multitrack.mkv")
-    };
+    });
 
     let player = PlayerEngine::new(None).expect("Failed to initialize PlayerEngine");
     let clip_str = clip_path.to_str().expect("valid path");
