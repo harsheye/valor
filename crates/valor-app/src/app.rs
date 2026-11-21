@@ -142,6 +142,13 @@ pub struct ValorNativeApp {
     pub current_sub_delay: f64,
     pub ab_loop_a: Option<f64>,
     pub ab_loop_b: Option<f64>,
+
+    // Phase 5: Dashboard Watch Sessions, Folders, Positions, and Texture LRU
+    pub watch_sessions: Vec<valor_core::models::WatchSession>,
+    pub folders: Vec<valor_core::models::FolderRecord>,
+    pub positions_cache: std::collections::HashMap<String, PlaybackPosition>,
+    pub storage_stats: Vec<(String, u64, usize)>,
+    pub texture_cache: valor_ui::texture_cache::LruTextureCache,
 }
 
 impl ValorNativeApp {
@@ -186,22 +193,33 @@ impl ValorNativeApp {
         compositor.set_blur_enabled(blur_active);
         let glass_compositor = Arc::new(Mutex::new(compositor));
 
+        let user_dirs = directories::UserDirs::new();
+        let default_video_dir = user_dirs
+            .as_ref()
+            .and_then(|u| u.video_dir())
+            .map(|p| p.to_path_buf())
+            .unwrap_or_else(|| PathBuf::from("videos"));
+
+        let test_library_dir = std::env::var("VALOR_TEST_LIBRARY")
+            .ok()
+            .map(PathBuf::from)
+            .unwrap_or(default_video_dir);
+
         let sample_candidates = [
-            r"C:\Users\Admin\Downloads\MobLand.2025.S02E09.Nervous.Breakdown.2160p.ATV.WEB-DL.DUAL.DD5.1.H.265-Spidey.mkv",
-            r"C:\Users\Admin\Downloads\Video\In The Grey (2026) 2160p 10bit UHD BluRay HDR10 x265 HEVC [Hindi AMZN DDP 5.1 + English TrueHD Atmos 7.1] ESub  TDP  SPHD.mkv",
-            r"C:\Users\Admin\Downloads\By Any Means (2026) English 1080p WEB-DL ESub [BollyFlix].mkv",
-            r"C:\Users\Admin\Downloads\Video\Ackella Webcam Model Profile - Omg Adult.mp4",
+            test_library_dir.join("Cosmic.Odyssey.2024.1080p.mkv"),
+            test_library_dir.join("Anthology.Series.S01E01.1080p.mkv"),
         ];
 
         let mut playlist_items = Vec::new();
-        for candidate in sample_candidates {
-            if Path::new(candidate).exists() {
-                let parsed = parse_media_filename(candidate);
-                let is_hdr = candidate.contains("2160p") || candidate.contains("HDR");
+        for candidate in &sample_candidates {
+            if candidate.exists() {
+                let candidate_str = candidate.to_string_lossy().to_string();
+                let parsed = parse_media_filename(&candidate_str);
+                let is_hdr = candidate_str.contains("2160p") || candidate_str.contains("HDR");
                 let item = MediaItem {
                     id: format!("item_{}", playlist_items.len() + 1),
                     fingerprint: format!("fp_{}", playlist_items.len() + 1),
-                    file_path: candidate.to_string(),
+                    file_path: candidate_str,
                     title: parsed.title,
                     duration: 3081.0,
                     size_bytes: 4_500_000_000,
@@ -226,9 +244,9 @@ impl ValorNativeApp {
             }
         }
 
-        let ass_path = r"C:\Users\Admin\valor\valor\sample_subtitle.ass";
-        if Path::new(ass_path).exists() {
-            let _ = player.add_external_subtitle(ass_path);
+        let ass_path = PathBuf::from("assets/subtitles/sample_subtitle.ass");
+        if ass_path.exists() {
+            let _ = player.add_external_subtitle(&ass_path.to_string_lossy());
         }
 
         let collection_name = "Devs".to_string();
@@ -287,6 +305,16 @@ impl ValorNativeApp {
                 .unwrap_or_default();
         }
 
+        let watch_sessions = db.get_watch_sessions(50).unwrap_or_default();
+        let folders = db.get_folders().unwrap_or_default();
+        let storage_stats = db.get_storage_stats().unwrap_or_default();
+        let mut positions_cache = std::collections::HashMap::new();
+        for it in &all_items {
+            if let Ok(Some(pos)) = db.get_playback_position(&it.fingerprint) {
+                positions_cache.insert(it.fingerprint.clone(), pos);
+            }
+        }
+
         Self {
             current_view: AppView::Player,
             player,
@@ -326,6 +354,11 @@ impl ValorNativeApp {
             current_sub_delay: 0.0,
             ab_loop_a: None,
             ab_loop_b: None,
+            watch_sessions,
+            folders,
+            positions_cache,
+            storage_stats,
+            texture_cache: valor_ui::texture_cache::LruTextureCache::new(),
         }
     }
 
@@ -908,6 +941,10 @@ impl eframe::App for ValorNativeApp {
                 &self.all_items,
                 &self.all_collections,
                 &self.history_entries,
+                &self.watch_sessions,
+                &self.folders,
+                &self.positions_cache,
+                &self.storage_stats,
                 &mut self.dashboard_state,
             );
 
@@ -919,26 +956,96 @@ impl eframe::App for ValorNativeApp {
                         self.play_playlist_item(0);
                         self.current_view = AppView::Player;
                     }
-                    DashboardAction::ResumeHistory(_entry) => {
+                    DashboardAction::ResumeHistory(entry) => {
+                        if let Ok(Some(item)) = self.db.find_item_by_fingerprint(&entry.current_item_fingerprint) {
+                            self.playlist_items = vec![item];
+                            self.current_playlist_index = 0;
+                            self.play_playlist_item(0);
+                            let _ = self.player.seek(entry.position_secs);
+                        }
                         self.current_view = AppView::Player;
+                    }
+                    DashboardAction::ResumeSession(sess) => {
+                        if let Ok(Some(item)) = self.db.find_item_by_fingerprint(&sess.fingerprint) {
+                            self.playlist_items = vec![item];
+                            self.current_playlist_index = 0;
+                            self.play_playlist_item(0);
+                            let _ = self.player.seek(sess.start_pos_secs);
+                        }
+                        self.current_view = AppView::Player;
+                    }
+                    DashboardAction::DeleteSession(sess_id) => {
+                        let _ = self.db.delete_watch_session(&sess_id);
+                        self.watch_sessions = self.db.get_watch_sessions(50).unwrap_or_default();
                     }
                     DashboardAction::PlayCollection(coll) => {
                         self.collection_name = coll.name.clone();
                         self.current_playlist_index = coll.current_index;
                         self.current_view = AppView::Player;
                     }
+                    DashboardAction::CreatePlaylist(name) => {
+                        let new_coll = Collection {
+                            id: format!("coll_{}", Utc::now().timestamp_millis()),
+                            name,
+                            collection_type: "playlist".into(),
+                            item_ids: Vec::new(),
+                            current_index: 0,
+                            last_played_at: Some(Utc::now()),
+                            is_pinned: false,
+                        };
+                        let _ = self.db.save_collection(&new_coll);
+                        self.all_collections = self.db.get_all_collections().unwrap_or_default();
+                    }
+                    DashboardAction::DeleteCollection(coll_id) => {
+                        let _ = self.db.delete_collection(&coll_id);
+                        self.all_collections = self.db.get_all_collections().unwrap_or_default();
+                    }
+                    DashboardAction::TogglePinCollection(coll_id) => {
+                        if let Ok(Some(mut c)) = self.db.get_collection_by_id(&coll_id) {
+                            c.is_pinned = !c.is_pinned;
+                            let _ = self.db.save_collection(&c);
+                            self.all_collections = self.db.get_all_collections().unwrap_or_default();
+                        }
+                    }
+                    DashboardAction::DeleteFolder(f_id) => {
+                        let _ = self.db.delete_folder(&f_id);
+                        self.folders = self.db.get_folders().unwrap_or_default();
+                    }
                     DashboardAction::StartScan => {
-                        let downloads = r"C:\Users\Admin\Downloads";
+                        let scan_target = directories::UserDirs::new()
+                            .and_then(|u| u.video_dir().map(|p| p.to_path_buf()))
+                            .or_else(|| directories::UserDirs::new().and_then(|u| u.download_dir().map(|p| p.to_path_buf())))
+                            .unwrap_or_else(|| PathBuf::from("."));
                         let cancel_flag = Arc::new(AtomicBool::new(false));
                         let pause_flag = Arc::new(AtomicBool::new(false));
                         let _ = scan_directory(
-                            Path::new(downloads),
+                            &scan_target,
                             &self.db,
                             cancel_flag,
                             pause_flag,
                             |_| {},
                         );
                         self.all_items = self.db.get_all_items().unwrap_or_default();
+                        self.storage_stats = self.db.get_storage_stats().unwrap_or_default();
+                    }
+                    DashboardAction::OpenFolderPicker => {
+                        if let Some(folder) = rfd::FileDialog::new().pick_folder() {
+                            let rec = valor_core::models::FolderRecord {
+                                id: format!("f_{}", Utc::now().timestamp_millis()),
+                                path: folder.to_string_lossy().to_string(),
+                                folder_type: "Movies".into(),
+                                enabled: true,
+                                ignore_globs: None,
+                                last_scanned_at: None,
+                                created_at: Utc::now(),
+                            };
+                            let _ = self.db.save_folder(&rec);
+                            self.folders = self.db.get_folders().unwrap_or_default();
+                        }
+                    }
+                    DashboardAction::OpenPlaylistDrawer => {
+                        self.playlist_state.is_open = true;
+                        self.current_view = AppView::Player;
                     }
                     DashboardAction::SwitchToPlayer => {
                         self.current_view = AppView::Player;

@@ -21,9 +21,11 @@ pub fn run_benchmark() {
     println!("--------------------------------------------");
 
     let test_clip = Path::new("tests/fixtures/media/clip_01_multitrack.mkv");
-    let clip_4k = Path::new(
-        r"C:\Users\Admin\Downloads\MobLand.2025.S02E09.Nervous.Breakdown.2160p.ATV.WEB-DL.DUAL.DD5.1.H.265-Spidey.mkv",
-    );
+    let clip_4k_buf = std::env::var("VALOR_TEST_LIBRARY")
+        .ok()
+        .map(|d| std::path::PathBuf::from(d).join("sample_4k.mkv"))
+        .unwrap_or_else(|| std::path::PathBuf::from("tests/fixtures/media/clip_01_multitrack.mkv"));
+    let clip_4k = clip_4k_buf.as_path();
 
     if !test_clip.exists() {
         eprintln!(

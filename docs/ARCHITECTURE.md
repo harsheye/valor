@@ -458,7 +458,7 @@ OUT OF OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
 ### A. Headless libmpv Worker Pool
 - **Spike Outcome**: Proved that headless libmpv initialized with `vo=null` and `ao=null` cleanly extracts both metadata (`track-list` in JSON) and video frames (`screenshot-to-file` directly to WebP) without opening any video display window or GPU context.
-- **Artifact**: Sample thumbnail generated from `clip_01_multitrack.mkv` saved at [sample_thumbnail.webp](file:///C:/Users/Admin/valor/valor/docs/screenshots/sample_thumbnail.webp) (9,822 bytes, WebP header verified).
+- **Artifact**: Sample thumbnail generated from `clip_01_multitrack.mkv` saved at [sample_thumbnail.webp](screenshots/sample_thumbnail.webp) (9,822 bytes, WebP header verified).
 - **Concurrency & Resource Cap**: Implemented in `crates/valor-library/src/worker_pool.rs`:
   - Strictly capped at $\le 2$ headless mpv instances using an atomic spawn counter and shared reuse pool.
   - Workers run with `pause=yes`, `idle=yes`, and `demuxer-max-bytes=4MB` to prevent memory blow-up.

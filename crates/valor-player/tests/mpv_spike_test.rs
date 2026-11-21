@@ -5,8 +5,12 @@ use valor_player::{PlaybackStatus, PlayerEngine};
 
 #[test]
 fn test_mpv_spike_playback() {
-    let test_file = r"C:\Users\Admin\Downloads\MobLand.2025.S02E09.Nervous.Breakdown.2160p.ATV.WEB-DL.DUAL.DD5.1.H.265-Spidey.mkv";
-    if !Path::new(test_file).exists() {
+    let test_file_buf = std::env::var("VALOR_TEST_LIBRARY")
+        .ok()
+        .map(|d| std::path::PathBuf::from(d).join("sample_4k.mkv"))
+        .unwrap_or_else(|| std::path::PathBuf::from("tests/fixtures/media/clip_01_multitrack.mkv"));
+    let test_file = test_file_buf.to_string_lossy();
+    if !Path::new(test_file.as_ref()).exists() {
         eprintln!(
             "Test file not found, skipping integration test: {}",
             test_file
@@ -19,7 +23,7 @@ fn test_mpv_spike_playback() {
 
     // Load HEVC 4K MKV
     let token = player
-        .load_file(test_file, "test_fingerprint", 0.0)
+        .load_file(test_file.as_ref(), "test_fingerprint", 0.0)
         .expect("Failed to load MKV file");
     assert!(token > 0);
 

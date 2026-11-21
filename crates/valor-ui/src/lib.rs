@@ -8,4 +8,7 @@ pub mod icons;
 pub mod peek;
 pub mod playlist_drawer;
 pub mod shortcuts;
+pub mod spinner;
+pub mod texture_cache;
 pub mod theme;
+pub mod view_models;

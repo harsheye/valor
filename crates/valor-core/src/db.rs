@@ -450,6 +450,163 @@ impl Database {
         Ok(())
     }
 
+    /// Retrieves all watched library folders
+    pub fn get_folders(&self) -> Result<Vec<FolderRecord>, DbError> {
+        let conn = self.conn.lock();
+        let mut stmt = conn.prepare(
+            "SELECT id, path, folder_type, enabled, ignore_globs, last_scanned_at, created_at
+             FROM folders ORDER BY created_at ASC;",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            let last_scanned_str: Option<String> = row.get(5)?;
+            let created_str: String = row.get(6)?;
+            Ok(FolderRecord {
+                id: row.get(0)?,
+                path: row.get(1)?,
+                folder_type: row.get(2)?,
+                enabled: row.get::<_, i32>(3)? != 0,
+                ignore_globs: row.get(4)?,
+                last_scanned_at: last_scanned_str
+                    .and_then(|s| chrono::DateTime::parse_from_rfc3339(&s).ok())
+                    .map(|d| d.with_timezone(&Utc)),
+                created_at: chrono::DateTime::parse_from_rfc3339(&created_str)
+                    .map(|d| d.with_timezone(&Utc))
+                    .unwrap_or_else(|_| Utc::now()),
+            })
+        })?;
+        let mut folders = Vec::new();
+        for r in rows {
+            folders.push(r?);
+        }
+        Ok(folders)
+    }
+
+    /// Saves or updates a watched library folder
+    pub fn save_folder(&self, folder: &FolderRecord) -> Result<(), DbError> {
+        let conn = self.conn.lock();
+        conn.execute(
+            "INSERT INTO folders (id, path, folder_type, enabled, ignore_globs, last_scanned_at, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+             ON CONFLICT(id) DO UPDATE SET
+                path = excluded.path,
+                folder_type = excluded.folder_type,
+                enabled = excluded.enabled,
+                ignore_globs = excluded.ignore_globs,
+                last_scanned_at = excluded.last_scanned_at;",
+            params![
+                folder.id,
+                folder.path,
+                folder.folder_type,
+                folder.enabled as i32,
+                folder.ignore_globs,
+                folder.last_scanned_at.map(|t| t.to_rfc3339()),
+                folder.created_at.to_rfc3339(),
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// Deletes a folder and unlinks media files
+    pub fn delete_folder(&self, id: &str) -> Result<(), DbError> {
+        let conn = self.conn.lock();
+        conn.execute("DELETE FROM folders WHERE id = ?1;", params![id])?;
+        Ok(())
+    }
+
+    /// Enables or disables a scan folder
+    pub fn set_folder_enabled(&self, id: &str, enabled: bool) -> Result<(), DbError> {
+        let conn = self.conn.lock();
+        conn.execute(
+            "UPDATE folders SET enabled = ?1 WHERE id = ?2;",
+            params![enabled as i32, id],
+        )?;
+        Ok(())
+    }
+
+    /// Relinks a media file path by fingerprint (when a missing file is located or moved)
+    pub fn relink_file_by_fingerprint(&self, fingerprint: &str, new_path: &str) -> Result<(), DbError> {
+        self.relink_file_path("", new_path, fingerprint)
+    }
+
+    /// Marks media items as missing or present
+    pub fn mark_items_missing_status(&self, missing: bool, fingerprints: &[String]) -> Result<(), DbError> {
+        let conn = self.conn.lock();
+        for fp in fingerprints {
+            conn.execute(
+                "UPDATE media_files SET is_missing = ?1 WHERE fingerprint = ?2;",
+                params![missing as i32, fp],
+            )?;
+            conn.execute(
+                "UPDATE items SET is_missing = ?1 WHERE fingerprint = ?2;",
+                params![missing as i32, fp],
+            )?;
+        }
+        Ok(())
+    }
+
+    /// Saves or updates a series record
+    pub fn save_series(&self, id: &str, title: &str, year: Option<u32>) -> Result<(), DbError> {
+        let conn = self.conn.lock();
+        conn.execute(
+            "INSERT INTO series (id, title, year, created_at) VALUES (?1, ?2, ?3, datetime('now'))
+             ON CONFLICT(id) DO UPDATE SET title = excluded.title, year = excluded.year;",
+            params![id, title, year],
+        )?;
+        Ok(())
+    }
+
+    /// Computes library-wide statistics: (movies_count, series_count, total_items, total_duration_secs)
+    pub fn get_library_stats(&self) -> Result<(usize, usize, usize, f64), DbError> {
+        let conn = self.conn.lock();
+        let movies_count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM items WHERE series_id IS NULL;",
+            [],
+            |r| r.get(0),
+        ).unwrap_or(0);
+
+        let series_count: i64 = conn.query_row(
+            "SELECT COUNT(DISTINCT series_id) FROM items WHERE series_id IS NOT NULL;",
+            [],
+            |r| r.get(0),
+        ).unwrap_or(0);
+
+        let total_items: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM items;",
+            [],
+            |r| r.get(0),
+        ).unwrap_or(0);
+
+        let total_duration: f64 = conn.query_row(
+            "SELECT COALESCE(SUM(duration), 0.0) FROM items;",
+            [],
+            |r| r.get(0),
+        ).unwrap_or(0.0);
+
+        Ok((movies_count as usize, series_count as usize, total_items as usize, total_duration))
+    }
+
+    /// Computes storage usage breakdown by folder: Vec<(folder_path, total_bytes, file_count)>
+    pub fn get_storage_stats(&self) -> Result<Vec<(String, u64, usize)>, DbError> {
+        let conn = self.conn.lock();
+        let mut stmt = conn.prepare(
+            "SELECT COALESCE(f.path, 'Unlinked'), COALESCE(SUM(mf.size_bytes), 0), COUNT(mf.id)
+             FROM media_files mf
+             LEFT JOIN folders f ON f.id = mf.folder_id
+             GROUP BY mf.folder_id;",
+        )?;
+        let rows = stmt.query_map([], |r| {
+            let path: String = r.get(0)?;
+            let bytes: i64 = r.get(1)?;
+            let count: i64 = r.get(2)?;
+            Ok((path, bytes as u64, count as usize))
+        })?;
+        let mut stats = Vec::new();
+        for res in rows {
+            stats.push(res?);
+        }
+        Ok(stats)
+    }
+
     /// Gets a playback position by fingerprint.
     pub fn get_playback_position(
         &self,
@@ -1395,6 +1552,13 @@ impl Database {
         }
 
         Ok(colls)
+    }
+
+    /// Deletes a collection record by ID (metadata-only, never deletes disk files)
+    pub fn delete_collection(&self, id: &str) -> Result<(), DbError> {
+        let conn = self.conn.lock();
+        conn.execute("DELETE FROM collections WHERE id = ?1;", params![id])?;
+        Ok(())
     }
 }
 

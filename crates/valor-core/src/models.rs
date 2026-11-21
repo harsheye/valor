@@ -71,6 +71,17 @@ pub struct WatchSession {
     pub stopped_early: bool,
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct FolderRecord {
+    pub id: String,
+    pub path: String,
+    pub folder_type: String, // "Movies", "Shows", "Music", "Other"
+    pub enabled: bool,
+    pub ignore_globs: Option<String>,
+    pub last_scanned_at: Option<DateTime<Utc>>,
+    pub created_at: DateTime<Utc>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct TrackItem {
     pub id: i64,
