@@ -416,6 +416,36 @@ impl ValorNativeApp {
                 };
 
                 if is_single_file {
+                    // W3: Opening a file that belongs to a saved collection must NOT create a separate single-file entry.
+                    // Look up membership by fingerprint or ID:
+                    if let Ok(matching_colls) = self
+                        .db
+                        .find_collections_for_item(&item.id, &item.fingerprint)
+                    {
+                        let non_single = matching_colls
+                            .into_iter()
+                            .find(|(c, _)| c.collection_type != "single" || c.item_ids.len() > 1);
+                        if let Some((collection, pos_idx)) = non_single {
+                            info!(
+                                "Item '{}' belongs to saved collection '{}' at index {}",
+                                item.title, collection.name, pos_idx
+                            );
+                            self.collection_name = collection.name.clone();
+                            let mut loaded_items = Vec::new();
+                            for id in &collection.item_ids {
+                                if let Ok(Some(it)) = self.db.get_item_by_id(id) {
+                                    loaded_items.push(it);
+                                }
+                            }
+                            if !loaded_items.is_empty() {
+                                self.playlist_items = loaded_items;
+                                self.play_playlist_item(pos_idx);
+                                self.current_view = AppView::Player;
+                                return;
+                            }
+                        }
+                    }
+
                     self.collection_name = item.title.clone();
                     self.playlist_items = vec![item];
                 } else {
@@ -489,6 +519,15 @@ impl ValorNativeApp {
             "Switching to playlist item #{}: {} (resume: {}s)",
             index, item.title, start_secs
         );
+        let hwdec_mode = match self._settings.decoding_mode.as_str() {
+            "software" => "no",
+            "d3d11va" => "d3d11va",
+            "nvdec" => "nvdec",
+            "auto" => "auto",
+            _ => "auto-safe",
+        };
+        let _ = self.player.set_hwdec_mode(hwdec_mode);
+
         let _ = self
             .player
             .load_file(&item.file_path, &item.fingerprint, start_secs);

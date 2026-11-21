@@ -89,7 +89,8 @@ pub fn run_benchmark() {
     };
 
     // 4. Query dropped frames from mpv
-    let total_drops = player.get_dropped_frames().unwrap_or(0);
+    let (decoder_drops, vo_drops) = player.get_detailed_dropped_frames();
+    let total_drops = decoder_drops + vo_drops;
 
     // 5. Measure Idle CPU when paused
     let _ = player.pause();
@@ -144,10 +145,16 @@ pub fn run_benchmark() {
         }
     );
     println!("  • Phase 0 Estimate Note: 280 µs reported in Phase 0 was an analytical baseline estimate; confirmed here.");
+    println!("  • Dropped Frames (Pinned libmpv Runtime Readout):");
     println!(
-        "  • Total Dropped Frames: {} (decoder drop-frame-count + vo-drop-frame-count)",
-        total_drops
+        "      - Decoder Drops ('decoder-frame-drop-count'): {}",
+        decoder_drops
     );
+    println!(
+        "      - VO Presentation Drops ('vo-drop-frame-count'): {}",
+        vo_drops
+    );
+    println!("      - Total Combined Dropped Frames: {}", total_drops);
     println!("  • Idle CPU (Paused): {:.2}%", idle_cpu_estimate);
     println!("  • Translucent UI Artifact: docs/screenshots/translucent_ui_live_video.png");
     println!("  • Status: ALL CRITERIA MET (PASS)");

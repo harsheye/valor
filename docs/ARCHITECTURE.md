@@ -28,6 +28,11 @@ For a desktop media player that composites high-framerate, 4K video with semi-tr
 ### Decision
 **Option A (`eframe` + `glow`) is chosen.** It provides the cleanest zero-copy integration with `mpv_render_context`, guaranteed sub-millisecond UI render ticks, lowest idle CPU overhead when paused, and native support for OpenGL custom painters.
 
+### Platform Risk: macOS OpenGL Deprecation & Mitigation
+- **Apple Deprecation Context**: Apple formally deprecated OpenGL in macOS 10.14 (Mojave) in favor of Metal. However, macOS maintains an active, hardware-accelerated OpenGL 4.1 Core Profile implementation across all Apple Silicon (M1/M2/M3/M4) and Intel architectures.
+- **Current Runtime Status**: Valor's `eframe` / `egui_glow` pipeline and `libmpv` OpenGL Render API compile and execute natively on macOS using this system OpenGL framework.
+- **Forward Migration Roadmap**: Should a future macOS release eliminate the OpenGL framework entirely, Valor's modular architecture encapsulates rendering in `RenderGlContext` and `GlassCompositor`. The migration path is transitioning the presentation swapchain to `wgpu` or `MoltenVK` paired with libmpv's native Metal / Vulkan render context (`MPV_RENDER_API_TYPE_METAL` / `MPV_RENDER_API_TYPE_VULKAN`).
+
 ---
 
 ## 3. Phase 0 Spike Verification Evidence

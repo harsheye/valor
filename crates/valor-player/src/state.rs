@@ -31,6 +31,7 @@ pub struct PlaybackState {
     pub height: u32,
     pub rotation: i64,
     pub audio_boost_tier: u32,
+    pub hwdec_current: String,
     pub switch_token: u64,
     pub tracks: Vec<TrackItem>,
 }
@@ -54,6 +55,7 @@ impl Default for PlaybackState {
             height: 0,
             rotation: 0,
             audio_boost_tier: 100,
+            hwdec_current: "no".to_string(),
             switch_token: 0,
             tracks: Vec::new(),
         }

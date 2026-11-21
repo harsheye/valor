@@ -71,6 +71,51 @@ pub struct TrackItem {
     pub is_external: bool,
 }
 
+impl TrackItem {
+    /// Formats a complete, informative track label displaying language, codec, channels, and flags.
+    pub fn display_label(&self) -> String {
+        let mut parts = Vec::new();
+        if let Some(l) = &self.lang {
+            parts.push(l.to_uppercase());
+        }
+        if let Some(t) = &self.title {
+            parts.push(t.clone());
+        }
+        if let Some(c) = &self.codec {
+            parts.push(c.to_uppercase());
+        }
+        if let Some(ch) = self.channels {
+            let ch_str = match ch {
+                1 => "Mono (1.0)".to_string(),
+                2 => "Stereo (2.0)".to_string(),
+                6 => "5.1 Surround".to_string(),
+                8 => "7.1 Surround".to_string(),
+                other => format!("{}ch", other),
+            };
+            parts.push(ch_str);
+        }
+        let mut flags = Vec::new();
+        if self.is_default {
+            flags.push("DEFAULT");
+        }
+        if self.is_forced {
+            flags.push("FORCED");
+        }
+        if self.is_external {
+            flags.push("EXTERNAL");
+        }
+        if !flags.is_empty() {
+            parts.push(format!("[{}]", flags.join("|")));
+        }
+
+        if parts.is_empty() {
+            format!("Track #{}", self.id)
+        } else {
+            parts.join(" · ")
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Bookmark {
     pub id: String,

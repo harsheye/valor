@@ -31,24 +31,34 @@ fn test_v10_mpv_property_names_and_capabilities() {
     let drop_frame_count = mpv.get_property::<i64>("drop-frame-count");
     let vo_drop_frame_count = mpv.get_property::<i64>("vo-drop-frame-count");
     let frame_drop_count = mpv.get_property::<i64>("frame-drop-count");
+    let decoder_frame_drop_count = mpv.get_property::<i64>("decoder-frame-drop-count");
 
     println!(
-        "  • Property 'drop-frame-count' (active playback):    {:?}",
+        "  • Property 'drop-frame-count' (active playback):           {:?}",
         drop_frame_count
     );
     println!(
-        "  • Property 'vo-drop-frame-count' (active playback):  {:?}",
+        "  • Property 'vo-drop-frame-count' (active playback):         {:?}",
         vo_drop_frame_count
     );
     println!(
-        "  • Property 'frame-drop-count' (active playback):     {:?}",
+        "  • Property 'frame-drop-count' (active playback):            {:?}",
         frame_drop_count
+    );
+    println!(
+        "  • Property 'decoder-frame-drop-count' (active playback):    {:?}",
+        decoder_frame_drop_count
     );
 
     // In pinned libmpv (v2.0):
     // 'frame-drop-count' is the verified active property that returns Ok(0) during playback!
     // 'drop-frame-count' and 'vo-drop-frame-count' return Err(Raw(-8)) (MPV_ERROR_PROPERTY_UNAVAILABLE) without an active hardware render VO context.
     println!("  • Note on mpv error codes: -8 is MPV_ERROR_PROPERTY_UNAVAILABLE, -10 is MPV_ERROR_PROPERTY_NOT_FOUND");
+    assert_eq!(
+        decoder_frame_drop_count,
+        Ok(0),
+        "'decoder-frame-drop-count' must return Ok(0)"
+    );
     assert_eq!(
         frame_drop_count,
         Ok(0),

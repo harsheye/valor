@@ -1131,6 +1131,135 @@ impl Database {
         Ok(())
     }
 
+    /// Finds all collections that contain an item matching the given item_id or fingerprint,
+    /// returning the Collection and the item's 0-based position_order index within that collection.
+    pub fn find_collections_for_item(
+        &self,
+        item_id: &str,
+        fingerprint: &str,
+    ) -> Result<Vec<(Collection, usize)>, DbError> {
+        let conn = self.conn.lock();
+        let mut stmt = conn.prepare(
+            "SELECT c.id, c.name, c.collection_type, c.current_index, c.is_pinned, c.last_played_at, ci.position_order
+             FROM collections c
+             JOIN collection_items ci ON ci.collection_id = c.id
+             JOIN items i ON i.id = ci.item_id
+             WHERE i.id = ?1 OR i.fingerprint = ?2
+             ORDER BY c.last_played_at DESC, c.name ASC;",
+        )?;
+
+        let coll_rows = stmt.query_map(params![item_id, fingerprint], |row| {
+            let id: String = row.get(0)?;
+            let name: String = row.get(1)?;
+            let coll_type: String = row.get(2)?;
+            let current_index: i64 = row.get(3)?;
+            let is_pinned: i32 = row.get(4)?;
+            let last_played_str: Option<String> = row.get(5)?;
+            let last_played_at = last_played_str
+                .and_then(|s| chrono::DateTime::parse_from_rfc3339(&s).ok())
+                .map(|dt| dt.with_timezone(&Utc));
+            let position_order: i64 = row.get(6)?;
+
+            Ok((
+                id,
+                name,
+                coll_type,
+                current_index,
+                is_pinned != 0,
+                last_played_at,
+                position_order as usize,
+            ))
+        })?;
+
+        let mut results = Vec::new();
+        for r in coll_rows {
+            let (id, name, coll_type, current_index, is_pinned, last_played_at, pos) = r?;
+            let mut item_stmt = conn.prepare(
+                "SELECT item_id FROM collection_items WHERE collection_id = ?1 ORDER BY position_order ASC;",
+            )?;
+            let item_ids = item_stmt
+                .query_map(params![id], |row| row.get(0))?
+                .filter_map(|res| res.ok())
+                .collect();
+
+            results.push((
+                Collection {
+                    id,
+                    name,
+                    collection_type: coll_type,
+                    item_ids,
+                    current_index: current_index as usize,
+                    last_played_at,
+                    is_pinned,
+                },
+                pos,
+            ));
+        }
+
+        Ok(results)
+    }
+
+    /// Retrieves a single media item by ID
+    pub fn get_item_by_id(&self, item_id: &str) -> Result<Option<MediaItem>, DbError> {
+        let conn = self.conn.lock();
+        let mut stmt = conn.prepare(
+            "SELECT i.id, i.fingerprint, COALESCE(mf.path, ''), i.title, i.duration, COALESCE(mf.size_bytes, 0),
+                    i.width, i.height, i.is_hdr, i.video_codec, i.audio_codec, i.series_id,
+                    i.season_number, i.episode_number, i.is_missing, i.created_at, i.updated_at
+             FROM items i
+             LEFT JOIN media_files mf ON mf.fingerprint = i.fingerprint
+             WHERE i.id = ?1
+             LIMIT 1;",
+        )?;
+        let mut rows = stmt.query(params![item_id])?;
+        if let Some(row) = rows.next()? {
+            Ok(Some(self.row_to_item(row)?))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Retrieves a collection by ID
+    pub fn get_collection_by_id(&self, coll_id: &str) -> Result<Option<Collection>, DbError> {
+        let conn = self.conn.lock();
+        let mut stmt = conn.prepare(
+            "SELECT id, name, collection_type, current_index, is_pinned, last_played_at
+             FROM collections WHERE id = ?1 LIMIT 1;",
+        )?;
+        let mut rows = stmt.query(params![coll_id])?;
+        if let Some(row) = rows.next()? {
+            let id: String = row.get(0)?;
+            let name: String = row.get(1)?;
+            let coll_type: String = row.get(2)?;
+            let current_index: i64 = row.get(3)?;
+            let is_pinned: i32 = row.get(4)?;
+            let last_played_str: Option<String> = row.get(5)?;
+            let last_played_at = last_played_str
+                .and_then(|s| chrono::DateTime::parse_from_rfc3339(&s).ok())
+                .map(|dt| dt.with_timezone(&Utc));
+
+            let mut item_stmt = conn.prepare(
+                "SELECT item_id FROM collection_items WHERE collection_id = ?1 ORDER BY position_order ASC;",
+            )?;
+            let item_ids = item_stmt
+                .query_map(params![id], |r| r.get(0))?
+                .filter_map(|res| res.ok())
+                .collect();
+
+            Ok(Some(Collection {
+                id,
+                name,
+                collection_type: coll_type,
+                item_ids,
+                current_index: current_index as usize,
+                last_played_at,
+                is_pinned: is_pinned != 0,
+            }))
+        } else {
+            Ok(None)
+        }
+    }
+
     /// Retrieves all collections
     pub fn get_all_collections(&self) -> Result<Vec<Collection>, DbError> {
         let conn = self.conn.lock();
@@ -1292,5 +1421,101 @@ mod tests {
         // 6. FTS5 Search
         let search_results = db.search_items("Episode").expect("fts search failed");
         assert_eq!(search_results.len(), 3);
+    }
+
+    #[test]
+    fn test_w3_membership_lookup_and_devs_deduplication() {
+        let db = Database::in_memory().expect("in-memory db failed");
+        let now = Utc::now();
+
+        // 1. Create series items (Devs S1E1, S1E2, S1E3, S1E4, S1E5, S1E6)
+        for i in 1..=6 {
+            let item = MediaItem {
+                id: format!("item_devs_s1e{}", i),
+                fingerprint: format!("fp_devs_s1e{}", i),
+                file_path: format!("/path/to/Devs.S01E0{}.1080p.mkv", i),
+                title: format!("Devs S1E{}", i),
+                duration: 3200.0,
+                size_bytes: 2_000_000_000,
+                width: Some(1920),
+                height: Some(1080),
+                is_hdr: false,
+                video_codec: Some("H.264".into()),
+                audio_codec: Some("AAC".into()),
+                series_id: None,
+                season_number: Some(1),
+                episode_number: Some(i),
+                is_missing: false,
+                created_at: now,
+                updated_at: now,
+            };
+            db.upsert_item(&item).expect("upsert item failed");
+        }
+
+        // 2. Saved collection "Devs" contains all 6 episodes
+        let devs_coll = Collection {
+            id: "coll_devs".into(),
+            name: "Devs".into(),
+            collection_type: "playlist".into(),
+            item_ids: (1..=6).map(|i| format!("item_devs_s1e{}", i)).collect(),
+            current_index: 0,
+            last_played_at: Some(now),
+            is_pinned: true,
+        };
+        db.save_collection(&devs_coll)
+            .expect("save collection failed");
+
+        // 3. User plays Episode 4 directly
+        let matches_ep4 = db
+            .find_collections_for_item("item_devs_s1e4", "fp_devs_s1e4")
+            .expect("lookup failed");
+        assert_eq!(matches_ep4.len(), 1);
+        let (coll_found, pos_idx) = &matches_ep4[0];
+        assert_eq!(coll_found.id, "coll_devs");
+        assert_eq!(*pos_idx, 3); // 0-based index of episode 4 in item_ids
+
+        // Update collection current_index and last_played_at as playback proceeds
+        let mut coll_update = coll_found.clone();
+        coll_update.current_index = *pos_idx;
+        coll_update.last_played_at = Some(now + chrono::Duration::seconds(10));
+        db.save_collection(&coll_update)
+            .expect("update collection failed");
+
+        // Save position for Episode 4
+        db.save_playback_position(&PlaybackPosition {
+            fingerprint: "fp_devs_s1e4".into(),
+            position_secs: 420.0,
+            duration_secs: 3200.0,
+            completed: false,
+            updated_at: now + chrono::Duration::seconds(10),
+        })
+        .expect("save pos failed");
+
+        // 4. Later, user plays Episode 6 directly
+        let matches_ep6 = db
+            .find_collections_for_item("item_devs_s1e6", "fp_devs_s1e6")
+            .expect("lookup failed");
+        assert_eq!(matches_ep6.len(), 1);
+        let (coll_found_6, pos_idx_6) = &matches_ep6[0];
+        assert_eq!(coll_found_6.id, "coll_devs");
+        assert_eq!(*pos_idx_6, 5); // index of episode 6
+
+        let mut coll_update_6 = coll_found_6.clone();
+        coll_update_6.current_index = *pos_idx_6;
+        coll_update_6.last_played_at = Some(now + chrono::Duration::seconds(20));
+        db.save_collection(&coll_update_6)
+            .expect("update collection failed");
+
+        // 5. Query history: MUST be exactly ONE card for "Devs", never duplicate cards!
+        let history = db.get_history(10).expect("get history failed");
+        assert_eq!(
+            history.len(),
+            1,
+            "Duplicate Devs entries must NOT occur in history!"
+        );
+        assert_eq!(history[0].collection_name, "Devs");
+        assert_eq!(history[0].total_items, 6);
+        assert_eq!(history[0].current_index, 5);
+        assert_eq!(history[0].current_item_fingerprint, "fp_devs_s1e6");
     }
 }

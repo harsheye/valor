@@ -1,3 +1,4 @@
+use crate::audio_graph::{AudioGraphComposer, NormalizationMode};
 use crate::state::{PlaybackState, PlaybackStatus};
 use libmpv2::Mpv;
 use parking_lot::Mutex;
@@ -18,6 +19,7 @@ pub enum PlayerError {
 pub struct PlayerEngine {
     mpv: Arc<Mutex<Mpv>>,
     state: Arc<Mutex<PlaybackState>>,
+    audio_graph: Arc<Mutex<AudioGraphComposer>>,
     current_token: AtomicU64,
 }
 
@@ -101,16 +103,32 @@ impl PlayerEngine {
         let _ = mpv.set_property("msg-level", "all=v");
 
         let state = Arc::new(Mutex::new(PlaybackState::default()));
+        let audio_graph = Arc::new(Mutex::new(AudioGraphComposer::default()));
 
         Ok(Self {
             mpv: Arc::new(Mutex::new(mpv)),
             state,
+            audio_graph,
             current_token: AtomicU64::new(1),
         })
     }
 
     pub fn raw_handle(&self) -> *mut libmpv2_sys::mpv_handle {
         self.mpv.lock().ctx.as_ptr()
+    }
+
+    pub fn get_property<T: libmpv2::GetData>(&self, name: &str) -> Result<T, PlayerError> {
+        let mpv = self.mpv.lock();
+        mpv.get_property(name).map_err(PlayerError::Mpv)
+    }
+
+    pub fn set_property<T: libmpv2::SetData>(
+        &self,
+        name: &str,
+        data: T,
+    ) -> Result<(), PlayerError> {
+        let mpv = self.mpv.lock();
+        mpv.set_property(name, data).map_err(PlayerError::Mpv)
     }
 
     /// Loads a media file safely using a monotonic switch token to prevent async race conditions.
@@ -342,20 +360,137 @@ impl PlayerEngine {
         Ok(())
     }
 
-    pub fn set_audio_boost(&self, tier_percent: u32) -> Result<(), PlayerError> {
+    pub fn set_cscale(&self, algo: &str) -> Result<(), PlayerError> {
         let mpv = self.mpv.lock();
-        // Keep master output volume strictly at 100% so mpv does not amplify after the filter chain
-        mpv.set_property("volume", 100.0)?;
+        let valid = match algo {
+            "lanczos" | "spline36" | "bilinear" => algo,
+            _ => "spline36",
+        };
+        mpv.set_property("cscale", valid)?;
+        Ok(())
+    }
 
-        if let Some(filter) = Self::build_audio_boost_filter(tier_percent) {
-            let res = mpv.set_property("af", filter.as_str());
-            if let Err(e) = &res {
-                eprintln!("Warning: af set_property failed: {:?}", e);
-            }
-        } else {
-            let _ = mpv.set_property("af", "");
+    pub fn set_dscale(&self, algo: &str) -> Result<(), PlayerError> {
+        let mpv = self.mpv.lock();
+        let valid = match algo {
+            "mitchell" | "bicubic" | "bilinear" => algo,
+            _ => "mitchell",
+        };
+        mpv.set_property("dscale", valid)?;
+        Ok(())
+    }
+
+    pub fn set_scale_antiring(&self, val: f64) -> Result<(), PlayerError> {
+        let mpv = self.mpv.lock();
+        mpv.set_property("scale-antiring", val.clamp(0.0, 1.0))?;
+        Ok(())
+    }
+
+    pub fn set_sigmoid_upscaling(&self, enable: bool) -> Result<(), PlayerError> {
+        let mpv = self.mpv.lock();
+        mpv.set_property("sigmoid-upscaling", enable)?;
+        Ok(())
+    }
+
+    pub fn set_correct_downscaling(&self, enable: bool) -> Result<(), PlayerError> {
+        let mpv = self.mpv.lock();
+        mpv.set_property("correct-downscaling", enable)?;
+        Ok(())
+    }
+
+    // Phase 4: Video Picture & Detail Controls
+    pub fn set_deband_iterations(&self, count: i64) -> Result<(), PlayerError> {
+        let mpv = self.mpv.lock();
+        mpv.set_property("deband-iterations", count.clamp(1, 16))?;
+        Ok(())
+    }
+
+    pub fn set_deband_threshold(&self, thresh: i64) -> Result<(), PlayerError> {
+        let mpv = self.mpv.lock();
+        mpv.set_property("deband-threshold", thresh.clamp(0, 4096))?;
+        Ok(())
+    }
+
+    pub fn set_deband_range(&self, range: i64) -> Result<(), PlayerError> {
+        let mpv = self.mpv.lock();
+        mpv.set_property("deband-range", range.clamp(1, 64))?;
+        Ok(())
+    }
+
+    pub fn set_deband_grain(&self, grain: i64) -> Result<(), PlayerError> {
+        let mpv = self.mpv.lock();
+        mpv.set_property("deband-grain", grain.clamp(0, 4096))?;
+        Ok(())
+    }
+
+    // Motion & Interpolation
+    pub fn set_interpolation(&self, enable: bool) -> Result<(), PlayerError> {
+        let mpv = self.mpv.lock();
+        mpv.set_property("interpolation", enable)?;
+        if enable {
+            let _ = mpv.set_property("video-sync", "display-resample");
         }
-        self.state.lock().audio_boost_tier = tier_percent;
+        Ok(())
+    }
+
+    pub fn set_tscale(&self, algo: &str) -> Result<(), PlayerError> {
+        let mpv = self.mpv.lock();
+        let valid = match algo {
+            "linear" | "catmull_rom" | "mitchell" | "bicubic" | "oversample" => algo,
+            _ => "oversample",
+        };
+        mpv.set_property("tscale", valid)?;
+        Ok(())
+    }
+
+    pub fn set_video_sync(&self, mode: &str) -> Result<(), PlayerError> {
+        let mpv = self.mpv.lock();
+        let valid = match mode {
+            "display-resample" | "audio" => mode,
+            _ => "audio",
+        };
+        mpv.set_property("video-sync", valid)?;
+        Ok(())
+    }
+
+    // Geometry Controls
+    pub fn set_video_zoom(&self, zoom: f64) -> Result<(), PlayerError> {
+        let mpv = self.mpv.lock();
+        mpv.set_property("video-zoom", zoom.clamp(-1.0, 4.0))?;
+        Ok(())
+    }
+
+    pub fn set_video_pan(&self, x: f64, y: f64) -> Result<(), PlayerError> {
+        let mpv = self.mpv.lock();
+        mpv.set_property("video-pan-x", x.clamp(-1.0, 1.0))?;
+        mpv.set_property("video-pan-y", y.clamp(-1.0, 1.0))?;
+        Ok(())
+    }
+
+    // HDR Parameters
+    pub fn set_target_peak(&self, nits: i64) -> Result<(), PlayerError> {
+        let mpv = self.mpv.lock();
+        if nits <= 0 {
+            mpv.set_property("target-peak", "auto")?;
+        } else {
+            mpv.set_property("target-peak", nits.clamp(100, 4000))?;
+        }
+        Ok(())
+    }
+
+    pub fn set_tone_mapping_param(&self, param: f64) -> Result<(), PlayerError> {
+        let mpv = self.mpv.lock();
+        mpv.set_property("tone-mapping-param", param)?;
+        Ok(())
+    }
+
+    pub fn set_gamut_mapping_mode(&self, mode: &str) -> Result<(), PlayerError> {
+        let mpv = self.mpv.lock();
+        let valid = match mode {
+            "clip" | "warn" | "linear" | "auto" => mode,
+            _ => "auto",
+        };
+        mpv.set_property("gamut-mapping-mode", valid)?;
         Ok(())
     }
 
@@ -368,38 +503,6 @@ impl PlayerEngine {
         mpv.set_property("video-rotate", valid)?;
         self.state.lock().rotation = valid;
         Ok(())
-    }
-
-    pub fn get_debug_stats(&self) -> String {
-        let s = self.state.lock();
-        format!(
-            "Valor Native Player Statistics:\n\
-             • File: {}\n\
-             • Position: {:.2}s / {:.2}s ({:.1}%)\n\
-             • Resolution: {}x{}\n\
-             • Video FPS: {:.2}\n\
-             • HDR: {}\n\
-             • Audio Boost: {}%\n\
-             • Playback Speed: {:.2}x\n\
-             • Rotation: {}°\n\
-             • Switch Token: {}\n",
-            s.current_file_path.as_deref().unwrap_or("None"),
-            s.position_secs,
-            s.duration_secs,
-            if s.duration_secs > 0.0 {
-                (s.position_secs / s.duration_secs) * 100.0
-            } else {
-                0.0
-            },
-            s.width,
-            s.height,
-            s.fps,
-            s.is_hdr,
-            s.audio_boost_tier,
-            s.speed,
-            s.rotation,
-            s.switch_token
-        )
     }
 
     pub fn set_tone_mapping(&self, algo: &str) -> Result<(), PlayerError> {
@@ -420,64 +523,128 @@ impl PlayerEngine {
         Ok(())
     }
 
-    // Audio DSP Studio: 10-band Equalizer and Audio Compressors
-    pub fn set_audio_eq(&self, gains: &[f64; 10]) -> Result<(), PlayerError> {
-        let freqs = [31, 62, 125, 250, 500, 1000, 2000, 4000, 8000, 16000];
-        let mut filter_parts = Vec::new();
-        for (f, g) in freqs.iter().zip(gains.iter()) {
-            filter_parts.push(format!("equalizer=f={}:width_type=o:w=1:g={:.1}", f, g));
-        }
-        let filter_str = filter_parts.join(",");
+    pub fn set_video_aspect_override(&self, aspect: &str) -> Result<(), PlayerError> {
+        self.set_aspect_ratio(aspect)
+    }
+
+    pub fn get_debug_stats(&self) -> String {
+        let s = self.state.lock();
+        format!(
+            "Valor Native Player Statistics:\n\
+             • File: {}\n\
+             • Position: {:.2}s / {:.2}s ({:.1}%)\n\
+             • Resolution: {}x{}\n\
+             • Video FPS: {:.2}\n\
+             • Hardware Decoder: {}\n\
+             • HDR: {}\n\
+             • Audio Boost: {}%\n\
+             • Playback Speed: {:.2}x\n\
+             • Rotation: {}°\n\
+             • Switch Token: {}\n",
+            s.current_file_path.as_deref().unwrap_or("None"),
+            s.position_secs,
+            s.duration_secs,
+            if s.duration_secs > 0.0 {
+                (s.position_secs / s.duration_secs) * 100.0
+            } else {
+                0.0
+            },
+            s.width,
+            s.height,
+            s.fps,
+            s.hwdec_current,
+            s.is_hdr,
+            s.audio_boost_tier,
+            s.speed,
+            s.rotation,
+            s.switch_token
+        )
+    }
+
+    // Phase 4 Audio Graph Composer Integration
+    pub fn set_audio_boost(&self, tier_percent: u32) -> Result<(), PlayerError> {
         let mpv = self.mpv.lock();
-        mpv.set_property("af-add", format!("lavfi=[{}]", filter_str))?;
+        // Keep master output volume strictly at 100% so mpv does not amplify after the filter chain
+        mpv.set_property("volume", 100.0)?;
+
+        let mut graph = self.audio_graph.lock();
+        graph.set_boost_tier(tier_percent);
+        graph.apply_to_mpv(&mpv)?;
+
+        self.state.lock().audio_boost_tier = tier_percent;
+        Ok(())
+    }
+
+    pub fn set_audio_eq(&self, gains: &[f64; 10]) -> Result<(), PlayerError> {
+        let mpv = self.mpv.lock();
+        let mut graph = self.audio_graph.lock();
+        graph.set_eq(gains);
+        graph.apply_to_mpv(&mpv)?;
         Ok(())
     }
 
     pub fn set_dynaudnorm(&self, enable: bool) -> Result<(), PlayerError> {
         let mpv = self.mpv.lock();
-        if enable {
-            mpv.command(
-                "af",
-                &[
-                    "add",
-                    "@dynaud:lavfi=[dynaudnorm=f=250:g=31:p=0.95:m=10.0:r=0.9]",
-                ],
-            )?;
+        let mut graph = self.audio_graph.lock();
+        graph.set_normalization(if enable {
+            NormalizationMode::DynAudNorm
         } else {
-            let _ = mpv.command("af", &["del", "@dynaud"]);
-        }
+            NormalizationMode::None
+        });
+        graph.apply_to_mpv(&mpv)?;
+        Ok(())
+    }
+
+    pub fn set_loudnorm(&self, enable: bool) -> Result<(), PlayerError> {
+        let mpv = self.mpv.lock();
+        let mut graph = self.audio_graph.lock();
+        graph.set_normalization(if enable {
+            NormalizationMode::LoudNorm
+        } else {
+            NormalizationMode::None
+        });
+        graph.apply_to_mpv(&mpv)?;
         Ok(())
     }
 
     pub fn set_night_mode(&self, enable: bool) -> Result<(), PlayerError> {
         let mpv = self.mpv.lock();
-        if enable {
-            mpv.command(
-                "af",
-                &[
-                    "add",
-                    "@night:lavfi=[acompressor=threshold=-24dB:ratio=6:attack=5:release=50]",
-                ],
-            )?;
+        let mut graph = self.audio_graph.lock();
+        graph.set_normalization(if enable {
+            NormalizationMode::NightMode
         } else {
-            let _ = mpv.command("af", &["del", "@night"]);
-        }
+            NormalizationMode::None
+        });
+        graph.apply_to_mpv(&mpv)?;
         Ok(())
     }
 
     pub fn set_dialogue_boost(&self, enable: bool) -> Result<(), PlayerError> {
         let mpv = self.mpv.lock();
-        if enable {
-            mpv.command(
-                "af",
-                &[
-                    "add",
-                    "@diagboost:lavfi=[pan=stereo|c0=c2+0.6*c0+0.6*c4|c1=c2+0.6*c1+0.6*c5]",
-                ],
-            )?;
+        let mut graph = self.audio_graph.lock();
+        graph.set_dialogue_boost(enable);
+        graph.apply_to_mpv(&mpv)?;
+        Ok(())
+    }
+
+    /// Hold-to-compare: temporarily bypasses all active audio filter graph processing
+    pub fn bypass_audio_studio(&self, bypass: bool) -> Result<(), PlayerError> {
+        let mpv = self.mpv.lock();
+        if bypass {
+            AudioGraphComposer::bypassed().apply_to_mpv(&mpv)?;
         } else {
-            let _ = mpv.command("af", &["del", "@diagboost"]);
+            self.audio_graph.lock().apply_to_mpv(&mpv)?;
         }
+        Ok(())
+    }
+
+    pub fn get_audio_graph(&self) -> AudioGraphComposer {
+        self.audio_graph.lock().clone()
+    }
+
+    pub fn set_sub_font(&self, font: &str) -> Result<(), PlayerError> {
+        let mpv = self.mpv.lock();
+        mpv.set_property("sub-font", font)?;
         Ok(())
     }
 
@@ -490,6 +657,36 @@ impl PlayerEngine {
     pub fn set_sub_color(&self, color: &str) -> Result<(), PlayerError> {
         let mpv = self.mpv.lock();
         mpv.set_property("sub-color", color)?;
+        Ok(())
+    }
+
+    pub fn set_sub_border_color(&self, color: &str) -> Result<(), PlayerError> {
+        let mpv = self.mpv.lock();
+        mpv.set_property("sub-border-color", color)?;
+        Ok(())
+    }
+
+    pub fn set_sub_border_size(&self, size: f64) -> Result<(), PlayerError> {
+        let mpv = self.mpv.lock();
+        mpv.set_property("sub-border-size", size)?;
+        Ok(())
+    }
+
+    pub fn set_sub_shadow_color(&self, color: &str) -> Result<(), PlayerError> {
+        let mpv = self.mpv.lock();
+        mpv.set_property("sub-shadow-color", color)?;
+        Ok(())
+    }
+
+    pub fn set_sub_shadow_offset(&self, offset: f64) -> Result<(), PlayerError> {
+        let mpv = self.mpv.lock();
+        mpv.set_property("sub-shadow-offset", offset)?;
+        Ok(())
+    }
+
+    pub fn set_sub_pos(&self, pos: i64) -> Result<(), PlayerError> {
+        let mpv = self.mpv.lock();
+        mpv.set_property("sub-pos", pos)?;
         Ok(())
     }
 
@@ -559,19 +756,42 @@ impl PlayerEngine {
                 s.status = PlaybackStatus::Completed;
             }
         }
+        if let Ok(hwdec) = mpv.get_property::<String>("hwdec-current") {
+            s.hwdec_current = hwdec;
+        }
 
         s.clone()
     }
 
-    pub fn get_dropped_frames(&self) -> Result<i64, PlayerError> {
+    pub fn get_active_hwdec(&self) -> String {
         let mpv = self.mpv.lock();
-        // Verified against pinned libmpv: 'frame-drop-count' is the active property returning Ok(0)
-        let dropped = mpv
-            .get_property::<i64>("frame-drop-count")
-            .or_else(|_| mpv.get_property::<i64>("drop-frame-count"))
-            .or_else(|_| mpv.get_property::<i64>("vo-drop-frame-count"))
+        mpv.get_property::<String>("hwdec-current")
+            .unwrap_or_else(|_| "no".to_string())
+    }
+
+    pub fn set_hwdec_mode(&self, mode: &str) -> Result<(), PlayerError> {
+        let mpv = self.mpv.lock();
+        mpv.set_property("hwdec", mode)?;
+        Ok(())
+    }
+
+    pub fn get_dropped_frames(&self) -> Result<i64, PlayerError> {
+        let (decoder_drops, vo_drops) = self.get_detailed_dropped_frames();
+        Ok(decoder_drops + vo_drops)
+    }
+
+    /// Queries separate decoder drops and presentation (VO) drops.
+    pub fn get_detailed_dropped_frames(&self) -> (i64, i64) {
+        let mpv = self.mpv.lock();
+        let decoder_drops = mpv
+            .get_property::<i64>("decoder-frame-drop-count")
+            .or_else(|_| mpv.get_property::<i64>("frame-drop-count"))
             .unwrap_or(0);
-        Ok(dropped)
+        let vo_drops = mpv
+            .get_property::<i64>("vo-drop-frame-count")
+            .or_else(|_| mpv.get_property::<i64>("drop-frame-count"))
+            .unwrap_or(0);
+        (decoder_drops, vo_drops)
     }
 
     /// Queries tracks currently present in mpv.

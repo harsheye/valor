@@ -30,6 +30,7 @@ pub struct Settings {
     pub end_of_collection_action: String, // "home", "stay", "replay"
     pub confirm_quit_while_playing: bool,
     pub system_media_controls: bool,
+    pub decoding_mode: String, // "auto-safe", "auto", "software", "d3d11va", "nvdec"
 
     // Visuals & HUD
     pub ambiance_glow: bool,
@@ -73,6 +74,7 @@ impl Default for Settings {
             end_of_collection_action: "home".to_string(),
             confirm_quit_while_playing: true,
             system_media_controls: true,
+            decoding_mode: "auto-safe".to_string(),
             ambiance_glow: true,
             glass_blur_enabled: true,
             pause_info_card: true,
