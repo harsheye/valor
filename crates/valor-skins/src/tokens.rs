@@ -16,14 +16,23 @@ pub struct SkinTokens {
     pub accent_2: String,
     pub on_accent: String,
     pub accent_soft: String,
+    pub accent_coral: String,
     pub text: String,
     pub muted: String,
     pub text_3: String,
     pub danger: String,
+    pub danger_soft: String,
     pub warning: String,
     pub success: String,
     pub focus_ring: String,
     pub scrim: String,
+
+    // Heatmap Tokens
+    pub heat_0: String,
+    pub heat_1: String,
+    pub heat_2: String,
+    pub heat_3: String,
+    pub heat_4: String,
 
     // Radii & Spacing
     pub radius_sm: String,
@@ -75,16 +84,24 @@ impl SkinTokens {
             accent_2: "#9BB3F2".to_string(),
             on_accent: "#0C1424".to_string(),
             accent_soft: "rgba(140, 169, 238, 0.14)".to_string(),
+            accent_coral: "#F43F5E".to_string(),
 
             text: "#E4E8EE".to_string(),
             muted: "#A9B2C0".to_string(),
             text_3: "#8F99AA".to_string(),
 
             danger: "#EC8F95".to_string(),
+            danger_soft: "rgba(236, 143, 149, 0.16)".to_string(),
             warning: "#E3BD7A".to_string(),
             success: "#86CDA6".to_string(),
             focus_ring: "#8CA9EE".to_string(),
             scrim: "rgba(15, 18, 23, 0.75)".to_string(),
+
+            heat_0: "#1A202C".to_string(),
+            heat_1: "#4A1D2F".to_string(),
+            heat_2: "#7E223B".to_string(),
+            heat_3: "#BD284E".to_string(),
+            heat_4: "#F43F5E".to_string(),
 
             radius_sm: "8px".to_string(),
             radius_md: "12px".to_string(),

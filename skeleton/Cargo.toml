@@ -1,0 +1,30 @@
+# Workspace manifest for the Valor native desktop skeleton.
+[workspace]
+members = [
+    "crates/valor-core",
+    "crates/valor-player",
+    "crates/valor-ui",
+    "crates/valor-app",
+]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+
+[workspace.dependencies]
+crossbeam-channel = "=0.5.17"
+directories = "=5.0.1"
+eframe = { version = "=0.37.0", default-features = false, features = ["glow", "default_fonts"] }
+egui = "=0.37.0"
+libmpv2 = "=7.0.1"
+serde = { version = "=1.0.229", features = ["derive"] }
+thiserror = "=2.0.21"
+tracing = "=0.1.44"
+tracing-subscriber = { version = "=0.3.23", features = ["env-filter"] }
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true

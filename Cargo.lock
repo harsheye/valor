@@ -3452,9 +3452,6 @@ dependencies = [
  "blake3",
  "chrono",
  "directories",
- "image",
- "libmpv2",
- "libmpv2-sys",
  "notify",
  "parking_lot",
  "regex",
@@ -3471,15 +3468,12 @@ dependencies = [
 name = "valor-player"
 version = "0.1.0"
 dependencies = [
+ "crossbeam-channel",
+ "libc",
  "libmpv2",
  "libmpv2-sys",
  "parking_lot",
  "serde",
- "serde_json",
- "thiserror 2.0.21",
- "tracing",
- "valor-core",
- "windows",
 ]
 
 [[package]]
@@ -3495,6 +3489,7 @@ name = "valor-ui"
 version = "0.1.0"
 dependencies = [
  "chrono",
+ "directories",
  "egui",
  "image",
  "parking_lot",

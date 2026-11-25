@@ -1,67 +1,95 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use eframe::egui;
-use std::path::PathBuf;
 use tracing::{info, Level};
 use tracing_subscriber::FmtSubscriber;
-use valor_app::app::ValorNativeApp;
-use valor_app::{bench, ipc};
+use valor_app::{ipc, shell_app::ValorShellApp};
 
 fn main() -> eframe::Result<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
 
-    // 1. Run Benchmark Suite if requested
-    if args.iter().any(|a| a == "--bench") {
-        bench::run_benchmark();
-        return Ok(());
+    let mut win_w = 1280.0;
+    let mut win_h = 720.0;
+    let mut custom_scale: Option<f32> = None;
+
+    let mut i = 0;
+    while i < args.len() {
+        if args[i] == "--width" && i + 1 < args.len() {
+            if let Ok(w) = args[i + 1].parse::<f32>() {
+                win_w = w;
+            }
+            i += 1;
+        } else if args[i] == "--height" && i + 1 < args.len() {
+            if let Ok(h) = args[i + 1].parse::<f32>() {
+                win_h = h;
+            }
+            i += 1;
+        } else if args[i] == "--scale" && i + 1 < args.len() {
+            if let Ok(s) = args[i + 1].parse::<f32>() {
+                custom_scale = Some(s);
+            }
+            i += 1;
+        }
+        i += 1;
     }
 
-    // 2. Single-Instance Forwarding via secure Named Pipe (Windows) / Unix Socket (Unix)
+    // Forward launch requests to an existing library window.
     if let Ok(true) = ipc::try_forward_to_existing_instance(&args) {
         println!("Forwarded arguments to existing Valor instance and exiting.");
         std::process::exit(0);
     }
 
-    // 3. Start Single-Instance IPC listener
-    let ipc_rx = ipc::start_single_instance_ipc_server();
+    // Start the single-instance listener for supported shell commands.
+    let _ipc_rx = ipc::start_single_instance_ipc_server();
 
-    // 4. Check for blur disable flag
-    let disable_blur = args.iter().any(|a| a == "--disable-blur");
-
-    // 5. Initialize Logging
+    // Initialize logging.
     let subscriber = FmtSubscriber::builder()
         .with_max_level(Level::INFO)
         .finish();
     let _ = tracing::subscriber::set_global_default(subscriber);
 
-    info!("Starting Valor Native Production Desktop Media Player");
+    info!("Starting Valor desktop library");
+
+    let app_icon = eframe::icon_data::from_png_bytes(include_bytes!("../../../assets/valor.png"))
+        .unwrap_or_default();
 
     let native_options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_title("Valor Native Player")
-            .with_inner_size([1280.0, 720.0])
-            .with_min_inner_size([800.0, 500.0])
+            .with_title("Valor")
+            .with_icon(std::sync::Arc::new(app_icon))
+            .with_inner_size([win_w, win_h])
+            .with_min_inner_size([960.0, 600.0])
+            .with_decorations(false)
             .with_transparent(false),
         renderer: eframe::Renderer::Glow,
         ..Default::default()
     };
 
-    // Forward any initial CLI file arguments to the new instance
-    let initial_paths: Vec<PathBuf> = args
-        .iter()
-        .filter(|a| !a.starts_with("--"))
-        .filter_map(|a| ipc::validate_and_canonicalize_path(a).ok())
-        .collect();
-
     eframe::run_native(
-        "Valor Native Player",
+        "Valor",
         native_options,
         Box::new(move |cc| {
-            let mut app = ValorNativeApp::new(cc, Some(ipc_rx), disable_blur);
-            if !initial_paths.is_empty() {
-                app.enqueue_paths(&initial_paths);
+            if let Some(scale) = custom_scale {
+                cc.egui_ctx.set_pixels_per_point(scale);
             }
-            Ok(Box::new(app))
+
+            // Setup bundled crisp Inter font
+            let mut fonts = egui::FontDefinitions::default();
+            fonts.font_data.insert(
+                "Inter".to_owned(),
+                std::sync::Arc::new(egui::FontData::from_static(include_bytes!(
+                    "../../../assets/fonts/Inter.ttf"
+                ))),
+            );
+            fonts
+                .families
+                .entry(egui::FontFamily::Proportional)
+                .or_default()
+                .insert(0, "Inter".to_owned());
+            cc.egui_ctx.set_fonts(fonts);
+
+            let _ = cc;
+            Ok(Box::new(ValorShellApp::new()))
         }),
     )
 }

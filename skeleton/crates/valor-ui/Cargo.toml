@@ -1,0 +1,9 @@
+# Manifest for the egui surface layer.
+[package]
+name = "valor-ui"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+egui.workspace = true

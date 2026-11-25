@@ -14,7 +14,7 @@ pub fn render_ember_spinner(ui: &mut Ui, center: Pos2, base_radius: f32, time_se
         let angle = base_angle + (time_secs as f32 * rotation_speed);
 
         // Deterministic pseudo-noise
-        let noise = ((i_f * 12.9898 + 78.233).sin() * 43758.5453).fract();
+        let noise = ((i_f * 12.9898 + 78.233).sin() * 43_758.547).fract();
         let noise2 = ((i_f * 39.346 + 11.135).cos() * 24634.63).fract();
         let pulse = ((time_secs as f32 * 3.5 + i_f * 0.45).sin() + 1.0) * 0.5;
 

@@ -2,10 +2,10 @@
 members = [
     "crates/valor-core",
     "crates/valor-library",
-    "crates/valor-player",
     "crates/valor-skins",
     "crates/valor-ui",
     "crates/valor-app",
+    "crates/valor-player",
 ]
 resolver = "2"
 

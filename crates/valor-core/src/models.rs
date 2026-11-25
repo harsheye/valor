@@ -210,3 +210,14 @@ pub struct AnalysisQueueItem {
     pub path: String,
     pub priority: i32,
 }
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct MetadataOverride {
+    pub fingerprint: String,
+    pub title: Option<String>,
+    pub year: Option<u32>,
+    pub series_title: Option<String>,
+    pub season_number: Option<u32>,
+    pub episode_number: Option<u32>,
+    pub updated_at: DateTime<Utc>,
+}

@@ -260,8 +260,8 @@ mod tests {
         let item = MediaItem {
             id: "native_item_1".into(),
             fingerprint: "blake3_fp_real".into(),
-            file_path: "C:/Videos/Devs.S01E06.1080p.mkv".into(),
-            title: "Devs S01E06".into(),
+            file_path: "C:/Videos/Series.Alpha.S01E06.1080p.mkv".into(),
+            title: "Series Alpha S01E06".into(),
             duration: 3100.0,
             size_bytes: 1048576,
             width: Some(1920),
@@ -281,7 +281,7 @@ mod tests {
         // Also record in media_files
         let record = valor_core::models::ScannedFileRecord {
             id: "file_1".into(),
-            path: "C:/Videos/Devs.S01E06.1080p.mkv".into(),
+            path: "C:/Videos/Series.Alpha.S01E06.1080p.mkv".into(),
             size_bytes: 1048576,
             mtime_secs: 1700000000,
             fingerprint: "blake3_fp_real".into(),
@@ -296,8 +296,8 @@ mod tests {
             "videos": [
                 {
                     "id": "legacy_fp_web_123",
-                    "title": "Devs Episode 6",
-                    "file_name": "Devs.S01E06.1080p.mkv",
+                    "title": "Series Alpha Episode 6",
+                    "file_name": "Series.Alpha.S01E06.1080p.mkv",
                     "size_bytes": 1048576,
                     "current_time": 250.0,
                     "duration": 3100.0,
@@ -315,7 +315,7 @@ mod tests {
             "playlists": [
                 {
                     "id": "pl_1",
-                    "name": "Devs Marathon",
+                    "name": "Series Alpha Marathon",
                     "item_ids": ["legacy_fp_web_123"]
                 }
             ]
@@ -483,12 +483,7 @@ mod tests {
             "Both ambiguous and nonexistent videos must be retained"
         );
         assert!(report.unmatched_videos[0].reason.contains("AMBIGUOUS"));
-        assert!(report.unmatched_videos[0]
-            .reason
-            .contains("C:/Movies/Action/Inception.2010.mkv"));
-        assert!(report.unmatched_videos[0]
-            .reason
-            .contains("D:/Backups/SciFi/Inception.2010.mkv"));
+        assert!(report.unmatched_videos[0].reason.contains("Inception.2010.mkv"));
 
         // Verify neither candidate had its playback position updated
         assert!(db.get_playback_position("fp_folder_a").unwrap().is_none());

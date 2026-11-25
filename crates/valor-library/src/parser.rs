@@ -34,9 +34,8 @@ static RE_VCODEC: LazyLock<Regex> = LazyLock::new(|| {
 static RE_ACODEC: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?i)\b(TrueHD|Atmos|DTS-HD|DTS-X|DTS|DDP5\.1|DD5\.1|AC3|AAC|FLAC)\b").unwrap()
 });
-static RE_LEADING_TRACK: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"^(?:(\d{1,3})\s*[-–]\s*|(\d{1,2})\.\s+|(\d{1,3})\s+)").unwrap()
-});
+static RE_LEADING_TRACK: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^(?:(\d{1,3})\s*[-–]\s*|(\d{1,2})\.\s+|(\d{1,3})\s+)").unwrap());
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ConfidenceLevel {
@@ -194,7 +193,7 @@ pub fn parse_media_filename(file_path: &str) -> ParsedFilename {
         let (title, year) = extract_year_from_title(raw_title);
         let mut final_title = clean_title_str(&title, stem);
 
-        // If title is empty or just the episode token (e.g. S01E03.mkv inside /Severance/Season 1/)
+        // If title is empty or just the episode token (e.g. S01E03.mkv inside /Series Beta/Season 1/)
         if raw_title.is_empty() || final_title == stem || RE_TV.is_match(&final_title) {
             if let Some(series) = get_parent_series_title(p) {
                 final_title = series;
@@ -801,8 +800,8 @@ mod tests {
                 Some(5),
             ),
             (
-                "/media/Severance/Season 1/S01E03.mkv",
-                "Severance",
+                "/media/Series Beta/Season 1/S01E03.mkv",
+                "Series Beta",
                 Some(1),
                 Some(3),
             ),
@@ -1035,16 +1034,37 @@ mod tests {
     fn test_y8_parser_leading_track_numbers_and_course_ordering() {
         // 1. Strip leading track number into track_no and keep out of title
         let cases = [
-            ("1. Introduction to Systems.mp4", 1, "Introduction to Systems"),
-            ("01 - Memory Safety and Lifetimes.mkv", 1, "Memory Safety and Lifetimes"),
-            ("02. Concurrency and Channels.mp4", 2, "Concurrency and Channels"),
-            ("03 - Async Await Fundamentals.mp4", 3, "Async Await Fundamentals"),
+            (
+                "1. Introduction to Systems.mp4",
+                1,
+                "Introduction to Systems",
+            ),
+            (
+                "01 - Memory Safety and Lifetimes.mkv",
+                1,
+                "Memory Safety and Lifetimes",
+            ),
+            (
+                "02. Concurrency and Channels.mp4",
+                2,
+                "Concurrency and Channels",
+            ),
+            (
+                "03 - Async Await Fundamentals.mp4",
+                3,
+                "Async Await Fundamentals",
+            ),
             ("12 Advanced Macros.mp4", 12, "Advanced Macros"),
         ];
 
         for (input, exp_track, exp_title) in cases {
             let parsed = parse_media_filename(input);
-            assert_eq!(parsed.track_no, Some(exp_track), "Track number mismatch for {}", input);
+            assert_eq!(
+                parsed.track_no,
+                Some(exp_track),
+                "Track number mismatch for {}",
+                input
+            );
             assert_eq!(parsed.title, exp_title, "Title mismatch for {}", input);
         }
 
@@ -1054,7 +1074,10 @@ mod tests {
             "01 - First Lecture.mp4",
             "03 - Third Lecture.mp4",
         ];
-        let mut parsed_list: Vec<ParsedFilename> = course_files.iter().map(|f| parse_course_filename(f)).collect();
+        let mut parsed_list: Vec<ParsedFilename> = course_files
+            .iter()
+            .map(|f| parse_course_filename(f))
+            .collect();
         // Sort by track number
         parsed_list.sort_by_key(|p| p.track_no.unwrap_or(9999));
 

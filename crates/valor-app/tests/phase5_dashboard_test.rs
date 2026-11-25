@@ -12,8 +12,8 @@ use valor_ui::dashboard::{render_dashboard, DashboardState, DashboardTab};
 use valor_ui::texture_cache::LruTextureCache;
 use valor_ui::theme::ValorTheme;
 use valor_ui::view_models::{
-    group_and_filter_series, group_watch_sessions, resolve_next_episode_to_play,
-    FilterPill, HdrFilter, LibraryTab, ResolutionFilter, SortOption,
+    group_and_filter_series, group_watch_sessions, resolve_next_episode_to_play, FilterPill,
+    HdrFilter, LibraryTab, ResolutionFilter, SortOption,
 };
 
 #[test]
@@ -29,26 +29,46 @@ fn test_phase5_library_dashboard_50000_items_benchmarks_and_screenshots() {
     // =========================================================================
     // 1. GENERATE 50,000 SYNTHETIC DATABASE ITEMS
     // =========================================================================
-    println!("Generating 50,000 synthetic database items (25,000 Movies + 25,000 Series Episodes)...");
+    println!(
+        "Generating 50,000 synthetic database items (25,000 Movies + 25,000 Series Episodes)..."
+    );
     let _gen_start = Instant::now();
     let now = Utc::now();
 
     let movie_titles = [
-        "Cosmic Odyssey", "Neon Horizon", "Starlight Voyage", "Quantum Paradox",
-        "Cybernetic Dreams", "Solaris Station", "Interstellar Echo", "Velocity Vector",
-        "Chronos Legacy", "Suborbital Horizon", "Gravity Well", "Aether Shift",
+        "Cosmic Odyssey",
+        "Neon Horizon",
+        "Starlight Voyage",
+        "Quantum Paradox",
+        "Cybernetic Dreams",
+        "Solaris Station",
+        "Interstellar Echo",
+        "Velocity Vector",
+        "Chronos Legacy",
+        "Suborbital Horizon",
+        "Gravity Well",
+        "Aether Shift",
     ];
 
     let series_titles = [
-        "Devs", "Foundation", "Severance", "Silom", "Dark Matter", "Expanse",
-        "Counterpart", "Constellation", "Peripheral", "Pantheon",
+        "Devs",
+        "Foundation",
+        "Severance",
+        "Silom",
+        "Dark Matter",
+        "Expanse",
+        "Counterpart",
+        "Constellation",
+        "Peripheral",
+        "Pantheon",
     ];
 
     // Pre-insert 500 Series parent records
     for s_idx in 0..500 {
         let s_title = series_titles[s_idx % series_titles.len()];
         let s_id = format!("series_{:03}", s_idx);
-        db.save_series(&s_id, s_title, Some(2024)).expect("save series");
+        db.save_series(&s_id, s_title, Some(2024))
+            .expect("save series");
     }
 
     let total_items_count = 50_000;
@@ -65,7 +85,12 @@ fn test_phase5_library_dashboard_50000_items_benchmarks_and_screenshots() {
         items.push(MediaItem {
             id: format!("movie_{:05}", i),
             fingerprint: format!("fp_movie_{:05}", i),
-            file_path: format!("/media/movies/{}.{}.{}.mkv", base_title.replace(' ', "."), year, if is_4k { "2160p" } else { "1080p" }),
+            file_path: format!(
+                "/media/movies/{}.{}.{}.mkv",
+                base_title.replace(' ', "."),
+                year,
+                if is_4k { "2160p" } else { "1080p" }
+            ),
             title: format!("{} ({})", base_title, year),
             duration,
             size_bytes: if is_4k { 8_500_000_000 } else { 2_200_000_000 },
@@ -73,7 +98,11 @@ fn test_phase5_library_dashboard_50000_items_benchmarks_and_screenshots() {
             height: Some(if is_4k { 2160 } else { 1080 }),
             is_hdr,
             video_codec: Some(if is_4k { "HEVC".into() } else { "H.264".into() }),
-            audio_codec: Some(if is_4k { "E-AC-3 5.1".into() } else { "AAC".into() }),
+            audio_codec: Some(if is_4k {
+                "E-AC-3 5.1".into()
+            } else {
+                "AAC".into()
+            }),
             series_id: None,
             season_number: None,
             episode_number: None,
@@ -95,7 +124,10 @@ fn test_phase5_library_dashboard_50000_items_benchmarks_and_screenshots() {
                 items.push(MediaItem {
                     id: format!("ep_{:05}", ep_global_idx),
                     fingerprint: format!("fp_ep_{:05}", ep_global_idx),
-                    file_path: format!("/media/shows/{}/Season {:02}/{}.S{:02}E{:02}.1080p.mkv", s_title, season, s_title, season, ep),
+                    file_path: format!(
+                        "/media/shows/{}/Season {:02}/{}.S{:02}E{:02}.1080p.mkv",
+                        s_title, season, s_title, season, ep
+                    ),
                     title: format!("{} S{:02}E{:02} Episode {}", s_title, season, ep, ep),
                     duration,
                     size_bytes: 1_800_000_000,
@@ -126,7 +158,11 @@ fn test_phase5_library_dashboard_50000_items_benchmarks_and_screenshots() {
         }
     }
     let ingest_duration = ingest_start.elapsed().as_secs_f64();
-    println!("Ingested 50,000 items in {:.2} s ({:.1} items/sec)", ingest_duration, 50_000.0 / ingest_duration);
+    println!(
+        "Ingested 50,000 items in {:.2} s ({:.1} items/sec)",
+        ingest_duration,
+        50_000.0 / ingest_duration
+    );
 
     // Generate Collections / Playlists
     println!("Generating 200 collections & playlists...");
@@ -134,14 +170,21 @@ fn test_phase5_library_dashboard_50000_items_benchmarks_and_screenshots() {
     for c_idx in 0..200 {
         let coll = Collection {
             id: format!("coll_{:03}", c_idx),
-            name: if c_idx == 0 { "Devs".to_string() } else { format!("Collection {:03}", c_idx) },
+            name: if c_idx == 0 {
+                "Devs".to_string()
+            } else {
+                format!("Collection {:03}", c_idx)
+            },
             collection_type: "playlist".into(),
-            item_ids: (0..12).map(|k| format!("ep_{:05}", (c_idx * 12 + k) % 25000)).collect(),
+            item_ids: (0..12)
+                .map(|k| format!("ep_{:05}", (c_idx * 12 + k) % 25000))
+                .collect(),
             current_index: (c_idx % 5),
             last_played_at: Some(now - Duration::hours(c_idx as i64 * 3)),
             is_pinned: c_idx < 5,
         };
-        db.save_collection(&coll).expect("Failed to save collection");
+        db.save_collection(&coll)
+            .expect("Failed to save collection");
         collections.push(coll);
     }
 
@@ -205,9 +248,22 @@ fn test_phase5_library_dashboard_50000_items_benchmarks_and_screenshots() {
     println!("BENCHMARK 1: FTS5 SEARCH LATENCY OVER 50,000 ROWS");
     println!("------------------------------------------------------------");
     let test_queries = [
-        "Cosmic", "Horizon", "Odyssey", "2024", "Devs", "Episode",
-        "Foundation", "Severance", "Quantum", "Cybernetic", "Solaris",
-        "1080p", "Station", "Paradox", "Voyage", "UnknownNonExistent",
+        "Cosmic",
+        "Horizon",
+        "Odyssey",
+        "2024",
+        "Devs",
+        "Episode",
+        "Foundation",
+        "Severance",
+        "Quantum",
+        "Cybernetic",
+        "Solaris",
+        "1080p",
+        "Station",
+        "Paradox",
+        "Voyage",
+        "UnknownNonExistent",
     ];
 
     let mut latencies_us = Vec::new();
@@ -216,15 +272,31 @@ fn test_phase5_library_dashboard_50000_items_benchmarks_and_screenshots() {
         let results = db.search_items(q).expect("FTS5 search failed");
         let dur_us = s_start.elapsed().as_micros() as f64;
         latencies_us.push(dur_us);
-        println!("  • Query: {:<18} -> {:>5} matches in {:>7.2} ms", format!("'{}'", q), results.len(), dur_us / 1000.0);
-        assert!(dur_us / 1000.0 < 50.0, "FTS5 query '{}' exceeded 50 ms limit ({:.2} ms)", q, dur_us / 1000.0);
+        println!(
+            "  • Query: {:<18} -> {:>5} matches in {:>7.2} ms",
+            format!("'{}'", q),
+            results.len(),
+            dur_us / 1000.0
+        );
+        assert!(
+            dur_us / 1000.0 < 50.0,
+            "FTS5 query '{}' exceeded 50 ms limit ({:.2} ms)",
+            q,
+            dur_us / 1000.0
+        );
     }
 
     let avg_latency_ms = (latencies_us.iter().sum::<f64>() / latencies_us.len() as f64) / 1000.0;
     let max_latency_ms = latencies_us.iter().cloned().fold(0.0, f64::max) / 1000.0;
     println!("FTS5 Search Benchmark Results:");
-    println!("  • Average Search Latency: {:.3} ms (Requirement: < 50 ms) -> PASS", avg_latency_ms);
-    println!("  • Maximum Search Latency: {:.3} ms (Requirement: < 50 ms) -> PASS", max_latency_ms);
+    println!(
+        "  • Average Search Latency: {:.3} ms (Requirement: < 50 ms) -> PASS",
+        avg_latency_ms
+    );
+    println!(
+        "  • Maximum Search Latency: {:.3} ms (Requirement: < 50 ms) -> PASS",
+        max_latency_ms
+    );
     assert!(avg_latency_ms < 15.0);
     assert!(max_latency_ms < 50.0);
 
@@ -247,9 +319,19 @@ fn test_phase5_library_dashboard_50000_items_benchmarks_and_screenshots() {
     println!("  • Collections Loaded: {}", initial_colls.len());
     println!("  • Recent Sessions:    {}", recent_sessions.len());
     println!("  • Folders Configured: {}", configured_folders.len());
-    println!("  • Library Totals:     {} Movies, {} Series, {} Items", lib_stats.0, lib_stats.1, lib_stats.2);
-    println!("  • Total Time to Open: {:.2} ms (Requirement: < 100 ms) -> PASS", time_to_open_ms);
-    assert!(time_to_open_ms < 100.0, "Dashboard open exceeded 100 ms limit ({:.2} ms)", time_to_open_ms);
+    println!(
+        "  • Library Totals:     {} Movies, {} Series, {} Items",
+        lib_stats.0, lib_stats.1, lib_stats.2
+    );
+    println!(
+        "  • Total Time to Open: {:.2} ms (Requirement: < 100 ms) -> PASS",
+        time_to_open_ms
+    );
+    assert!(
+        time_to_open_ms < 100.0,
+        "Dashboard open exceeded 100 ms limit ({:.2} ms)",
+        time_to_open_ms
+    );
 
     // =========================================================================
     // 4. FRAME TIME WHILE SCROLLING 50,000 ITEMS (< 16.6 ms / 60 FPS)
@@ -318,10 +400,19 @@ fn test_phase5_library_dashboard_50000_items_benchmarks_and_screenshots() {
     let avg_frame_ms = (frame_times_us.iter().sum::<f64>() / frame_times_us.len() as f64) / 1000.0;
     let max_frame_ms = frame_times_us.iter().cloned().fold(0.0, f64::max) / 1000.0;
     println!("Scrolling 50,000 Items Results:");
-    println!("  • Average Virtualized Frame Time: {:.3} ms (60 FPS Budget: 16.66 ms) -> PASS", avg_frame_ms);
-    println!("  • Maximum Single Frame Time:      {:.3} ms -> PASS", max_frame_ms);
+    println!(
+        "  • Average Virtualized Frame Time: {:.3} ms (60 FPS Budget: 16.66 ms) -> PASS",
+        avg_frame_ms
+    );
+    println!(
+        "  • Maximum Single Frame Time:      {:.3} ms -> PASS",
+        max_frame_ms
+    );
     assert!(avg_frame_ms < 10.0, "Average frame time exceeded 10 ms");
-    assert!(max_frame_ms < 16.66, "Single frame exceeded 16.66 ms 60 FPS ceiling");
+    assert!(
+        max_frame_ms < 16.66,
+        "Single frame exceeded 16.66 ms 60 FPS ceiling"
+    );
 
     // =========================================================================
     // 5. TEXTURE MEMORY CEILING VERIFICATION (LRU CAP)
@@ -343,8 +434,14 @@ fn test_phase5_library_dashboard_50000_items_benchmarks_and_screenshots() {
     out.textures_delta.clear();
     println!("Texture LRU Memory Ceiling Results:");
     println!("  • Unique Requested Items:  1,000");
-    println!("  • Active GPU Textures:     {} (LRU Cap: 256) -> PASS", loaded_count);
-    println!("  • Estimated GPU VRAM:      {:.2} MB (Ceiling: < 64.0 MB) -> PASS", est_vram_mb);
+    println!(
+        "  • Active GPU Textures:     {} (LRU Cap: 256) -> PASS",
+        loaded_count
+    );
+    println!(
+        "  • Estimated GPU VRAM:      {:.2} MB (Ceiling: < 64.0 MB) -> PASS",
+        est_vram_mb
+    );
     assert!(loaded_count <= 256);
     assert!(est_vram_mb <= 64.0);
 
@@ -363,18 +460,30 @@ fn test_phase5_library_dashboard_50000_items_benchmarks_and_screenshots() {
         HdrFilter::All,
         "",
     );
-    assert_eq!(series_summaries.len(), 500, "Must correctly group 25,000 episodes into 500 series");
+    assert_eq!(
+        series_summaries.len(),
+        500,
+        "Must correctly group 25,000 episodes into 500 series"
+    );
     let first_series = &series_summaries[0];
     assert_eq!(first_series.season_count, 5);
     assert_eq!(first_series.episode_count, 50);
 
-    let next_to_play = resolve_next_episode_to_play(first_series, &positions_cache).expect("next ep");
+    let next_to_play =
+        resolve_next_episode_to_play(first_series, &positions_cache).expect("next ep");
     assert!(next_to_play.season_number.is_some());
-    println!("  • Series Detail & Next Episode Resolution: PASS (Resolved to {})", next_to_play.title);
+    println!(
+        "  • Series Detail & Next Episode Resolution: PASS (Resolved to {})",
+        next_to_play.title
+    );
 
     let history_groups = group_watch_sessions(&watch_sessions);
     assert!(!history_groups.is_empty());
-    println!("  • History Date Grouping: PASS (Found {} date buckets, group 0: '{}')", history_groups.len(), history_groups[0].aggregate_label);
+    println!(
+        "  • History Date Grouping: PASS (Found {} date buckets, group 0: '{}')",
+        history_groups.len(),
+        history_groups[0].aggregate_label
+    );
 
     // =========================================================================
     // 7. GENERATE SCREENSHOTS OF EVERY DASHBOARD VIEW

@@ -1,0 +1,6 @@
+# Generated build output, local media libraries, and runtime state.
+/target/
+/libmpv/
+/.valor/
+/logs/
+*.log

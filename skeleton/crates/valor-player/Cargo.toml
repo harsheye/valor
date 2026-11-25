@@ -1,0 +1,11 @@
+# Manifest for the libmpv and OpenGL integration boundary.
+[package]
+name = "valor-player"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+build = "build.rs"
+
+[dependencies]
+libmpv2.workspace = true
+valor-core = { path = "../valor-core" }

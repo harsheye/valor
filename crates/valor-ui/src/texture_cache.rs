@@ -66,6 +66,7 @@ impl LruTextureCache {
 
     /// Pumps newly decoded images from worker thread and uploads them to GPU
     pub fn pump_uploads(&mut self, ctx: &Context) {
+        let mut pumped = false;
         while let Ok(decoded) = self.result_rx.try_recv() {
             let handle = ctx.load_texture(
                 format!("thumb_{}", decoded.fingerprint),
@@ -73,6 +74,10 @@ impl LruTextureCache {
                 TextureOptions::LINEAR,
             );
             self.insert_texture(decoded.fingerprint, handle);
+            pumped = true;
+        }
+        if pumped {
+            ctx.request_repaint();
         }
     }
 
@@ -110,10 +115,22 @@ impl LruTextureCache {
             if !pending.contains_key(fingerprint) && p.exists() {
                 pending.insert(fingerprint.to_string(), true);
                 let _ = self.request_tx.send((fingerprint.to_string(), p.clone()));
+                ctx.request_repaint_after(std::time::Duration::from_millis(50));
             }
         }
 
         None
+    }
+
+    /// Convenience getter for `Path`
+    pub fn get(
+        &mut self,
+        fingerprint: &str,
+        path: &std::path::Path,
+        ctx: &Context,
+    ) -> Option<&TextureHandle> {
+        let pb = path.to_path_buf();
+        self.get_or_request(ctx, fingerprint, Some(&pb))
     }
 
     /// Number of textures currently allocated in GPU VRAM
@@ -147,11 +164,19 @@ mod tests {
         let ctx = Context::default();
 
         for i in 0..5 {
-            let handle = ctx.load_texture(format!("t{}", i), dummy_img.clone(), TextureOptions::NEAREST);
+            let handle = ctx.load_texture(
+                format!("t{}", i),
+                dummy_img.clone(),
+                TextureOptions::NEAREST,
+            );
             cache.insert_texture(format!("fp_{}", i), handle);
         }
 
-        assert_eq!(cache.loaded_gpu_count(), 3, "Must not exceed max_textures cap");
+        assert_eq!(
+            cache.loaded_gpu_count(),
+            3,
+            "Must not exceed max_textures cap"
+        );
         assert!(!cache.gpu_textures.contains_key("fp_0"));
         assert!(!cache.gpu_textures.contains_key("fp_1"));
         assert!(cache.gpu_textures.contains_key("fp_2"));

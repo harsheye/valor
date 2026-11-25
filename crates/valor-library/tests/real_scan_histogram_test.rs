@@ -56,7 +56,9 @@ fn test_w8_w9_y3_y8_scan_honesty_and_stratified_histogram() {
     // Explaining the 1,234 vs 1,287 count and mechanical disk latency (Y3)
     println!("RECONCILIATION OF FILE COUNTS AND DISK ACCESS LATENCIES:");
     println!("  1. File Count Reconciliation:");
-    println!("     • 1,234 files was the exact count when scanning the single 'Movies' root directory.");
+    println!(
+        "     • 1,234 files was the exact count when scanning the single 'Movies' root directory."
+    );
     println!("     • 1,287 files was the combined aggregate count when including additional show directories.");
     println!("  2. Scan Throughput & Latency Explanation:");
     println!("     • Scanning 1,234 files on a mechanical rotational hard drive (NTFS) took ~1.8 s (~1.46 ms/file)");
@@ -100,12 +102,27 @@ fn test_w8_w9_y3_y8_scan_honesty_and_stratified_histogram() {
 
     println!("COLD SCAN RESULTS:");
     println!("  • Directory Path:                 {:?}", target_dir);
-    println!("  • Cold Scan Elapsed:             {:.3} ms", t_cold_elapsed.as_secs_f64() * 1000.0);
-    println!("  • Files Seen (Total):             {}", cold_stats.files_seen);
-    println!("  • Files New / Inserted:           {}", cold_stats.files_new);
-    println!("  • Time-To-First-Usable-Library:   {:.3} ms (Instant UI availability)", t_cold_elapsed.as_secs_f64() * 1000.0);
+    println!(
+        "  • Cold Scan Elapsed:             {:.3} ms",
+        t_cold_elapsed.as_secs_f64() * 1000.0
+    );
+    println!(
+        "  • Files Seen (Total):             {}",
+        cold_stats.files_seen
+    );
+    println!(
+        "  • Files New / Inserted:           {}",
+        cold_stats.files_new
+    );
+    println!(
+        "  • Time-To-First-Usable-Library:   {:.3} ms (Instant UI availability)",
+        t_cold_elapsed.as_secs_f64() * 1000.0
+    );
     println!("  • Analysis Tasks Enqueued:        {}", pending);
-    println!("  • Computed Analysis ETA:          {:.2} s (2-worker pool @ 15ms/file)", est_analysis_secs);
+    println!(
+        "  • Computed Analysis ETA:          {:.2} s (2-worker pool @ 15ms/file)",
+        est_analysis_secs
+    );
 
     // Warm incremental scan
     let t_warm_start = Instant::now();
@@ -114,10 +131,22 @@ fn test_w8_w9_y3_y8_scan_honesty_and_stratified_histogram() {
     let t_warm_elapsed = t_warm_start.elapsed();
 
     println!("\nWARM INCREMENTAL SCAN RESULTS:");
-    println!("  • Warm Scan Elapsed:              {:.3} ms", t_warm_elapsed.as_secs_f64() * 1000.0);
-    println!("  • Files Seen:                     {}", warm_stats.files_seen);
-    println!("  • Files New / Updated:            {} / {}", warm_stats.files_new, warm_stats.files_updated);
-    println!("  • Warm Check Latency per File:    {:.3} µs", (t_warm_elapsed.as_secs_f64() * 1_000_000.0) / warm_stats.files_seen.max(1) as f64);
+    println!(
+        "  • Warm Scan Elapsed:              {:.3} ms",
+        t_warm_elapsed.as_secs_f64() * 1000.0
+    );
+    println!(
+        "  • Files Seen:                     {}",
+        warm_stats.files_seen
+    );
+    println!(
+        "  • Files New / Updated:            {} / {}",
+        warm_stats.files_new, warm_stats.files_updated
+    );
+    println!(
+        "  • Warm Check Latency per File:    {:.3} µs",
+        (t_warm_elapsed.as_secs_f64() * 1_000_000.0) / warm_stats.files_seen.max(1) as f64
+    );
 
     let _ = fs::remove_file(&temp_db_path);
 
@@ -129,11 +158,16 @@ fn test_w8_w9_y3_y8_scan_honesty_and_stratified_histogram() {
     let mut non_course_entries = Vec::new();
     let mut course_entries = Vec::new();
 
-    for entry in walkdir::WalkDir::new(&target_dir).into_iter().filter_map(|e| e.ok()) {
+    for entry in walkdir::WalkDir::new(&target_dir)
+        .into_iter()
+        .filter_map(|e| e.ok())
+    {
         if entry.file_type().is_file() {
             let path = entry.path();
             if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
-                if ["mp4", "mkv", "avi", "webm", "flac", "wav"].contains(&ext.to_lowercase().as_str()) {
+                if ["mp4", "mkv", "avi", "webm", "flac", "wav"]
+                    .contains(&ext.to_lowercase().as_str())
+                {
                     let fname = path.file_name().unwrap().to_string_lossy().to_string();
                     let is_course = path.to_string_lossy().to_lowercase().contains("course")
                         || path.to_string_lossy().to_lowercase().contains("lecture")
@@ -178,10 +212,26 @@ fn test_w8_w9_y3_y8_scan_honesty_and_stratified_histogram() {
     }
 
     println!("\nCONFIDENCE DISTRIBUTION HISTOGRAM (NON-COURSE MEDIA):");
-    println!("  [0.85 - 1.00] High Confidence:   {:4} files ({:5.1}%) [████████████████████]", b_high, (b_high as f64 / total_non_course.max(1) as f64) * 100.0);
-    println!("  [0.70 - 0.84] Good Confidence:   {:4} files ({:5.1}%) [█████████           ]", b_med, (b_med as f64 / total_non_course.max(1) as f64) * 100.0);
-    println!("  [0.50 - 0.69] Moderate / Clean:  {:4} files ({:5.1}%) [██████████████      ]", b_fair, (b_fair as f64 / total_non_course.max(1) as f64) * 100.0);
-    println!("  [0.00 - 0.49] Low / Ambiguous:   {:4} files ({:5.1}%) [█                   ]", b_low, (b_low as f64 / total_non_course.max(1) as f64) * 100.0);
+    println!(
+        "  [0.85 - 1.00] High Confidence:   {:4} files ({:5.1}%) [████████████████████]",
+        b_high,
+        (b_high as f64 / total_non_course.max(1) as f64) * 100.0
+    );
+    println!(
+        "  [0.70 - 0.84] Good Confidence:   {:4} files ({:5.1}%) [█████████           ]",
+        b_med,
+        (b_med as f64 / total_non_course.max(1) as f64) * 100.0
+    );
+    println!(
+        "  [0.50 - 0.69] Moderate / Clean:  {:4} files ({:5.1}%) [██████████████      ]",
+        b_fair,
+        (b_fair as f64 / total_non_course.max(1) as f64) * 100.0
+    );
+    println!(
+        "  [0.00 - 0.49] Low / Ambiguous:   {:4} files ({:5.1}%) [█                   ]",
+        b_low,
+        (b_low as f64 / total_non_course.max(1) as f64) * 100.0
+    );
 
     // Sort by confidence ascending to get the 20 lowest-confidence filenames OUTSIDE the course folders
     non_course_entries.sort_by(|a, b| a.2.partial_cmp(&b.2).unwrap_or(std::cmp::Ordering::Equal));
@@ -189,7 +239,10 @@ fn test_w8_w9_y3_y8_scan_honesty_and_stratified_histogram() {
     println!("\n================================================================================");
     println!("20 LOWEST-CONFIDENCE FILENAMES (OUTSIDE COURSE FOLDERS)");
     println!("================================================================================");
-    println!("{:<3} | {:<5} | {:<44} | {:<24} | S/E/Y", "#", "Conf", "Filename", "Extracted Title");
+    println!(
+        "{:<3} | {:<5} | {:<44} | {:<24} | S/E/Y",
+        "#", "Conf", "Filename", "Extracted Title"
+    );
     println!("--------------------------------------------------------------------------------");
     for (idx, (fname, parsed, score)) in non_course_entries.iter().take(20).enumerate() {
         let display_fname = if fname.len() > 44 {
@@ -202,8 +255,18 @@ fn test_w8_w9_y3_y8_scan_honesty_and_stratified_histogram() {
         } else {
             parsed.title.clone()
         };
-        let sey = format!("S:{:?} E:{:?} Y:{:?}", parsed.season, parsed.episode, parsed.year);
-        println!("{:<3} | {:.2}  | {:<44} | {:<24} | {}", idx + 1, score, display_fname, display_title, sey);
+        let sey = format!(
+            "S:{:?} E:{:?} Y:{:?}",
+            parsed.season, parsed.episode, parsed.year
+        );
+        println!(
+            "{:<3} | {:.2}  | {:<44} | {:<24} | {}",
+            idx + 1,
+            score,
+            display_fname,
+            display_title,
+            sey
+        );
     }
     println!("================================================================================");
 }

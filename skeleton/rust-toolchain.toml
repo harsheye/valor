@@ -1,0 +1,5 @@
+# Stable Rust toolchain required by the Valor workspace.
+[toolchain]
+channel = "stable"
+profile = "minimal"
+components = ["clippy", "rustfmt"]

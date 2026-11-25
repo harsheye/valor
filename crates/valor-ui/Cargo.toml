@@ -15,3 +15,4 @@ thiserror = "2.0"
 resvg = "0.45"
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp"] }
 parking_lot = "0.12"
+directories = "5.0"

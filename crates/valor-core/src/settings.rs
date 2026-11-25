@@ -16,7 +16,12 @@ pub enum SettingsError {
     TomlSer(#[from] toml::ser::Error),
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+fn default_skip_secs() -> u32 {
+    10
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Settings {
     pub version: u32,
 
@@ -27,6 +32,8 @@ pub struct Settings {
     pub default_sub_lang: String,
     pub auto_next: bool,
     pub auto_next_countdown_secs: u32,
+    #[serde(default = "default_skip_secs")]
+    pub skip_secs: u32,
     pub end_of_collection_action: String, // "home", "stay", "replay"
     pub confirm_quit_while_playing: bool,
     pub system_media_controls: bool,
@@ -71,6 +78,7 @@ impl Default for Settings {
             default_sub_lang: "eng".to_string(),
             auto_next: true,
             auto_next_countdown_secs: 5,
+            skip_secs: 10,
             end_of_collection_action: "home".to_string(),
             confirm_quit_while_playing: true,
             system_media_controls: true,

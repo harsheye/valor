@@ -1,5 +1,3 @@
-pub mod app;
-pub mod bench;
 pub mod ipc;
-pub mod power;
-pub mod render;
+pub mod shell_app;
+pub mod thumbnail_extractor;

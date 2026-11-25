@@ -7,8 +7,6 @@ license.workspace = true
 [dependencies]
 valor-core = { path = "../valor-core" }
 blake3 = "1.5"
-libmpv2 = "7.0.1"
-libmpv2-sys = "4.0.1"
 walkdir = "2.5"
 notify = "6.1"
 regex = "1.11"
@@ -19,7 +17,6 @@ directories = "5.0"
 parking_lot = "0.12"
 thiserror = "2.0"
 tracing = "0.1"
-image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp"] }
 
 [dev-dependencies]
 tempfile = "3.10"

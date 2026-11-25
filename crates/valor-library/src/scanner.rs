@@ -11,14 +11,17 @@ use tracing::{debug, error, info};
 use valor_core::db::Database;
 use valor_core::fingerprint::compute_fingerprint;
 use valor_core::models::{MediaItem, ScannedFileRecord};
+use valor_core::path_utils::{normalize_path_string, path_is_within};
 use walkdir::WalkDir;
 
 const MEDIA_EXTENSIONS: &[&str] = &[
     "mkv", "mp4", "avi", "mov", "wmv", "flv", "webm", "m4v", "ts", "m2ts", "vob", "mpg", "mpeg",
-    "iso",
+    "iso", "3gp", "3g2", "ogv", "mxf", "m2v", "asf", "divx", "f4v", "rmvb", "mts", "mpe", "mpv",
 ];
 
-const BATCH_SIZE: usize = 500;
+// Commit and publish modest batches so libraries become visible while the
+// walk is still in progress instead of appearing only at the end.
+const BATCH_SIZE: usize = 64;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ScanFileError {
@@ -68,7 +71,29 @@ where
     let cache = db.get_all_cached_file_info().unwrap_or_default();
 
     // Follow symlinks and handle directory traversal gracefully
-    for entry_res in WalkDir::new(root_dir).follow_links(true).into_iter() {
+    let excluded = db
+        .get_all_excluded_paths()
+        .unwrap_or_default();
+    for entry_res in WalkDir::new(root_dir)
+        .follow_links(true)
+        .into_iter()
+        .filter_entry(|entry| {
+            let path_str = entry.path().to_string_lossy().to_ascii_lowercase();
+            if path_str.contains("$recycle.bin")
+                || path_str.contains("system volume information")
+                || path_str.contains(".trash")
+                || path_str.contains(".git")
+                || path_str.contains(".svn")
+                || entry.file_name().to_string_lossy().starts_with("$r")
+                || entry.file_name().to_string_lossy().starts_with("._")
+            {
+                return false;
+            }
+            !excluded
+                .iter()
+                .any(|path| path_is_within(entry.path(), Path::new(path)))
+        })
+    {
         // 1. Check cancellation
         if cancel_flag.load(Ordering::Relaxed) {
             info!("Directory scan canceled by user");
@@ -114,7 +139,7 @@ where
         }
 
         progress.files_seen += 1;
-        let path_str = p.to_string_lossy().to_string();
+        let path_str = normalize_path_string(&p.to_string_lossy());
         progress.current_path = Some(path_str.clone());
 
         // 4. Read metadata (size and mtime)
@@ -131,6 +156,18 @@ where
         };
 
         let size_bytes = meta.len();
+        // Skip files under 100 MB threshold
+        if size_bytes < 100 * 1024 * 1024 {
+            progress.files_skipped += 1;
+            continue;
+        }
+
+        // Double check against all excluded paths
+        if excluded.iter().any(|ex| path_is_within(p, Path::new(ex))) {
+            progress.files_skipped += 1;
+            continue;
+        }
+
         let mtime_secs = meta
             .modified()
             .ok()
@@ -142,7 +179,7 @@ where
         if let Some(cached) = cache.get(&path_str) {
             if cached.size_bytes == size_bytes && cached.mtime_secs == mtime_secs {
                 progress.files_skipped += 1;
-                if progress.files_seen % 500 == 0 {
+                if progress.files_seen % BATCH_SIZE == 0 {
                     progress_callback(progress.clone());
                 }
                 continue;
@@ -195,6 +232,13 @@ where
 
         let path_hash = blake3::hash(path_str.as_bytes()).to_hex();
 
+        let is_series = parsed.season.is_some() || parsed.episode.is_some();
+        let series_id = if is_series {
+            Some(parsed.title.clone())
+        } else {
+            None
+        };
+
         let item = MediaItem {
             id: format!("item_{}", path_hash),
             fingerprint: fingerprint.clone(),
@@ -207,7 +251,7 @@ where
             is_hdr,
             video_codec,
             audio_codec,
-            series_id: None,
+            series_id,
             season_number: parsed.season,
             episode_number: parsed.episode,
             is_missing: false,
@@ -232,7 +276,9 @@ where
         if batch.len() >= BATCH_SIZE {
             if let Err(e) = db.batch_upsert_scanned_files(&batch) {
                 error!("Batch upsert failed: {:?}", e);
-                progress.errors_count += batch.len();
+                return Err(format!(
+                    "Could not save discovered media to the library: {e}"
+                ));
             }
             batch.clear();
             progress_callback(progress.clone());
@@ -243,7 +289,9 @@ where
     if !batch.is_empty() {
         if let Err(e) = db.batch_upsert_scanned_files(&batch) {
             error!("Final batch upsert failed: {:?}", e);
-            progress.errors_count += batch.len();
+            return Err(format!(
+                "Could not save discovered media to the library: {e}"
+            ));
         }
         batch.clear();
     }

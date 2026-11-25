@@ -1,0 +1,64 @@
+VALOR APP SHELL - FORMAL LAYOUT & WIDGET TREE DUMP
+Generated: 2026-11-21
+====================================================================
+ROOT CANVAS:
+Size: 1280 x 720 logical px (min 960 x 600)
+Background: #0B0D12 (L=5.7%)
+
+1. TITLEBAR:
+Rect: [0, 0] -> [1280, 40]
+Height: 40.0 px (dimensions::TITLEBAR_HEIGHT)
+Left Brand: Icon 16x16 at [12, 12], Text 'Valor' 14px Semibold
+Center Search Box:
+Width: 512.0 px (40% clamped in [280, 640])
+Height: 32.0 px, Radius: 6px
+Background: #141721, Border: 1px #FFFFFF1A / #3B82F6
+Shortcut: '/' focus, 'Esc' clear
+Right Window Controls:
+Settings: [1118, 4] -> [1150, 36] (32x32, 6px radius, hover fill)
+Minimize: [1150, 0] -> [1196, 40] (46x40)
+Maximize: [1196, 0] -> [1242, 40] (46x40)
+Close:    [1242, 0] -> [1288, 40] (46x40, hover background #C42B1C)
+Divider: 1px HLine at y=40.0 (#FFFFFF1A)
+
+2. LEFT NAVIGATION RAIL:
+Rect: [0, 41] -> [280, 720]
+Width: 280.0 px default (resizable [220, 420], collapsible to 48px)
+Background: #141721 (L=10.4%, Delta L = +4.7 pts vs bg)
+Hamburger Button: [8, 49] -> [40, 81] (32x32, 6px radius)
+Nav Rows (height 40px, margin 8px, gap 4px):
+- Home:     Icon 20px 'home', Label 'Home' 14px, Accent Pill 3x16px
+- Library:  Icon 20px 'library', Label 'Library' 14px
+- History:  Icon 20px 'history', Label 'History (n)' 14px
+Divider: 1px HLine at y=217.0 (#FFFFFF1A)
+This PC Section:
+Header: [8, 229] -> [272, 269] (Icon 'computer' 20px, 'This PC' 14px, Chevron 16px, Folder+ 24px)
+Tree Rows (height 36px, indent 16px/level):
+- Folder Row: Icon 16px 'folder' / 'folder-open' / 'warning', Name 14px, Chevron 16px
+- Context Menu: 32px items (Rescan, Open in Explorer, Remove from library)
+Empty State: 'No folders added · Add folder' button
+Bottom Pinned Rows (at bottom):
+Divider: 1px HLine
+- Theme:    [8, 632] -> [272, 672] (Icon 'palette' 20px, 'Theme' 14px)
+- Settings: [8, 676] -> [272, 716] (Icon 'settings' 20px, 'Settings' 14px)
+Divider: 1px VLine at x=280.0 (#FFFFFF1A)
+
+3. CONTENT SURFACE:
+Rect: [281, 41] -> [1280, 720]
+Corner Radius: 8px top-left, 0 elsewhere
+Background: #1F2433 (L=16.1%, Delta L = +5.7 pts vs nav)
+Padding: Left/Right 32px, Top 24px
+Header Toolbar Row:
+Left Title: Icon 24px, Page Title 28px Display, Summary 14px Muted
+Right Toolbar (height 32px, gap 8px):
+- [Select]: 84x32px, 6px radius, toggle mode with accent border
+- [Sort v]: 40x32px, popup menu 200px wide (Date modified, Date added, Name, Duration, Size, Last watched, Resolution)
+- [Filter v]: 40x32px, popup menu with blue accent dot when active (All, In progress, Unwatched, Watched)
+- [View v]: 40x32px, popup menu (Large grid, Medium grid, Small grid, List view)
+- [...]: 32x32px overflow popup ('Rescan all')
+Divider: 1px HLine under toolbar (#FFFFFF1A)
+Home Minimal Body:
+- Primary Action: 'Open file' button (120x36px, #3B82F6 accent, 6px radius)
+- Drop Hint: 'or drop a file anywhere in the window' (14px #94A3B8)
+- Library Empty State: 'Add a folder to build your library' (14px #94A3B8)
+====================================================================

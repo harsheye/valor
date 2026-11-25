@@ -211,17 +211,17 @@ pub fn start_single_instance_ipc_server() -> Receiver<PathBuf> {
     #[cfg(windows)]
     {
         let pipe_name = get_ipc_pipe_name();
-        std::thread::spawn(move || {
-            run_windows_named_pipe_server(&pipe_name, tx);
-        });
+        let _ = std::thread::Builder::new()
+            .name("valor-ipc-named-pipe".into())
+            .spawn(move || run_windows_named_pipe_server(&pipe_name, tx));
     }
 
     #[cfg(not(windows))]
     {
         let sock_path = get_ipc_pipe_name();
-        std::thread::spawn(move || {
-            run_unix_socket_server(&sock_path, tx);
-        });
+        let _ = std::thread::Builder::new()
+            .name("valor-ipc-unix-socket".into())
+            .spawn(move || run_unix_socket_server(&sock_path, tx));
     }
 
     rx

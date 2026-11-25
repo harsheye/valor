@@ -1,0 +1,16 @@
+# Manifest for the native desktop entry point and worker orchestration.
+[package]
+name = "valor-app"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+crossbeam-channel.workspace = true
+eframe.workspace = true
+egui.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+valor-core = { path = "../valor-core" }
+valor-player = { path = "../valor-player" }
+valor-ui = { path = "../valor-ui" }

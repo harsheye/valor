@@ -7,6 +7,9 @@ use std::sync::Arc;
 use thiserror::Error;
 use tracing::info;
 
+use crate::path_utils::{normalize_path_string, path_is_within};
+use std::collections::HashMap;
+
 #[derive(Error, Debug)]
 pub enum DbError {
     #[error("SQLite error: {0}")]
@@ -15,6 +18,15 @@ pub enum DbError {
     NotFound(String),
 }
 
+/// Identifies one demo-marked database row for a user review preview.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DemoDataRow {
+    pub table: String,
+    pub id: String,
+}
+
+pub const MIN_MEDIA_SIZE_BYTES: u64 = 100 * 1024 * 1024; // 100 MB minimum threshold
+
 #[derive(Clone)]
 pub struct Database {
     conn: Arc<Mutex<Connection>>,
@@ -22,6 +34,61 @@ pub struct Database {
 }
 
 impl Database {
+    /// Lists the exact demo-marked rows that a confirmed cleanup would remove.
+    pub fn preview_demo_data(&self) -> Result<Vec<DemoDataRow>, DbError> {
+        let conn = self.conn.lock();
+        let mut statement = conn.prepare(
+            "SELECT 'media_files', id FROM media_files WHERE is_demo = 1
+             UNION ALL SELECT 'series', id FROM series WHERE is_demo = 1
+             UNION ALL SELECT 'items', id FROM items WHERE is_demo = 1
+             UNION ALL SELECT 'collections', id FROM collections WHERE is_demo = 1
+             UNION ALL SELECT 'watch_sessions', id FROM watch_sessions WHERE is_demo = 1
+             UNION ALL SELECT 'bookmarks', id FROM bookmarks WHERE is_demo = 1
+             UNION ALL SELECT 'playback_positions', fingerprint FROM playback_positions WHERE is_demo = 1
+             ORDER BY 1, 2",
+        )?;
+        let rows = statement.query_map([], |row| {
+            Ok(DemoDataRow {
+                table: row.get(0)?,
+                id: row.get(1)?,
+            })
+        })?;
+        Ok(rows.collect::<Result<Vec<_>, _>>()?)
+    }
+
+    /// Deletes only rows marked as demo after the caller has obtained confirmation.
+    pub fn remove_demo_data(&self) -> Result<usize, DbError> {
+        let mut conn = self.conn.lock();
+        let tx = conn.transaction()?;
+        let mut removed = 0usize;
+        for table in [
+            "watch_sessions",
+            "bookmarks",
+            "playback_positions",
+            "collection_items",
+            "items",
+            "media_files",
+            "series",
+            "collections",
+        ] {
+            let query = match table {
+                "collection_items" => "DELETE FROM collection_items WHERE collection_id IN (SELECT id FROM collections WHERE is_demo = 1) OR item_id IN (SELECT id FROM items WHERE is_demo = 1)",
+                _ => match table {
+                    "playback_positions" => "DELETE FROM playback_positions WHERE is_demo = 1",
+                    _ => "",
+                },
+            };
+            let changed = if table == "collection_items" || table == "playback_positions" {
+                tx.execute(query, [])?
+            } else {
+                tx.execute(&format!("DELETE FROM {table} WHERE is_demo = 1"), [])?
+            };
+            removed += changed;
+        }
+        tx.commit()?;
+        Ok(removed)
+    }
+
     pub fn open<P: AsRef<Path>>(path: P) -> Result<Self, DbError> {
         let path_buf = path.as_ref().to_path_buf();
         let conn = Connection::open(&path_buf)?;
@@ -36,6 +103,7 @@ impl Database {
             path: Some(path_buf),
         };
         db.run_migrations()?;
+        let _ = db.purge_excluded_and_small_items();
         Ok(db)
     }
 
@@ -70,7 +138,7 @@ impl Database {
     }
 
     fn run_migrations(&self) -> Result<(), DbError> {
-        let conn = self.conn.lock();
+        let mut conn = self.conn.lock();
 
         conn.execute_batch(
             "CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -178,6 +246,13 @@ impl Database {
                     position_secs REAL NOT NULL,
                     duration_secs REAL NOT NULL,
                     completed INTEGER NOT NULL DEFAULT 0,
+                    updated_at TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS media_track_prefs (
+                    fingerprint TEXT PRIMARY KEY,
+                    audio_track_id INTEGER,
+                    sub_track_id INTEGER,
                     updated_at TEXT NOT NULL
                 );
 
@@ -366,6 +441,105 @@ impl Database {
             )?;
         }
 
+        if current_version < 6 {
+            info!("Applying schema migration v6 (metadata_overrides and hidden_entities)");
+            conn.execute_batch(
+                "
+                CREATE TABLE IF NOT EXISTS metadata_overrides (
+                    fingerprint TEXT PRIMARY KEY,
+                    title TEXT,
+                    year INTEGER,
+                    series_title TEXT,
+                    season_number INTEGER,
+                    episode_number INTEGER,
+                    updated_at TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS hidden_entities (
+                    key TEXT PRIMARY KEY,
+                    hidden INTEGER NOT NULL DEFAULT 1
+                );
+
+                INSERT INTO schema_migrations (version, applied_at) VALUES (6, datetime('now'));
+                ",
+            )?;
+        }
+
+        if current_version < 7 {
+            info!("Applying schema migration v7 (demo markers and folder media counts)");
+            conn.execute_batch(
+                "
+                ALTER TABLE media_files ADD COLUMN is_demo INTEGER NOT NULL DEFAULT 0;
+                ALTER TABLE series ADD COLUMN is_demo INTEGER NOT NULL DEFAULT 0;
+                ALTER TABLE items ADD COLUMN is_demo INTEGER NOT NULL DEFAULT 0;
+                ALTER TABLE collections ADD COLUMN is_demo INTEGER NOT NULL DEFAULT 0;
+                ALTER TABLE watch_sessions ADD COLUMN is_demo INTEGER NOT NULL DEFAULT 0;
+                ALTER TABLE bookmarks ADD COLUMN is_demo INTEGER NOT NULL DEFAULT 0;
+                ALTER TABLE playback_positions ADD COLUMN is_demo INTEGER NOT NULL DEFAULT 0;
+                CREATE TABLE folder_media_counts (
+                    path TEXT PRIMARY KEY,
+                    parent TEXT,
+                    media_count_direct INTEGER NOT NULL DEFAULT 0,
+                    media_count_total INTEGER NOT NULL DEFAULT 0,
+                    updated_at TEXT NOT NULL
+                );
+                CREATE INDEX idx_folder_media_counts_parent ON folder_media_counts(parent);
+
+                -- Mark only rows whose identifiers match the former built-in seed implementation.
+                UPDATE collections SET is_demo = 1 WHERE id IN ('coll_devs', 'col_perfect_lie', 'col_video', 'col_fight_club');
+                UPDATE items SET is_demo = 1 WHERE id IN ('item_tpl_s1e8', 'item_video_1', 'item_fc_1') OR id GLOB 'item_[0-9]*';
+                UPDATE series SET is_demo = 1 WHERE id = 'The Perfect Lie';
+                UPDATE playback_positions SET is_demo = 1 WHERE fingerprint IN ('fp_tpl_s1e8', 'fp_video_1', 'fp_fc_1');
+                UPDATE media_files SET is_demo = 1 WHERE path LIKE '%Cosmic.Odyssey.2024.1080p.mkv' OR path LIKE '%Anthology.Series.S01E01.1080p.mkv';
+                UPDATE bookmarks SET is_demo = 1 WHERE id IN ('b1', 'b2');
+                UPDATE watch_sessions SET is_demo = 1 WHERE id IN ('sess_today_1', 'sess_today_2', 'sess_today_3', 'sess_midnight') OR id GLOB 'sess_past_[0-9]*';
+
+                INSERT INTO schema_migrations (version, applied_at) VALUES (7, datetime('now'));
+                "
+            )?;
+        }
+
+        if current_version < 8 {
+            info!("Applying schema migration v8 (canonical folders and exclusions)");
+            conn.execute_batch(
+                "ALTER TABLE media_files ADD COLUMN status TEXT NOT NULL DEFAULT 'active';
+                 CREATE TABLE IF NOT EXISTS excluded_paths (
+                    root_id TEXT NOT NULL REFERENCES folders(id) ON DELETE CASCADE,
+                    path TEXT NOT NULL,
+                    PRIMARY KEY(root_id, path)
+                 );
+                 CREATE INDEX IF NOT EXISTS idx_excluded_paths_root ON excluded_paths(root_id);
+                 INSERT INTO schema_migrations (version, applied_at) VALUES (8, datetime('now'));",
+            )?;
+
+            let folders: Vec<(String, String)> = {
+                let mut statement = conn.prepare("SELECT id, path FROM folders")?;
+                let rows = statement
+                    .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
+                    .collect::<Result<_, _>>()?;
+                rows
+            };
+            for (id, path) in folders {
+                conn.execute(
+                    "UPDATE OR IGNORE folders SET path = ?1 WHERE id = ?2",
+                    params![normalize_path_string(&path), id],
+                )?;
+            }
+            let files: Vec<(String, String)> = {
+                let mut statement = conn.prepare("SELECT id, path FROM media_files")?;
+                let rows = statement
+                    .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
+                    .collect::<Result<_, _>>()?;
+                rows
+            };
+            for (id, path) in files {
+                conn.execute(
+                    "UPDATE OR IGNORE media_files SET path = ?1 WHERE id = ?2",
+                    params![normalize_path_string(&path), id],
+                )?;
+            }
+            rebuild_folder_counts_in_conn(&mut conn)?;
+        }
+
         Ok(())
     }
 
@@ -392,7 +566,10 @@ impl Database {
     }
 
     /// Records a discrete watch session in the watch_sessions table (Phase 5 session view)
-    pub fn record_watch_session(&self, session: &crate::models::WatchSession) -> Result<(), DbError> {
+    pub fn record_watch_session(
+        &self,
+        session: &crate::models::WatchSession,
+    ) -> Result<(), DbError> {
         let conn = self.conn.lock();
         conn.execute(
             "INSERT INTO watch_sessions (id, fingerprint, collection_id, item_title, start_time, end_time, start_pos_secs, end_pos_secs, completed, stopped_early)
@@ -413,8 +590,66 @@ impl Database {
         Ok(())
     }
 
+    /// Atomically stores the final playback position and its corresponding watch session.
+    pub fn save_playback_session(
+        &self,
+        position: &PlaybackPosition,
+        session: &crate::models::WatchSession,
+    ) -> Result<(), DbError> {
+        let mut conn = self.conn.lock();
+        let tx = conn.transaction()?;
+        tx.execute(
+            "INSERT INTO playback_positions (fingerprint, position_secs, duration_secs, completed, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5)
+             ON CONFLICT(fingerprint) DO UPDATE SET position_secs=excluded.position_secs,
+             duration_secs=excluded.duration_secs, completed=excluded.completed, updated_at=excluded.updated_at",
+            params![position.fingerprint, position.position_secs, position.duration_secs, position.completed as i32, position.updated_at.to_rfc3339()],
+        )?;
+        tx.execute(
+            "INSERT INTO watch_sessions (id, fingerprint, collection_id, item_title, start_time, end_time, start_pos_secs, end_pos_secs, completed, stopped_early)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+            params![session.id, session.fingerprint, session.collection_id, session.item_title, session.start_time.to_rfc3339(), session.end_time.to_rfc3339(), session.start_pos_secs, session.end_pos_secs, session.completed as i32, session.stopped_early as i32],
+        )?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// Records a batch of watch sessions in a single transaction
+    pub fn record_watch_sessions_batch(
+        &self,
+        sessions: &[crate::models::WatchSession],
+    ) -> Result<(), DbError> {
+        let mut conn = self.conn.lock();
+        let tx = conn.transaction()?;
+        {
+            let mut stmt = tx.prepare(
+                "INSERT INTO watch_sessions (id, fingerprint, collection_id, item_title, start_time, end_time, start_pos_secs, end_pos_secs, completed, stopped_early)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10);"
+            )?;
+            for session in sessions {
+                stmt.execute(params![
+                    session.id,
+                    session.fingerprint,
+                    session.collection_id,
+                    session.item_title,
+                    session.start_time.to_rfc3339(),
+                    session.end_time.to_rfc3339(),
+                    session.start_pos_secs,
+                    session.end_pos_secs,
+                    session.completed as i32,
+                    session.stopped_early as i32,
+                ])?;
+            }
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
     /// Retrieves recent watch sessions
-    pub fn get_watch_sessions(&self, limit: usize) -> Result<Vec<crate::models::WatchSession>, DbError> {
+    pub fn get_watch_sessions(
+        &self,
+        limit: usize,
+    ) -> Result<Vec<crate::models::WatchSession>, DbError> {
         let conn = self.conn.lock();
         let mut stmt = conn.prepare(
             "SELECT id, fingerprint, collection_id, item_title, start_time, end_time, start_pos_secs, end_pos_secs, completed, stopped_early
@@ -428,8 +663,12 @@ impl Database {
                 fingerprint: row.get(1)?,
                 collection_id: row.get(2)?,
                 item_title: row.get(3)?,
-                start_time: chrono::DateTime::parse_from_rfc3339(&start_str).map(|d| d.with_timezone(&chrono::Utc)).unwrap_or_else(|_| chrono::Utc::now()),
-                end_time: chrono::DateTime::parse_from_rfc3339(&end_str).map(|d| d.with_timezone(&chrono::Utc)).unwrap_or_else(|_| chrono::Utc::now()),
+                start_time: chrono::DateTime::parse_from_rfc3339(&start_str)
+                    .map(|d| d.with_timezone(&chrono::Utc))
+                    .unwrap_or_else(|_| chrono::Utc::now()),
+                end_time: chrono::DateTime::parse_from_rfc3339(&end_str)
+                    .map(|d| d.with_timezone(&chrono::Utc))
+                    .unwrap_or_else(|_| chrono::Utc::now()),
                 start_pos_secs: row.get(6)?,
                 end_pos_secs: row.get(7)?,
                 completed: row.get::<_, i32>(8)? != 0,
@@ -448,6 +687,180 @@ impl Database {
         let conn = self.conn.lock();
         conn.execute("DELETE FROM watch_sessions WHERE id = ?1;", params![id])?;
         Ok(())
+    }
+
+    /// Retrieves a single watch session by ID
+    pub fn get_watch_session_by_id(
+        &self,
+        id: &str,
+    ) -> Result<Option<crate::models::WatchSession>, DbError> {
+        let conn = self.conn.lock();
+        let mut stmt = conn.prepare(
+            "SELECT id, fingerprint, collection_id, item_title, start_time, end_time, start_pos_secs, end_pos_secs, completed, stopped_early
+             FROM watch_sessions WHERE id = ?1;",
+        )?;
+        let mut rows = stmt.query_map(params![id], |row| {
+            let start_str: String = row.get(4)?;
+            let end_str: String = row.get(5)?;
+            Ok(crate::models::WatchSession {
+                id: row.get(0)?,
+                fingerprint: row.get(1)?,
+                collection_id: row.get(2)?,
+                item_title: row.get(3)?,
+                start_time: chrono::DateTime::parse_from_rfc3339(&start_str)
+                    .map(|d| d.with_timezone(&chrono::Utc))
+                    .unwrap_or_else(|_| chrono::Utc::now()),
+                end_time: chrono::DateTime::parse_from_rfc3339(&end_str)
+                    .map(|d| d.with_timezone(&chrono::Utc))
+                    .unwrap_or_else(|_| chrono::Utc::now()),
+                start_pos_secs: row.get(6)?,
+                end_pos_secs: row.get(7)?,
+                completed: row.get::<_, i32>(8)? != 0,
+                stopped_early: row.get::<_, i32>(9)? != 0,
+            })
+        })?;
+        if let Some(r) = rows.next() {
+            Ok(Some(r?))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Aggregates sessions in the trailing 365 days by local date: returns (date_str "YYYY-MM-DD", session_count, total_watched_seconds)
+    pub fn get_watch_sessions_heatmap(&self) -> Result<Vec<(String, usize, f64)>, DbError> {
+        let conn = self.conn.lock();
+        let mut stmt = conn.prepare(
+            "SELECT date(start_time, 'localtime') as day,
+                    COUNT(*),
+                    COALESCE(SUM(abs(end_pos_secs - start_pos_secs)), 0.0)
+             FROM watch_sessions
+             WHERE datetime(start_time) >= datetime('now', '-365 days')
+             GROUP BY day
+             ORDER BY day ASC;",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            let day: String = row.get(0)?;
+            let count: i64 = row.get(1)?;
+            let secs: f64 = row.get(2)?;
+            Ok((day, count as usize, secs))
+        })?;
+        let mut res = Vec::new();
+        for r in rows {
+            res.push(r?);
+        }
+        Ok(res)
+    }
+
+    /// Clear all watch sessions (and optionally reset playback positions)
+    pub fn clear_watch_sessions(&self, reset_positions: bool) -> Result<(), DbError> {
+        let conn = self.conn.lock();
+        conn.execute("DELETE FROM watch_sessions;", [])?;
+        if reset_positions {
+            conn.execute("DELETE FROM playback_positions;", [])?;
+        }
+        Ok(())
+    }
+
+    /// Retrieves total count of watch sessions
+    pub fn get_watch_sessions_count(&self) -> Result<usize, DbError> {
+        let conn = self.conn.lock();
+        let count: i64 =
+            conn.query_row("SELECT COUNT(*) FROM watch_sessions;", [], |r| r.get(0))?;
+        Ok(count as usize)
+    }
+
+    /// Retrieves paginated and filtered watch sessions along with total matching count
+    pub fn get_watch_sessions_filtered(
+        &self,
+        search_query: Option<&str>,
+        filter_pill: &str,
+        day_filter: Option<&str>,
+        offset: usize,
+        limit: usize,
+    ) -> Result<(Vec<crate::models::WatchSession>, usize), DbError> {
+        let conn = self.conn.lock();
+
+        let mut conditions = Vec::new();
+        let mut params_vec: Vec<rusqlite::types::Value> = Vec::new();
+
+        if let Some(q) = search_query {
+            let trimmed = q.trim();
+            if !trimmed.is_empty() {
+                conditions.push("item_title LIKE ?".to_string());
+                params_vec.push(rusqlite::types::Value::Text(format!("%{}%", trimmed)));
+            }
+        }
+
+        match filter_pill.to_lowercase().as_str() {
+            "stopped early" | "stopped_early" | "stoppedearly" => {
+                conditions.push("stopped_early = 1".to_string());
+            }
+            "finished" => {
+                conditions.push("completed = 1".to_string());
+            }
+            "local" => {
+                // All local sessions
+            }
+            _ => {}
+        }
+
+        if let Some(day) = day_filter {
+            let trimmed = day.trim();
+            if !trimmed.is_empty() {
+                conditions.push("date(start_time, 'localtime') = ?".to_string());
+                params_vec.push(rusqlite::types::Value::Text(trimmed.to_string()));
+            }
+        }
+
+        let where_clause = if conditions.is_empty() {
+            String::new()
+        } else {
+            format!("WHERE {}", conditions.join(" AND "))
+        };
+
+        let count_sql = format!("SELECT COUNT(*) FROM watch_sessions {};", where_clause);
+        let mut count_stmt = conn.prepare(&count_sql)?;
+        let count_params = rusqlite::params_from_iter(params_vec.iter());
+        let total_count: i64 = count_stmt.query_row(count_params, |r| r.get(0))?;
+
+        let query_sql = format!(
+            "SELECT id, fingerprint, collection_id, item_title, start_time, end_time, start_pos_secs, end_pos_secs, completed, stopped_early
+             FROM watch_sessions {}
+             ORDER BY start_time DESC LIMIT ? OFFSET ?;",
+            where_clause
+        );
+        let mut query_stmt = conn.prepare(&query_sql)?;
+        let mut query_params_vec = params_vec;
+        query_params_vec.push(rusqlite::types::Value::Integer(limit as i64));
+        query_params_vec.push(rusqlite::types::Value::Integer(offset as i64));
+
+        let rows =
+            query_stmt.query_map(rusqlite::params_from_iter(query_params_vec.iter()), |row| {
+                let start_str: String = row.get(4)?;
+                let end_str: String = row.get(5)?;
+                Ok(crate::models::WatchSession {
+                    id: row.get(0)?,
+                    fingerprint: row.get(1)?,
+                    collection_id: row.get(2)?,
+                    item_title: row.get(3)?,
+                    start_time: chrono::DateTime::parse_from_rfc3339(&start_str)
+                        .map(|d| d.with_timezone(&chrono::Utc))
+                        .unwrap_or_else(|_| chrono::Utc::now()),
+                    end_time: chrono::DateTime::parse_from_rfc3339(&end_str)
+                        .map(|d| d.with_timezone(&chrono::Utc))
+                        .unwrap_or_else(|_| chrono::Utc::now()),
+                    start_pos_secs: row.get(6)?,
+                    end_pos_secs: row.get(7)?,
+                    completed: row.get::<_, i32>(8)? != 0,
+                    stopped_early: row.get::<_, i32>(9)? != 0,
+                })
+            })?;
+
+        let mut sessions = Vec::new();
+        for r in rows {
+            sessions.push(r?);
+        }
+        Ok((sessions, total_count as usize))
     }
 
     /// Retrieves all watched library folders
@@ -481,9 +894,251 @@ impl Database {
         Ok(folders)
     }
 
+    pub fn get_folder_by_path(&self, path: &Path) -> Result<Option<FolderRecord>, DbError> {
+        let wanted = normalize_path_string(&path.to_string_lossy());
+        Ok(self.get_folders()?.into_iter().find(|folder| {
+            if cfg!(windows) {
+                folder.path.eq_ignore_ascii_case(&wanted)
+            } else {
+                folder.path == wanted
+            }
+        }))
+    }
+
+    pub fn get_all_excluded_paths(&self) -> Result<Vec<String>, DbError> {
+        let conn = self.conn.lock();
+        let mut statement = conn.prepare("SELECT DISTINCT path FROM excluded_paths ORDER BY path")?;
+        let rows = statement.query_map([], |row| row.get(0))?;
+        Ok(rows.collect::<Result<Vec<String>, _>>()?)
+    }
+
+    pub fn get_excluded_paths(&self, root_id: &str) -> Result<Vec<String>, DbError> {
+        let conn = self.conn.lock();
+        let mut statement =
+            conn.prepare("SELECT path FROM excluded_paths WHERE root_id = ?1 ORDER BY path")?;
+        let rows = statement.query_map(params![root_id], |row| row.get(0))?;
+        Ok(rows.collect::<Result<Vec<String>, _>>()?)
+    }
+
+    pub fn get_excluded_paths_under_root(&self, root: &Path) -> Result<Vec<String>, DbError> {
+        match self.get_folder_by_path(root)? {
+            Some(folder) => self.get_excluded_paths(&folder.id),
+            None => Ok(Vec::new()),
+        }
+    }
+
+    pub fn is_path_excluded(&self, path: &Path) -> Result<bool, DbError> {
+        let excludes = self.get_all_excluded_paths()?;
+        Ok(excludes
+            .iter()
+            .any(|excluded| path_is_within(path, Path::new(excluded))))
+    }
+
+    pub fn purge_excluded_and_small_items(&self) -> Result<usize, DbError> {
+        let excluded_paths = self.get_all_excluded_paths()?;
+        let conn = self.conn.lock();
+
+        let files: Vec<(String, String, String, i64)> = {
+            let mut stmt = conn.prepare("SELECT id, path, fingerprint, size_bytes FROM media_files")?;
+            let rows = stmt.query_map([], |row| {
+                Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
+            })?;
+            rows.collect::<Result<_, _>>()?
+        };
+
+        let mut ids_to_delete = Vec::new();
+        let mut fps_to_delete = Vec::new();
+
+        for (id, path, fp, size) in files {
+            let is_small = (size as u64) < MIN_MEDIA_SIZE_BYTES;
+            let is_excluded = excluded_paths
+                .iter()
+                .any(|ex| path_is_within(Path::new(&path), Path::new(ex)));
+            if is_small || is_excluded {
+                ids_to_delete.push(id);
+                fps_to_delete.push(fp);
+            }
+        }
+
+        let deleted_count = ids_to_delete.len();
+        if deleted_count > 0 {
+            for chunk in ids_to_delete.chunks(400) {
+                for id in chunk {
+                    let _ = conn.execute("DELETE FROM items WHERE file_id = ?1", params![id]);
+                    let _ = conn.execute("DELETE FROM media_files WHERE id = ?1", params![id]);
+                }
+            }
+            for chunk in fps_to_delete.chunks(400) {
+                for fp in chunk {
+                    let _ = conn.execute("DELETE FROM items WHERE fingerprint = ?1", params![fp]);
+                    let _ = conn.execute("DELETE FROM analysis_queue WHERE fingerprint = ?1", params![fp]);
+                }
+            }
+        }
+
+        // Clean up orphaned items
+        let _ = conn.execute(
+            "DELETE FROM items WHERE file_id NOT IN (SELECT id FROM media_files) 
+             AND fingerprint NOT IN (SELECT fingerprint FROM media_files)",
+            [],
+        );
+
+        drop(conn);
+        let _ = self.rebuild_folder_media_counts();
+        Ok(deleted_count)
+    }
+
+    pub fn exclude_subfolder(&self, root_id: &str, path: &Path) -> Result<(), DbError> {
+        let normalized = normalize_path_string(&path.to_string_lossy());
+        let mut conn = self.conn.lock();
+        let tx = conn.transaction()?;
+        tx.execute(
+            "INSERT OR IGNORE INTO excluded_paths(root_id, path) VALUES (?1, ?2)",
+            params![root_id, normalized],
+        )?;
+        let files: Vec<(String, String, String)> = {
+            let mut statement = tx.prepare("SELECT id, path, fingerprint FROM media_files")?;
+            let rows = statement
+                .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?
+                .collect::<Result<_, _>>()?;
+            rows
+        };
+        for (id, file_path, fp) in files {
+            if path_is_within(Path::new(&file_path), path) {
+                let _ = tx.execute("DELETE FROM items WHERE file_id = ?1 OR fingerprint = ?2", params![id, fp]);
+                let _ = tx.execute("DELETE FROM media_files WHERE id = ?1", params![id]);
+            }
+        }
+        tx.commit()?;
+        drop(conn);
+        self.rebuild_folder_media_counts()
+    }
+
+    pub fn include_excluded_subfolder(&self, root_id: &str, path: &Path) -> Result<(), DbError> {
+        let normalized = normalize_path_string(&path.to_string_lossy());
+        let mut conn = self.conn.lock();
+        let tx = conn.transaction()?;
+        tx.execute(
+            "DELETE FROM excluded_paths WHERE root_id = ?1 AND path = ?2",
+            params![root_id, normalized],
+        )?;
+        let excludes: Vec<String> = {
+            let mut statement = tx.prepare("SELECT path FROM excluded_paths WHERE root_id = ?1")?;
+            let rows = statement
+                .query_map(params![root_id], |row| row.get(0))?
+                .collect::<Result<_, _>>()?;
+            rows
+        };
+        let files: Vec<(String, String)> = {
+            let mut statement = tx.prepare("SELECT id, path FROM media_files")?;
+            let rows = statement
+                .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
+                .collect::<Result<_, _>>()?;
+            rows
+        };
+        for (id, file_path) in files {
+            let file = Path::new(&file_path);
+            if path_is_within(file, path)
+                && !excludes
+                    .iter()
+                    .any(|exclude| path_is_within(file, Path::new(exclude)))
+            {
+                tx.execute(
+                    "UPDATE media_files SET status = 'active' WHERE id = ?1",
+                    params![id],
+                )?;
+            }
+        }
+        tx.commit()?;
+        drop(conn);
+        self.rebuild_folder_media_counts()
+    }
+
+    pub fn restore_removed_media_under(&self, root: &Path) -> Result<(), DbError> {
+        let mut conn = self.conn.lock();
+        let tx = conn.transaction()?;
+        let files: Vec<(String, String)> = {
+            let mut statement =
+                tx.prepare("SELECT id, path FROM media_files WHERE status = 'removed'")?;
+            let rows = statement
+                .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
+                .collect::<Result<_, _>>()?;
+            rows
+        };
+        for (id, path) in files {
+            if path_is_within(Path::new(&path), root) {
+                tx.execute(
+                    "UPDATE media_files SET status = 'active' WHERE id = ?1",
+                    params![id],
+                )?;
+            }
+        }
+        tx.commit()?;
+        drop(conn);
+        self.rebuild_folder_media_counts()
+    }
+
+    /// Remove a watched root while retaining all item, position, session and bookmark rows.
+    pub fn remove_folder_from_library(&self, root: &Path) -> Result<(), DbError> {
+        let Some(folder) = self.get_folder_by_path(root)? else {
+            return Err(DbError::NotFound(root.display().to_string()));
+        };
+        let mut conn = self.conn.lock();
+        let tx = conn.transaction()?;
+        let files: Vec<(String, String)> = {
+            let mut statement = tx.prepare("SELECT id, path FROM media_files")?;
+            let rows = statement
+                .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
+                .collect::<Result<_, _>>()?;
+            rows
+        };
+        for (id, path) in files {
+            if path_is_within(Path::new(&path), root) {
+                tx.execute(
+                    "UPDATE media_files SET status = 'removed', folder_id = NULL WHERE id = ?1",
+                    params![id],
+                )?;
+            }
+        }
+        tx.execute(
+            "DELETE FROM folder_media_counts WHERE path = ?1",
+            params![folder.path],
+        )?;
+        tx.execute(
+            "DELETE FROM excluded_paths WHERE root_id = ?1",
+            params![folder.id],
+        )?;
+        tx.execute("DELETE FROM folders WHERE id = ?1", params![folder.id])?;
+        tx.commit()?;
+        drop(conn);
+        self.rebuild_folder_media_counts()
+    }
+
+    pub fn folder_media_counts(&self) -> Result<HashMap<String, usize>, DbError> {
+        let conn = self.conn.lock();
+        let mut statement =
+            conn.prepare("SELECT path, media_count_total FROM folder_media_counts")?;
+        let rows = statement.query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+        })?;
+        let mut counts = HashMap::new();
+        for row in rows {
+            let (path, count) = row?;
+            counts.insert(normalize_path_string(&path), count.max(0) as usize);
+        }
+        Ok(counts)
+    }
+
+    pub fn rebuild_folder_media_counts(&self) -> Result<(), DbError> {
+        let mut conn = self.conn.lock();
+        rebuild_folder_counts_in_conn(&mut conn)?;
+        Ok(())
+    }
+
     /// Saves or updates a watched library folder
     pub fn save_folder(&self, folder: &FolderRecord) -> Result<(), DbError> {
         let conn = self.conn.lock();
+        let normalized_path = normalize_path_string(&folder.path);
         conn.execute(
             "INSERT INTO folders (id, path, folder_type, enabled, ignore_globs, last_scanned_at, created_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
@@ -495,7 +1150,7 @@ impl Database {
                 last_scanned_at = excluded.last_scanned_at;",
             params![
                 folder.id,
-                folder.path,
+                normalized_path,
                 folder.folder_type,
                 folder.enabled as i32,
                 folder.ignore_globs,
@@ -504,6 +1159,32 @@ impl Database {
             ],
         )?;
         Ok(())
+    }
+
+    /// Adds a watched root, restoring previously removed media at the same path.
+    pub fn add_folder_path(&self, path: &Path) -> Result<FolderRecord, DbError> {
+        if let Some(folder) = self.get_folder_by_path(path)? {
+            return Ok(folder);
+        }
+        let normalized = normalize_path_string(&path.to_string_lossy());
+        let folder = FolderRecord {
+            id: format!(
+                "folder-{:016x}",
+                normalized
+                    .bytes()
+                    .fold(0xcbf29ce484222325u64, |h, b| (h ^ b as u64)
+                        .wrapping_mul(0x100000001b3))
+            ),
+            path: normalized,
+            folder_type: "Other".to_owned(),
+            enabled: true,
+            ignore_globs: None,
+            last_scanned_at: None,
+            created_at: Utc::now(),
+        };
+        self.save_folder(&folder)?;
+        self.restore_removed_media_under(path)?;
+        Ok(folder)
     }
 
     /// Deletes a folder and unlinks media files
@@ -524,12 +1205,20 @@ impl Database {
     }
 
     /// Relinks a media file path by fingerprint (when a missing file is located or moved)
-    pub fn relink_file_by_fingerprint(&self, fingerprint: &str, new_path: &str) -> Result<(), DbError> {
+    pub fn relink_file_by_fingerprint(
+        &self,
+        fingerprint: &str,
+        new_path: &str,
+    ) -> Result<(), DbError> {
         self.relink_file_path("", new_path, fingerprint)
     }
 
     /// Marks media items as missing or present
-    pub fn mark_items_missing_status(&self, missing: bool, fingerprints: &[String]) -> Result<(), DbError> {
+    pub fn mark_items_missing_status(
+        &self,
+        missing: bool,
+        fingerprints: &[String],
+    ) -> Result<(), DbError> {
         let conn = self.conn.lock();
         for fp in fingerprints {
             conn.execute(
@@ -558,31 +1247,38 @@ impl Database {
     /// Computes library-wide statistics: (movies_count, series_count, total_items, total_duration_secs)
     pub fn get_library_stats(&self) -> Result<(usize, usize, usize, f64), DbError> {
         let conn = self.conn.lock();
-        let movies_count: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM items WHERE series_id IS NULL;",
-            [],
-            |r| r.get(0),
-        ).unwrap_or(0);
+        let movies_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM items WHERE series_id IS NULL;",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap_or(0);
 
-        let series_count: i64 = conn.query_row(
-            "SELECT COUNT(DISTINCT series_id) FROM items WHERE series_id IS NOT NULL;",
-            [],
-            |r| r.get(0),
-        ).unwrap_or(0);
+        let series_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(DISTINCT series_id) FROM items WHERE series_id IS NOT NULL;",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap_or(0);
 
-        let total_items: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM items;",
-            [],
-            |r| r.get(0),
-        ).unwrap_or(0);
+        let total_items: i64 = conn
+            .query_row("SELECT COUNT(*) FROM items;", [], |r| r.get(0))
+            .unwrap_or(0);
 
-        let total_duration: f64 = conn.query_row(
-            "SELECT COALESCE(SUM(duration), 0.0) FROM items;",
-            [],
-            |r| r.get(0),
-        ).unwrap_or(0.0);
+        let total_duration: f64 = conn
+            .query_row("SELECT COALESCE(SUM(duration), 0.0) FROM items;", [], |r| {
+                r.get(0)
+            })
+            .unwrap_or(0.0);
 
-        Ok((movies_count as usize, series_count as usize, total_items as usize, total_duration))
+        Ok((
+            movies_count as usize,
+            series_count as usize,
+            total_items as usize,
+            total_duration,
+        ))
     }
 
     /// Computes storage usage breakdown by folder: Vec<(folder_path, total_bytes, file_count)>
@@ -635,6 +1331,196 @@ impl Database {
             .optional()?;
 
         Ok(pos)
+    }
+
+    /// Retrieves all playback positions as a map keyed by fingerprint
+    pub fn get_all_playback_positions(
+        &self,
+    ) -> Result<std::collections::HashMap<String, PlaybackPosition>, DbError> {
+        let conn = self.conn.lock();
+        let mut stmt = conn.prepare(
+            "SELECT fingerprint, position_secs, duration_secs, completed, updated_at
+             FROM playback_positions",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            let updated_str: String = row.get(4)?;
+            let updated_at = chrono::DateTime::parse_from_rfc3339(&updated_str)
+                .map(|dt| dt.with_timezone(&Utc))
+                .unwrap_or_else(|_| Utc::now());
+
+            Ok(PlaybackPosition {
+                fingerprint: row.get(0)?,
+                position_secs: row.get(1)?,
+                duration_secs: row.get(2)?,
+                completed: row.get::<_, i32>(3)? != 0,
+                updated_at,
+            })
+        })?;
+
+        let mut map = std::collections::HashMap::new();
+        for res in rows {
+            let pos = res?;
+            map.insert(pos.fingerprint.clone(), pos);
+        }
+        Ok(map)
+    }
+
+    pub fn save_track_prefs(
+        &self,
+        fingerprint: &str,
+        audio_track_id: Option<i64>,
+        sub_track_id: Option<i64>,
+    ) -> Result<(), DbError> {
+        let conn = self.conn.lock();
+        conn.execute(
+            "INSERT INTO media_track_prefs (fingerprint, audio_track_id, sub_track_id, updated_at)
+             VALUES (?1, ?2, ?3, ?4)
+             ON CONFLICT(fingerprint) DO UPDATE SET
+               audio_track_id = COALESCE(?2, media_track_prefs.audio_track_id),
+               sub_track_id = ?3,
+               updated_at = ?4;",
+            params![fingerprint, audio_track_id, sub_track_id, Utc::now().to_rfc3339()],
+        )?;
+        Ok(())
+    }
+
+    pub fn get_track_prefs(
+        &self,
+        fingerprint: &str,
+    ) -> Result<Option<(Option<i64>, Option<i64>)>, DbError> {
+        let conn = self.conn.lock();
+        let mut stmt = conn.prepare(
+            "SELECT audio_track_id, sub_track_id FROM media_track_prefs WHERE fingerprint = ?1;",
+        )?;
+        let res = stmt.query_row(params![fingerprint], |row| {
+            Ok((row.get::<_, Option<i64>>(0)?, row.get::<_, Option<i64>>(1)?))
+        });
+        match res {
+            Ok(pair) => Ok(Some(pair)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(DbError::Sqlite(e)),
+        }
+    }
+
+    /// Retrieves all metadata overrides
+    pub fn get_metadata_overrides(
+        &self,
+    ) -> Result<std::collections::HashMap<String, crate::models::MetadataOverride>, DbError> {
+        let conn = self.conn.lock();
+        let mut stmt = conn.prepare(
+            "SELECT fingerprint, title, year, series_title, season_number, episode_number, updated_at
+             FROM metadata_overrides",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            let updated_str: String = row.get(6)?;
+            let updated_at = chrono::DateTime::parse_from_rfc3339(&updated_str)
+                .map(|dt| dt.with_timezone(&Utc))
+                .unwrap_or_else(|_| Utc::now());
+
+            Ok(crate::models::MetadataOverride {
+                fingerprint: row.get(0)?,
+                title: row.get(1)?,
+                year: row.get(2)?,
+                series_title: row.get(3)?,
+                season_number: row.get(4)?,
+                episode_number: row.get(5)?,
+                updated_at,
+            })
+        })?;
+
+        let mut map = std::collections::HashMap::new();
+        for res in rows {
+            let ov = res?;
+            map.insert(ov.fingerprint.clone(), ov);
+        }
+        Ok(map)
+    }
+
+    /// Saves or updates a metadata override
+    pub fn save_metadata_override(
+        &self,
+        ov: &crate::models::MetadataOverride,
+    ) -> Result<(), DbError> {
+        let conn = self.conn.lock();
+        conn.execute(
+            "INSERT INTO metadata_overrides (fingerprint, title, year, series_title, season_number, episode_number, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+             ON CONFLICT(fingerprint) DO UPDATE SET
+                title = excluded.title,
+                year = excluded.year,
+                series_title = excluded.series_title,
+                season_number = excluded.season_number,
+                episode_number = excluded.episode_number,
+                updated_at = excluded.updated_at;",
+            params![
+                ov.fingerprint,
+                ov.title,
+                ov.year,
+                ov.series_title,
+                ov.season_number,
+                ov.episode_number,
+                ov.updated_at.to_rfc3339(),
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// Marks a series hidden or visible
+    pub fn set_series_hidden(&self, series_key: &str, hidden: bool) -> Result<(), DbError> {
+        let conn = self.conn.lock();
+        if hidden {
+            conn.execute(
+                "INSERT INTO hidden_entities (key, hidden) VALUES (?1, 1) ON CONFLICT(key) DO UPDATE SET hidden = 1;",
+                params![series_key],
+            )?;
+        } else {
+            conn.execute(
+                "DELETE FROM hidden_entities WHERE key = ?1;",
+                params![series_key],
+            )?;
+        }
+        Ok(())
+    }
+
+    /// Marks an item hidden or visible
+    pub fn set_item_hidden(&self, fingerprint: &str, hidden: bool) -> Result<(), DbError> {
+        let conn = self.conn.lock();
+        if hidden {
+            conn.execute(
+                "INSERT INTO hidden_entities (key, hidden) VALUES (?1, 1) ON CONFLICT(key) DO UPDATE SET hidden = 1;",
+                params![fingerprint],
+            )?;
+        } else {
+            conn.execute(
+                "DELETE FROM hidden_entities WHERE key = ?1;",
+                params![fingerprint],
+            )?;
+        }
+        Ok(())
+    }
+
+    /// Deletes a series and its items from the database (files untouched)
+    pub fn delete_series(&self, series_key: &str) -> Result<(), DbError> {
+        let conn = self.conn.lock();
+        conn.execute(
+            "DELETE FROM items WHERE series_id = ?1 OR title = ?1;",
+            params![series_key],
+        )?;
+        conn.execute(
+            "DELETE FROM series WHERE id = ?1 OR title = ?1;",
+            params![series_key],
+        )?;
+        Ok(())
+    }
+
+    /// Deletes an item by fingerprint (files untouched)
+    pub fn delete_item_by_fingerprint(&self, fingerprint: &str) -> Result<(), DbError> {
+        let conn = self.conn.lock();
+        conn.execute(
+            "DELETE FROM items WHERE fingerprint = ?1;",
+            params![fingerprint],
+        )?;
+        Ok(())
     }
 
     /// Retrieves history cards: one entry per collection/playlist, sorted by last_played_at.
@@ -762,8 +1648,9 @@ impl Database {
         &self,
     ) -> Result<std::collections::HashMap<String, CachedFileInfo>, DbError> {
         let conn = self.conn.lock();
-        let mut stmt =
-            conn.prepare("SELECT path, size_bytes, mtime_secs, fingerprint FROM media_files")?;
+        let mut stmt = conn.prepare(
+            "SELECT path, size_bytes, mtime_secs, fingerprint FROM media_files WHERE status = 'active'",
+        )?;
         let mut map = std::collections::HashMap::new();
         let rows = stmt.query_map([], |row| {
             let path: String = row.get(0)?;
@@ -771,7 +1658,7 @@ impl Database {
             let mtime_secs: i64 = row.get(2)?;
             let fingerprint: String = row.get(3)?;
             Ok((
-                path,
+                normalize_path_string(&path),
                 CachedFileInfo {
                     size_bytes: size_bytes as u64,
                     mtime_secs,
@@ -797,14 +1684,15 @@ impl Database {
 
         {
             let mut stmt_file = tx.prepare(
-                "INSERT INTO media_files (id, path, size_bytes, mtime_secs, fingerprint, legacy_fingerprint, is_missing, last_seen_at, created_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, 0, ?7, ?8)
+                "INSERT INTO media_files (id, path, size_bytes, mtime_secs, fingerprint, legacy_fingerprint, is_missing, last_seen_at, created_at, status)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, 0, ?7, ?8, 'active')
                  ON CONFLICT(path) DO UPDATE SET
                     size_bytes = excluded.size_bytes,
                     mtime_secs = excluded.mtime_secs,
                     fingerprint = excluded.fingerprint,
                     legacy_fingerprint = excluded.legacy_fingerprint,
                     is_missing = 0,
+                    status = 'active',
                     last_seen_at = excluded.last_seen_at;"
             )?;
 
@@ -826,6 +1714,11 @@ impl Database {
                     updated_at = excluded.updated_at;"
             )?;
 
+            let mut stmt_series = tx.prepare(
+                "INSERT INTO series (id, title, created_at) VALUES (?1, ?2, ?3)
+                 ON CONFLICT(id) DO NOTHING",
+            )?;
+
             let mut stmt_fts_del = tx.prepare("DELETE FROM library_fts WHERE item_id = ?1")?;
             let mut stmt_fts_ins = tx.prepare(
                 "INSERT INTO library_fts (item_id, title, series_title) VALUES (?1, ?2, ?3)",
@@ -841,7 +1734,7 @@ impl Database {
             for r in records {
                 stmt_file.execute(params![
                     r.id,
-                    r.path,
+                    normalize_path_string(&r.path),
                     r.size_bytes as i64,
                     r.mtime_secs,
                     r.fingerprint,
@@ -849,6 +1742,14 @@ impl Database {
                     now,
                     now,
                 ])?;
+
+                if let Some(series_id) = r.item.series_id.as_deref() {
+                    stmt_series.execute(params![
+                        series_id,
+                        series_id,
+                        r.item.created_at.to_rfc3339()
+                    ])?;
+                }
 
                 stmt_item.execute(params![
                     r.item.id,
@@ -869,7 +1770,11 @@ impl Database {
                 ])?;
 
                 let _ = stmt_fts_del.execute(params![r.item.id]);
-                let _ = stmt_fts_ins.execute(params![r.item.id, r.item.title, ""]);
+                let _ = stmt_fts_ins.execute(params![
+                    r.item.id,
+                    r.item.title,
+                    r.item.series_id.as_deref().unwrap_or("")
+                ]);
                 let _ = stmt_queue.execute(params![r.id, r.fingerprint, r.path, now]);
             }
         }
@@ -1059,13 +1964,14 @@ impl Database {
     /// Marks a media file and its item as missing without permanently deleting them
     pub fn mark_file_missing(&self, path: &str) -> Result<(), DbError> {
         let conn = self.conn.lock();
+        let normalized = normalize_path_string(path);
         conn.execute(
             "UPDATE media_files SET is_missing = 1 WHERE path = ?1;",
-            params![path],
+            params![normalized],
         )?;
         conn.execute(
             "UPDATE items SET is_missing = 1 WHERE fingerprint IN (SELECT fingerprint FROM media_files WHERE path = ?1);",
-            params![path],
+            params![normalized],
         )?;
         Ok(())
     }
@@ -1223,15 +2129,17 @@ impl Database {
         Ok((p as usize, pr as usize, c as usize, f as usize))
     }
 
-    /// Retrieves all items
+    /// Retrieves all items (at least 100MB and not in excluded folders)
     pub fn get_all_items(&self) -> Result<Vec<MediaItem>, DbError> {
+        let excludes = self.get_all_excluded_paths().unwrap_or_default();
         let conn = self.conn.lock();
         let mut stmt = conn.prepare(
             "SELECT i.id, i.fingerprint, COALESCE(mf.path, ''), i.title, i.duration, COALESCE(mf.size_bytes, 0),
                     i.width, i.height, i.is_hdr, i.video_codec, i.audio_codec, i.series_id,
                     i.season_number, i.episode_number, i.is_missing, i.created_at, i.updated_at
              FROM items i
-             LEFT JOIN media_files mf ON mf.fingerprint = i.fingerprint
+             INNER JOIN media_files mf ON mf.fingerprint = i.fingerprint
+             WHERE mf.status = 'active' AND mf.size_bytes >= 104857600
              ORDER BY i.title ASC",
         )?;
 
@@ -1268,7 +2176,11 @@ impl Database {
 
         let mut items = Vec::new();
         for r in rows {
-            items.push(r?);
+            let item = r?;
+            let path_p = Path::new(&item.file_path);
+            if !excludes.iter().any(|ex| path_is_within(path_p, Path::new(ex))) {
+                items.push(item);
+            }
         }
         Ok(items)
     }
@@ -1289,7 +2201,7 @@ impl Database {
              FROM library_fts fts
              JOIN items i ON i.id = fts.item_id
              LEFT JOIN media_files mf ON mf.fingerprint = i.fingerprint
-             WHERE library_fts MATCH ?1
+             WHERE library_fts MATCH ?1 AND (mf.status IS NULL OR mf.status = 'active')
              ORDER BY rank
              LIMIT 100",
         )?;
@@ -1562,6 +2474,51 @@ impl Database {
     }
 }
 
+fn rebuild_folder_counts_in_conn(conn: &mut Connection) -> Result<(), rusqlite::Error> {
+    let paths: Vec<String> = {
+        let mut statement = conn.prepare("SELECT path FROM media_files WHERE status = 'active'")?;
+        let rows = statement
+            .query_map([], |row| row.get(0))?
+            .collect::<Result<_, _>>()?;
+        rows
+    };
+    let mut direct = HashMap::<String, i64>::new();
+    let mut total = HashMap::<String, i64>::new();
+    for path in paths {
+        let normalized = normalize_path_string(&path);
+        let Some(parent) = Path::new(&normalized).parent() else {
+            continue;
+        };
+        let mut ancestor = Some(parent.to_path_buf());
+        if let Some(parent) = ancestor.as_ref() {
+            *direct
+                .entry(normalize_path_string(&parent.to_string_lossy()))
+                .or_default() += 1;
+        }
+        while let Some(current) = ancestor {
+            *total
+                .entry(normalize_path_string(&current.to_string_lossy()))
+                .or_default() += 1;
+            ancestor = current.parent().map(Path::to_path_buf);
+        }
+    }
+
+    let tx = conn.transaction()?;
+    tx.execute("DELETE FROM folder_media_counts", [])?;
+    let updated_at = Utc::now().to_rfc3339();
+    for (path, count) in total {
+        let parent = Path::new(&path)
+            .parent()
+            .map(|value| normalize_path_string(&value.to_string_lossy()));
+        tx.execute(
+            "INSERT INTO folder_media_counts(path, parent, media_count_direct, media_count_total, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![path, parent, direct.get(&path).copied().unwrap_or(0), count, updated_at],
+        )?;
+    }
+    tx.commit()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1703,13 +2660,14 @@ mod tests {
             id: "coll_anthology".into(),
             name: "Anthology Series".into(),
             collection_type: "playlist".into(),
-            item_ids: (1..=6).map(|i| format!("item_anthology_s1e{}", i)).collect(),
+            item_ids: (1..=6)
+                .map(|i| format!("item_anthology_s1e{}", i))
+                .collect(),
             current_index: 0,
             last_played_at: Some(now),
             is_pinned: true,
         };
-        db.save_collection(&coll)
-            .expect("save collection failed");
+        db.save_collection(&coll).expect("save collection failed");
 
         // 3. User plays Episode 4 directly
         let matches_ep4 = db
