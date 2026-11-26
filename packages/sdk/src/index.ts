@@ -28,6 +28,10 @@ export interface MediaPlayerOptions {
     hideLogo?: boolean;
   };
   domain?: string;
+  proxyUrl?: string;
+  headers?: Record<string, string>;
+  startAt?: number;
+  title?: string;
 }
 
 export class MediaPlayer {
@@ -56,6 +60,10 @@ export class MediaPlayer {
 
     const url = new URL(`${this.domain}/embed`);
     if (options.media) url.searchParams.set('url', options.media);
+    if (options.title) url.searchParams.set('title', options.title);
+    if (options.proxyUrl) url.searchParams.set('proxy', options.proxyUrl);
+    if (options.headers) url.searchParams.set('headers', JSON.stringify(options.headers));
+    if (options.startAt !== undefined) url.searchParams.set('startat', String(options.startAt));
     if (options.controls) url.searchParams.set('controls', JSON.stringify(options.controls));
     if (options.theme) url.searchParams.set('theme', JSON.stringify(options.theme));
 
@@ -127,6 +135,14 @@ export class MediaPlayer {
     this.sendCommand({ type: 'SET_SPEED', payload: { speed } });
   }
 
+  public setQuality(level: number) {
+    this.sendCommand({ type: 'SET_QUALITY', payload: { level } });
+  }
+
+  public setProxy(proxyUrl: string, headers?: Record<string, string>) {
+    this.sendCommand({ type: 'SET_PROXY', payload: { proxyUrl, headers } });
+  }
+
   public on(event: string, callback: Function) {
     if (!this.listeners.has(event)) {
       this.listeners.set(event, []);
@@ -155,3 +171,11 @@ export class MediaPlayer {
     }
   }
 }
+
+export {
+  ValorPlayerElement,
+  registerSourceAdapter,
+  getSourceAdapter,
+  type SourceAdapterFactory,
+  type SubtitleRenderer,
+} from './element';

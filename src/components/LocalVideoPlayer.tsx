@@ -6,7 +6,8 @@ import {
   Layers, Type, Clock, Sliders, SkipForward, Ban, FastForward, Zap, Coffee, ChevronRight, ChevronLeft, Eye, Settings, Bookmark as BookmarkIcon, Activity, Terminal
 } from 'lucide-react';
 import { Button } from './ui/button';
-import type { VideoItem, CustomAudioTrack, CustomSubtitleTrack, Bookmark } from '../types/media';
+import type { VideoItem, CustomAudioTrack, CustomSubtitleTrack, Bookmark, MediaChapter } from '../types/media';
+import { ChapterScrubSegments, getActiveChapter } from './ChapterScrubSegments';
 import { SubtitleOverlay } from './SubtitleOverlay';
 import type { SubtitleSettings } from './SubtitleOverlay';
 import { AudioSubPopover } from './AudioSubPopover';
@@ -1426,6 +1427,13 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [radialMenuState, setRadialMenuState] = useState<{ visible: boolean; x: number; y: number }>({ visible: false, x: 0, y: 0 });
   const [hoverTime, setHoverTime] = useState<string | null>(null);
+  const [hoverTimeSeconds, setHoverTimeSeconds] = useState<number | null>(null);
+  const [chapters, setChapters] = useState<MediaChapter[]>(() => video.chapters || []);
+  const [showChapterMenu, setShowChapterMenu] = useState(false);
+
+  useEffect(() => {
+    setChapters(video.chapters || []);
+  }, [video.id, video.chapters]);
   const [hoverPercent, setHoverPercent] = useState(0);
   const [isScrubbing, setIsScrubbing] = useState(false);
   const [scrubTime, setScrubTime] = useState<number | null>(null);
@@ -1904,9 +1912,13 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
             duration: result.duration,
             format: result.format,
             streams: result.streams,
+            chapters: result.chapters && result.chapters.length > 0 ? result.chapters : video.chapters,
             seekMap: seekMap.length > 0 ? seekMap : undefined,
             timecodeScale
           };
+          if (result.chapters && result.chapters.length > 0) {
+            setChapters(result.chapters);
+          }
           onUpdateVideoRef.current(updatedVideo);
         } catch (err) {
           logger.error('Auto probe streams failed:', err);
@@ -3637,6 +3649,7 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
     const time = pct * duration;
     
     setHoverTime(formatTime(time));
+    setHoverTimeSeconds(time);
     setHoverPercent(pct * 100);
     if (previewVideoRef.current) {
       previewVideoRef.current.currentTime = time;
@@ -3645,6 +3658,7 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
 
   const handleProgressMouseLeave = () => {
     setHoverTime(null);
+    setHoverTimeSeconds(null);
   };
 
   const renderSettingsButton = (key: string) => {
@@ -4613,9 +4627,21 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
                     pointerEvents: showPlayBarMode === 'enable' ? 'auto' : 'none'
                   }}
                 >
-                  <div className="scrub-track-bg"></div>
-                  <div className="scrub-track-buffered" style={{ width: `${effectiveDuration > 0 ? Math.min(100, Math.max(0, bufferedPercent)) : 0}%` }}></div>
-                  <div className="scrub-track-progress" style={{ width: `${effectiveDuration > 0 ? Math.min(100, Math.max(0, (currentTime / effectiveDuration) * 100)) : 0}%` }}></div>
+                  {chapters.length > 0 && effectiveDuration > 0 ? (
+                    <ChapterScrubSegments
+                      chapters={chapters}
+                      duration={effectiveDuration}
+                      currentTime={isScrubbing && scrubTime !== null ? scrubTime : currentTime}
+                      bufferedPercent={bufferedPercent}
+                      hoverTime={hoverTimeSeconds}
+                    />
+                  ) : (
+                    <>
+                      <div className="scrub-track-bg"></div>
+                      <div className="scrub-track-buffered" style={{ width: `${effectiveDuration > 0 ? Math.min(100, Math.max(0, bufferedPercent)) : 0}%` }}></div>
+                      <div className="scrub-track-progress" style={{ width: `${effectiveDuration > 0 ? Math.min(100, Math.max(0, (currentTime / effectiveDuration) * 100)) : 0}%` }}></div>
+                    </>
+                  )}
 
                   {/* Bookmark Timeline Dots */}
                   {effectiveDuration > 0 && bookmarks.map((bm) => {
@@ -4708,7 +4734,17 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
                     </div>
                     {showTimeDisplay && (
                       <div className="scrub-hover-time">
-                        {isScrubbing ? formatTime(scrubTime !== null ? scrubTime : currentTime) : hoverTime}
+                        {(() => {
+                          const targetT = isScrubbing ? (scrubTime !== null ? scrubTime : currentTime) : hoverTimeSeconds;
+                          const hoveredChap = targetT !== null ? getActiveChapter(chapters, targetT) : null;
+                          const timeStr = isScrubbing ? formatTime(scrubTime !== null ? scrubTime : currentTime) : hoverTime;
+                          return hoveredChap ? (
+                            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '2px' }}>
+                              <span style={{ fontSize: '0.72rem', opacity: 0.9, maxWidth: '180px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{hoveredChap.title}</span>
+                              <span>{timeStr}</span>
+                            </div>
+                          ) : timeStr;
+                        })()}
                       </div>
                     )}
                   </div>
@@ -4812,6 +4848,95 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
                     </span>
                   </div>
                 )}
+                {chapters.length > 0 && (() => {
+                  const activeChap = getActiveChapter(chapters, currentTime);
+                  return (
+                    <div style={{ position: 'relative', marginLeft: '10px' }}>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setShowChapterMenu(prev => !prev);
+                        }}
+                        style={{
+                          background: 'rgba(255,255,255,0.08)',
+                          border: '1px solid rgba(255,255,255,0.14)',
+                          borderRadius: '6px',
+                          color: 'var(--text-primary, #fff)',
+                          padding: '3px 9px',
+                          fontSize: '0.78rem',
+                          cursor: 'pointer',
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '4px',
+                          maxWidth: '180px',
+                          whiteSpace: 'nowrap',
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis',
+                        }}
+                        title="Chapters"
+                      >
+                        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                          {activeChap ? activeChap.title : `${chapters.length} Chapters`}
+                        </span>
+                        <ChevronRight size={13} />
+                      </button>
+                      {showChapterMenu && (
+                        <div
+                          onClick={(e) => e.stopPropagation()}
+                          style={{
+                            position: 'absolute',
+                            bottom: '100%',
+                            left: 0,
+                            marginBottom: '10px',
+                            background: 'rgba(18, 18, 22, 0.96)',
+                            border: '1px solid rgba(255,255,255,0.14)',
+                            borderRadius: '10px',
+                            padding: '6px',
+                            minWidth: '220px',
+                            maxHeight: '260px',
+                            overflowY: 'auto',
+                            zIndex: 200,
+                            display: 'flex',
+                            flexDirection: 'column',
+                            gap: '2px',
+                          }}
+                        >
+                          {chapters.map((ch) => {
+                            const isCurrent = activeChap?.id === ch.id;
+                            return (
+                              <button
+                                key={ch.id}
+                                onClick={() => {
+                                  if (videoRef.current) {
+                                    videoRef.current.currentTime = ch.startTime;
+                                    setCurrentTime(ch.startTime);
+                                  }
+                                  setShowChapterMenu(false);
+                                }}
+                                style={{
+                                  textAlign: 'left',
+                                  background: isCurrent ? 'var(--accent-color, #8b5cf6)' : 'transparent',
+                                  color: '#fff',
+                                  border: 'none',
+                                  borderRadius: '6px',
+                                  padding: '6px 10px',
+                                  fontSize: '0.82rem',
+                                  cursor: 'pointer',
+                                  display: 'flex',
+                                  justifyContent: 'space-between',
+                                  gap: '10px',
+                                }}
+                              >
+                                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{ch.title}</span>
+                                <span style={{ opacity: 0.7, fontSize: '0.75rem', flexShrink: 0 }}>{formatTime(ch.startTime)}</span>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
               </div>
 
               <div className="bottom-controls-center-group">

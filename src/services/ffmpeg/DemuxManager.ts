@@ -2,6 +2,7 @@ import { FFmpeg } from '@ffmpeg/ffmpeg';
 import { logger } from '../../utils/logger';
 import type { ByteSource } from '../local/localByteSource';
 import { FFmpegManager } from './FFmpegManager';
+import { parseChaptersFromFfmpegLogs, type MediaChapter } from '../ffmpeg';
 import type { ProbeResult, MediaStreamInfo } from '../pipeline/MediaPipeline';
 
 export class DemuxManager {
@@ -131,7 +132,7 @@ export class DemuxManager {
       streams.push({ index, type, codec, language, details });
     }
 
-    return { duration, streams };
+    return { duration, streams, chapters: parseChaptersFromFfmpegLogs(logText) } as ProbeResult & { chapters: MediaChapter[] };
   }
 
   private getMkvHeaderOnly(bytes: Uint8Array): Uint8Array {

@@ -12,8 +12,10 @@ export type EmbedCommand =
   | { type: 'SET_VOLUME'; payload: { volume: number } }
   | { type: 'SET_MUTE'; payload: { muted: boolean } }
   | { type: 'SET_SPEED'; payload: { speed: number } }
+  | { type: 'SET_QUALITY'; payload: { level: number } }
+  | { type: 'SET_PROXY'; payload: { proxyUrl: string; headers?: Record<string, string> } }
   | { type: 'SET_FULLSCREEN'; payload: { fullscreen: boolean } }
-  | { type: 'LOAD'; payload: { url: string; media?: string; autoPlay?: boolean; currentTime?: number; duration?: number; hlsPlaylist?: any; playbackMode?: string; } }
+  | { type: 'LOAD'; payload: { url: string; media?: string; title?: string; autoPlay?: boolean; currentTime?: number; duration?: number; hlsPlaylist?: any; playbackMode?: string; proxyUrl?: string; headers?: Record<string, string>; } }
   | { type: 'UPDATE_CONFIG'; payload: { controls?: Partial<ControlsConfig>; theme?: Partial<ThemeConfig> } }
   | { type: 'DESTROY' };
 
@@ -28,6 +30,7 @@ export type EmbedEvent =
   | { type: 'SEEK'; payload: { time: number } }
   | { type: 'SUBTITLE_CHANGE'; payload: { trackId: string | null } }
   | { type: 'AUDIO_CHANGE'; payload: { trackId: string | null } }
+  | { type: 'QUALITY_CHANGE'; payload: { level: number; height?: number; bitrate?: number } }
   | { type: 'FULLSCREEN_CHANGE'; payload: { isFullscreen: boolean } }
   | { type: 'ERROR'; payload: { message: string; code?: string } };
 

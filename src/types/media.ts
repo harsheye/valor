@@ -1,6 +1,13 @@
 import type { MediaStream } from '../services/ffmpeg';
 import type { SubtitleCue } from '../utils/subtitleParser';
 
+export interface MediaChapter {
+  id: string;
+  title: string;
+  startTime: number;
+  endTime: number;
+}
+
 export interface CustomAudioTrack {
   id: string;
   name: string;
@@ -32,6 +39,7 @@ export interface VideoItem {
   duration?: string;
   format?: string;
   streams?: MediaStream[];
+  chapters?: MediaChapter[];
   audioTracks: CustomAudioTrack[];
   subtitleTracks: CustomSubtitleTrack[];
   isRemote?: boolean;
@@ -44,6 +52,8 @@ export interface VideoItem {
   resumeTime?: number;
   probingError?: string;
   playbackMode?: 'advanced' | 'native';
+  proxyUrl?: string;
+  headers?: Record<string, string>;
   lastPlayedDate?: string;
   localFilePath?: string;
   playedDates?: string[];

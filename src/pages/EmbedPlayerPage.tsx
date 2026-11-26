@@ -8,14 +8,25 @@ export const EmbedPlayerPage: React.FC = () => {
   const [video, setVideo] = useState<VideoItem | null>(() => {
     const params = new URLSearchParams(window.location.search);
     const mediaUrl = params.get('url');
+    const proxyUrl = params.get('proxy') || undefined;
+    let headers: Record<string, string> | undefined;
+    try {
+      const hdrRaw = params.get('headers');
+      if (hdrRaw) headers = JSON.parse(hdrRaw);
+    } catch {
+      // ignore invalid headers JSON
+    }
     if (mediaUrl) {
       return {
         id: 'embed-session',
         title: params.get('title') || 'Embedded Video',
         url: mediaUrl,
         type: 'url',
-        currentTime: 0,
+        currentTime: Number(params.get('startat') || 0),
         duration: '0',
+        isRemote: true,
+        proxyUrl,
+        headers,
         audioTracks: [],
         subtitleTracks: []
       };
@@ -79,7 +90,7 @@ export const EmbedPlayerPage: React.FC = () => {
         case 'LOAD':
           setVideo({
             id: 'embed-session',
-            title: 'Embedded Media',
+            title: cmd.payload.title || 'Embedded Media',
             url: cmd.payload.media || cmd.payload.url || '',
             type: 'url',
             currentTime: cmd.payload.currentTime || 0,
@@ -87,9 +98,18 @@ export const EmbedPlayerPage: React.FC = () => {
             isRemote: true,
             hlsPlaylist: cmd.payload.hlsPlaylist,
             playbackMode: (cmd.payload.playbackMode as any) || undefined,
+            proxyUrl: cmd.payload.proxyUrl,
+            headers: cmd.payload.headers,
             audioTracks: [],
             subtitleTracks: []
           });
+          break;
+        case 'SET_PROXY':
+          setVideo(prev => prev ? {
+            ...prev,
+            proxyUrl: cmd.payload.proxyUrl,
+            headers: cmd.payload.headers ?? prev.headers,
+          } : prev);
           break;
         case 'UPDATE_CONFIG':
           if (cmd.payload.controls) setControls(prev => ({ ...prev, ...cmd.payload.controls }));

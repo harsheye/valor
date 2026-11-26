@@ -44,10 +44,62 @@ export interface MediaStream {
   details: string;
 }
 
+export interface MediaChapter {
+  id: string;
+  title: string;
+  startTime: number;
+  endTime: number;
+}
+
 export interface ProbeResult {
   duration: string;
   format: string;
   streams: MediaStream[];
+  chapters: MediaChapter[];
+}
+
+export function parseChaptersFromFfmpegLogs(logText: string): MediaChapter[] {
+  const chapters: MediaChapter[] = [];
+  const lines = logText.split(/\r?\n/);
+  let current: MediaChapter | null = null;
+  let inChapters = false;
+
+  for (const line of lines) {
+    if (line.includes('Output #')) break;
+    if (/^\s*Chapters:\s*$/i.test(line)) {
+      inChapters = true;
+      continue;
+    }
+    const chapMatch = line.match(/Chapter\s+#\d+:(\d+):\s*start\s+([\d.]+),\s*end\s+([\d.]+)/i);
+    if (chapMatch) {
+      inChapters = true;
+      if (current) chapters.push(current);
+      const idx = Number(chapMatch[1]);
+      const startTime = parseFloat(chapMatch[2]);
+      const endTime = parseFloat(chapMatch[3]);
+      current = {
+        id: `chapter-${idx}`,
+        title: `Chapter ${idx + 1}`,
+        startTime: Number.isFinite(startTime) ? startTime : 0,
+        endTime: Number.isFinite(endTime) ? endTime : 0,
+      };
+      continue;
+    }
+    if (current && inChapters) {
+      if (/^\s*Stream\s+#/i.test(line)) {
+        chapters.push(current);
+        current = null;
+        inChapters = false;
+        continue;
+      }
+      const titleMatch = line.match(/^\s*title\s*:\s*(.+)$/i);
+      if (titleMatch) {
+        current.title = titleMatch[1].trim();
+      }
+    }
+  }
+  if (current) chapters.push(current);
+  return chapters;
 }
 
 // ─── Codec helpers ────────────────────────────────────────────────────────────
@@ -372,8 +424,9 @@ export class FFmpegService {
         details
       });
     }
-    logger.success('Parsed stream layout:', { duration, format, streams });
-    return { duration, format, streams };
+    const chapters = parseChaptersFromFfmpegLogs(logText);
+    logger.success('Parsed stream layout:', { duration, format, streams, chapters });
+    return { duration, format, streams, chapters };
   }
 
   /**

@@ -7,7 +7,8 @@ import {
   Layers, Type, Clock, Sliders, SkipForward, Ban, FastForward, Zap, Coffee, ChevronRight, ChevronLeft, Eye, Settings, Bookmark as BookmarkIcon, Activity, Terminal
 } from 'lucide-react';
 import { Button } from './ui/button';
-import type { VideoItem, CustomAudioTrack, CustomSubtitleTrack, Bookmark } from '../types/media';
+import type { VideoItem, CustomAudioTrack, CustomSubtitleTrack, Bookmark, MediaChapter } from '../types/media';
+import { ChapterScrubSegments, getActiveChapter } from './ChapterScrubSegments';
 import { SubtitleOverlay } from './SubtitleOverlay';
 import type { SubtitleSettings } from './SubtitleOverlay';
 import { AudioSubPopover } from './AudioSubPopover';
@@ -245,13 +246,45 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
     
     setVideoLayout({ left, top, width, height });
   }, []);
+  const resolveProxyUrl = useCallback((rawUrl: string, proxy: string, hdrs?: Record<string, string>) => {
+    if (!proxy || !rawUrl) return rawUrl;
+    if (!rawUrl.startsWith('http://') && !rawUrl.startsWith('https://')) return rawUrl;
+    if (rawUrl.startsWith(proxy)) return rawUrl;
+    const sep = proxy.includes('?') ? '&' : '?';
+    let out = `${proxy}${sep}url=${encodeURIComponent(rawUrl)}`;
+    if (hdrs && Object.keys(hdrs).length > 0) {
+      out += `&headers=${encodeURIComponent(JSON.stringify(hdrs))}`;
+    }
+    return out;
+  }, []);
+
+  const hlsRef = useRef<Hls | null>(null);
+  const [hlsLevels, setHlsLevels] = useState<Array<{ index: number; height: number; width: number; bitrate: number; name: string }>>([]);
+  const [activeQualityLevel, setActiveQualityLevel] = useState<number>(-1);
+  const [currentAutoHeight, setCurrentAutoHeight] = useState<number | null>(null);
+  const [showQualityMenu, setShowQualityMenu] = useState(false);
+  const [runtimeProxyUrl, setRuntimeProxyUrl] = useState<string>(video.proxyUrl || '');
+  const [proxyInputDraft, setProxyInputDraft] = useState<string>(video.proxyUrl || 'http://localhost:8787/proxy');
+  const [showProxyModal, setShowProxyModal] = useState(false);
+
+  useEffect(() => {
+    setRuntimeProxyUrl(video.proxyUrl || '');
+    if (video.proxyUrl) setProxyInputDraft(video.proxyUrl);
+  }, [video.proxyUrl]);
+
   const isDirectHls = video.url.includes('.m3u8') && !video.hlsPlaylist;
 
   useEffect(() => {
     // Only use hls.js for raw .m3u8 URLs when no custom hlsPlaylist is provided by the backend
+    setHlsLevels([]);
+    setActiveQualityLevel(-1);
+    setCurrentAutoHeight(null);
 
     if (isDirectHls && videoRef.current) {
       if (Hls.isSupported()) {
+        const activeProxy = runtimeProxyUrl;
+        const customHeaders = video.headers;
+
         class CustomLoader extends Hls.DefaultConfig.loader {
           constructor(config: any) {
             super(config);
@@ -259,18 +292,43 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
           load(context: any, config: any, callbacks: any) {
             if (context.url && (context.url.includes('ttvnw.net') || context.url.includes('doppiocdn')) && !context.url.includes('/twitch-usher/') && !context.url.includes('/twitch-proxy/')) {
               context.url = '/twitch-proxy/' + context.url;
+            } else if (activeProxy && context.url) {
+              context.url = resolveProxyUrl(context.url, activeProxy, customHeaders);
             }
             super.load(context, config, callbacks);
           }
         }
 
-        const hls = new Hls({ 
+        const hls = new Hls({
           autoStartLoad: true,
-          loader: CustomLoader as any
+          loader: CustomLoader as any,
+          xhrSetup: (!activeProxy && customHeaders) ? (xhr: XMLHttpRequest) => {
+            Object.entries(customHeaders).forEach(([k, v]) => {
+              try { xhr.setRequestHeader(k, v); } catch { /* ignore forbidden headers */ }
+            });
+          } : undefined,
         });
-        hls.loadSource(video.url);
+        hlsRef.current = hls;
+        hls.loadSource(resolveProxyUrl(video.url, activeProxy, customHeaders));
         hls.attachMedia(videoRef.current);
-        
+
+        hls.on(Hls.Events.MANIFEST_PARSED, (_event, data) => {
+          const levels = (data.levels || []).map((lvl: any, index: number) => ({
+            index,
+            height: lvl.height || 0,
+            width: lvl.width || 0,
+            bitrate: lvl.bitrate || 0,
+            name: lvl.height ? `${lvl.height}p` : `${Math.round((lvl.bitrate || 0) / 1000)} kbps`,
+          }));
+          levels.sort((a: any, b: any) => (b.height - a.height) || (b.bitrate - a.bitrate));
+          setHlsLevels(levels);
+        });
+
+        hls.on(Hls.Events.LEVEL_SWITCHED, (_event, data) => {
+          const lvl = hls.levels?.[data.level];
+          if (lvl?.height) setCurrentAutoHeight(lvl.height);
+        });
+
         hls.on(Hls.Events.ERROR, (event, data) => {
           if (data.fatal) {
             switch(data.type) {
@@ -288,14 +346,15 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
         });
 
         return () => {
+          hlsRef.current = null;
           hls.destroy();
         };
       } else if (videoRef.current.canPlayType('application/vnd.apple.mpegurl')) {
         // Fallback for native Safari support
-        videoRef.current.src = video.url;
+        videoRef.current.src = resolveProxyUrl(video.url, runtimeProxyUrl, video.headers);
       }
     }
-  }, [video.url, video.hlsPlaylist]);
+  }, [video.url, video.hlsPlaylist, runtimeProxyUrl, video.headers, resolveProxyUrl]);
 
   useEffect(() => {
     const handleResize = () => {
@@ -1462,6 +1521,13 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [radialMenuState, setRadialMenuState] = useState<{ visible: boolean; x: number; y: number }>({ visible: false, x: 0, y: 0 });
   const [hoverTime, setHoverTime] = useState<string | null>(null);
+  const [hoverTimeSeconds, setHoverTimeSeconds] = useState<number | null>(null);
+  const [chapters, setChapters] = useState<MediaChapter[]>(() => video.chapters || []);
+  const [showChapterMenu, setShowChapterMenu] = useState(false);
+
+  useEffect(() => {
+    setChapters(video.chapters || []);
+  }, [video.id, video.chapters]);
   const [hoverPercent, setHoverPercent] = useState(0);
   const [isScrubbing, setIsScrubbing] = useState(false);
   const [scrubTime, setScrubTime] = useState<number | null>(null);
@@ -1975,9 +2041,13 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
             duration: result.duration,
             format: result.format,
             streams: result.streams,
+            chapters: result.chapters && result.chapters.length > 0 ? result.chapters : video.chapters,
             seekMap: seekMap.length > 0 ? seekMap : undefined,
             timecodeScale
           };
+          if (result.chapters && result.chapters.length > 0) {
+            setChapters(result.chapters);
+          }
           onUpdateVideoRef.current(updatedVideo);
         } catch (err) {
           logger.error('Auto probe streams failed:', err);
@@ -3788,6 +3858,7 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
     const time = pct * duration;
     
     setHoverTime(formatTime(time));
+    setHoverTimeSeconds(time);
     setHoverPercent(pct * 100);
     if (previewVideoRef.current) {
       previewVideoRef.current.currentTime = time;
@@ -3796,6 +3867,7 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
 
   const handleProgressMouseLeave = () => {
     setHoverTime(null);
+    setHoverTimeSeconds(null);
   };
 
   const renderSettingsButton = (key: string) => {
@@ -4073,7 +4145,7 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
         <video
           ref={videoRef}
           onContextMenu={(e) => e.preventDefault()}
-          src={(video.url.includes('.m3u8') && !video.hlsPlaylist && Hls.isSupported()) ? undefined : video.url}
+          src={(video.url.includes('.m3u8') && !video.hlsPlaylist && Hls.isSupported()) ? undefined : resolveProxyUrl(video.url, runtimeProxyUrl, video.headers)}
           controls={false}
           crossOrigin={video.playbackMode === 'advanced' ? 'anonymous' : undefined}
           className="main-video-element"
@@ -4479,9 +4551,9 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
                       </span>
                       <button 
                         className="btn-enable-advanced" 
-                        onClick={() => triggerSwitchToast("Advanced Mode via proxy is a future feature. Currently playing in Native Mode.")}
+                        onClick={() => setShowProxyModal(true)}
                       >
-                        Enable Advanced Mode
+                        {runtimeProxyUrl ? 'Proxy Active (Edit)' : 'Configure Proxy'}
                       </button>
                     </div>
                   )}
@@ -4695,9 +4767,21 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
                     pointerEvents: showPlayBarMode === 'enable' ? 'auto' : 'none'
                   }}
                 >
-                  <div className="scrub-track-bg"></div>
-                  <div className="scrub-track-buffered" style={{ width: `${effectiveDuration > 0 ? Math.min(100, Math.max(0, bufferedPercent)) : 0}%` }}></div>
-                  <div className="scrub-track-progress" style={getScrubProgressStyle()}></div>
+                  {chapters.length > 0 && effectiveDuration > 0 ? (
+                    <ChapterScrubSegments
+                      chapters={chapters}
+                      duration={effectiveDuration}
+                      currentTime={isScrubbing && scrubTime !== null ? scrubTime : currentTime}
+                      bufferedPercent={bufferedPercent}
+                      hoverTime={hoverTimeSeconds}
+                    />
+                  ) : (
+                    <>
+                      <div className="scrub-track-bg"></div>
+                      <div className="scrub-track-buffered" style={{ width: `${effectiveDuration > 0 ? Math.min(100, Math.max(0, bufferedPercent)) : 0}%` }}></div>
+                      <div className="scrub-track-progress" style={getScrubProgressStyle()}></div>
+                    </>
+                  )}
 
                   {/* Bookmark Timeline Dots */}
                   {effectiveDuration > 0 && bookmarks.map((bm) => {
@@ -4790,7 +4874,17 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
                     </div>
                     {showTimeDisplay && (
                       <div className="scrub-hover-time">
-                        {isScrubbing ? formatTime(scrubTime !== null ? scrubTime : currentTime) : hoverTime}
+                        {(() => {
+                          const targetT = isScrubbing ? (scrubTime !== null ? scrubTime : currentTime) : hoverTimeSeconds;
+                          const hoveredChap = targetT !== null ? getActiveChapter(chapters, targetT) : null;
+                          const timeStr = isScrubbing ? formatTime(scrubTime !== null ? scrubTime : currentTime) : hoverTime;
+                          return hoveredChap ? (
+                            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '2px' }}>
+                              <span style={{ fontSize: '0.72rem', opacity: 0.9, maxWidth: '180px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{hoveredChap.title}</span>
+                              <span>{timeStr}</span>
+                            </div>
+                          ) : timeStr;
+                        })()}
                       </div>
                     )}
                   </div>
@@ -4894,6 +4988,95 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
                     </span>
                   </div>
                 )}
+                {chapters.length > 0 && (() => {
+                  const activeChap = getActiveChapter(chapters, currentTime);
+                  return (
+                    <div style={{ position: 'relative', marginLeft: '10px' }}>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setShowChapterMenu(prev => !prev);
+                        }}
+                        style={{
+                          background: 'rgba(255,255,255,0.08)',
+                          border: '1px solid rgba(255,255,255,0.14)',
+                          borderRadius: '6px',
+                          color: 'var(--text-primary, #fff)',
+                          padding: '3px 9px',
+                          fontSize: '0.78rem',
+                          cursor: 'pointer',
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '4px',
+                          maxWidth: '180px',
+                          whiteSpace: 'nowrap',
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis',
+                        }}
+                        title="Chapters"
+                      >
+                        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                          {activeChap ? activeChap.title : `${chapters.length} Chapters`}
+                        </span>
+                        <ChevronRight size={13} />
+                      </button>
+                      {showChapterMenu && (
+                        <div
+                          onClick={(e) => e.stopPropagation()}
+                          style={{
+                            position: 'absolute',
+                            bottom: '100%',
+                            left: 0,
+                            marginBottom: '10px',
+                            background: 'rgba(18, 18, 22, 0.96)',
+                            border: '1px solid rgba(255,255,255,0.14)',
+                            borderRadius: '10px',
+                            padding: '6px',
+                            minWidth: '220px',
+                            maxHeight: '260px',
+                            overflowY: 'auto',
+                            zIndex: 200,
+                            display: 'flex',
+                            flexDirection: 'column',
+                            gap: '2px',
+                          }}
+                        >
+                          {chapters.map((ch) => {
+                            const isCurrent = activeChap?.id === ch.id;
+                            return (
+                              <button
+                                key={ch.id}
+                                onClick={() => {
+                                  if (videoRef.current) {
+                                    videoRef.current.currentTime = ch.startTime;
+                                    setCurrentTime(ch.startTime);
+                                  }
+                                  setShowChapterMenu(false);
+                                }}
+                                style={{
+                                  textAlign: 'left',
+                                  background: isCurrent ? 'var(--accent-color, #8b5cf6)' : 'transparent',
+                                  color: '#fff',
+                                  border: 'none',
+                                  borderRadius: '6px',
+                                  padding: '6px 10px',
+                                  fontSize: '0.82rem',
+                                  cursor: 'pointer',
+                                  display: 'flex',
+                                  justifyContent: 'space-between',
+                                  gap: '10px',
+                                }}
+                              >
+                                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{ch.title}</span>
+                                <span style={{ opacity: 0.7, fontSize: '0.75rem', flexShrink: 0 }}>{formatTime(ch.startTime)}</span>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
               </div>
 
               <div className="bottom-controls-center-group">
@@ -5059,6 +5242,106 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
                   </button>
                 )}
                 
+                {/* HLS Quality Selector (shown when HLS levels are available) */}
+                {hlsLevels.length > 0 && (
+                  <div
+                    style={{ position: 'relative', marginRight: '12px' }}
+                    onMouseEnter={() => setShowQualityMenu(true)}
+                    onMouseLeave={() => setShowQualityMenu(false)}
+                  >
+                    <button
+                      className="control-btn-quality"
+                      onClick={() => setShowQualityMenu(prev => !prev)}
+                      title="HLS Video Quality"
+                      style={{
+                        background: 'rgba(255,255,255,0.1)',
+                        border: '1px solid rgba(255,255,255,0.18)',
+                        borderRadius: '6px',
+                        color: 'var(--text-primary, #fff)',
+                        cursor: 'pointer',
+                        padding: '4px 10px',
+                        fontSize: '0.82rem',
+                        fontWeight: 600,
+                      }}
+                    >
+                      {activeQualityLevel === -1
+                        ? `Auto${currentAutoHeight ? ` (${currentAutoHeight}p)` : ''}`
+                        : (hlsLevels.find(l => l.index === activeQualityLevel)?.name || 'Quality')}
+                    </button>
+                    {showQualityMenu && (
+                      <div
+                        style={{
+                          position: 'absolute',
+                          bottom: '100%',
+                          right: 0,
+                          marginBottom: '10px',
+                          background: 'rgba(18, 18, 22, 0.96)',
+                          border: '1px solid rgba(255,255,255,0.14)',
+                          borderRadius: '10px',
+                          padding: '6px',
+                          minWidth: '150px',
+                          boxShadow: '0 10px 28px rgba(0,0,0,0.6)',
+                          zIndex: 200,
+                          display: 'flex',
+                          flexDirection: 'column',
+                          gap: '2px',
+                        }}
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        <button
+                          onClick={() => {
+                            if (hlsRef.current) hlsRef.current.currentLevel = -1;
+                            setActiveQualityLevel(-1);
+                            setShowQualityMenu(false);
+                          }}
+                          style={{
+                            textAlign: 'left',
+                            background: activeQualityLevel === -1 ? 'var(--accent-color, #ff0033)' : 'transparent',
+                            color: '#fff',
+                            border: 'none',
+                            borderRadius: '6px',
+                            padding: '6px 10px',
+                            fontSize: '0.85rem',
+                            cursor: 'pointer',
+                          }}
+                        >
+                          Auto {currentAutoHeight ? `(${currentAutoHeight}p)` : ''}
+                        </button>
+                        {hlsLevels.map((lvl) => (
+                          <button
+                            key={lvl.index}
+                            onClick={() => {
+                              if (hlsRef.current) hlsRef.current.currentLevel = lvl.index;
+                              setActiveQualityLevel(lvl.index);
+                              setShowQualityMenu(false);
+                            }}
+                            style={{
+                              textAlign: 'left',
+                              background: activeQualityLevel === lvl.index ? 'var(--accent-color, #ff0033)' : 'transparent',
+                              color: '#fff',
+                              border: 'none',
+                              borderRadius: '6px',
+                              padding: '6px 10px',
+                              fontSize: '0.85rem',
+                              cursor: 'pointer',
+                              display: 'flex',
+                              justifyContent: 'space-between',
+                              gap: '12px',
+                            }}
+                          >
+                            <span>{lvl.name}</span>
+                            {lvl.bitrate > 0 && (
+                              <span style={{ opacity: 0.65, fontSize: '0.75rem' }}>
+                                {(lvl.bitrate / 1_000_000).toFixed(1)} Mbps
+                              </span>
+                            )}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+
                 {/* Speed Button & Popover */}
                 <div 
                   style={{ position: 'relative', marginRight: '50px' }}
@@ -5138,6 +5421,92 @@ export const RemoteVideoPlayer: React.FC<VideoPlayerProps> = ({
               </div>
             </div>
           )}
+        </div>
+      )}
+
+      {/* Proxy Configuration Modal */}
+      {showProxyModal && (
+        <div
+          onClick={() => setShowProxyModal(false)}
+          style={{
+            position: 'absolute',
+            inset: 0,
+            background: 'rgba(0,0,0,0.65)',
+            zIndex: 220,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+          }}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              background: '#16161a',
+              border: '1px solid rgba(255,255,255,0.14)',
+              borderRadius: '12px',
+              padding: '20px',
+              width: '400px',
+              maxWidth: '90vw',
+              color: '#fff',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '12px',
+            }}
+          >
+            <h3 style={{ margin: 0, fontSize: '1rem', fontWeight: 600 }}>Media Proxy Settings</h3>
+            <p style={{ margin: 0, fontSize: '0.82rem', color: 'rgba(255,255,255,0.7)' }}>
+              Route CORS-restricted streams, HLS playlists, and range requests through your Valor Proxy Server (<code>npx @valor/proxy-server</code>).
+            </p>
+            <input
+              type="text"
+              value={proxyInputDraft}
+              onChange={(e) => setProxyInputDraft(e.target.value)}
+              placeholder="http://localhost:8787/proxy"
+              style={{
+                background: '#0e0e12',
+                border: '1px solid rgba(255,255,255,0.2)',
+                borderRadius: '8px',
+                padding: '8px 12px',
+                color: '#fff',
+                fontSize: '0.88rem',
+              }}
+            />
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px' }}>
+              <button
+                onClick={() => {
+                  setRuntimeProxyUrl('');
+                  setShowProxyModal(false);
+                }}
+                style={{
+                  background: 'rgba(255,255,255,0.08)',
+                  color: '#fff',
+                  border: 'none',
+                  borderRadius: '8px',
+                  padding: '7px 14px',
+                  cursor: 'pointer',
+                }}
+              >
+                Disable
+              </button>
+              <button
+                onClick={() => {
+                  setRuntimeProxyUrl(proxyInputDraft.trim());
+                  setShowProxyModal(false);
+                }}
+                style={{
+                  background: 'var(--accent-color, #ff0033)',
+                  color: '#fff',
+                  border: 'none',
+                  borderRadius: '8px',
+                  padding: '7px 14px',
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                }}
+              >
+                Apply Proxy
+              </button>
+            </div>
+          </div>
         </div>
       )}
 
