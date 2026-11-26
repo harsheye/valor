@@ -1,5 +1,6 @@
 import React from 'react';
 import { Check } from 'lucide-react';
+import { playerIslandStore } from './player/usePlayerIsland';
 
 interface SpeedPopoverProps {
   playbackRate: number;

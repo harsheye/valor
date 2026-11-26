@@ -17,17 +17,17 @@ export class ChunkManifest {
   private states = new Map<number, ChunkState>();
 
   private static LEGAL_TRANSITIONS: Record<ChunkState, ChunkState[]> = {
-    EMPTY: ['RESERVED', 'FETCHING'],
-    RESERVED: ['FETCHING', 'EMPTY'],
-    FETCHING: ['DECODED', 'FAILED'],
-    DECODED: ['CACHED'],
+    EMPTY: ['RESERVED', 'FETCHING', 'QUEUED', 'FAILED'],
+    RESERVED: ['FETCHING', 'EMPTY', 'FAILED'],
+    FETCHING: ['DECODED', 'FAILED', 'EMPTY'],
+    DECODED: ['CACHED', 'QUEUED'],
     CACHED: ['QUEUED', 'EVICTABLE', 'EMPTY'],
-    QUEUED: ['PLAYING', 'EVICTABLE', 'EMPTY', 'PLAYED', 'CACHED'],
+    QUEUED: ['PLAYING', 'EVICTABLE', 'EMPTY', 'PLAYED', 'CACHED', 'DECODED'],
     PLAYING: ['PLAYED', 'EVICTABLE', 'EMPTY'],
-    PLAYED: ['EVICTABLE', 'EMPTY'],
+    PLAYED: ['EVICTABLE', 'EMPTY', 'CACHED'],
     EVICTABLE: ['REMOVED', 'EMPTY'],
-    FAILED: ['COOLDOWN'],
-    COOLDOWN: ['EMPTY'],
+    FAILED: ['COOLDOWN', 'EMPTY', 'FAILED'],
+    COOLDOWN: ['EMPTY', 'FETCHING', 'FAILED', 'COOLDOWN'],
     REMOVED: ['EMPTY']
   };
 
@@ -45,8 +45,6 @@ export class ChunkManifest {
         `[ChunkManifest-${this.instanceId}] Invalid chunk state transition: chunk ${chunkKey}s, ${currentState} -> ${nextState}`
       );
     }
-
-    console.log(`[ChunkManifest-${this.instanceId}] Chunk ${chunkKey}s: ${currentState} -> ${nextState}`);
     this.states.set(chunkKey, nextState);
   }
 

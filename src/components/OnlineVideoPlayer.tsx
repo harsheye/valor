@@ -1,15 +1,17 @@
+import { OnlineStreamAdBanner } from './OnlineStreamAdBanner';
+import { getEmbedProviders, buildEmbedUrl, fetchEmbedProvidersFromServer, getProviderDisplayName } from '../services/embedProviders';
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { 
   Play, Pause, RotateCcw, RotateCw, X, 
-  Maximize, Minimize, Volume2, Volume1, VolumeX, Lock,
+  Maximize, Minimize, Volume2, Volume1, VolumeX,
   Sliders, SkipForward, Ban, Eye, Settings, Bookmark as BookmarkIcon, List, Server, Cpu
 } from 'lucide-react';
 import type { VideoItem, Bookmark } from '../types/media';
-import { BookmarkPanel } from './BookmarkPanel';
-import { BookmarkModal } from './BookmarkModal';
 import { CustomSelect } from './CustomSelect';
 import { logger } from '../utils/logger';
 import { classifyVideoTitle } from '../utils/libraryClassifier';
+import { PlayerIsland, usePlayerIsland } from './player';
+import { useAutoLandscape } from '../utils/screenOrientation';
 
 interface OnlineVideoPlayerProps {
   video: VideoItem;
@@ -40,7 +42,8 @@ interface OnlineVideoPlayerProps {
   spinnerPreset?: string;
 }
 
-const DEFAULT_TMDB_TOKEN = "eyJhbGciOiJIUzI1NiJ9.eyJhdWQiOiJlMzQwMGRhZWZjODJjNTJlZDEyYzk1MWU1ZWFmYmVhYyIsIm5iZiI6MTc4MzU0MTI2OS44NzUsInN1YiI6IjZhNGVhZTE1MzFhOWUyYmNhZjBmY2RlMiIsInNjb3BlcyI6WyJhcGlfcmVhZCJdLCJ2ZXJzaW9uIjoxfQ.GT6_b6NSJwjYCXlbaCi_djq09ug0rKDxY9iouqVrYWY";
+import { DEFAULT_TMDB_TOKEN } from '../utils/constants';
+import { mergeBookmarksList } from '../utils/bookmarkUtils';
 
 export const OnlineVideoPlayer: React.FC<OnlineVideoPlayerProps> = ({
   video,
@@ -69,6 +72,7 @@ export const OnlineVideoPlayer: React.FC<OnlineVideoPlayerProps> = ({
   customLoaderType = 'default',
   spinnerPreset = 'fire-circle'
 }) => {
+  const island = usePlayerIsland();
   const [isPlaying, setIsPlaying] = useState(true);
   const [currentTime, setCurrentTime] = useState(video.currentTime || 0);
   const [duration, setDuration] = useState(0);
@@ -81,7 +85,7 @@ export const OnlineVideoPlayer: React.FC<OnlineVideoPlayerProps> = ({
   const [isFullscreen, setIsFullscreen] = useState(false);
   
   // Streaming servers & details
-  const [server, setServer] = useState<'videasy' | 'vidking'>('videasy');
+  const [server, setServer] = useState<string>('videasy');
   const [currentSeason, setCurrentSeason] = useState(video.season || 1);
   const [currentEpisode, setCurrentEpisode] = useState(video.episode || 1);
   const [tvMetadata, setTvMetadata] = useState<{ seasonsCount: number; episodesPerSeason: { [seasonNum: number]: number } } | null>(null);
@@ -94,8 +98,58 @@ export const OnlineVideoPlayer: React.FC<OnlineVideoPlayerProps> = ({
   const [showAddDialog, setShowAddDialog] = useState(false);
   const [editingBookmark, setEditingBookmark] = useState<Bookmark | undefined>(undefined);
   const [markingStartTime, setMarkingStartTime] = useState<number | null>(null);
-  const [isLocked, setIsLocked] = useState(false);
+  // Lock mode removed per user request
+  const topRightControlsRef = useRef<HTMLDivElement>(null);
+  const [controlsHovered, setControlsHovered] = useState(false);
+  const [controlsOpacity, setControlsOpacity] = useState(0.1);
+
+  // Proximity-based opacity for top-right controls (Server selector & Close button)
+  // Base resting opacity is strictly 0.1 (10%), scaling up to 1.0 as the mouse nears the controls
+  useEffect(() => {
+    const handleProximityMouseMove = (e: MouseEvent) => {
+      if (controlsHovered) {
+        setControlsOpacity(1.0);
+        return;
+      }
+      const el = topRightControlsRef.current;
+      if (!el) return;
+
+      const rect = el.getBoundingClientRect();
+      const centerX = rect.left + rect.width / 2;
+      const centerY = rect.top + rect.height / 2;
+      const distance = Math.hypot(e.clientX - centerX, e.clientY - centerY);
+
+      const maxDistance = 350; // Distance in px where fading starts
+      if (distance >= maxDistance) {
+        setControlsOpacity(0.1);
+      } else {
+        const proximity = 1 - (distance / maxDistance);
+        // Smooth ease curve from 0.1 up to 1.0
+        const calculated = 0.1 + 0.9 * Math.pow(proximity, 1.2);
+        setControlsOpacity(Math.min(1.0, Math.max(0.1, Number(calculated.toFixed(3)))));
+      }
+    };
+
+    window.addEventListener('mousemove', handleProximityMouseMove, { passive: true });
+    return () => {
+      window.removeEventListener('mousemove', handleProximityMouseMove);
+    };
+  }, [controlsHovered]);
   
+  // Consecutive Skip Accumulator State (1.8s window)
+  const [consecutiveSkipInfo, setConsecutiveSkipInfo] = useState<{
+    direction: 'forward' | 'rewind';
+    totalSeconds: number;
+    count: number;
+  } | null>(null);
+  const consecutiveSkipTimerRef = useRef<any>(null);
+  const consecutiveSkipAccumulatorRef = useRef<{
+    direction: 'forward' | 'rewind';
+    totalSeconds: number;
+    count: number;
+    lastTime: number;
+  }>({ direction: 'forward', totalSeconds: 0, count: 0, lastTime: 0 });
+
   // Native control mode (pointer events auto)
   const [interactWithNative, setInteractWithNative] = useState(false);
 
@@ -123,6 +177,8 @@ export const OnlineVideoPlayer: React.FC<OnlineVideoPlayerProps> = ({
   const lastSkipTimeRef = useRef<number>(0);
 
   const isAnime = video.type === 'online_anime';
+
+  useAutoLandscape(true, playerContainerRef);
 
   // Trigger Toast Notification
   const addToast = useCallback((msg: string) => {
@@ -156,6 +212,54 @@ export const OnlineVideoPlayer: React.FC<OnlineVideoPlayerProps> = ({
       try { iframe.contentWindow?.postMessage(p, '*'); } catch (e) {}
     });
   }, []);
+
+  // Anti-Sandbox Protection: Blocks browser extensions / ad-blockers from injecting restrictive sandbox attributes into the stream iframe
+  useEffect(() => {
+    const iframe = iframeRef.current;
+    if (!iframe) return;
+
+    const fullPermissions = 'allow-forms allow-modals allow-orientation-lock allow-pointer-lock allow-popups allow-popups-to-escape-sandbox allow-presentation allow-same-origin allow-scripts';
+
+    const sanitizeIframe = () => {
+      if (iframe.hasAttribute('sandbox')) {
+        const current = iframe.getAttribute('sandbox') || '';
+        // If an extension injected a restrictive sandbox that blocks forms or scripts, grant all required player permissions
+        if (!current.includes('allow-forms') || !current.includes('allow-scripts') || !current.includes('allow-same-origin')) {
+          console.warn('[Valor] Upgrading restrictive 3rd-party sandbox attribute on online stream iframe to allow all player permissions');
+          iframe.setAttribute('sandbox', fullPermissions);
+        }
+      }
+    };
+
+    sanitizeIframe();
+
+    // Hook setAttribute to prevent extensions from adding a restrictive sandbox
+    try {
+      const origSetAttribute = iframe.setAttribute.bind(iframe);
+      iframe.setAttribute = function(name: string, val: string) {
+        if (name && name.toLowerCase() === 'sandbox') {
+          console.warn('[Valor] Intercepted 3rd-party sandbox setAttribute on online stream iframe, granting all permissions');
+          return origSetAttribute(name, fullPermissions);
+        }
+        return origSetAttribute(name, val);
+      };
+    } catch {}
+
+    // MutationObserver to ensure sandbox is never restrictive
+    const observer = new MutationObserver((mutations) => {
+      for (const m of mutations) {
+        if (m.type === 'attributes' && m.attributeName?.toLowerCase() === 'sandbox') {
+          sanitizeIframe();
+        }
+      }
+    });
+
+    observer.observe(iframe, { attributes: true, attributeFilter: ['sandbox'] });
+
+    return () => {
+      observer.disconnect();
+    };
+  }, [server, video.id, currentSeason, currentEpisode]);
 
   // Fetch Bookmarks from GraphQL API and TiDB (with LocalStorage fallback)
   const fetchBookmarks = useCallback(async () => {
@@ -287,7 +391,9 @@ export const OnlineVideoPlayer: React.FC<OnlineVideoPlayerProps> = ({
                 id: `api-intro-${idx}`,
                 time: msToSec(item.start_ms),
                 endTime: msToSec(item.end_ms),
+                startTime: msToSec(item.start_ms),
                 label: 'Intro',
+                category: 'Intro',
                 isIntro: true,
                 isOutro: false,
                 skipEnabled: true,
@@ -302,7 +408,9 @@ export const OnlineVideoPlayer: React.FC<OnlineVideoPlayerProps> = ({
                 id: `api-recap-${idx}`,
                 time: msToSec(item.start_ms),
                 endTime: msToSec(item.end_ms),
-                label: 'Recap',
+                startTime: msToSec(item.start_ms),
+                label: 'Preview / Recap',
+                category: 'Preview',
                 isIntro: true,
                 isOutro: false,
                 skipEnabled: true,
@@ -317,13 +425,34 @@ export const OnlineVideoPlayer: React.FC<OnlineVideoPlayerProps> = ({
                 id: `api-credits-${idx}`,
                 time: msToSec(item.start_ms),
                 endTime: msToSec(item.end_ms),
-                label: 'Credits/Outro',
+                startTime: msToSec(item.start_ms),
+                label: 'Credits / Outro',
+                category: 'Outro',
                 isIntro: false,
                 isOutro: true,
                 skipEnabled: true,
                 createdBy: 'theintrodb'
               });
             });
+          }
+
+          if (tidbBms.length > 0) {
+            // Save every timestamp found in IntroDB into our database!
+            try {
+              fetch('/api/timestamps/save-introdb', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  tmdbId: resolvedTmdbId,
+                  season: isTV ? season : null,
+                  episode: isTV ? episode : null,
+                  videoId: video.id,
+                  mediaName: video.title || '',
+                  introDbData,
+                  userId: userId || 'theintrodb'
+                })
+              }).catch(() => {});
+            } catch (saveErr) {}
           }
         }
       } catch (err) {
@@ -342,15 +471,8 @@ export const OnlineVideoPlayer: React.FC<OnlineVideoPlayerProps> = ({
       }
     } catch {}
 
-    const mergeBookmarks = (existing: any[], newBms: any[]) => {
-      const map = new Map<string, any>();
-      existing.forEach(bm => map.set(bm.id, bm));
-      newBms.forEach(bm => map.set(bm.id, bm));
-      return Array.from(map.values()).sort((a, b) => a.time - b.time);
-    };
-
     const initialBms = video.bookmarks || localBms;
-    const merged = mergeBookmarks(mergeBookmarks(initialBms, serverBms), tidbBms);
+    const merged = mergeBookmarksList(initialBms, [...serverBms, ...tidbBms]);
     setBookmarks(merged);
   }, [video.id, video.tmdbId, video.title, video.type, video.season, video.episode, video.bookmarks, userId, duration]);
 
@@ -363,14 +485,10 @@ export const OnlineVideoPlayer: React.FC<OnlineVideoPlayerProps> = ({
       localStorage.setItem(key, JSON.stringify(updatedBookmarks));
     } catch (err) {}
 
-    // 2. Send GraphQL mutation to server (SQLite / TiDB)
+    // 2. Send GraphQL & REST mutations to server database (PostgreSQL / SQLite / Redis)
     try {
       const activeUserId = userId || 'local';
       const resolvedTmdbId = video.tmdbId;
-      if (!resolvedTmdbId) {
-        console.warn('Skipping bookmarks server sync: tmdbId is missing');
-        return;
-      }
       
       const seriesInfo = classifyVideoTitle(video.title);
       const isTV = video.type === 'online_tv' || seriesInfo.type === 'series';
@@ -382,24 +500,15 @@ export const OnlineVideoPlayer: React.FC<OnlineVideoPlayerProps> = ({
         return !bm.createdBy || bm.createdBy === 'manual' || bm.userId === activeUserId || bm.userName === profileName;
       });
 
-      const mutation = `
-        mutation SaveBookmarks($userId: String!, $videoId: String!, $tmdbId: Int!, $season: Int, $episode: Int, $bookmarks: [BookmarkInput!]!) {
-          saveBookmarks(userId: $userId, videoId: $videoId, tmdbId: $tmdbId, season: $season, episode: $episode, bookmarks: $bookmarks) {
-            success
-            count
-          }
-        }
-      `;
-      
       const serialized = userBookmarks.map(bm => ({
-        id: bm.id,
-        time: bm.time,
+        id: bm.id || `bm_${bm.time}_${Math.random().toString(36).substring(2, 7)}`,
+        time: Number(bm.time) || 0,
         endTime: bm.endTime !== undefined ? bm.endTime : null,
-        label: bm.label || '',
+        label: bm.label || bm.title || 'Bookmark',
         isIntro: bm.isIntro || false,
         isOutro: bm.isOutro || false,
         skipEnabled: bm.skipEnabled || false,
-        title: bm.title || '',
+        title: bm.title || bm.label || 'Bookmark',
         description: bm.description || '',
         category: bm.category || 'Custom',
         thumbnail: bm.thumbnail || '',
@@ -411,21 +520,48 @@ export const OnlineVideoPlayer: React.FC<OnlineVideoPlayerProps> = ({
         mediaName: bm.mediaName || video.title || ''
       }));
 
-      await fetch('http://127.0.0.1:50001/api/graphql', {
+      // A. Save to /api/timestamps REST endpoint (works with or without tmdbId)
+      await fetch('/api/timestamps', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
         body: JSON.stringify({
-          query: mutation,
-          variables: { 
-            userId: activeUserId, 
-            videoId: video.id, 
-            tmdbId: resolvedTmdbId,
-            season: isTV ? season : null,
-            episode: isTV ? episode : null,
-            bookmarks: serialized 
-          }
+          userId: activeUserId,
+          videoId: video.id,
+          tmdbId: resolvedTmdbId || null,
+          season: isTV ? season : null,
+          episode: isTV ? episode : null,
+          bookmarks: serialized
         })
-      });
+      }).catch(() => {});
+
+      // B. Save via GraphQL if tmdbId is resolved
+      if (resolvedTmdbId) {
+        const mutation = `
+          mutation SaveBookmarks($userId: String!, $videoId: String!, $tmdbId: Int!, $season: Int, $episode: Int, $bookmarks: [BookmarkInput!]!) {
+            saveBookmarks(userId: $userId, videoId: $videoId, tmdbId: $tmdbId, season: $season, episode: $episode, bookmarks: $bookmarks) {
+              success
+              count
+            }
+          }
+        `;
+        await fetch('/api/graphql', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({
+            query: mutation,
+            variables: { 
+              userId: activeUserId, 
+              videoId: video.id, 
+              tmdbId: resolvedTmdbId,
+              season: isTV ? season : null,
+              episode: isTV ? episode : null,
+              bookmarks: serialized 
+            }
+          })
+        }).catch(() => {});
+      }
     } catch (err) {
       console.warn('Failed to sync bookmarks to server:', err);
     }
@@ -515,21 +651,21 @@ export const OnlineVideoPlayer: React.FC<OnlineVideoPlayerProps> = ({
 
   // Auto-hide controls handler
   const handleMouseMove = () => {
-    if (isLocked) return;
     setShowControls(true);
     if (controlsTimeoutRef.current) clearTimeout(controlsTimeoutRef.current);
     
-    if (isPlaying && !interactWithNative) {
+    if (!interactWithNative) {
+      const hideDelay = uiHideTimeout < 100 ? uiHideTimeout * 1000 : uiHideTimeout;
       controlsTimeoutRef.current = setTimeout(() => {
         setShowControls(false);
-      }, uiHideTimeout);
+      }, hideDelay);
     }
   };
 
   // Keyboard Hotkeys listener
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (isLocked || showAddDialog || showSettingsPanel) return;
+      if (showAddDialog || showSettingsPanel) return;
 
       const activeTag = document.activeElement?.tagName.toLowerCase();
       if (activeTag === 'input' || activeTag === 'textarea' || activeTag === 'select') return;
@@ -583,7 +719,7 @@ export const OnlineVideoPlayer: React.FC<OnlineVideoPlayerProps> = ({
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isLocked, isPlaying, volume, isMuted, showAddDialog, showSettingsPanel, interactWithNative, sendIframeCommand]);
+  }, [isPlaying, volume, isMuted, showAddDialog, showSettingsPanel, interactWithNative, sendIframeCommand]);
 
   // Listen to postMessage player events from iframe
   useEffect(() => {
@@ -639,26 +775,7 @@ export const OnlineVideoPlayer: React.FC<OnlineVideoPlayerProps> = ({
 
   // Construct URL for streaming server iframe
   const getEmbedUrl = () => {
-    const id = video.type === 'online_anime' ? video.anilistId : video.tmdbId;
-    const startProgress = video.currentTime && Math.floor(video.currentTime) > 10 ? `?progress=${Math.floor(video.currentTime)}` : '';
-    
-    if (server === 'videasy') {
-      const colorParam = startProgress ? '&color=8B5CF6' : '?color=8B5CF6';
-      if (video.type === 'online_movie') {
-        return `https://player.videasy.net/movie/${id}${startProgress}${colorParam}`;
-      } else if (video.type === 'online_tv') {
-        return `https://player.videasy.net/tv/${id}/${currentSeason}/${currentEpisode}${startProgress}${colorParam}&nextEpisode=true&episodeSelector=true`;
-      } else {
-        return `https://player.videasy.net/anime/${id}/${currentEpisode}${startProgress}${colorParam}`;
-      }
-    } else {
-      const colorParam = startProgress ? '&color=e50914' : '?color=e50914';
-      if (video.type === 'online_movie') {
-        return `https://www.vidking.net/embed/movie/${id}${startProgress}${colorParam}&autoPlay=true`;
-      } else {
-        return `https://www.vidking.net/embed/tv/${id}/${currentSeason}/${currentEpisode}${startProgress}${colorParam}&nextEpisode=true&episodeSelector=true`;
-      }
-    }
+    return buildEmbedUrl(server, video, currentTime, currentSeason, currentEpisode);
   };
 
   // Skip auto-marked scenes
@@ -692,7 +809,6 @@ export const OnlineVideoPlayer: React.FC<OnlineVideoPlayerProps> = ({
 
   // Playback control functions
   const togglePlay = () => {
-    if (isLocked) return;
     if (isPlaying) {
       sendIframeCommand('pause');
       setIsPlaying(false);
@@ -703,22 +819,42 @@ export const OnlineVideoPlayer: React.FC<OnlineVideoPlayerProps> = ({
   };
 
   const seekDelta = (secs: number) => {
-    if (isLocked || blockSeekingCompletely) return;
-    const target = Math.max(0, Math.min(duration, currentTime + secs));
+    if (blockSeekingCompletely) return;
+    const dir: 'forward' | 'rewind' = secs < 0 ? 'rewind' : 'forward';
+    const now = Date.now();
+    const acc = consecutiveSkipAccumulatorRef.current;
+
+    acc.direction = dir;
+    acc.totalSeconds = 10;
+    acc.count = (acc.count || 0) + 1;
+    acc.lastTime = now;
+
+    const delta = dir === 'forward' ? 10 : -10;
+    const maxDuration = duration > 0 ? duration : Infinity;
+    const target = Math.max(0, Math.min(maxDuration, currentTime + delta));
     sendIframeCommand('seek', target);
     setCurrentTime(target);
-    addToast(secs > 0 ? `+${secs}s` : `${secs}s`);
+    island.notify({ type: 'seek', delta: delta, time: target, duration });
+
+    setConsecutiveSkipInfo({ direction: dir, totalSeconds: 10, count: acc.count });
+
+    if (consecutiveSkipTimerRef.current) {
+      clearTimeout(consecutiveSkipTimerRef.current);
+    }
+    consecutiveSkipTimerRef.current = setTimeout(() => {
+      consecutiveSkipAccumulatorRef.current = { direction: dir, totalSeconds: 0, count: 0, lastTime: 0 };
+      setConsecutiveSkipInfo(null);
+    }, 800);
   };
 
   const handleSliderChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (isLocked || blockSeekingCompletely) return;
+    if (blockSeekingCompletely) return;
     const target = Number(e.target.value);
     sendIframeCommand('seek', target);
     setCurrentTime(target);
   };
 
   const adjustVolume = (delta: number) => {
-    if (isLocked) return;
     const val = Math.max(0, Math.min(1.0, volume + delta));
     setVolume(val);
     localStorage.setItem('valor_player_volume', String(val));
@@ -726,20 +862,18 @@ export const OnlineVideoPlayer: React.FC<OnlineVideoPlayerProps> = ({
     
     // Note: Cross-origin iframe limitations might prevent volume modification 
     // inside the iframe directly, but we show visual status inside our custom control
-    addToast(`Volume: ${Math.round(val * 100)}%`);
+    island.notify({ type: 'volume', value: val, muted: val === 0 });
   };
 
   const toggleMute = () => {
-    if (isLocked) return;
     setIsMuted(prev => {
       const next = !prev;
-      addToast(next ? "Muted" : `Volume: ${Math.round(volume * 100)}%`);
+      island.notify({ type: 'volume', value: volume, muted: next });
       return next;
     });
   };
 
   const toggleFullscreen = () => {
-    if (isLocked) return;
     if (!document.fullscreenElement) {
       playerContainerRef.current?.requestFullscreen().then(() => setIsFullscreen(true));
     } else {
@@ -807,10 +941,14 @@ export const OnlineVideoPlayer: React.FC<OnlineVideoPlayerProps> = ({
         createdBy: 'manual'
       };
       nextBookmarks.push(newBm);
-      addToast("Bookmark Saved");
+      island.notify({ type: 'bookmark', time: Math.floor(newBm.time), count: nextBookmarks.length });
     }
     setBookmarks(nextBookmarks);
     saveBookmarksToServer(nextBookmarks);
+    onUpdateVideo((prev: any) => ({
+      ...prev,
+      bookmarks: nextBookmarks
+    }), false, undefined, true);
     setMarkingStartTime(null);
   };
 
@@ -818,6 +956,10 @@ export const OnlineVideoPlayer: React.FC<OnlineVideoPlayerProps> = ({
     const next = bookmarks.filter(b => b.id !== bmId);
     setBookmarks(next);
     saveBookmarksToServer(next);
+    onUpdateVideo((prev: any) => ({
+      ...prev,
+      bookmarks: next
+    }), false, undefined, true);
     addToast("Bookmark Deleted");
   };
 
@@ -825,7 +967,7 @@ export const OnlineVideoPlayer: React.FC<OnlineVideoPlayerProps> = ({
     if (showSettingsPanel || showAddDialog || interactWithNative) return;
     
     const target = e.target as HTMLElement;
-    if (target.closest('.player-quick-settings-panel')) return;
+    if (target.closest('.player-quick-settings-panel') || target.closest('.playlist-panel-container') || target.closest('.playlist-panel-backdrop')) return;
 
     if (e.deltaY < 0) {
       adjustVolume(0.1);
@@ -837,66 +979,227 @@ export const OnlineVideoPlayer: React.FC<OnlineVideoPlayerProps> = ({
   return (
     <div 
       ref={playerContainerRef}
-      className={`local-player-container ${isLocked ? 'is-locked' : ''}`}
+      className="local-player-container"
       onMouseMove={handleMouseMove}
       onWheel={handleWheel}
-      onMouseLeave={() => !interactWithNative && isPlaying && setShowControls(false)}
+      onMouseLeave={() => !interactWithNative && setShowControls(false)}
       style={{ background: 'black', fontFamily: 'Outfit, sans-serif' }}
     >
-      {/* Standalone Source Selector Dropdown (Unnested) */}
-      <div style={{ position: 'fixed', top: '20px', right: '70px', zIndex: 2200, pointerEvents: 'auto' }}>
+      <PlayerIsland />
+      {/* Top Right Controls: Hazard Icon (Ad Notice), Source Selector & Exit Button — Proximity Fade */}
+      <div 
+        ref={topRightControlsRef}
+        className="top-right-online-controls"
+        style={{ 
+          position: 'fixed', 
+          top: '20px', 
+          right: '20px', 
+          zIndex: 2200, 
+          display: 'flex', 
+          alignItems: 'center', 
+          gap: '10px', 
+          pointerEvents: 'auto',
+          opacity: controlsOpacity,
+          transition: 'opacity 0.15s ease-out'
+        }}
+        onMouseEnter={() => setControlsHovered(true)}
+        onMouseLeave={() => setControlsHovered(false)}
+      >
+        {/* Simple Hazard Icon for Ad Notice & Shortcuts */}
+        <OnlineStreamAdBanner />
+
+        {/* Source Selector Dropdown */}
         <CustomSelect
           value={server}
-          onChange={(val) => setServer(val as 'videasy' | 'vidking')}
-          options={[
-            { value: 'videasy', label: 'Source 1' },
-            { value: 'vidking', label: 'Source 2' }
-          ]}
+          onChange={(val) => setServer(val)}
+          options={getEmbedProviders().filter(p => p.enabled).map((p, idx) => ({ 
+            value: p.id, 
+            label: getProviderDisplayName(p, idx) 
+          }))}
           hideSearch={true}
-          width="130px"
+          width="115px"
         />
+
+        {/* Cross (Exit) Button */}
+        <button 
+          onClick={onBack}
+          style={{
+            width: '36px',
+            height: '36px',
+            borderRadius: '50%',
+            background: 'rgba(10, 10, 15, 0.85)',
+            backdropFilter: 'blur(15px)',
+            WebkitBackdropFilter: 'blur(15px)',
+            border: '1px solid rgba(255, 255, 255, 0.15)',
+            color: 'rgba(255, 255, 255, 0.85)',
+            cursor: 'pointer',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            boxShadow: '0 4px 20px rgba(0,0,0,0.5)',
+            transition: 'all 0.2s ease'
+          }}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.color = '#fff';
+            e.currentTarget.style.background = '#e50914';
+            e.currentTarget.style.borderColor = '#e50914';
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.color = 'rgba(255, 255, 255, 0.85)';
+            e.currentTarget.style.background = 'rgba(10, 10, 15, 0.85)';
+            e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.15)';
+          }}
+          title="Exit Player"
+        >
+          <X size={18} />
+        </button>
       </div>
 
-      {/* Standalone Exit Button (Unnested) */}
-      <button 
-        onClick={onBack}
-        style={{
-          position: 'fixed',
-          top: '20px',
-          right: '20px',
-          zIndex: 2200,
-          width: '36px',
-          height: '36px',
-          borderRadius: '50%',
-          background: 'rgba(10, 10, 15, 0.85)',
-          backdropFilter: 'blur(15px)',
-          WebkitBackdropFilter: 'blur(15px)',
-          border: '1px solid rgba(255, 255, 255, 0.12)',
-          color: 'rgba(255, 255, 255, 0.85)',
-          cursor: 'pointer',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          boxShadow: '0 4px 20px rgba(0,0,0,0.5)',
-          transition: 'all 0.2s ease',
-          pointerEvents: 'auto'
-        }}
-        onMouseEnter={(e) => {
-          e.currentTarget.style.color = '#fff';
-          e.currentTarget.style.background = '#e50914';
-          e.currentTarget.style.borderColor = '#e50914';
-        }}
-        onMouseLeave={(e) => {
-          e.currentTarget.style.color = 'rgba(255, 255, 255, 0.85)';
-          e.currentTarget.style.background = 'rgba(10, 10, 15, 0.85)';
-          e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.12)';
-        }}
-        title="Exit Player"
-      >
-        <X size={18} />
-      </button>
+      {/* Side Skip Indicator (Left: Rewind / Right: Forward) */}
+      {consecutiveSkipInfo && (
+        <div 
+          className={`player-side-skip player-side-skip-${consecutiveSkipInfo.direction === 'rewind' ? 'left' : 'right'} player-side-skip-${consecutiveSkipInfo.direction}`}
+        >
+          <div className="player-side-skip-scrim" />
+          <div 
+            key={`${consecutiveSkipInfo.direction}-${consecutiveSkipInfo.count}`}
+            className="player-side-skip-badge"
+          >
+            <div className="player-side-skip-icon-wrap">
+              {consecutiveSkipInfo.direction === 'rewind' ? (
+                <RotateCcw size={18} strokeWidth={2.4} className="player-side-skip-icon anim-spin-rewind" />
+              ) : (
+                <RotateCw size={18} strokeWidth={2.4} className="player-side-skip-icon anim-spin-forward" />
+              )}
+            </div>
+            <span className="player-side-skip-text">
+              {consecutiveSkipInfo.direction === 'rewind' ? `-${consecutiveSkipInfo.totalSeconds}s` : `+${consecutiveSkipInfo.totalSeconds}s`}
+            </span>
+          </div>
+        </div>
+      )}
 
       <style>{`
+        /* Side Skip Indicator (Left: Rewind / Right: Forward) */
+        .player-side-skip {
+          position: absolute;
+          top: 0;
+          bottom: 0;
+          width: 25%;
+          min-width: 120px;
+          max-width: 260px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          pointer-events: none;
+          z-index: 60;
+          overflow: hidden;
+          background: transparent !important;
+        }
+        .player-side-skip-left,
+        .player-side-skip-rewind {
+          left: 0;
+          right: auto;
+        }
+        .player-side-skip-right,
+        .player-side-skip-forward {
+          right: 0;
+          left: auto;
+        }
+
+        /* Transparent background scrim */
+        .player-side-skip-scrim {
+          display: none !important;
+        }
+
+        /* Minimal, Transparent Background Skip Badge with Small Icon */
+        .player-side-skip-badge {
+          position: relative;
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          justify-content: center;
+          gap: 4px;
+          min-width: auto;
+          padding: 0 !important;
+          border-radius: 0;
+          background: transparent !important;
+          border: none !important;
+          backdrop-filter: none !important;
+          -webkit-backdrop-filter: none !important;
+          box-shadow: none !important;
+          color: #ffffff;
+          animation: sideSkipPopFade 0.75s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+          user-select: none;
+        }
+        .player-side-skip-icon-wrap {
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          width: 28px;
+          height: 28px;
+          border-radius: 50%;
+          background: transparent !important;
+          border: none !important;
+        }
+        .player-side-skip-icon {
+          color: #ffffff;
+          filter: drop-shadow(0 2px 8px rgba(0, 0, 0, 0.9));
+        }
+        .player-side-skip-text {
+          font-size: 0.95rem;
+          font-weight: 700;
+          letter-spacing: -0.01em;
+          font-family: 'Outfit', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+          color: #ffffff;
+          text-shadow: 0 2px 8px rgba(0, 0, 0, 0.95);
+        }
+
+        @keyframes sideSkipPopFade {
+          0% {
+            transform: scale(0.72) translateY(6px);
+            opacity: 0;
+          }
+          18% {
+            transform: scale(1.08) translateY(-2px);
+            opacity: 1;
+          }
+          30% {
+            transform: scale(1.0) translateY(0);
+            opacity: 1;
+          }
+          75% {
+            transform: scale(1.0) translateY(0);
+            opacity: 1;
+          }
+          100% {
+            transform: scale(0.9) translateY(4px);
+            opacity: 0;
+          }
+        }
+
+        .anim-spin-rewind {
+          animation: skipIconPulseRewind 0.45s cubic-bezier(0.34, 1.56, 0.64, 1);
+        }
+        .anim-spin-forward {
+          animation: skipIconPulseForward 0.45s cubic-bezier(0.34, 1.56, 0.64, 1);
+        }
+
+        @keyframes skipIconPulseRewind {
+          0% { transform: rotate(0deg) scale(0.85); }
+          50% { transform: rotate(-35deg) scale(1.2); }
+          100% { transform: rotate(0deg) scale(1); }
+        }
+        @keyframes skipIconPulseForward {
+          0% { transform: rotate(0deg) scale(0.85); }
+          50% { transform: rotate(35deg) scale(1.2); }
+          100% { transform: rotate(0deg) scale(1); }
+        }
+
+        .top-right-online-controls:hover,
+        .top-right-online-controls:focus-within {
+          opacity: 1 !important;
+        }
         .local-player-container {
           position: fixed;
           inset: 0;
@@ -1239,21 +1542,6 @@ export const OnlineVideoPlayer: React.FC<OnlineVideoPlayerProps> = ({
         .popover-wrapper {
           position: relative;
         }
-        .player-toast-notification {
-          position: absolute;
-          bottom: 120px;
-          left: 50%;
-          transform: translateX(-50%);
-          background: rgba(139, 92, 246, 0.95);
-          border: 1px solid #a78bfa;
-          color: white;
-          padding: 8px 20px;
-          border-radius: 20px;
-          font-size: 13px;
-          font-weight: 600;
-          z-index: 1000;
-          box-shadow: 0 4px 15px rgba(0,0,0,0.3);
-        }
       `}</style>
 
       {/* Direct Interactive Streaming HUD */}
@@ -1273,211 +1561,12 @@ export const OnlineVideoPlayer: React.FC<OnlineVideoPlayerProps> = ({
           src={getEmbedUrl()}
           style={{ width: '100%', height: '100%', border: 'none' }}
           allowFullScreen
-          allow="autoplay; encrypted-media"
-          {...{ credentialless: "true" }}
+          allow="autoplay; encrypted-media; fullscreen; picture-in-picture"
+
         />
       </div>
 
-      {/* Custom CONTROL OVERLAY OVER THE IFRAME */}
-      {!interactWithNative && (
-        <div 
-          className={`player-ui-overlay-layer ${showControls ? 'visible' : ''}`}
-          style={{ zIndex: 10, background: 'transparent', pointerEvents: 'none' }}
-        >
-          {/* Top Bar controls - Only X Close Button */}
-          <div className="top-bar-overlay" style={{ background: 'transparent', justifyContent: 'space-between', padding: '16px 20px', pointerEvents: 'none' }}>
-            <button
-              onClick={() => setIsLocked(!isLocked)}
-              className={`control-btn ${isLocked ? 'active' : ''}`}
-              style={{ pointerEvents: 'auto', background: isLocked ? 'rgba(229, 9, 20, 0.2)' : 'rgba(0,0,0,0.6)', border: `1px solid ${isLocked ? '#e50914' : 'rgba(255,255,255,0.15)'}`, borderRadius: '8px', padding: '8px', color: isLocked ? '#e50914' : '#fff' }}
-            >
-              <Lock size={20} />
-            </button>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginLeft: 'auto', pointerEvents: 'auto' }}>
-              {/* Close Button X */}
-              <button 
-                className="back-btn" 
-                onClick={onBack} 
-                title="Exit Player"
-                style={{ background: 'rgba(0,0,0,0.6)', border: '1px solid rgba(255,255,255,0.15)', borderRadius: '8px', width: '32px', height: '32px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', cursor: 'pointer' }}
-              >
-                <X size={20} />
-              </button>
-            </div>
-          </div>
 
-          {/* Toast notifications */}
-          {toastMessage && (
-            <div className="player-toast-notification" style={{ pointerEvents: 'auto' }}>
-              {toastMessage}
-            </div>
-          )}
-
-          {/* Interactive Skip Section Overlay Button */}
-          {activeBookmarkForSkip && (
-            <div 
-              style={{
-                position: 'absolute',
-                bottom: '80px',
-                right: '24px',
-                zIndex: 25,
-                pointerEvents: 'auto'
-              }}
-            >
-              <button
-                onClick={() => {
-                  if (activeBookmarkForSkip.endTime) {
-                    sendIframeCommand('seek', activeBookmarkForSkip.endTime);
-                    setCurrentTime(activeBookmarkForSkip.endTime);
-                    addToast(`Skipped ${activeBookmarkForSkip.category || 'Section'}`);
-                  }
-                }}
-                style={{
-                  background: 'linear-gradient(135deg, #8b5cf6 0%, #6d28d9 100%)',
-                  border: '1px solid rgba(255,255,255,0.2)',
-                  borderRadius: '10px',
-                  color: '#fff',
-                  padding: '10px 18px',
-                  fontSize: '0.85rem',
-                  fontWeight: 800,
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '8px',
-                  cursor: 'pointer',
-                  boxShadow: '0 8px 25px rgba(109, 40, 217, 0.5)'
-                }}
-              >
-                <SkipForward size={16} />
-                <span>Skip {activeBookmarkForSkip.category || 'Section'}</span>
-              </button>
-            </div>
-          )}
-
-          {/* Bottom Controls Overlay (Strictly pointerEvents none on wrapper!) */}
-          <div className="bottom-bar-overlay" style={{ background: 'transparent', padding: '16px 20px', pointerEvents: 'none' }}>
-            {/* Timeline Progress Tracker with Bookmarks */}
-            <div className="scrub-container-premium" style={{ cursor: 'default', marginBottom: '10px', pointerEvents: 'auto' }}>
-              {/* Visual Track Background */}
-              <div 
-                className="scrub-track-bg" 
-                style={{ 
-                  position: 'absolute', 
-                  width: '100%', 
-                  height: '4px', 
-                  background: 'rgba(255,255,255,0.2)', 
-                  borderRadius: '2px',
-                  zIndex: 7
-                }} 
-              />
-              
-              {/* Visual Progress Bar Overlay */}
-              <div 
-                className="scrub-track-progress" 
-                style={{ 
-                  width: `${(currentTime / (duration || 1)) * 100}%`,
-                  height: '4px',
-                  background: '#8b5cf6',
-                  borderRadius: '2px',
-                  position: 'absolute',
-                  zIndex: 8
-                }} 
-              />
-
-              {/* Render bookmarks on timeline */}
-              {bookmarks.map((bm) => {
-                const pct = (bm.time / (duration || 1)) * 100;
-                const isRange = bm.endTime !== undefined && bm.endTime > bm.time;
-                
-                if (isRange && bm.endTime) {
-                  const endPct = (bm.endTime / (duration || 1)) * 100;
-                  const width = endPct - pct;
-                  return (
-                    <div 
-                      key={bm.id}
-                      className={`timeline-bookmark-range ${bm.category?.toLowerCase() || ''}`}
-                      style={{ left: `${pct}%`, width: `${width}%` }}
-                      title={`${bm.category}: ${bm.title || bm.label}`}
-                    />
-                  );
-                }
-                return (
-                  <div 
-                    key={bm.id}
-                    className={`timeline-bookmark-dot ${bm.category?.toLowerCase() || ''}`}
-                    style={{ left: `${pct}%` }}
-                    title={`${bm.category}: ${bm.title || bm.label}`}
-                  />
-                );
-              })}
-            </div>
-
-            {/* Bottom Control Buttons Row - Strictly pointerEvents none on row wrapper! */}
-            <div className="bottom-control-buttons-row" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', marginTop: '6px', pointerEvents: 'none' }}>
-              <div className="popover-wrapper" style={{ position: 'relative', pointerEvents: 'auto' }}>
-                <button 
-                  className={`control-btn ${showBookmarksPopover ? 'active' : ''}`}
-                  onClick={() => setShowBookmarksPopover(prev => !prev)}
-                  title="Bookmarks Panel"
-                  style={{
-                    background: 'rgba(12, 12, 18, 0.85)',
-                    border: '1.5px solid rgba(255, 255, 255, 0.4)',
-                    borderRadius: '12px',
-                    color: '#fff',
-                    padding: '8px 16px',
-                    cursor: 'pointer',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    boxShadow: '0 8px 20px rgba(0, 0, 0, 0.6), 0 0 12px rgba(139, 92, 246, 0.3)',
-                    transition: 'all 0.2s ease'
-                  }}
-                >
-                  <BookmarkIcon size={22} />
-                </button>
-
-                {showBookmarksPopover && (
-                  <BookmarkPanel 
-                    bookmarks={bookmarks}
-                    onJump={(time) => {
-                      sendIframeCommand('seek', time);
-                      setCurrentTime(time);
-                      setShowBookmarksPopover(false);
-                    }}
-                    onEdit={(bm) => {
-                      setEditingBookmark(bm);
-                      setShowAddDialog(true);
-                      setShowBookmarksPopover(false);
-                    }}
-                    onDelete={handleDeleteBookmark}
-                    onAdd={() => {
-                      setEditingBookmark(undefined);
-                      setShowAddDialog(true);
-                      setShowBookmarksPopover(false);
-                    }}
-                    onClose={() => setShowBookmarksPopover(false)}
-                  />
-                )}
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Bookmark Modal */}
-      {showAddDialog && (
-        <BookmarkModal 
-          initialTime={markingStartTime !== null ? markingStartTime : Math.round(currentTime)}
-          initialEndTime={markingStartTime !== null ? Math.round(currentTime) : undefined}
-          initialBookmark={editingBookmark}
-          videoElement={null}
-          videoTitle={video.title}
-          onSave={handleSaveBookmark}
-          onClose={() => {
-            setShowAddDialog(false);
-            setMarkingStartTime(null);
-          }}
-        />
-      )}
     </div>
   );
 };

@@ -14,6 +14,7 @@ import { FFmpeg } from "@ffmpeg/ffmpeg";
 import { fetchFile } from "@ffmpeg/util";
 import type { ByteSource } from "./local/localByteSource";
 import { logger } from "../utils/logger";
+import { isWasmSupported } from "../utils/wasmCheck";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -41,6 +42,7 @@ export interface MediaStream {
   type: 'video' | 'audio' | 'subtitle';
   codec: string;
   language?: string;
+  title?: string;
   details: string;
 }
 
@@ -173,6 +175,11 @@ export class FFmpegService {
       await this.terminateWorker();
     }
 
+    if (!isWasmSupported()) {
+      logger.warn('[FFmpegService] WebAssembly is not supported in this browser environment.');
+      throw new Error('WebAssembly is not supported in this browser environment.');
+    }
+
     const ff = new FFmpeg();
 
     if (actualOnProgress) {
@@ -253,7 +260,6 @@ export class FFmpegService {
     const ext = file.name.substring(file.name.lastIndexOf('.')) || '.mkv';
     const cleanName = `input${ext}`;
     const inputPath = `${mountPoint}/${cleanName}`;
-    const cleanFile = new File([file], cleanName, { type: file.type });
 
     try {
       await ff.createDir(mountPoint);
@@ -263,13 +269,23 @@ export class FFmpegService {
 
     try {
       // Use string literal — FFFSType.WORKERFS is undefined in ESM builds
-      await ff.mount("WORKERFS" as any, { files: [cleanFile] }, mountPoint);
+      await ff.mount("WORKERFS" as any, {
+        blobs: [{ name: cleanName, data: file }]
+      }, mountPoint);
       logger.success(`[ffmpeg] WORKERFS mounted successfully at ${inputPath}`);
     } catch (workerFsError) {
-      // WORKERFS unavailable in this environment — fall back to MEMFS write
-      logger.warn("[ffmpeg] WORKERFS unavailable, falling back to fetchFile:", workerFsError);
-      const data = await fetchFile(file);
-      await ff.writeFile(inputPath, data);
+      try {
+        await ff.mount("WORKERFS" as any, { files: [file] }, mountPoint);
+        return `${mountPoint}/${file.name}`;
+      } catch (err2) {
+        if (file.size < 64 * 1024 * 1024) {
+          logger.warn("[ffmpeg] WORKERFS unavailable, falling back to fetchFile:", err2);
+          const data = await fetchFile(file);
+          await ff.writeFile(inputPath, data);
+        } else {
+          throw err2;
+        }
+      }
     }
 
     return inputPath;
@@ -458,7 +474,24 @@ export class FFmpegService {
       const fullLog = this.logCollector.join("\n");
       this.logCollector = null;
 
-      return this.parseProbeLogs(fullLog);
+      let result = this.parseProbeLogs(fullLog);
+      if (result.streams.length === 0 && size > 2 * 1024 * 1024) {
+        try {
+          const tailSize = Math.min(2 * 1024 * 1024, size - headerLimit);
+          const tailBytes = await source.read(size - tailSize, size - 1);
+          const combined = new Uint8Array(headerBytes.length + tailBytes.length);
+          combined.set(headerBytes, 0);
+          combined.set(tailBytes, headerBytes.length);
+          await ff.writeFile(tempInFile, combined);
+          this.logCollector = [];
+          await ff.exec(["-i", tempInFile, "-t", "0", "-c", "copy", "-f", "null", "-"]);
+          const retryLog = this.logCollector.join("\n");
+          this.logCollector = null;
+          try { await ff.deleteFile(tempInFile); } catch {}
+          result = this.parseProbeLogs(retryLog);
+        } catch {}
+      }
+      return result;
     });
   }
 

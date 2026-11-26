@@ -51,7 +51,7 @@ function describeTextArc(x: number, y: number, radius: number, startAngle: numbe
 export interface RadialMenuItem {
   id: string;
   label: string;
-  icon: React.ReactNode;
+  icon?: React.ReactNode;
   onClick: () => void;
   color?: string; // Hex or rgba for slice fill
   disabled?: boolean;
@@ -86,14 +86,16 @@ export const RadialMenu: React.FC<RadialMenuProps> = ({ x, y, items, centerItem,
   const innerRadius = 45;
   const outerRadius = 125;
   const sliceGap = 0; // Removed gap for a complete pie chart
-  
-  // Keep menu fully within viewport bounds
-  const safeX = Math.max(size/2, Math.min(window.innerWidth - size/2, x));
-  const safeY = Math.max(size/2, Math.min(window.innerHeight - size/2, y));
 
-  const sliceAngle = 360 / items.length;
-  // Offset so the first item is centered at the top
-  const angleOffset = items.length === 3 ? 60 : items.length === 4 ? 45 : items.length === 6 ? 30 : 90;
+  // Keep menu fully within viewport bounds
+  const safeX = Math.max(size / 2, Math.min(window.innerWidth - size / 2, x));
+  const safeY = Math.max(size / 2, Math.min(window.innerHeight - size / 2, y));
+
+  // Max 4 outer items (1 mid + 4 on outer = 5 total)
+  const displayItems = items.slice(0, 4);
+  const sliceAngle = 360 / Math.max(1, displayItems.length);
+  // Offset so the 4 slices align symmetrically (North, East, South, West)
+  const angleOffset = displayItems.length === 4 ? 45 : displayItems.length === 3 ? 60 : 90;
 
   return (
     <div 
@@ -134,7 +136,7 @@ export const RadialMenu: React.FC<RadialMenuProps> = ({ x, y, items, centerItem,
           </defs>
           
           <g filter="url(#drop-shadow)" style={{ pointerEvents: 'auto' }}>
-            {items.map((item, i) => {
+            {displayItems.map((item, i) => {
               const startAngle = i * sliceAngle - angleOffset + (sliceGap / 2);
               const endAngle = (i + 1) * sliceAngle - angleOffset - (sliceGap / 2);
               const pathData = describeArc(center, center, innerRadius, outerRadius, startAngle, endAngle);
@@ -144,16 +146,16 @@ export const RadialMenu: React.FC<RadialMenuProps> = ({ x, y, items, centerItem,
               const normalizedMid = (midAngle % 360 + 360) % 360;
               const isBottom = normalizedMid > 90 && normalizedMid < 270;
 
-              const iconRadius = innerRadius + (outerRadius - innerRadius) * 0.35;
-              const textRadius = innerRadius + (outerRadius - innerRadius) * 0.75;
+              const iconRadius = innerRadius + (outerRadius - innerRadius) * 0.38;
+              const textRadius = innerRadius + (outerRadius - innerRadius) * 0.76;
               
               const iconPos = polarToCartesian(center, center, iconRadius, midAngle);
               const textPathId = `text-path-${item.id}`;
               const textPathData = describeTextArc(center, center, textRadius, startAngle, endAngle);
               
               const isHovered = hoveredId === item.id && !item.disabled;
-              const defaultColor = 'rgba(28, 28, 32, 0.85)';
-              const hoverDefaultColor = 'rgba(60, 60, 68, 0.95)';
+              const defaultColor = item.color || 'var(--surface-2)';
+              const hoverDefaultColor = 'var(--surface-3)';
               
               return (
                 <g 
@@ -165,7 +167,7 @@ export const RadialMenu: React.FC<RadialMenuProps> = ({ x, y, items, centerItem,
                     e.stopPropagation(); 
                     if (e.button === 0 && !item.disabled) {
                       item.onClick(); 
-                      onClose(); 
+                      if (!inline) onClose();
                     }
                   }}
                   onContextMenu={(e) => { 
@@ -181,8 +183,8 @@ export const RadialMenu: React.FC<RadialMenuProps> = ({ x, y, items, centerItem,
                 >
                   <path
                     d={pathData}
-                    fill={item.color && isHovered ? item.color : (isHovered ? hoverDefaultColor : (item.color || defaultColor))}
-                    stroke="rgba(255, 255, 255, 0.15)"
+                    fill={isHovered ? hoverDefaultColor : defaultColor}
+                    stroke="var(--border)"
                     strokeWidth="1"
                     style={{ transition: 'fill 0.15s ease' }}
                   />
@@ -192,10 +194,10 @@ export const RadialMenu: React.FC<RadialMenuProps> = ({ x, y, items, centerItem,
                   
                   {/* Curved Text */}
                   <text 
-                    fill="white" 
+                    fill="var(--text-1)" 
                     fontSize="11px" 
                     fontWeight="600"
-                    fontFamily="Inter, system-ui, sans-serif"
+                    fontFamily="var(--font-ui)"
                     textAnchor="middle"
                     style={{
                       pointerEvents: 'none',
@@ -223,7 +225,7 @@ export const RadialMenu: React.FC<RadialMenuProps> = ({ x, y, items, centerItem,
                         justifyContent: 'center',
                         width: '100%',
                         height: '100%',
-                        color: 'white',
+                        color: 'var(--text-1)',
                         transform: isHovered ? 'scale(1.15)' : 'scale(1)',
                         transition: 'transform 0.15s cubic-bezier(0.175, 0.885, 0.32, 1.275)'
                       }}>
@@ -235,7 +237,7 @@ export const RadialMenu: React.FC<RadialMenuProps> = ({ x, y, items, centerItem,
               );
             })}
             
-            {/* Center Action Button */}
+            {/* Center Action Button (Mid = Pause / Play) */}
             {centerItem && (
               <g 
                 onMouseEnter={() => !centerItem.disabled && setHoveredId('center')}
@@ -263,8 +265,8 @@ export const RadialMenu: React.FC<RadialMenuProps> = ({ x, y, items, centerItem,
                   cx={center} 
                   cy={center} 
                   r={innerRadius - 4} 
-                  fill={hoveredId === 'center' && !centerItem.disabled ? 'rgba(60, 60, 68, 0.95)' : 'rgba(20, 20, 24, 0.95)'}
-                  stroke="rgba(255, 255, 255, 0.2)"
+                  fill={hoveredId === 'center' && !centerItem.disabled ? 'var(--surface-3)' : 'var(--surface-2)'}
+                  stroke="var(--border)"
                   strokeWidth="2"
                   style={{ transition: 'fill 0.15s ease' }}
                 />

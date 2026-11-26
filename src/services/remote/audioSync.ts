@@ -273,7 +273,6 @@ export class AudioSyncEngine {
 
       // If they drift by more than 300ms, do a hard seek
       if (absDrift > 0.3) {
-        console.log(`[AudioSync] Large drift detected: ${Math.round(drift * 1000)}ms. Hard seeking audio.`);
         this.syncAudioTime(Math.max(0, vTime - this.audioStartOffset));
         this.audio.playbackRate = this.video.playbackRate;
       } 

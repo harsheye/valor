@@ -34,6 +34,7 @@ export interface VideoItem {
   title: string;
   url: string;
   type: 'local' | 'url' | 'online_movie' | 'online_tv' | 'online_anime';
+  sourceType?: 'local' | 'remote' | 'online';
   file?: File;
   fileName?: string;
   duration?: string;
@@ -51,22 +52,32 @@ export interface VideoItem {
   currentTime?: number;
   resumeTime?: number;
   probingError?: string;
-  playbackMode?: 'advanced' | 'native';
+  authRequired?: boolean;
+  playbackMode?: 'advanced' | 'native' | 'server' | 'simple';
   proxyUrl?: string;
   headers?: Record<string, string>;
+  auth?: { username: string; password?: string };
+  isCinema?: boolean;
+  isWatched?: boolean;
+  completed?: boolean;
   lastPlayedDate?: string;
+  lastPlayedAt?: number;
+  hasScrobbledTrakt?: boolean;
   localFilePath?: string;
   playedDates?: string[];
   rating?: number;
   totalTimeWatched?: number;
   timeToFinish?: number;
   bookmarks?: Bookmark[];
+  aspectRatio?: string;
   tmdbId?: number;
+  traktId?: number;
+  imdbId?: string;
+  backdropUrl?: string;
   anilistId?: number;
   posterPath?: string;
   season?: number;
   episode?: number;
-  hasScrobbledTrakt?: boolean;
 }
 
 export interface Bookmark {
@@ -88,10 +99,19 @@ export interface Bookmark {
   episode?: number;
   season?: number;
   color?: string;
-  createdBy?: 'theintrodb' | 'manual' | 'system';
+  createdBy?: 'theintrodb' | 'manual' | 'system' | 'database' | string;
   tmdbId?: number;
   userName?: string;
   userTime?: string;
   mediaName?: string;
   userId?: string;
+  videoId?: string;
+}
+
+export function getVideoSourceType(v: Partial<VideoItem> | undefined | null): 'local' | 'remote' | 'online' {
+  if (!v) return 'local';
+  if (v.sourceType) return v.sourceType;
+  if (v.type === 'online_movie' || v.type === 'online_tv' || v.type === 'online_anime') return 'online';
+  if (v.isRemote || v.type === 'url' || v.playbackMode === 'server') return 'remote';
+  return 'local';
 }

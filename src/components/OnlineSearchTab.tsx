@@ -1,27 +1,24 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { CustomSelect } from './CustomSelect';
-import { Search, Play, History, Clock, X, ChevronLeft, ChevronRight } from 'lucide-react';
+import React, { useState, useEffect, useMemo } from 'react';
 import type { VideoItem } from '../types/media';
-import { Input } from './ui/input';
-import {
-  Pagination,
-  PaginationContent,
-  PaginationEllipsis,
-  PaginationItem,
-  PaginationLink,
-} from './ui/pagination';
-import './OnlineSearchTabV2.css';
-
-const categoryOptions = [
-  { value: 'all', label: '🎬 Movies/TV' },
-  { value: 'anime', label: '🌸 Anime' }
-];
+import { SearchBar } from './streaming/SearchBar';
+import { SegmentedControl, type SegmentOption } from './streaming/SegmentedControl';
+import { PosterCard, type PosterMediaItem } from './streaming/PosterCard';
+import { PosterGridSkeleton } from './streaming/Skeletons';
+import { SearchX, RotateCcw, AlertTriangle, Sparkles, History as HistoryIcon, TrendingUp, Play } from 'lucide-react';
+import { classifyVideoTitle } from '../utils/libraryClassifier';
+import { smartTitleCase } from '../utils/libraryViewModel';
+import { DEFAULT_TMDB_TOKEN } from '../utils/constants';
+import './streaming/streaming.css';
 
 interface OnlineSearchTabProps {
   onSelectMedia: (video: VideoItem) => void;
+  onPlayVideo?: (video: VideoItem) => void;
   tmdbApiKey?: string;
   traktAccessToken?: string;
+  videos?: VideoItem[];
 }
+
+export type MediaFilterType = 'all' | 'series' | 'movies';
 
 interface SearchResult {
   id: string | number;
@@ -31,111 +28,365 @@ interface SearchResult {
   type: 'movie' | 'tv' | 'anime';
   overview?: string;
   rating?: number;
+  seasonEpisode?: string;
+  progressPercent?: number;
+  originalVideo?: VideoItem;
 }
 
-const DEFAULT_TMDB_TOKEN = "eyJhbGciOiJIUzI1NiJ9.eyJhdWQiOiJlMzQwMGRhZWZjODJjNTJlZDEyYzk1MWU1ZWFmYmVhYyIsIm5iZiI6MTc4MzU0MTI2OS44NzUsInN1YiI6IjZhNGVhZTE1MzFhOWUyYmNhZjBmY2RlMiIsInNjb3BlcyI6WyJhcGlfcmVhZCJdLCJ2ZXJzaW9uIjoxfQ.GT6_b6NSJwjYCXlbaCi_djq09ug0rKDxY9iouqVrYWY";
+// Curated high-quality recommendations & trending library
+const CURATED_CATALOG: Record<string, SearchResult[]> = {
+  crime_mystery: [
+    {
+      id: 1403,
+      title: 'Dexter: New Blood',
+      year: '2021',
+      type: 'tv',
+      rating: 8.1,
+      posterPath: 'https://images.weserv.nl/?url=https://image.tmdb.org/t/p/w500/5E122Uevc7caezGvaLKnC8v1pce.jpg',
+      overview: 'Set 10 years after Dexter went missing in the eye of Hurricane Laura, he is living under an assumed name.'
+    },
+    {
+      id: 67744,
+      title: 'Mindhunter',
+      year: '2017',
+      type: 'tv',
+      rating: 8.6,
+      posterPath: 'https://images.weserv.nl/?url=https://image.tmdb.org/t/p/w500/fbKE87mojpIETWepSbD5Qt741d7.jpg',
+      overview: 'An agent in the FBI\'s Elite Serial Crime Unit develops profiling techniques to catch serial killers.'
+    },
+    {
+      id: 46648,
+      title: 'True Detective',
+      year: '2014',
+      type: 'tv',
+      rating: 8.3,
+      posterPath: 'https://images.weserv.nl/?url=https://image.tmdb.org/t/p/w500/cuV2O5cfmtpsdVWng3a29gqHgqm.jpg',
+      overview: 'Police investigations unearth the personal and professional secrets of those involved, both within and outside the law.'
+    },
+    {
+      id: 1396,
+      title: 'Breaking Bad',
+      year: '2008',
+      type: 'tv',
+      rating: 8.9,
+      posterPath: 'https://images.weserv.nl/?url=https://image.tmdb.org/t/p/w500/ztkUQFLlC19CCMYHW9o1zWhJRNq.jpg',
+      overview: 'A chemistry teacher diagnosed with terminal lung cancer turns to manufacturing and selling methamphetamine.'
+    },
+    {
+      id: 114479,
+      title: 'The Penguin',
+      year: '2024',
+      type: 'tv',
+      rating: 8.5,
+      posterPath: 'https://images.weserv.nl/?url=https://image.tmdb.org/t/p/w500/aeUgugpUaYqV02n7vK49uF4462U.jpg',
+      overview: 'Follow Oswald "Oz" Cobb as he navigates the corruption and chaos of Gotham City\'s criminal underworld.'
+    },
+    {
+      id: 414906,
+      title: 'The Batman',
+      year: '2022',
+      type: 'movie',
+      rating: 7.7,
+      posterPath: 'https://images.weserv.nl/?url=https://image.tmdb.org/t/p/w500/74xTEgt7R36Fpooo50r9T25onhq.jpg',
+      overview: 'In his second year of fighting crime, Batman uncovers corruption in Gotham City that connects to his own family.'
+    },
+    {
+      id: 807,
+      title: 'Se7en',
+      year: '1995',
+      type: 'movie',
+      rating: 8.4,
+      posterPath: 'https://images.weserv.nl/?url=https://image.tmdb.org/t/p/w500/6yoghtyTpznpBik8EngEmJskVUO.jpg',
+      overview: 'Two detectives hunt a serial killer who uses the seven deadly sins as his motives.'
+    },
+    {
+      id: 1949,
+      title: 'Zodiac',
+      year: '2007',
+      type: 'movie',
+      rating: 7.6,
+      posterPath: 'https://images.weserv.nl/?url=https://image.tmdb.org/t/p/w500/6Sj9wDu3YnbQ5MrMlhTk0Jz9Eme.jpg',
+      overview: 'A cartoonist becomes obsessed with tracking down the Zodiac Killer in Northern California.'
+    }
+  ],
+  drama_thriller: [
+    {
+      id: 95403,
+      title: 'Severance',
+      year: '2022',
+      type: 'tv',
+      rating: 8.4,
+      posterPath: 'https://images.weserv.nl/?url=https://image.tmdb.org/t/p/w500/pPHuE2vlS526GbmNnO9B9n3gZtX.jpg',
+      overview: 'Mark leads a team of office workers whose memories have been surgically divided between their work and personal lives.'
+    },
+    {
+      id: 76331,
+      title: 'Succession',
+      year: '2018',
+      type: 'tv',
+      rating: 8.4,
+      posterPath: 'https://images.weserv.nl/?url=https://image.tmdb.org/t/p/w500/7udW8a1K0kC0rB68rO1u1hR3k5y.jpg',
+      overview: 'The Roy family is known for controlling the biggest media and entertainment company in the world.'
+    },
+    {
+      id: 126308,
+      title: 'Shōgun',
+      year: '2024',
+      type: 'tv',
+      rating: 8.5,
+      posterPath: 'https://images.weserv.nl/?url=https://image.tmdb.org/t/p/w500/7O4iVfOMQmdCSPxRIiqxdu2NUE1.jpg',
+      overview: 'In feudal Japan, Lord Yoshii Toranaga discovers secrets that could tip the scales of power.'
+    },
+    {
+      id: 872585,
+      title: 'Oppenheimer',
+      year: '2023',
+      type: 'movie',
+      rating: 8.1,
+      posterPath: 'https://images.weserv.nl/?url=https://image.tmdb.org/t/p/w500/8Gxv8gSFCU0XGDykEGv7zR1n2ua.jpg',
+      overview: 'The story of J. Robert Oppenheimer\'s role in the development of the atomic bomb during World War II.'
+    },
+    {
+      id: 496243,
+      title: 'Parasite',
+      year: '2019',
+      type: 'movie',
+      rating: 8.5,
+      posterPath: 'https://images.weserv.nl/?url=https://image.tmdb.org/t/p/w500/7IiTTgloJzvGI1TAYymCfbfl3vT.jpg',
+      overview: 'Greed and class discrimination threaten the newly formed symbiotic relationship between the wealthy Park family and the destitute Kim clan.'
+    },
+    {
+      id: 550,
+      title: 'Fight Club',
+      year: '1999',
+      type: 'movie',
+      rating: 8.4,
+      posterPath: 'https://images.weserv.nl/?url=https://image.tmdb.org/t/p/w500/pB8BM7pdSp6B6Ih7QZ4DrQ3PmJK.jpg',
+      overview: 'A ticking-time-bomb insomniac and a slippery soap salesman channel primal male aggression into a shocking new form of therapy.'
+    }
+  ],
+  trending: [
+    {
+      id: 93405,
+      title: 'Squid Game',
+      year: '2024',
+      type: 'tv',
+      rating: 7.8,
+      posterPath: 'https://images.weserv.nl/?url=https://image.tmdb.org/t/p/w500/dDlG1TjAec37nS9eM5rW6W0UuYh.jpg',
+      overview: 'Hundreds of cash-strapped players accept a strange invitation to compete in children\'s games.'
+    },
+    {
+      id: 693134,
+      title: 'Dune: Part Two',
+      year: '2024',
+      type: 'movie',
+      rating: 8.2,
+      posterPath: 'https://images.weserv.nl/?url=https://image.tmdb.org/t/p/w500/1pdfLvkbY9ohJlCjQH2CZjjYVvJ.jpg',
+      overview: 'Paul Atreides unites with Chani and the Fremen while seeking revenge against the conspirators who destroyed his family.'
+    },
+    {
+      id: 114479,
+      title: 'The Penguin',
+      year: '2024',
+      type: 'tv',
+      rating: 8.5,
+      posterPath: 'https://images.weserv.nl/?url=https://image.tmdb.org/t/p/w500/aeUgugpUaYqV02n7vK49uF4462U.jpg',
+      overview: 'Follow Oswald "Oz" Cobb as he navigates the corruption of Gotham City\'s criminal underworld.'
+    },
+    {
+      id: 95403,
+      title: 'Severance',
+      year: '2022',
+      type: 'tv',
+      rating: 8.4,
+      posterPath: 'https://images.weserv.nl/?url=https://image.tmdb.org/t/p/w500/pPHuE2vlS526GbmNnO9B9n3gZtX.jpg',
+      overview: 'Mark leads a team of office workers whose memories have been surgically divided.'
+    },
+    {
+      id: 124364,
+      title: 'From',
+      year: '2022',
+      type: 'tv',
+      rating: 8.2,
+      posterPath: 'https://images.weserv.nl/?url=https://image.tmdb.org/t/p/w500/uF609aq4q7jwhcHQp284kn8f4n2.jpg',
+      overview: 'Unravel the mystery of a nightmarish town in middle America that traps all who enter.'
+    },
+    {
+      id: 157336,
+      title: 'Interstellar',
+      year: '2014',
+      type: 'movie',
+      rating: 8.4,
+      posterPath: 'https://images.weserv.nl/?url=https://image.tmdb.org/t/p/w500/gEU2QniE6E77NI6lCU6MxlNBvIx.jpg',
+      overview: 'A team of explorers travel through a wormhole in space in an attempt to ensure humanity\'s survival.'
+    }
+  ]
+};
 
 export const OnlineSearchTab: React.FC<OnlineSearchTabProps> = ({
   onSelectMedia,
+  onPlayVideo,
   tmdbApiKey,
-  traktAccessToken
+  videos = []
 }) => {
   const [query, setQuery] = useState(() => {
     return localStorage.getItem('valor_online_search_query') || '';
   });
-  const [category, setCategory] = useState<'all' | 'anime'>(() => {
-    return (localStorage.getItem('valor_online_search_category') as any) || 'all';
+  const [mediaTypeFilter, setMediaTypeFilter] = useState<MediaFilterType>(() => {
+    return (localStorage.getItem('valor_online_search_type') as MediaFilterType) || 'all';
   });
+
   const [results, setResults] = useState<SearchResult[]>([]);
+  const [trendingList, setTrendingList] = useState<SearchResult[]>(CURATED_CATALOG.trending);
+  const [recommendedList, setRecommendedList] = useState<SearchResult[]>(CURATED_CATALOG.crime_mystery);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [imageErrors, setImageErrors] = useState<Record<string, boolean>>({});
-  const [isFocused, setIsFocused] = useState(false);
-  const [watchedTmdbIds, setWatchedTmdbIds] = useState<Set<number>>(new Set());
-  const [currentPage, setCurrentPage] = useState(1);
 
-  useEffect(() => {
-    setCurrentPage(1);
-  }, [results, category]);
+  // Filter options: All / Series / Movies
+  const typeOptions: SegmentOption<MediaFilterType>[] = [
+    { value: 'all', label: 'All' },
+    { value: 'series', label: 'Series' },
+    { value: 'movies', label: 'Movies' }
+  ];
 
-  useEffect(() => {
-    if (!traktAccessToken) return;
+  // 1. Extract History Items & Detect User's Favorite Genres
+  const { historyMediaItems, topGenreLabel, recentHistoryNames } = useMemo(() => {
+    const genreScore: Record<string, number> = {
+      crime_mystery: 0,
+      drama_thriller: 0
+    };
+    const titlesList: string[] = [];
 
-    const fetchTraktWatched = async () => {
-      try {
-        const headers = {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${traktAccessToken}`,
-          'trakt-api-key': 'f2926f0d87d3e789c50a3c276ab6002f5027dec31089fe75792c2836165c7289',
-          'trakt-api-version': '2'
+    const mappedHistory: SearchResult[] = videos
+      .filter(v => v.title)
+      .slice(0, 8)
+      .map(v => {
+        const info = classifyVideoTitle(v.title);
+        const isSeries = info.type === 'series';
+        const cleanName = smartTitleCase(info.seriesTitle || info.cleanTitle || v.title);
+        titlesList.push(cleanName);
+
+        const lower = cleanName.toLowerCase();
+        if (/dexter|kidnap|crime|killer|detective|murder|police|fbi|sherlock|underworld|gangster|investigation/i.test(lower)) {
+          genreScore.crime_mystery += 3;
+        } else {
+          genreScore.drama_thriller += 2;
+        }
+
+        const seasonEpisode = isSeries && info.season !== undefined && info.episode !== undefined
+          ? `S${String(info.season).padStart(2, '0')}E${String(info.episode).padStart(2, '0')}`
+          : undefined;
+
+        const durationSec = typeof v.duration === 'string' ? parseFloat(v.duration) : (typeof (v as any).duration === 'number' ? (v as any).duration : 0);
+        const currentSec = typeof v.currentTime === 'number' ? v.currentTime : 0;
+        const progressPercent = durationSec > 0
+          ? Math.min(100, Math.round((currentSec / durationSec) * 100))
+          : 0;
+
+        return {
+          id: v.id || `${cleanName}-${currentSec}`,
+          title: isSeries && seasonEpisode ? `${cleanName} - ${seasonEpisode}` : cleanName,
+          posterPath: (v as any).posterPath || (v as any).thumbnailUrl || '',
+          year: info.year ? String(info.year) : '2024',
+          type: isSeries ? 'tv' : 'movie',
+          seasonEpisode,
+          progressPercent,
+          originalVideo: v
         };
+      });
 
-        const [moviesRes, showsRes] = await Promise.all([
-          fetch('https://api.trakt.tv/sync/watched/movies', { headers }),
-          fetch('https://api.trakt.tv/sync/watched/shows', { headers })
-        ]);
+    const isCrime = genreScore.crime_mystery >= genreScore.drama_thriller;
+    const topGenre = isCrime ? 'Crime & Mystery' : 'Drama & Thriller';
 
-        const ids = new Set<number>();
+    return {
+      historyMediaItems: mappedHistory,
+      topGenreLabel: topGenre,
+      recentHistoryNames: Array.from(new Set(titlesList)).slice(0, 2).join(' & ')
+    };
+  }, [videos]);
 
-        if (moviesRes.ok) {
-          const moviesData = await moviesRes.json();
-          moviesData.forEach((item: any) => {
-            if (item.movie?.ids?.tmdb) {
-              ids.add(Number(item.movie.ids.tmdb));
-            }
-          });
+  // 2. Fetch TMDB Trending & Dynamic Recommendations (with curated fallback)
+  useEffect(() => {
+    let isMounted = true;
+
+    const fetchDiscoveryData = async () => {
+      const isBearer = tmdbApiKey ? tmdbApiKey.length > 50 : true;
+      const token = tmdbApiKey || DEFAULT_TMDB_TOKEN;
+
+      // Select fallback genre list
+      const baseRecommendations = topGenreLabel === 'Crime & Mystery' 
+        ? CURATED_CATALOG.crime_mystery 
+        : CURATED_CATALOG.drama_thriller;
+      setRecommendedList(baseRecommendations);
+
+      if (!token) {
+        setTrendingList(CURATED_CATALOG.trending);
+        return;
+      }
+
+      try {
+        let url = 'https://api.themoviedb.org/3/trending/all/day?language=en-US';
+        const headers: HeadersInit = { accept: 'application/json' };
+        if (isBearer) {
+          headers['Authorization'] = `Bearer ${token}`;
+        } else {
+          url += `&api_key=${token}`;
         }
 
-        if (showsRes.ok) {
-          const showsData = await showsRes.json();
-          showsData.forEach((item: any) => {
-            if (item.show?.ids?.tmdb) {
-              ids.add(Number(item.show.ids.tmdb));
-            }
-          });
-        }
+        const res = await fetch(url, { headers });
+        if (res.ok) {
+          const data = await res.json();
+          if (isMounted && data.results && data.results.length > 0) {
+            const mapped: SearchResult[] = data.results
+              .filter((r: any) => r.media_type === 'movie' || r.media_type === 'tv')
+              .map((r: any) => {
+                const isMovie = r.media_type === 'movie';
+                const title = isMovie ? r.title : r.name;
+                const date = isMovie ? r.release_date : r.first_air_date;
+                const year = date ? date.split('-')[0] : '2024';
+                const posterPath = r.poster_path
+                  ? `https://images.weserv.nl/?url=https://image.tmdb.org/t/p/w500${r.poster_path}`
+                  : '';
 
-        setWatchedTmdbIds(ids);
-      } catch (err) {
-        console.warn('Failed to fetch watched history from Trakt:', err);
+                return {
+                  id: r.id,
+                  title: title || 'Unknown Title',
+                  posterPath,
+                  year,
+                  type: isMovie ? 'movie' : 'tv',
+                  overview: r.overview,
+                  rating: r.vote_average
+                };
+              });
+            setTrendingList(mapped);
+          }
+        }
+      } catch (err: any) {
+        console.warn('Using curated fallback discovery catalog:', err);
       }
     };
 
-    fetchTraktWatched();
-  }, [traktAccessToken]);
+    fetchDiscoveryData();
+    return () => { isMounted = false; };
+  }, [tmdbApiKey, topGenreLabel]);
 
-  const [history, setHistory] = useState<string[]>(() => {
-    const saved = localStorage.getItem('valor_online_search_history');
-    return saved ? JSON.parse(saved) : [];
-  });
-
-  const searchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const searchWrapperRef = useRef<HTMLDivElement>(null);
-
-  const addToHistory = (searchQuery: string) => {
-    if (!searchQuery.trim() || searchQuery.trim().length < 2) return;
-    const trimmed = searchQuery.trim();
-    setHistory(prev => {
-      const filtered = prev.filter(q => q.toLowerCase() !== trimmed.toLowerCase());
-      const updated = [trimmed, ...filtered].slice(0, 5);
-      localStorage.setItem('valor_online_search_history', JSON.stringify(updated));
-      return updated;
-    });
-  };
-
-  const fetchTmdbResults = async (searchQuery: string) => {
+  // 3. Execute Search Query against TMDB
+  const executeSearch = async (searchQuery: string) => {
     if (!searchQuery.trim()) {
       setResults([]);
+      setLoading(false);
       return;
     }
+
     setLoading(true);
     setError(null);
+
     try {
       const isBearer = tmdbApiKey ? tmdbApiKey.length > 50 : true;
       const token = tmdbApiKey || DEFAULT_TMDB_TOKEN;
 
       let url = `https://api.themoviedb.org/3/search/multi?query=${encodeURIComponent(searchQuery)}&include_adult=false`;
-      let headers: HeadersInit = { 'accept': 'application/json' };
+      const headers: HeadersInit = { accept: 'application/json' };
 
       if (isBearer) {
         headers['Authorization'] = `Bearer ${token}`;
@@ -144,7 +395,7 @@ export const OnlineSearchTab: React.FC<OnlineSearchTabProps> = ({
       }
 
       const res = await fetch(url, { headers });
-      if (!res.ok) throw new Error(`TMDB Search failed with status: ${res.status}`);
+      if (!res.ok) throw new Error(`Search failed with status: ${res.status}`);
       const data = await res.json();
 
       const mapped: SearchResult[] = (data.results || [])
@@ -153,7 +404,7 @@ export const OnlineSearchTab: React.FC<OnlineSearchTabProps> = ({
           const isMovie = r.media_type === 'movie';
           const title = isMovie ? r.title : r.name;
           const date = isMovie ? r.release_date : r.first_air_date;
-          const year = date ? date.split('-')[0] : 'N/A';
+          const year = date ? date.split('-')[0] : '2024';
           const posterPath = r.poster_path
             ? `https://images.weserv.nl/?url=https://image.tmdb.org/t/p/w500${r.poster_path}`
             : '';
@@ -163,15 +414,13 @@ export const OnlineSearchTab: React.FC<OnlineSearchTabProps> = ({
             title: title || 'Unknown Title',
             posterPath,
             year,
-            type: isMovie ? 'movie' : ('tv' as any),
+            type: isMovie ? 'movie' : 'tv',
             overview: r.overview,
             rating: r.vote_average
           };
         });
+
       setResults(mapped);
-      if (mapped.length > 0) {
-        addToHistory(searchQuery);
-      }
     } catch (err: any) {
       console.error(err);
       setError(err?.message || 'Failed to fetch search results from TMDB.');
@@ -180,411 +429,508 @@ export const OnlineSearchTab: React.FC<OnlineSearchTabProps> = ({
     }
   };
 
-  const fetchAniListResults = async (searchQuery: string) => {
-    if (!searchQuery.trim()) {
-      setResults([]);
-      return;
-    }
-    setLoading(true);
-    setError(null);
-    try {
-      const graphqlQuery = `
-        query ($search: String) {
-          Page (page: 1, perPage: 24) {
-            media (search: $search, type: ANIME, sort: POPULARITY_DESC) {
-              id
-              title {
-                english
-                romaji
-                native
-              }
-              coverImage {
-                extraLarge
-                large
-              }
-              startDate {
-                year
-              }
-              description
-              averageScore
-              format
-            }
-          }
-        }
-      `;
-
-      const res = await fetch('https://graphql.anilist.co', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Accept': 'application/json',
-        },
-        body: JSON.stringify({
-          query: graphqlQuery,
-          variables: { search: searchQuery }
-        })
-      });
-
-      if (!res.ok) throw new Error(`AniList Search failed with status: ${res.status}`);
-      const body = await res.json();
-      const mediaList = body.data?.Page?.media || [];
-
-      const mapped: SearchResult[] = mediaList.map((m: any) => {
-        const title = m.title.english || m.title.romaji || m.title.native || 'Unknown Anime';
-        const rawPoster = m.coverImage.extraLarge || m.coverImage.large || '';
-        const posterPath = rawPoster ? `https://images.weserv.nl/?url=${encodeURIComponent(rawPoster)}` : '';
-
-        return {
-          id: m.id,
-          title,
-          posterPath,
-          year: m.startDate.year ? String(m.startDate.year) : 'N/A',
-          type: 'anime',
-          overview: m.description ? m.description.replace(/<[^>]*>/g, '') : '',
-          rating: m.averageScore ? m.averageScore / 10 : undefined
-        };
-      });
-      setResults(mapped);
-      if (mapped.length > 0) {
-        addToHistory(searchQuery);
-      }
-    } catch (err: any) {
-      console.error(err);
-      setError(err?.message || 'Failed to fetch search results from AniList.');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  // Click outside to close dropdown
-  useEffect(() => {
-    const handleClickOutside = (event: MouseEvent) => {
-      if (searchWrapperRef.current && !searchWrapperRef.current.contains(event.target as Node)) {
-        setIsFocused(false);
-      }
-    };
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => {
-      document.removeEventListener('mousedown', handleClickOutside);
-    };
-  }, []);
-
-  // Debounced search trigger
   useEffect(() => {
     localStorage.setItem('valor_online_search_query', query);
-    localStorage.setItem('valor_online_search_category', category);
+    localStorage.setItem('valor_online_search_type', mediaTypeFilter);
 
-    if (searchTimeoutRef.current) {
-      clearTimeout(searchTimeoutRef.current);
-    }
-
-    if (!query.trim()) {
+    if (query.trim()) {
+      executeSearch(query);
+    } else {
       setResults([]);
+      setLoading(false);
+    }
+  }, [query]);
+
+  // Handle card selection
+  const handleCardClick = (res: SearchResult) => {
+    if (res.originalVideo && onPlayVideo) {
+      onPlayVideo(res.originalVideo);
       return;
     }
 
-    searchTimeoutRef.current = setTimeout(() => {
-      setImageErrors({});
-      if (category === 'all') {
-        fetchTmdbResults(query);
-      } else {
-        fetchAniListResults(query);
-      }
-    }, 500);
-
-    return () => {
-      if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
-    };
-  }, [query, category]);
-
-  const handleCardClick = (res: SearchResult) => {
     const videoItem: VideoItem = {
       id: `${res.type}-${res.id}`,
       title: res.title,
       url: '',
-      type: res.type === 'movie' ? 'online_movie' : (res.type === 'tv' ? 'online_tv' : 'online_anime'),
+      type: res.type === 'movie' ? 'online_movie' : 'online_tv',
       isRemote: true,
       posterPath: res.posterPath,
-      tmdbId: res.type !== 'anime' ? Number(res.id) : undefined,
-      anilistId: res.type === 'anime' ? Number(res.id) : undefined,
+      tmdbId: Number(res.id),
       audioTracks: [],
       subtitleTracks: []
     };
     onSelectMedia(videoItem);
   };
 
-  const itemsPerPage = 12;
-  const totalPages = Math.ceil(results.length / itemsPerPage);
-  const paginatedResults = results.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage);
-
-  const handlePageChange = (page: number) => {
-    if (page >= 1 && page <= totalPages) {
-      setCurrentPage(page);
+  // Filter helper for mediaTypeFilter: All / Series / Movies
+  const filterByMediaType = (items: SearchResult[]) => {
+    if (mediaTypeFilter === 'movies') {
+      return items.filter(i => i.type === 'movie');
     }
+    if (mediaTypeFilter === 'series') {
+      return items.filter(i => i.type === 'tv' || (i as any).type === 'series');
+    }
+    return items;
   };
 
-  const renderPageNumbers = () => {
-    const pageNumbers = [];
-    const maxVisible = 3;
-    let start = Math.max(1, currentPage - 1);
-    let end = Math.min(totalPages, start + maxVisible - 1);
-    if (end - start + 1 < maxVisible) {
-      start = Math.max(1, end - maxVisible + 1);
-    }
+  const filteredSearchResults = useMemo(() => {
+    return filterByMediaType(results);
+  }, [results, mediaTypeFilter]);
 
-    if (start > 1) {
-      pageNumbers.push(
-        <PaginationItem key={1}>
-          <PaginationLink onClick={() => handlePageChange(1)}>
-            1
-          </PaginationLink>
-        </PaginationItem>
-      );
-      if (start > 2) {
-        pageNumbers.push(<PaginationEllipsis key="ellipsis-start" />);
-      }
-    }
+  const filteredHistory = useMemo(() => {
+    return filterByMediaType(historyMediaItems);
+  }, [historyMediaItems, mediaTypeFilter]);
 
-    for (let i = start; i <= end; i++) {
-      pageNumbers.push(
-        <PaginationItem key={i}>
-          <PaginationLink
-            onClick={() => handlePageChange(i)}
-            isActive={currentPage === i}
-          >
-            {i}
-          </PaginationLink>
-        </PaginationItem>
-      );
-    }
+  const filteredRecommended = useMemo(() => {
+    return filterByMediaType(recommendedList);
+  }, [recommendedList, mediaTypeFilter]);
 
-    if (end < totalPages) {
-      if (end < totalPages - 1) {
-        pageNumbers.push(<PaginationEllipsis key="ellipsis-end" />);
-      }
-      pageNumbers.push(
-        <PaginationItem key={totalPages}>
-          <PaginationLink onClick={() => handlePageChange(totalPages)}>
-            {totalPages}
-          </PaginationLink>
-        </PaginationItem>
-      );
-    }
+  const filteredTrending = useMemo(() => {
+    return filterByMediaType(trendingList);
+  }, [trendingList, mediaTypeFilter]);
 
-    return pageNumbers;
-  };
-
-  const handleImageError = (id: string | number) => {
-    setImageErrors(prev => ({ ...prev, [id]: true }));
-  };
+  const isSearchActive = query.trim().length > 0;
 
   return (
-    <div className="os2-container">
-      {/* Search Header Row */}
-      <div className="os2-toolbar">
-        <div className="os2-category">
-          <CustomSelect
-            value={category}
+    <div
+      className="online-search-scroll-container"
+      style={{
+        width: '100%',
+        height: '100%',
+        flex: 1,
+        minHeight: 0,
+        overflowY: 'auto',
+        overflowX: 'hidden',
+        WebkitOverflowScrolling: 'touch',
+        background: 'var(--bg)',
+        color: 'var(--text-1)',
+        padding: '0 0 var(--space-8) 0',
+        boxSizing: 'border-box'
+      }}
+    >
+      {/* Sticky Top Bar with Segmented Control & Pill Search Input */}
+      <header
+        className="online-search-header"
+        style={{
+          position: 'sticky',
+          top: 0,
+          zIndex: 100,
+          background: 'color-mix(in srgb, var(--bg) 92%, transparent)',
+          backdropFilter: 'blur(16px)',
+          WebkitBackdropFilter: 'blur(16px)',
+          borderBottom: '1px solid var(--border)',
+          padding: 'var(--space-4) var(--page-padding-x, var(--space-7))',
+          boxSizing: 'border-box'
+        }}
+      >
+        <div
+          style={{
+            width: '100%',
+            maxWidth: 'var(--page-max-width, 1400px)',
+            margin: '0 auto',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            flexWrap: 'wrap',
+            gap: 'var(--space-3)'
+          }}
+        >
+          {/* Left: Type Segmented Control (All / Series / Movies) */}
+          <SegmentedControl<MediaFilterType>
+            options={typeOptions}
+            value={mediaTypeFilter}
             onChange={(val) => {
-              setCategory(val);
-              setQuery('');
-              setResults([]);
+              setMediaTypeFilter(val);
+              setLoading(true);
+              setTimeout(() => setLoading(false), 80);
             }}
-            options={categoryOptions}
-            hideSearch={true}
-            width="150px"
+            ariaLabel="Filter media type"
+          />
+
+          {/* Right: Pill Search Input with "/" shortcut & 250ms debounce */}
+          <SearchBar
+            value={query}
+            onChange={(q) => setQuery(q)}
+            placeholder="Search movies, TV series, anime..."
+            debounceMs={250}
           />
         </div>
+      </header>
 
-        <div className="os2-search" ref={searchWrapperRef}>
-          <Search className="os2-search-icon" size={20} />
-          <input
-            type="text"
-            className="os2-search-input"
-            placeholder={category === 'all' ? "Search Movie or TV Series name..." : "Search Anime (e.g. Naruto, One Piece)..."}
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            onFocus={() => setIsFocused(true)}
-          />
-          {loading && <div className="os2-spinner-inline"></div>}
+      {/* Main Content Area */}
+      <main
+        className="online-search-content"
+        style={{
+          width: '100%',
+          maxWidth: 'var(--page-max-width, 1400px)',
+          margin: '0 auto',
+          padding: 'var(--space-6) var(--page-padding-x, var(--space-7))',
+          boxSizing: 'border-box',
+          display: 'flex',
+          flexDirection: 'column',
+          gap: 'var(--space-7)'
+        }}
+      >
+        {/* Error Alert */}
+        {error && (
+          <div
+            role="alert"
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 'var(--space-3)',
+              padding: 'var(--space-3) var(--space-4)',
+              background: 'color-mix(in srgb, var(--danger) 15%, var(--surface-1))',
+              border: '1px solid var(--danger)',
+              borderRadius: 'var(--radius-sm)',
+              color: 'var(--text-1)'
+            }}
+          >
+            <AlertTriangle size={18} style={{ color: 'var(--danger)', flexShrink: 0 }} />
+            <span style={{ fontSize: '0.88rem' }}>{error}</span>
+          </div>
+        )}
 
-          {/* Autocomplete Recent Searches Dropdown */}
-          {isFocused && query.trim() === '' && history.length > 0 && (
-            <div className="os2-history">
-              <div className="os2-dropdown-header">
-                <span className="os2-dropdown-title">
-                  <History size={13} style={{ marginRight: '6px' }} />
-                  Recent Searches
-                </span>
-                <button
-                  className="os2-clear-all-btn"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setHistory([]);
-                    localStorage.removeItem('valor_online_search_history');
+        {/* ================================================================= */}
+        {/* 1. SEARCH RESULTS VIEW (when user types a query)                   */}
+        {/* ================================================================= */}
+        {isSearchActive ? (
+          <div>
+            <div style={{ marginBottom: 'var(--space-5)', display: 'flex', alignItems: 'baseline', gap: 'var(--space-3)' }}>
+              <h1
+                style={{
+                  margin: 0,
+                  fontSize: '1.4rem',
+                  fontWeight: 700,
+                  fontFamily: 'var(--font-display)',
+                  color: 'var(--text-1)'
+                }}
+              >
+                Search Results for "{query}"
+              </h1>
+              <span style={{ fontSize: '0.85rem', color: 'var(--text-3)', fontVariantNumeric: 'tabular-nums' }}>
+                {filteredSearchResults.length} {filteredSearchResults.length === 1 ? 'title' : 'titles'}
+              </span>
+            </div>
+
+            {loading ? (
+              <PosterGridSkeleton count={12} />
+            ) : filteredSearchResults.length === 0 ? (
+              <div
+                style={{
+                  display: 'flex',
+                  flexDirection: 'column',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  textAlign: 'center',
+                  padding: 'var(--space-8) var(--space-4)',
+                  maxWidth: '480px',
+                  margin: 'var(--space-6) auto',
+                  background: 'var(--surface-1)',
+                  border: '1px solid var(--border)',
+                  borderRadius: 'var(--radius-lg)',
+                  boxShadow: '0 8px 32px rgba(0, 0, 0, 0.25)'
+                }}
+              >
+                <div
+                  style={{
+                    width: '56px',
+                    height: '56px',
+                    borderRadius: '50%',
+                    background: 'var(--surface-2)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    color: 'var(--accent)',
+                    marginBottom: 'var(--space-3)',
+                    border: '1px solid var(--control-border)'
                   }}
                 >
-                  Clear All
-                </button>
-              </div>
-              <div className="os2-dropdown-list">
-                {history.map((h, i) => (
-                  <div
-                    key={i}
-                    className="os2-dropdown-item"
-                    onClick={() => {
-                      setQuery(h);
-                      setIsFocused(false);
+                  <SearchX size={28} />
+                </div>
+
+                <h2
+                  style={{
+                    margin: '0 0 var(--space-2) 0',
+                    fontSize: '1.25rem',
+                    fontWeight: 700,
+                    color: 'var(--text-1)',
+                    fontFamily: 'var(--font-display)'
+                  }}
+                >
+                  No results found for "{query}"
+                </h2>
+
+                <p
+                  style={{
+                    margin: '0 0 var(--space-5) 0',
+                    fontSize: '0.88rem',
+                    lineHeight: 1.5,
+                    color: 'var(--text-2)'
+                  }}
+                >
+                  We couldn't find any matches. How to fix it:
+                  <br />
+                  • Check for spelling errors or typos.
+                  <br />
+                  • Try broader search keywords.
+                  {mediaTypeFilter !== 'all' && (
+                    <>
+                      <br />
+                      • Currently filtering by <strong>{mediaTypeFilter}</strong>. Switch to <strong>All</strong>.
+                    </>
+                  )}
+                </p>
+
+                <div style={{ display: 'flex', gap: 'var(--space-3)' }}>
+                  {mediaTypeFilter !== 'all' && (
+                    <button
+                      type="button"
+                      onClick={() => setMediaTypeFilter('all')}
+                      style={{
+                        background: 'var(--surface-2)',
+                        color: 'var(--text-1)',
+                        border: '1px solid var(--control-border)',
+                        borderRadius: 'var(--radius-sm)',
+                        padding: '8px 16px',
+                        fontSize: '0.85rem',
+                        fontWeight: 600,
+                        cursor: 'pointer'
+                      }}
+                    >
+                      Show All Formats
+                    </button>
+                  )}
+
+                  <button
+                    type="button"
+                    onClick={() => setQuery('')}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '6px',
+                      background: 'var(--accent-fill)',
+                      color: 'var(--on-accent)',
+                      border: 'none',
+                      borderRadius: 'var(--radius-sm)',
+                      padding: '8px 16px',
+                      fontSize: '0.85rem',
+                      fontWeight: 600,
+                      cursor: 'pointer'
                     }}
                   >
-                    <div className="os2-item-left">
-                      <Clock size={13} className="os2-item-clock-icon" />
-                      <span className="os2-item-text">{h}</span>
-                    </div>
-                    <button
-                      className="os2-delete-item-btn"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setHistory(prev => {
-                          const updated = prev.filter((_, idx) => idx !== i);
-                          localStorage.setItem('valor_online_search_history', JSON.stringify(updated));
-                          return updated;
-                        });
-                      }}
-                      title="Remove"
-                    >
-                      <X size={12} />
-                    </button>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-        </div>
-      </div>
-
-      {/* Error Message */}
-      {error && (
-        <div className="os2-error-alert">
-          <span>{error}</span>
-        </div>
-      )}
-
-      {/* Search Results Grid */}
-      <div className="os2-results">
-        {!loading && results.length === 0 && query.trim().length > 0 && (
-          <div className="os2-no-results">
-            <span>No results found for "{query}"</span>
-          </div>
-        )}
-
-        {loading ? (
-          <div className="os2-grid">
-            {Array.from({ length: 12 }).map((_, i) => (
-              <div key={`skeleton-${i}`} className="os2-card os2-skeleton">
-                <div className="os2-poster os2-shimmer" style={{ height: '280px', borderRadius: '12px' }}></div>
-                <div className="os2-details" style={{ marginTop: '10px' }}>
-                  <div className="os2-skeleton-line os2-shimmer" style={{ height: '16px', width: '80%', borderRadius: '4px', marginBottom: '8px' }}></div>
-                  <div className="os2-skeleton-line os2-shimmer" style={{ height: '12px', width: '40%', borderRadius: '4px' }}></div>
+                    <RotateCcw size={14} /> Clear Search
+                  </button>
                 </div>
               </div>
-            ))}
-          </div>
-        ) : (
-          <>
-            <div className="os2-grid">
-              {paginatedResults.map((res) => {
-                const hasError = imageErrors[res.id] || !res.posterPath;
-                const isWatchedOnTrakt = res.type !== 'anime' && watchedTmdbIds.has(Number(res.id));
-
-                return (
-                  <div
-                    key={`${res.type}-${res.id}`}
-                    className="os2-card"
-                    onClick={() => handleCardClick(res)}
-                  >
-                    <div className="os2-poster">
-                      {!hasError ? (
-                        <img
-                          src={res.posterPath}
-                          alt={res.title}
-                          className="os2-image"
-                          loading="lazy"
-                          crossOrigin="anonymous"
-                          onError={() => handleImageError(res.id)}
-                        />
-                      ) : (
-                        <div className="os2-fallback">
-                          <span className="os2-title">{res.title}</span>
-                        </div>
-                      )}
-
-                      <div className="os2-overlay">
-                        <button className="os2-play">
-                          <Play fill="currentColor" size={20} />
-                        </button>
-                      </div>
-
-                      {res.rating && (
-                        <div className="os2-rating">
-                          ⭐ {res.rating.toFixed(1)}
-                        </div>
-                      )}
-
-                      {isWatchedOnTrakt && (
-                        <div className="os2-watched">
-                          ✓ Watched
-                        </div>
-                      )}
-                    </div>
-                    <div className="os2-details">
-                      <h3 className="os2-title" title={res.title}>{res.title}</h3>
-                      <div className="os2-meta">
-                        <span className="os2-year">{res.year}</span>
-                        <span className={`os2-tag ${res.type}`}>
-                          {res.type === 'movie' ? 'Movie' : (res.type === 'tv' ? 'TV' : 'Anime')}
-                        </span>
-                      </div>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-
-            {totalPages > 1 && (
-              <div className="pagination-container" style={{ borderTop: '1px solid var(--border-color)', width: '100%' }}>
-                <Pagination>
-                  <PaginationContent>
-                    <PaginationItem>
-                      <PaginationLink
-                        onClick={() => handlePageChange(currentPage - 1)}
-                        disabled={currentPage === 1}
-                        size="icon"
-                        aria-label="Go to previous page"
-                      >
-                        <ChevronLeft className="size-4" />
-                      </PaginationLink>
-                    </PaginationItem>
-                    
-                    {renderPageNumbers()}
-                    
-                    <PaginationItem>
-                      <PaginationLink
-                        onClick={() => handlePageChange(currentPage + 1)}
-                        disabled={currentPage === totalPages}
-                        size="icon"
-                        aria-label="Go to next page"
-                      >
-                        <ChevronRight className="size-4" />
-                      </PaginationLink>
-                    </PaginationItem>
-                  </PaginationContent>
-                </Pagination>
+            ) : (
+              <div className="online-stream-grid">
+                {filteredSearchResults.map((item, idx) => (
+                  <PosterCard
+                    key={`search-${item.type}-${item.id}`}
+                    item={{
+                      id: item.id,
+                      title: item.title,
+                      posterPath: item.posterPath,
+                      year: item.year,
+                      type: item.type,
+                      rating: item.rating
+                    }}
+                    onClick={() => handleCardClick(item)}
+                    index={idx}
+                  />
+                ))}
               </div>
             )}
+          </div>
+        ) : (
+          /* ================================================================= */
+          /* 2. DISCOVERY HOME VIEW (History + Recommendations + Trending)     */
+          /* ================================================================= */
+          <>
+            {/* Section A: FROM YOUR HISTORY / CONTINUE WATCHING */}
+            {filteredHistory.length > 0 && (
+              <section aria-label="From Your History">
+                <div style={{ marginBottom: 'var(--space-4)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <div
+                      style={{
+                        width: '28px',
+                        height: '28px',
+                        borderRadius: '8px',
+                        background: 'rgba(239, 68, 68, 0.15)',
+                        color: 'var(--accent)',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center'
+                      }}
+                    >
+                      <HistoryIcon size={16} />
+                    </div>
+                    <h2
+                      style={{
+                        margin: 0,
+                        fontSize: '1.25rem',
+                        fontWeight: 700,
+                        fontFamily: 'var(--font-display)',
+                        color: 'var(--text-1)'
+                      }}
+                    >
+                      From Your History
+                    </h2>
+                  </div>
+                  <span style={{ fontSize: '0.82rem', color: 'var(--text-3)', fontVariantNumeric: 'tabular-nums' }}>
+                    {filteredHistory.length} {filteredHistory.length === 1 ? 'title' : 'titles'}
+                  </span>
+                </div>
+
+                <div className="online-stream-grid">
+                  {filteredHistory.map((item, idx) => (
+                    <PosterCard
+                      key={`hist-${item.id}`}
+                      item={{
+                        id: item.id,
+                        title: item.title,
+                        posterPath: item.posterPath,
+                        year: item.year,
+                        type: item.type,
+                        quality: item.seasonEpisode || 'History',
+                        progressPercent: item.progressPercent
+                      }}
+                      onClick={() => handleCardClick(item)}
+                      index={idx}
+                    />
+                  ))}
+                </div>
+              </section>
+            )}
+
+            {/* Section B: RECOMMENDED FOR YOU (Based on favorite genres/history) */}
+            <section aria-label="Recommended For You">
+              <div style={{ marginBottom: 'var(--space-4)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '8px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <div
+                    style={{
+                      width: '28px',
+                      height: '28px',
+                      borderRadius: '8px',
+                      background: 'rgba(168, 85, 247, 0.15)',
+                      color: '#a855f7',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center'
+                    }}
+                  >
+                    <Sparkles size={16} />
+                  </div>
+                  <div>
+                    <h2
+                      style={{
+                        margin: 0,
+                        fontSize: '1.25rem',
+                        fontWeight: 700,
+                        fontFamily: 'var(--font-display)',
+                        color: 'var(--text-1)'
+                      }}
+                    >
+                      Recommended For You
+                    </h2>
+                  </div>
+                </div>
+
+                <div
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                    padding: '4px 10px',
+                    borderRadius: '20px',
+                    background: 'var(--surface-2)',
+                    border: '1px solid var(--border)',
+                    fontSize: '11px',
+                    fontWeight: 600,
+                    color: 'var(--text-2)'
+                  }}
+                >
+                  <span>{recentHistoryNames ? `Based on ${recentHistoryNames} · ${topGenreLabel}` : `Top in ${topGenreLabel}`}</span>
+                </div>
+              </div>
+
+              <div className="online-stream-grid">
+                {filteredRecommended.map((item, idx) => (
+                  <PosterCard
+                    key={`rec-${item.type}-${item.id}`}
+                    item={{
+                      id: item.id,
+                      title: item.title,
+                      posterPath: item.posterPath,
+                      year: item.year,
+                      type: item.type,
+                      rating: item.rating
+                    }}
+                    onClick={() => handleCardClick(item)}
+                    index={idx}
+                  />
+                ))}
+              </div>
+            </section>
+
+            {/* Section C: TRENDING NOW */}
+            <section aria-label="Trending Now">
+              <div style={{ marginBottom: 'var(--space-4)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <div
+                    style={{
+                      width: '28px',
+                      height: '28px',
+                      borderRadius: '8px',
+                      background: 'rgba(59, 130, 246, 0.15)',
+                      color: '#3b82f6',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center'
+                    }}
+                  >
+                    <TrendingUp size={16} />
+                  </div>
+                  <h2
+                    style={{
+                      margin: 0,
+                      fontSize: '1.25rem',
+                      fontWeight: 700,
+                      fontFamily: 'var(--font-display)',
+                      color: 'var(--text-1)'
+                    }}
+                  >
+                    Trending Now
+                  </h2>
+                </div>
+                <span style={{ fontSize: '0.82rem', color: 'var(--text-3)', fontVariantNumeric: 'tabular-nums' }}>
+                  {filteredTrending.length} {filteredTrending.length === 1 ? 'title' : 'titles'}
+                </span>
+              </div>
+
+              <div className="online-stream-grid">
+                {filteredTrending.map((item, idx) => (
+                  <PosterCard
+                    key={`trend-${item.type}-${item.id}`}
+                    item={{
+                      id: item.id,
+                      title: item.title,
+                      posterPath: item.posterPath,
+                      year: item.year,
+                      type: item.type,
+                      rating: item.rating
+                    }}
+                    onClick={() => handleCardClick(item)}
+                    index={idx}
+                  />
+                ))}
+              </div>
+            </section>
           </>
         )}
-      </div>
+      </main>
     </div>
   );
 };

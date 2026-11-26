@@ -1,13 +1,88 @@
 import type { ByteSource } from '../local/localByteSource';
+import { getSavedCredentials } from './mediaAuthStore';
+import { recordCorsStatus, recordRemoteMediaName, parseContentDisposition } from '../../utils/corsCheck';
 
 type DownloadPriority = 'current' | 'prefetch';
+
+// Add a helper for proxying fetch through the extension background if in a frame
+const proxyFetch = (url: string, options: any, blob: boolean): Promise<any> => {
+  return new Promise((resolve, reject) => {
+    if (window === window.parent) {
+      return reject(new Error('Not in iframe, cannot proxy'));
+    }
+    const id = Math.random().toString(36).substring(2);
+    
+    const listener = (event: MessageEvent) => {
+      if (event.data && event.data.type === 'PROXY_FETCH_RESPONSE' && event.data.id === id) {
+        window.removeEventListener('message', listener);
+        if (event.data.response.ok) {
+          resolve(event.data.response);
+        } else {
+          reject(new Error(event.data.response.error || `Proxy fetch failed: ${event.data.response.status}`));
+        }
+      }
+    };
+    window.addEventListener('message', listener);
+    
+    // Timeout
+    setTimeout(() => {
+      window.removeEventListener('message', listener);
+      reject(new Error('Proxy fetch timeout'));
+    }, 15000);
+
+    window.parent.postMessage({ type: 'PROXY_FETCH', id, url, options, blob }, '*');
+  });
+};
+
+export const getBackendProxyUrl = (url: string): string => {
+  const creds = getSavedCredentials(url);
+  let proxyUrl = `/api/proxy?url=${encodeURIComponent(url)}`;
+  if (creds && creds.username) {
+    proxyUrl += `&user=${encodeURIComponent(creds.username)}`;
+    if (creds.password) {
+      proxyUrl += `&pass=${encodeURIComponent(creds.password)}`;
+    }
+  }
+  return proxyUrl;
+};
+
+export const getProxyHeaders = (url: string, extraHeaders: Record<string, string> = {}): Record<string, string> => {
+  const creds = getSavedCredentials(url);
+  const headers = { ...extraHeaders };
+  if (creds && creds.username) {
+    try {
+      headers['Authorization'] = `Basic ${btoa(`${creds.username}:${creds.password || ''}`)}`;
+    } catch {}
+  }
+  return headers;
+};
 
 export class HttpByteSource implements ByteSource {
   private url: string;
   private size: number | null = null;
+  private proxyMode: 'none' | 'extension' | 'backend' = 'none';
 
   constructor(url: string) {
     this.url = url;
+    // If credentials are saved for this host, or if it is a cross-origin HTTP(S) URL,
+    // default to backend proxy to avoid browser CORS restrictions and forward Basic Auth!
+    const creds = getSavedCredentials(url);
+    if (creds && creds.username) {
+      this.proxyMode = 'backend';
+    } else if (url && (url.startsWith('http://') || url.startsWith('https://'))) {
+      if (typeof window !== 'undefined') {
+        try {
+          const u = new URL(url, window.location.href);
+          if (u.origin !== window.location.origin) {
+            this.proxyMode = 'backend';
+          }
+        } catch {
+          this.proxyMode = 'backend';
+        }
+      } else {
+        this.proxyMode = 'backend';
+      }
+    }
   }
 
   async getSize(): Promise<number> {
@@ -15,59 +90,154 @@ export class HttpByteSource implements ByteSource {
 
     let lastError: any = null;
 
+    if (this.proxyMode === 'none') {
+      try {
+        const response = await fetch(this.url, { method: 'HEAD' });
+        if (response.status === 200 || response.status === 206) {
+          const length = response.headers.get('Content-Length');
+          if (length) {
+            this.size = parseInt(length, 10);
+            return this.size;
+          }
+        }
+      } catch (e) {
+        lastError = e;
+      }
+
+      try {
+        const response = await fetch(this.url, {
+          headers: { Range: 'bytes=0-0' }
+        });
+        if (response.status === 200 || response.status === 206) {
+          const range = response.headers.get('Content-Range');
+          if (range) {
+            const parts = range.split('/');
+            if (parts.length > 1) {
+              this.size = parseInt(parts[1], 10);
+              return this.size;
+            }
+          }
+          const length = response.headers.get('Content-Length');
+          if (length) {
+            this.size = parseInt(length, 10);
+            return this.size;
+          }
+        }
+      } catch (err) {
+        lastError = err;
+      }
+    }
+
+    // Direct fetch failed or blocked by CORS: try extension proxy first if in iframe
+    if (window !== window.parent) {
+      try {
+        const proxyRes = await proxyFetch(this.url, { headers: { Range: 'bytes=0-0' } }, false);
+        this.proxyMode = 'extension';
+        const range = proxyRes.headers?.['content-range'];
+        if (range) {
+          const parts = range.split('/');
+          if (parts.length > 1) {
+            this.size = parseInt(parts[1], 10);
+            return this.size;
+          }
+        }
+        const length = proxyRes.headers?.['content-length'];
+        if (length) {
+          this.size = parseInt(length, 10);
+          return this.size;
+        }
+      } catch (proxyErr) {
+        lastError = proxyErr;
+      }
+    }
+
+    // Try Valor backend proxy fallback (/api/proxy)
     try {
-      const response = await fetch(this.url, { method: 'HEAD' });
-      if (response.status !== 200 && response.status !== 206) {
-        throw new Error(`HEAD request failed with status: ${response.status}`);
+      const proxyUrl = getBackendProxyUrl(this.url);
+      const response = await fetch(proxyUrl, {
+        headers: getProxyHeaders(this.url, { Range: 'bytes=0-0' })
+      });
+      if (response.status === 200 || response.status === 206) {
+        this.proxyMode = 'backend';
+        const range = response.headers.get('Content-Range');
+        if (range) {
+          const parts = range.split('/');
+          if (parts.length > 1) {
+            this.size = parseInt(parts[1], 10);
+            return this.size;
+          }
+        }
+        const length = response.headers.get('Content-Length');
+        if (length) {
+          this.size = parseInt(length, 10);
+          return this.size;
+        }
       }
-      const length = response.headers.get('Content-Length');
-      if (length) {
-        this.size = parseInt(length, 10);
-        return this.size;
+    } catch (backendErr) {
+      lastError = backendErr;
+    }
+
+    throw lastError || new Error('Could not determine remote file size');
+  }
+
+  private async parseResponseBody(response: Response, start: number, end: number): Promise<Uint8Array> {
+    const arrayBuffer = await response.arrayBuffer();
+    const bytes = new Uint8Array(arrayBuffer);
+    if (response.status === 200) {
+      // Server returned entire body starting from 0 instead of requested slice
+      return bytes.subarray(start, Math.min(end + 1, bytes.byteLength));
+    }
+    return bytes;
+  }
+
+  async read(start: number, end: number, signal?: AbortSignal): Promise<Uint8Array> {
+    if (this.proxyMode === 'extension') {
+      const proxyRes = await proxyFetch(this.url, { headers: { Range: `bytes=${start}-${end}` } }, true);
+      const binaryString = atob(proxyRes.base64);
+      const bytes = new Uint8Array(binaryString.length);
+      for (let i = 0; i < binaryString.length; i++) {
+        bytes[i] = binaryString.charCodeAt(i);
       }
-    } catch (e) {
-      console.warn('HEAD request failed, falling back to GET Range bytes=0-0:', e);
-      lastError = e;
+      return bytes;
+    }
+
+    if (this.proxyMode === 'backend') {
+      const proxyUrl = getBackendProxyUrl(this.url);
+      const response = await fetch(proxyUrl, {
+        headers: getProxyHeaders(this.url, { Range: `bytes=${start}-${end}` }),
+        signal
+      });
+      if (response.status !== 206 && response.status !== 200) {
+        throw new Error(`Failed to fetch range ${start}-${end} via backend proxy, status: ${response.status}`);
+      }
+      return this.parseResponseBody(response, start, end);
     }
 
     try {
       const response = await fetch(this.url, {
-        headers: { Range: 'bytes=0-0' }
+        headers: { Range: `bytes=${start}-${end}` },
+        signal
       });
-      if (response.status !== 200 && response.status !== 206) {
-        throw new Error(`GET range request failed with status: ${response.status}`);
+      if (response.status === 206 || response.status === 200) {
+        return this.parseResponseBody(response, start, end);
       }
-      const range = response.headers.get('Content-Range');
-      if (range) {
-        const parts = range.split('/');
-        if (parts.length > 1) {
-          this.size = parseInt(parts[1], 10);
-          return this.size;
+    } catch (directErr) {
+      // Fallback to backend proxy
+      try {
+        const proxyUrl = getBackendProxyUrl(this.url);
+        const response = await fetch(proxyUrl, {
+          headers: getProxyHeaders(this.url, { Range: `bytes=${start}-${end}` }),
+          signal
+        });
+        if (response.status === 206 || response.status === 200) {
+          this.proxyMode = 'backend';
+          return this.parseResponseBody(response, start, end);
         }
-      }
-      const length = response.headers.get('Content-Length');
-      if (length) {
-        this.size = parseInt(length, 10);
-        return this.size;
-      }
-    } catch (err) {
-      console.error('Failed to resolve file size from Range fallback:', err);
-      throw err || lastError;
+      } catch (e) {}
+      throw directErr;
     }
-    
-    throw new Error('Could not determine remote file size');
-  }
 
-  async read(start: number, end: number, signal?: AbortSignal): Promise<Uint8Array> {
-    const response = await fetch(this.url, {
-      headers: { Range: `bytes=${start}-${end}` },
-      signal
-    });
-    if (response.status !== 206 && response.status !== 200) {
-      throw new Error(`Failed to fetch range ${start}-${end}, status: ${response.status}`);
-    }
-    const arrayBuffer = await response.arrayBuffer();
-    return new Uint8Array(arrayBuffer);
+    throw new Error(`Failed to fetch range ${start}-${end}`);
   }
 }
 
@@ -263,13 +433,18 @@ export class CachedByteSource implements ByteSource {
   private chunkSize: number;
   private cacheLimit: number;
   private cache: Map<number, Uint8Array> = new Map();
+  private inFlight: Map<number, Promise<Uint8Array>> = new Map();
   private lruList: number[] = [];
   private activeChunks: Map<number, number> = new Map();
+  private lookbehindChunks = 3;
+  private lookaheadChunks = 10;
 
-  constructor(source: ByteSource, chunkSize = 1024 * 1024, cacheLimit = 8) {
+  constructor(source: ByteSource, chunkSize = 4 * 1024 * 1024, cacheLimit = 16, lookbehindChunks = 3, lookaheadChunks = 10) {
     this.source = source;
     this.chunkSize = chunkSize;
     this.cacheLimit = cacheLimit;
+    this.lookbehindChunks = lookbehindChunks;
+    this.lookaheadChunks = lookaheadChunks;
   }
 
   async getSize(): Promise<number> {
@@ -303,13 +478,26 @@ export class CachedByteSource implements ByteSource {
 
       await Promise.all(
         chunksToRead.map(async (chunk) => {
-          if (!this.cache.has(chunk.index)) {
-            const chunkData = await this.source.read(chunk.startByte, chunk.endByte, signal);
-            this.cache.set(chunk.index, chunkData);
-            this.updateLru(chunk.index, startChunk);
-          } else {
+          if (this.cache.has(chunk.index)) {
             this.touchLru(chunk.index);
+            return;
           }
+
+          let fetchPromise = this.inFlight.get(chunk.index);
+          if (!fetchPromise) {
+            fetchPromise = this.source.read(chunk.startByte, chunk.endByte, signal)
+              .then((chunkData) => {
+                this.cache.set(chunk.index, chunkData);
+                this.updateLru(chunk.index, startChunk);
+                return chunkData;
+              })
+              .finally(() => {
+                this.inFlight.delete(chunk.index);
+              });
+            this.inFlight.set(chunk.index, fetchPromise);
+          }
+
+          await fetchPromise;
         })
       );
 
@@ -361,7 +549,7 @@ export class CachedByteSource implements ByteSource {
       // Evict the oldest chunk that is outside this window and not active.
       const evictIndex = this.lruList.findIndex(idx => {
         if (this.activeChunks.has(idx)) return false;
-        const inRange = idx >= current - 3 && idx <= current + 10;
+        const inRange = idx >= current - this.lookbehindChunks && idx <= current + this.lookaheadChunks;
         return !inRange;
       });
 
@@ -381,33 +569,133 @@ export class CachedByteSource implements ByteSource {
       }
     }
   }
+
+  getStats(): { cachedChunks: number; totalBytes: number; chunkSize: number; cacheLimit: number; maxBytes: number } {
+    let totalBytes = 0;
+    for (const chunk of this.cache.values()) {
+      totalBytes += chunk.byteLength;
+    }
+    return {
+      cachedChunks: this.cache.size,
+      totalBytes,
+      chunkSize: this.chunkSize,
+      cacheLimit: this.cacheLimit,
+      maxBytes: this.chunkSize * this.cacheLimit,
+    };
+  }
+
+  updateLimits(chunkSize: number, cacheLimit: number, lookbehindChunks = 3, lookaheadChunks = 10): void {
+    this.chunkSize = Math.max(512 * 1024, chunkSize);
+    this.cacheLimit = Math.max(2, cacheLimit);
+    this.lookbehindChunks = Math.max(1, lookbehindChunks);
+    this.lookaheadChunks = Math.max(2, lookaheadChunks);
+
+    // Evict excess chunks if current cache exceeds new limit
+    while (this.cache.size > this.cacheLimit) {
+      const oldestEvictIndex = this.lruList.findIndex(idx => !this.activeChunks.has(idx));
+      if (oldestEvictIndex !== -1) {
+        const oldest = this.lruList[oldestEvictIndex];
+        this.lruList.splice(oldestEvictIndex, 1);
+        this.cache.delete(oldest);
+      } else {
+        break;
+      }
+    }
+  }
+
+  clear(): void {
+    this.cache.clear();
+    this.lruList = [];
+    this.inFlight.clear();
+  }
 }
 
-export async function detectUrlCapabilities(url: string): Promise<boolean> {
+export interface UrlCapabilitiesResult {
+  supported: boolean;
+  statusCode?: number;
+  authRequired?: boolean;
+  isCorsBlocked?: boolean;
+  error?: string;
+  directByteAccess?: boolean;
+}
+
+export async function detectUrlCapabilities(url: string): Promise<UrlCapabilitiesResult> {
   const controller = new AbortController();
-  const id = setTimeout(() => controller.abort(), 3000);
+  const id = setTimeout(() => controller.abort(), 4000);
 
   try {
     // Validate protocol for security
-    const parsedUrl = new URL(url);
+    const parsedUrl = new URL(url, typeof window !== 'undefined' ? window.location.href : 'http://localhost');
     if (parsedUrl.protocol !== 'http:' && parsedUrl.protocol !== 'https:') {
       console.warn('URL capability detection rejected: Unsupported protocol:', parsedUrl.protocol);
       clearTimeout(id);
-      return false;
+      return { supported: false, error: 'Unsupported protocol' };
     }
+
+    const isCross = typeof window !== 'undefined' && parsedUrl.origin !== window.location.origin;
+    const creds = getSavedCredentials(url);
+
+    // If cross-origin or credentials exist, query through backend proxy immediately to prevent browser CORS errors!
+    if (isCross || creds) {
+      const proxyUrl = getBackendProxyUrl(url);
+      const res = await fetch(proxyUrl, {
+        headers: getProxyHeaders(url, { Range: 'bytes=0-15' }),
+        signal: controller.signal
+      });
+      clearTimeout(id);
+      if (res.status === 401) {
+        return { supported: false, statusCode: res.status, authRequired: true };
+      }
+      if (res.status === 404) {
+        return { supported: false, statusCode: 404, error: 'Remote file not found (404)' };
+      }
+      if (res.status === 200 || res.status === 206) {
+        const buffer = await res.arrayBuffer();
+        return { supported: buffer.byteLength > 0, statusCode: res.status, directByteAccess: true };
+      }
+      return { supported: false, statusCode: res.status };
+    }
+
     const response = await fetch(url, {
       headers: { Range: 'bytes=0-15' },
       signal: controller.signal
     });
     clearTimeout(id);
+    if (response.status === 401) {
+      return { supported: false, statusCode: response.status, authRequired: true };
+    }
+    if (response.status === 404) {
+      return { supported: false, statusCode: 404, error: 'Remote file not found (404)' };
+    }
     if (response.status === 200 || response.status === 206) {
       const buffer = await response.arrayBuffer();
-      return buffer.byteLength > 0;
+      return { supported: buffer.byteLength > 0, statusCode: response.status, directByteAccess: true };
     }
-    return false;
-  } catch (e) {
+    return { supported: false, statusCode: response.status };
+  } catch (e: any) {
     clearTimeout(id);
-    console.warn('CORS or network error during capability detection:', e);
-    return false;
+    try {
+      const proxyUrl = getBackendProxyUrl(url);
+      const proxyController = new AbortController();
+      const pId = setTimeout(() => proxyController.abort(), 4000);
+      const res = await fetch(proxyUrl, {
+        headers: getProxyHeaders(url, { Range: 'bytes=0-15' }),
+        signal: proxyController.signal
+      });
+      clearTimeout(pId);
+      if (res.status === 401) {
+        return { supported: false, statusCode: res.status, authRequired: true };
+      }
+      if (res.status === 404) {
+        return { supported: false, statusCode: 404, error: 'Remote file not found (404)' };
+      }
+      if (res.status === 200 || res.status === 206) {
+        const buffer = await res.arrayBuffer();
+        return { supported: buffer.byteLength > 0, statusCode: res.status, directByteAccess: true };
+      }
+      return { supported: false, statusCode: res.status };
+    } catch (err: any) {
+      return { supported: false, isCorsBlocked: true, error: err?.message || 'CORS / Network failure' };
+    }
   }
 }

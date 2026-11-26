@@ -1,3 +1,4 @@
+import { logger } from '../../utils/logger';
 import type { AudioPacket } from '../pipeline/MediaPipeline';
 
 export class AudioScheduler {
@@ -53,24 +54,25 @@ export class AudioScheduler {
       }
     }
 
-    // If we have a preceding chunk and it's consecutive (e.g. within 15s), chain perfectly to its end time
-    if (prevNode && (packet.startTime - prevNode.startTime) <= 15) {
+    const delay = (packet.startTime - currentTime) / playbackRate;
+
+    // If we have a preceding chunk, it's consecutive, and its end time is still in the future, chain seamlessly
+    if (prevNode && (packet.startTime - prevNode.startTime) <= 15 && prevNode.audioEndTime > this.audioCtx.currentTime) {
       audioStartTime = prevNode.audioEndTime;
     } else {
       // Natural projection for the first chunk in a new sequence
-      const delay = (packet.startTime - currentTime) / playbackRate;
-      const isCurrentChunk = delay <= 0;
-      const LOOKAHEAD = isCurrentChunk ? 0.015 : 0;
-      audioStartTime = this.audioCtx.currentTime + Math.max(0, delay) + LOOKAHEAD;
+      audioStartTime = this.audioCtx.currentTime + Math.max(0, delay);
     }
+    // Prevent scheduling in the past which causes clicks and discontinuity
+    audioStartTime = Math.max(this.audioCtx.currentTime, audioStartTime);
 
     const durationPlayed = (packet.buffer.duration - playOffset) / playbackRate;
     const audioEndTime = audioStartTime + durationPlayed;
 
-    console.log(`[AudioScheduler-${this.instanceId}] Projecting chunk ${packet.startTime}s: delay=${delay.toFixed(3)}s, playOffset=${playOffset.toFixed(3)}s, audioStartTime=${audioStartTime.toFixed(3)}s`);
+    logger.scheduler(`[AudioScheduler-${this.instanceId}] Projecting chunk ${packet.startTime}s: delay=${delay.toFixed(3)}s, playOffset=${playOffset.toFixed(3)}s, audioStartTime=${audioStartTime.toFixed(3)}s`);
 
     source.onended = () => {
-      console.log(`[AudioScheduler-${this.instanceId}] Chunk ended:`, packet.startTime);
+      logger.scheduler(`[AudioScheduler-${this.instanceId}] Chunk ended:`, packet.startTime);
     };
 
     source.start(audioStartTime, playOffset);
@@ -84,21 +86,21 @@ export class AudioScheduler {
       playOffset,
       playbackRate
     });
-    console.log(`[AudioScheduler-${this.instanceId}] Active Sources: ${this.activeNodes.length}`);
+    logger.scheduler(`[AudioScheduler-${this.instanceId}] Active Sources: ${this.activeNodes.length}`);
   }
 
   stopAll(): void {
-    console.log(`[AudioScheduler-${this.instanceId}] stopAll called. Stopping ${this.activeNodes.length} active nodes.`);
+    logger.scheduler(`[AudioScheduler-${this.instanceId}] stopAll called. Stopping ${this.activeNodes.length} active nodes.`);
     for (const active of this.activeNodes) {
       try {
-        console.log(`[AudioScheduler-${this.instanceId}] source.stop() called for chunk starting at ${active.startTime}s: YES`);
+        logger.scheduler(`[AudioScheduler-${this.instanceId}] source.stop() called for chunk starting at ${active.startTime}s: YES`);
         active.node.stop();
       } catch (e: any) {
-        console.log(`[AudioScheduler-${this.instanceId}] source.stop() failed or already stopped for chunk starting at ${active.startTime}s: ${e.message}`);
+        logger.scheduler(`[AudioScheduler-${this.instanceId}] source.stop() failed or already stopped for chunk starting at ${active.startTime}s: ${e.message}`);
       }
     }
     this.activeNodes = [];
-    console.log(`[AudioScheduler-${this.instanceId}] Active Sources: 0`);
+    logger.scheduler(`[AudioScheduler-${this.instanceId}] Active Sources: 0`);
   }
 
   evictPlayed(currentTime: number): number[] {
@@ -128,8 +130,18 @@ export class AudioScheduler {
   updatePlaybackRate(rate: number): void {
     for (const active of this.activeNodes) {
       try {
+        active.playbackRate = rate;
         active.node.playbackRate.value = rate;
       } catch {}
     }
+  }
+
+  adjustRateForDrift(drift: number, baseRate: number): void {
+    // drift = videoTime - audioTime
+    // If drift > 0 (video ahead): speed audio up subtly (+1.5%) to close the gap
+    // If drift < 0 (audio ahead): slow audio down subtly (-1.5%) to let video catch up
+    const factor = drift > 0 ? 1.015 : 0.985;
+    const adjustedRate = baseRate * factor;
+    this.updatePlaybackRate(adjustedRate);
   }
 }

@@ -102,7 +102,10 @@ try {
 }
 try {
   const existingProfilesWithPasswords = db.prepare("SELECT username, password FROM profiles WHERE username IS NOT NULL AND password IS NOT NULL").all();
-  const insertAccount = db.prepare("INSERT OR IGNORE INTO accounts (username, password) VALUES (?, ?)");
+  const tableInfo = db.prepare("PRAGMA table_info(accounts)").all();
+  const colNames = tableInfo.map((c) => c.name.toLowerCase());
+  const passCol = colNames.includes("password_hash") ? "password_hash" : "password";
+  const insertAccount = db.prepare(`INSERT OR IGNORE INTO accounts (username, ${passCol}) VALUES (?, ?)`);
   for (const p of existingProfilesWithPasswords) {
     insertAccount.run(p.username, p.password);
   }
@@ -595,11 +598,21 @@ var backendServer = import_http.default.createServer((req, res) => {
     return;
   }
   if (pathname === "/api/log") {
+    const now = Date.now();
+    if (!global._lastBrowserLogTime) global._lastBrowserLogTime = 0;
+    if (now - global._lastBrowserLogTime < 120000) {
+      res.statusCode = 200;
+      res.setHeader("Content-Type", "application/json");
+      res.end(JSON.stringify({ success: true, throttled: true }));
+      return;
+    }
+    global._lastBrowserLogTime = now;
     getJsonBody(req).then((data) => {
       const type = data.type || "INFO";
       const msg = data.message || "";
       console.log(`[Browser ${type}] ${msg}`);
       res.statusCode = 200;
+      res.setHeader("Content-Type", "application/json");
       res.end(JSON.stringify({ success: true }));
     });
     return;
@@ -773,7 +786,7 @@ var backendServer = import_http.default.createServer((req, res) => {
   }
   if (pathname === "/api/trakt/exchange" && req.method === "POST") {
     getJsonBody(req).then(async (body) => {
-      const { code, redirect_uri, client_secret } = body;
+      const { code, redirect_uri, client_secret, code_verifier } = body;
       if (!code) {
         res.statusCode = 400;
         res.setHeader("Content-Type", "application/json");
@@ -783,15 +796,21 @@ var backendServer = import_http.default.createServer((req, res) => {
       try {
         const payload = {
           code,
-          client_id: "f2926f0d87d3e789c50a3c276ab6002f5027dec31089fe75792c2836165c7289",
-          client_secret: client_secret || "",
-          redirect_uri: redirect_uri || "http://localhost:50000",
+          client_id: "V4WfZovVxhKMc-KNyfTHgL_KtI84gJLnBHMss-qwu88",
+          redirect_uri: (redirect_uri || "https://player.streamiteasy.xyz").trim().replace(/\/+$/, ""),
           grant_type: "authorization_code"
         };
+        if (code_verifier) {
+          payload.code_verifier = code_verifier;
+        }
+        if (client_secret) {
+          payload.client_secret = client_secret;
+        }
         const traktRes = await fetch("https://api.trakt.tv/oauth/token", {
           method: "POST",
           headers: {
-            "Content-Type": "application/json"
+            "Content-Type": "application/json",
+            "User-Agent": "Valor/1.0"
           },
           body: JSON.stringify(payload)
         });
@@ -809,6 +828,37 @@ var backendServer = import_http.default.createServer((req, res) => {
         res.statusCode = 500;
         res.setHeader("Content-Type", "application/json");
         res.end(JSON.stringify({ error: err.message || "Failed to exchange Trakt token" }));
+      }
+    });
+    return;
+  }
+  if (pathname === "/api/trakt/user" && req.method === "POST") {
+    getJsonBody(req).then(async (body) => {
+      const { access_token } = body;
+      if (!access_token) {
+        res.statusCode = 400;
+        res.setHeader("Content-Type", "application/json");
+        res.end(JSON.stringify({ error: "Missing access token" }));
+        return;
+      }
+      try {
+        const traktRes = await fetch("https://api.trakt.tv/users/me?extended=full", {
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${access_token}`,
+            "trakt-api-version": "2",
+            "trakt-api-key": "V4WfZovVxhKMc-KNyfTHgL_KtI84gJLnBHMss-qwu88",
+            "User-Agent": "Valor/1.0"
+          }
+        });
+        const data = await traktRes.json();
+        res.statusCode = traktRes.status;
+        res.setHeader("Content-Type", "application/json");
+        res.end(JSON.stringify(data));
+      } catch (err) {
+        res.statusCode = 500;
+        res.setHeader("Content-Type", "application/json");
+        res.end(JSON.stringify({ error: err.message || "Failed to fetch Trakt profile" }));
       }
     });
     return;

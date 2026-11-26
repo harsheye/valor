@@ -1,0 +1,142 @@
+/* PlayerLoader.css - Unified single source of truth for video loading states */
+.pl {
+  position: absolute;
+  inset: 0;
+  z-index: 25;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  transition: opacity 150ms ease-out;
+  pointer-events: none;
+}
+
+.pl--in {
+  opacity: 1;
+}
+
+.pl--err-active {
+  pointer-events: auto !important;
+}
+
+/* Variant splash: solid black with faint radial crimson vignette */
+.pl--splash {
+  background: radial-gradient(ellipse at 50% 45%, #16090b 0%, #000000 70%);
+}
+
+/* Variant buffering: transparent background so video frame remains visible */
+.pl--buffering {
+  background: transparent !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  pointer-events: none !important;
+}
+
+.pl-logo-wrap {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Monogram animated 84px mark */
+.pl-mk {
+  width: 84px;
+  height: 91px;
+  overflow: visible;
+  filter: drop-shadow(0 0 14px rgba(225, 29, 46, 0.45));
+}
+
+.pl-mk path {
+  fill: none;
+  stroke: url(#plg);
+  stroke-width: 9;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-dasharray: 1;
+  stroke-dashoffset: 1;
+  animation: pl-draw 3.6s ease-in-out infinite;
+}
+
+.pl-mk path + path {
+  animation-delay: 0.25s;
+}
+
+@keyframes pl-draw {
+  0% {
+    stroke-dashoffset: 1;
+    opacity: 1;
+  }
+  40%, 72% {
+    stroke-dashoffset: 0;
+    opacity: 1;
+  }
+  100% {
+    stroke-dashoffset: 0;
+    opacity: 0;
+  }
+}
+
+.pl-err {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  text-align: center;
+  color: #ffffff;
+  padding: 24px;
+  max-width: 380px;
+}
+
+.pl-err-title {
+  font-size: 16px;
+  font-weight: 700;
+  margin: 0;
+  color: #ff4a5a;
+}
+
+.pl-err-desc {
+  font-size: 13px;
+  color: #a1a1aa;
+  margin: 0;
+  line-height: 1.4;
+}
+
+.pl-err-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 8px;
+}
+
+.pl-btn {
+  padding: 7px 16px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  background: rgba(255, 255, 255, 0.1);
+  color: #ffffff;
+  transition: all 0.15s ease;
+}
+
+.pl-btn:hover {
+  background: rgba(255, 255, 255, 0.2);
+}
+
+.pl-btn-retry {
+  background: #e11d2e;
+  border-color: #e11d2e;
+}
+
+.pl-btn-retry:hover {
+  background: #f42c3d;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pl * {
+    animation: none !important;
+  }
+  .pl-mk path {
+    stroke-dashoffset: 0;
+  }
+}

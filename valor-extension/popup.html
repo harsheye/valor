@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Valor</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <main class="popup" role="main">
+    <!-- Header -->
+    <header class="header">
+      <div class="brand">
+        <div class="logo-tile" aria-hidden="true">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="#ffffff">
+            <polygon points="6 4 20 12 6 20 6 4" />
+          </svg>
+        </div>
+        <span class="brand-name">Valor</span>
+      </div>
+      <div id="connStatus" class="status" aria-live="polite">
+        <span class="status-dot"></span>
+        <span class="status-text">Not connected</span>
+      </div>
+    </header>
+
+    <!-- Embed behavior -->
+    <section class="section">
+      <h2 class="section-label">Embed behavior</h2>
+      <div class="segmented-control" id="modeSelector" role="group" aria-label="Embed behavior">
+        <button type="button" class="seg-btn" data-mode="auto" aria-pressed="false">Auto replace</button>
+        <button type="button" class="seg-btn" data-mode="badge" aria-pressed="false">Show icon</button>
+        <button type="button" class="seg-btn" data-mode="off" aria-pressed="false">Off</button>
+      </div>
+    </section>
+
+    <!-- Detected on this page -->
+    <section class="section">
+      <div class="section-row">
+        <h2 class="section-label">Detected on this page</h2>
+        <button type="button" id="btnRescan" class="icon-btn" aria-label="Rescan page" title="Rescan page">
+          <svg id="rescanIcon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/>
+          </svg>
+        </button>
+      </div>
+      <div id="mediaSnifferList" class="detected-list">
+        <div class="detected-empty">No media detected on this page</div>
+      </div>
+    </section>
+
+    <!-- Player address -->
+    <section class="section">
+      <label for="valorUrlInput" class="section-label">Player address</label>
+      <div class="input-wrap">
+        <input type="text" id="valorUrlInput" spellcheck="false" autocomplete="off" placeholder="http://localhost:5173/embed" />
+        <span id="addressStatusDot" class="input-status-dot" aria-hidden="true"></span>
+      </div>
+    </section>
+
+    <!-- Toggles -->
+    <section class="section toggles-section">
+      <div class="toggle-row">
+        <div class="toggle-copy">
+          <span class="toggle-title" id="resumeLabel">Resume where you left off</span>
+          <span class="toggle-desc">Restores your playback position</span>
+        </div>
+        <button type="button" role="switch" id="btnSwitchResume" aria-checked="true" aria-labelledby="resumeLabel" class="switch-btn">
+          <span class="switch-thumb"></span>
+        </button>
+        <input type="checkbox" id="chkResume" class="visually-hidden" checked />
+      </div>
+
+      <div class="toggle-row">
+        <div class="toggle-copy">
+          <span class="toggle-title" id="cinemaLabel">Cinema mode</span>
+          <span class="toggle-desc">Dark, borderless player</span>
+        </div>
+        <button type="button" role="switch" id="btnSwitchCinema" aria-checked="false" aria-labelledby="cinemaLabel" class="switch-btn">
+          <span class="switch-thumb"></span>
+        </button>
+        <input type="checkbox" id="chkCinema" class="visually-hidden" />
+      </div>
+    </section>
+
+    <!-- Actions -->
+    <div class="actions">
+      <button type="button" id="btnSave" class="btn-save">Save</button>
+      <div id="toastMessage" class="toast" role="status" aria-live="polite"></div>
+    </div>
+
+    <!-- Footer -->
+    <footer class="footer">
+      <span id="versionLabel">Valor v2.4.0</span>
+    </footer>
+  </main>
+
+  <script src="popup.js"></script>
+</body>
+</html>

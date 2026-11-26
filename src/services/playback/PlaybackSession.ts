@@ -13,9 +13,6 @@ export class PlaybackSession {
     this.sessionId = Math.random().toString(36).substring(7);
     this.chunkAbortController.abort();
     this.chunkAbortController = new AbortController();
-    console.log(
-      `[PlaybackSession-${this.instanceId}] New playback generation ${this.playbackGeneration} (${reason}). session=${this.sessionId}`
-    );
     return this.playbackGeneration;
   }
 

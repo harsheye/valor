@@ -1,3 +1,4 @@
+import { logger } from '../../utils/logger';
 import { FFmpeg } from '@ffmpeg/ffmpeg';
 import { PacketCache } from '../cache/PacketCache';
 import { PacketReader } from '../packet/PacketReader';
@@ -7,7 +8,7 @@ import { extractRemoteSubtitleSegment } from '../remote/ffmpegRemote';
 import { parseSubtitles } from '../../utils/subtitleParser';
 
 export class BufferManager {
-  private packetCache = new PacketCache(60, 120);
+  private packetCache = new PacketCache(30, 120); // 30s behind, 120s ahead
   private subtitleCache = new Map<string, any[]>(); // keyed by streamIndex_offsetTime
   private activeFills = new Map<string, Promise<any>>();
   private failedFills = new Map<string, { count: number; lastTime: number }>();
@@ -25,6 +26,10 @@ export class BufferManager {
     return this.packetCache;
   }
 
+  setCacheRetention(keepBehind: number, keepAhead: number): void {
+    this.packetCache.updateRetention(keepBehind, keepAhead);
+  }
+
   getSubtitleCache(): Map<string, any[]> {
     return this.subtitleCache;
   }
@@ -39,7 +44,7 @@ export class BufferManager {
 
     const elapsed = Date.now() - record.lastTime;
     if (elapsed < this.COOLDOWN_MS) {
-      console.log(`[BufferManager] Key ${key} is in failure cooldown (${((this.COOLDOWN_MS - elapsed)/1000).toFixed(1)}s remaining). Skipping request.`);
+      logger.buffer(`[BufferManager] Key ${key} is in failure cooldown (${((this.COOLDOWN_MS - elapsed)/1000).toFixed(1)}s remaining). Skipping request.`);
       return true;
     }
 
@@ -51,7 +56,7 @@ export class BufferManager {
     record.count += 1;
     record.lastTime = Date.now();
     this.failedFills.set(key, record);
-    console.warn(`[BufferManager] Key ${key} failed. Attempt count: ${record.count}/${this.MAX_RETRIES}`);
+    logger.warn(`[BufferManager] Key ${key} failed. Attempt count: ${record.count}/${this.MAX_RETRIES}`);
   }
 
   resetFailures(): void {
@@ -109,10 +114,10 @@ export class BufferManager {
     let promise = this.activeFills.get(key);
     if (!promise) {
       this.setBuffering(true);
-      console.log(`[BufferManager] [${new Date().toISOString()}] Launching single-flight audio request for: ${key}`);
+      logger.buffer(`[BufferManager] [${new Date().toISOString()}] Launching single-flight audio request for: ${key}`);
       promise = packetReader.readAudioPacket(ff, streamIndex, startTime, duration, seekMap, signal)
         .then((packet) => {
-          console.log("Cache Insert:", chunkKey, "packetStart:", packet.startTime, "duration:", packet.duration);
+          logger.buffer("Cache Insert:", chunkKey, "packetStart:", packet.startTime, "duration:", packet.duration);
           this.packetCache.add(packet, chunkKey);
           return packet;
         })
@@ -128,7 +133,7 @@ export class BufferManager {
         });
       this.activeFills.set(key, promise);
     } else {
-      console.log(`[BufferManager] [${new Date().toISOString()}] Re-using existing single-flight audio request for: ${key}`);
+      logger.buffer(`[BufferManager] [${new Date().toISOString()}] Re-using existing single-flight audio request for: ${key}`);
     }
 
     return promise;
@@ -162,7 +167,7 @@ export class BufferManager {
     // 1. Check Cache
     const cached = this.subtitleCache.get(key);
     if (cached) {
-      console.log(`[BufferManager] [${new Date().toISOString()}] Cache hit for subtitle request: ${key}`);
+      logger.buffer(`[BufferManager] [${new Date().toISOString()}] Cache hit for subtitle request: ${key}`);
       return cached;
     }
 
@@ -170,7 +175,7 @@ export class BufferManager {
     let promise = this.activeFills.get(key);
     if (!promise) {
       this.setBuffering(true);
-      console.log(`[BufferManager] [${new Date().toISOString()}] Launching single-flight subtitle request for: ${key}`);
+      logger.buffer(`[BufferManager] [${new Date().toISOString()}] Launching single-flight subtitle request for: ${key}`);
       promise = (async () => {
         let text = '';
         if (!isRemote && videoFile) {
@@ -197,7 +202,7 @@ export class BufferManager {
       });
       this.activeFills.set(key, promise);
     } else {
-      console.log(`[BufferManager] [${new Date().toISOString()}] Re-using existing single-flight subtitle request for: ${key}`);
+      logger.buffer(`[BufferManager] [${new Date().toISOString()}] Re-using existing single-flight subtitle request for: ${key}`);
     }
 
     return promise;

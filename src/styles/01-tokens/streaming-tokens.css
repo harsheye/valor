@@ -1,0 +1,516 @@
+/* ==========================================================================
+   VALOR STREAMING DESIGN SYSTEM TOKENS
+   Complete token sets for all Valor themes:
+   - Midnight Slate (Cool, quiet dark - default)
+   - Ember Night (Warm, low-blue amber)
+   - Forest Mist (Muted green-grey sage)
+   - Valor Crimson (Softened red brand)
+   - Black-Ops (Calibrated OLED pure black)
+   - Soft Paper (Warm paper light theme)
+   - Valor Cyber Dark (Modern canvas #0b0c10 with neon coral #ff6b7a)
+   - Studio Light (Crisp pure white #ffffff with crimson #c4263a)
+   ========================================================================== */
+
+:root {
+  /* Radii & Spacing Scale */
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-7: 32px;
+  --space-8: 40px;
+
+  /* Typography */
+  --font-ui:      'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --font-display: 'Outfit', var(--font-ui);
+
+  --ui-dimmer: 1;
+  --text-scale: 1;
+}
+
+/* --------------------------------------------------------------------------
+   THEME 1: MIDNIGHT-SLATE (Default; cool, quiet dark)
+   -------------------------------------------------------------------------- */
+:root:not([data-theme]),
+[data-theme="midnight-slate"] {
+  --bg:             #0F1217;
+  --surface-1:      #151A21;
+  --surface-2:      #1B212A;
+  --surface-3:      #232B36;
+  --border:         #262D39;
+  --control-border: #6C778A;
+
+  --text-1:         #E4E8EE;
+  --text-2:         #A9B2C0;
+  --text-3:         #8F99AA;
+
+  --accent:         #8CA9EE;
+  --accent-fill:    #9BB3F2;
+  --on-accent:      #0C1424;
+  --accent-soft:    rgba(140, 169, 238, 0.14);
+
+  --success:        #86CDA6;
+  --warning:        #E3BD7A;
+  --danger:         #EC8F95;
+
+  --focus-ring:     #8CA9EE;
+  --scrim:          rgba(15, 18, 23, 0.75);
+
+  --tile-l:         22%;
+  --tile-glyph-l:   74%;
+
+  /* Compatibility Aliases */
+  --bg-color: var(--bg);
+  --bg-primary: var(--bg);
+  --bg-secondary: var(--surface-1);
+  --background: var(--bg);
+  --surface: var(--surface-1);
+  --surface-elevated: var(--surface-2);
+  --surface-hover: var(--surface-2);
+  --card-bg: var(--surface-1);
+  --card-hover-bg: var(--surface-2);
+  --card-border: var(--border);
+  --sidebar: var(--surface-1);
+  --sidebar-hover: var(--surface-2);
+  --text-primary: var(--text-1);
+  --text-secondary: var(--text-2);
+  --text-muted: var(--text-3);
+  --border-color: var(--border);
+  --border-subtle: var(--border);
+  --border-focus: var(--focus-ring);
+  --accent-color: var(--accent);
+  --accent-hover: var(--accent-fill);
+  --accent-glow: var(--accent-soft);
+}
+
+/* --------------------------------------------------------------------------
+   THEME 2: EMBER-NIGHT (Warm, low-blue; amber charcoal)
+   -------------------------------------------------------------------------- */
+[data-theme="ember-night"] {
+  --bg:             #14110F;
+  --surface-1:      #1B1714;
+  --surface-2:      #231E1A;
+  --surface-3:      #2D2722;
+  --border:         #2E2721;
+  --control-border: #837565;
+
+  --text-1:         #EBE3D8;
+  --text-2:         #B9AD9D;
+  --text-3:         #9D9182;
+
+  --accent:         #E5A86D;
+  --accent-fill:    #E5A86D;
+  --on-accent:      #1E140A;
+  --accent-soft:    rgba(229, 168, 109, 0.14);
+
+  --success:        #86CDA6;
+  --warning:        #E3BD7A;
+  --danger:         #EC8F95;
+
+  --focus-ring:     #E5A86D;
+  --scrim:          rgba(20, 17, 15, 0.75);
+
+  --tile-l:         22%;
+  --tile-glyph-l:   74%;
+
+  /* Compatibility Aliases */
+  --bg-color: var(--bg);
+  --bg-primary: var(--bg);
+  --bg-secondary: var(--surface-1);
+  --background: var(--bg);
+  --surface: var(--surface-1);
+  --surface-elevated: var(--surface-2);
+  --surface-hover: var(--surface-2);
+  --card-bg: var(--surface-1);
+  --card-hover-bg: var(--surface-2);
+  --card-border: var(--border);
+  --sidebar: var(--surface-1);
+  --sidebar-hover: var(--surface-2);
+  --text-primary: var(--text-1);
+  --text-secondary: var(--text-2);
+  --text-muted: var(--text-3);
+  --border-color: var(--border);
+  --border-subtle: var(--border);
+  --border-focus: var(--focus-ring);
+  --accent-color: var(--accent);
+  --accent-hover: var(--accent-fill);
+  --accent-glow: var(--accent-soft);
+}
+
+/* --------------------------------------------------------------------------
+   THEME 3: FOREST-MIST (Muted green-grey; calming sage)
+   -------------------------------------------------------------------------- */
+[data-theme="forest-mist"] {
+  --bg:             #0E1412;
+  --surface-1:      #141C19;
+  --surface-2:      #1A2420;
+  --surface-3:      #222E29;
+  --border:         #24302B;
+  --control-border: #6A7D73;
+
+  --text-1:         #E0E9E4;
+  --text-2:         #A2B3AA;
+  --text-3:         #889990;
+
+  --accent:         #7CC3A1;
+  --accent-fill:    #8DCDB0;
+  --on-accent:      #07150E;
+  --accent-soft:    rgba(124, 195, 161, 0.14);
+
+  --success:        #86CDA6;
+  --warning:        #E3BD7A;
+  --danger:         #EC8F95;
+
+  --focus-ring:     #7CC3A1;
+  --scrim:          rgba(14, 20, 18, 0.75);
+
+  --tile-l:         22%;
+  --tile-glyph-l:   74%;
+
+  /* Compatibility Aliases */
+  --bg-color: var(--bg);
+  --bg-primary: var(--bg);
+  --bg-secondary: var(--surface-1);
+  --background: var(--bg);
+  --surface: var(--surface-1);
+  --surface-elevated: var(--surface-2);
+  --surface-hover: var(--surface-2);
+  --card-bg: var(--surface-1);
+  --card-hover-bg: var(--surface-2);
+  --card-border: var(--border);
+  --sidebar: var(--surface-1);
+  --sidebar-hover: var(--surface-2);
+  --text-primary: var(--text-1);
+  --text-secondary: var(--text-2);
+  --text-muted: var(--text-3);
+  --border-color: var(--border);
+  --border-subtle: var(--border);
+  --border-focus: var(--focus-ring);
+  --accent-color: var(--accent);
+  --accent-hover: var(--accent-fill);
+  --accent-glow: var(--accent-soft);
+}
+
+/* --------------------------------------------------------------------------
+   THEME 4: VALOR-CRIMSON (The signature red brand, softened)
+   -------------------------------------------------------------------------- */
+[data-theme="valor-crimson"] {
+  --bg:             #131114;
+  --surface-1:      #1A171B;
+  --surface-2:      #221E24;
+  --surface-3:      #2B262D;
+  --border:         #2D2830;
+  --control-border: #7D7381;
+
+  --text-1:         #E9E4E9;
+  --text-2:         #B3AAB5;
+  --text-3:         #978D9B;
+
+  --accent:         #E57C86;
+  --accent-fill:    #B2404C;
+  --on-accent:      #FBF1F2;
+  --accent-soft:    rgba(229, 124, 134, 0.14);
+
+  --success:        #86CDA6;
+  --warning:        #E3BD7A;
+  --danger:         #EC8F95;
+
+  --focus-ring:     #E57C86;
+  --scrim:          rgba(19, 17, 20, 0.75);
+
+  --tile-l:         22%;
+  --tile-glyph-l:   74%;
+
+  /* Compatibility Aliases */
+  --bg-color: var(--bg);
+  --bg-primary: var(--bg);
+  --bg-secondary: var(--surface-1);
+  --background: var(--bg);
+  --surface: var(--surface-1);
+  --surface-elevated: var(--surface-2);
+  --surface-hover: var(--surface-2);
+  --card-bg: var(--surface-1);
+  --card-hover-bg: var(--surface-2);
+  --card-border: var(--border);
+  --sidebar: var(--surface-1);
+  --sidebar-hover: var(--surface-2);
+  --text-primary: var(--text-1);
+  --text-secondary: var(--text-2);
+  --text-muted: var(--text-3);
+  --border-color: var(--border);
+  --border-subtle: var(--border);
+  --border-focus: var(--focus-ring);
+  --accent-color: var(--accent);
+  --accent-hover: var(--accent-fill);
+  --accent-glow: var(--accent-soft);
+}
+
+/* --------------------------------------------------------------------------
+   THEME 5: BLACK-OPS (True-Black OLED; pure #000000 depth)
+   -------------------------------------------------------------------------- */
+[data-theme="black-ops"],
+[data-theme="oled"] {
+  --bg:             #000000;
+  --surface-1:      #000000;
+  --surface-2:      #000000;
+  --surface-3:      #0a0a0a;
+  --border:         rgba(255, 255, 255, 0.10);
+  --control-border: #656877;
+  --border-hover:   rgba(255, 255, 255, 0.16);
+
+  --text-1:         #f2f2f2;
+  --text-2:         #b0b0b0;
+  --text-3:         #9a9a9a;
+
+  --accent:         #e53950;
+  --accent-fill:    #b2404c;
+  --on-accent:      #ffffff;
+  --accent-soft:    rgba(229, 57, 80, 0.14);
+
+  --success:        #3ddc84;
+  --warning:        #f5b83d;
+  --danger:         #ff5a5f;
+
+  --focus-ring:     #e53950;
+  --scrim:          #000000;
+
+  --tile-l:         22%;
+  --tile-glyph-l:   74%;
+
+  /* Compatibility Aliases */
+  --bg-color: #000000;
+  --bg-primary: #000000;
+  --bg-secondary: #000000;
+  --background: #000000;
+  --surface: #000000;
+  --surface-elevated: #000000;
+  --surface-hover: #0a0a0a;
+  --sidebar-bg: #000000;
+  --card-bg: #000000;
+  --card-hover-bg: #0a0a0a;
+  --card-border: var(--border);
+  --sidebar: #000000;
+  --sidebar-hover: #0a0a0a;
+  --overlay: #000000;
+  --modal-bg: #000000;
+  --dropdown-bg: #000000;
+  --dropdown-border: var(--control-border);
+  --dropdown-text: var(--text-1);
+  --dropdown-hover-bg: #0a0a0a;
+  --dropdown-selected-bg: #000000;
+
+  --text-primary: var(--text-1);
+  --text-secondary: var(--text-2);
+  --text-muted: var(--text-3);
+
+  --border-color: var(--border);
+  --border-subtle: var(--border);
+  --border-focus: var(--focus-ring);
+
+  --accent-color: var(--accent);
+  --accent-hover: var(--accent-fill);
+  --accent-glow: transparent;
+
+  --input-bg: #000000;
+  --input-border: var(--control-border);
+  --input-text: var(--text-1);
+  --input-placeholder: var(--text-3);
+
+  --scrollbar-track: #000000;
+  --scrollbar-thumb: #1a1a1a;
+  --scrollbar-thumb-hover: #2a2a2a;
+}
+
+/* --------------------------------------------------------------------------
+   THEME 6: SOFT-PAPER (Warm light theme for bright rooms; never pure white)
+   -------------------------------------------------------------------------- */
+[data-theme="soft-paper"] {
+  --bg:             #ECE7DD;
+  --surface-1:      #F5F1E8;
+  --surface-2:      #FAF7F0;
+  --surface-3:      #E4DED2;
+  --border:         #D9D2C4;
+  --control-border: #8A8274;
+
+  --text-1:         #25221D;
+  --text-2:         #57514A;
+  --text-3:         #675F52;
+
+  --accent:         #3A5CB0;
+  --accent-fill:    #3A5CB0;
+  --on-accent:      #F7F5EF;
+  --accent-soft:    rgba(58, 92, 176, 0.10);
+
+  --success:        #276F4D;
+  --warning:        #7A560F;
+  --danger:         #A83540;
+
+  --focus-ring:     #3A5CB0;
+  --scrim:          rgba(236, 231, 221, 0.8);
+
+  --tile-l:         82%;
+  --tile-glyph-l:   28%;
+
+  /* Compatibility Aliases */
+  --bg-color: var(--bg);
+  --bg-primary: var(--bg);
+  --bg-secondary: var(--surface-1);
+  --background: var(--bg);
+  --surface: var(--surface-1);
+  --surface-elevated: var(--surface-2);
+  --surface-hover: var(--surface-2);
+  --card-bg: var(--surface-1);
+  --card-hover-bg: var(--surface-2);
+  --card-border: var(--border);
+  --sidebar: var(--surface-1);
+  --sidebar-hover: var(--surface-2);
+  --text-primary: var(--text-1);
+  --text-secondary: var(--text-2);
+  --text-muted: var(--text-3);
+  --border-color: var(--border);
+  --border-subtle: var(--border);
+  --border-focus: var(--focus-ring);
+  --accent-color: var(--accent);
+  --accent-hover: var(--accent-fill);
+  --accent-glow: var(--accent-soft);
+}
+
+/* --------------------------------------------------------------------------
+   THEME 7: VALOR CYBER DARK (Deep canvas with neon coral accent)
+   -------------------------------------------------------------------------- */
+[data-theme="dark"],
+[data-theme="valor-dark"] {
+  --bg:             #0b0c10;
+  --surface-1:      #14161c;
+  --surface-2:      #1b1e26;
+  --surface-3:      #252935;
+  --border:         #262a34;
+  --control-border: #3b4252;
+
+  --text-1:         #f2f4f8;
+  --text-2:         #b0b8c6;
+  --text-3:         #8790a1;
+
+  --accent:         #ff6b7a;
+  --accent-fill:    #d92d40;
+  --on-accent:      #ffffff;
+  --accent-soft:    color-mix(in srgb, var(--accent) 14%, var(--surface-1));
+
+  --success:        #3ddc84;
+  --warning:        #f5b83d;
+  --danger:         #ff5a5f;
+
+  --focus-ring:     #7aa7ff;
+  --scrim:          color-mix(in srgb, var(--bg) 75%, transparent);
+
+  --tile-l:         22%;
+  --tile-glyph-l:   74%;
+
+  /* Compatibility Aliases */
+  --bg-color: var(--bg);
+  --bg-primary: var(--bg);
+  --bg-secondary: var(--surface-1);
+  --background: var(--bg);
+  --surface: var(--surface-1);
+  --surface-elevated: var(--surface-2);
+  --surface-hover: var(--surface-2);
+  --card-bg: var(--surface-1);
+  --card-hover-bg: var(--surface-2);
+  --card-border: var(--border);
+  --sidebar: var(--surface-1);
+  --sidebar-hover: var(--surface-2);
+  --text-primary: var(--text-1);
+  --text-secondary: var(--text-2);
+  --text-muted: var(--text-3);
+  --border-color: var(--border);
+  --border-subtle: var(--border);
+  --border-focus: var(--focus-ring);
+  --accent-color: var(--accent);
+  --accent-hover: var(--accent-fill);
+  --accent-glow: var(--accent-soft);
+}
+
+/* --------------------------------------------------------------------------
+   THEME 8: STUDIO LIGHT (Crisp pure white with crimson accent)
+   -------------------------------------------------------------------------- */
+[data-theme="light"] {
+  --bg:             #ffffff;
+  --surface-1:      #ffffff;
+  --surface-2:      #eceef3;
+  --surface-3:      #e1e4ec;
+  --border:         #d5d9e2;
+  --control-border: #bcc3d1;
+
+  --text-1:         #12141a;
+  --text-2:         #454c5c;
+  --text-3:         #5b6373;
+
+  --accent:         #c4263a;
+  --accent-fill:    #c4263a;
+  --on-accent:      #ffffff;
+  --accent-soft:    color-mix(in srgb, var(--accent) 10%, var(--surface-1));
+
+  --success:        #16794a;
+  --warning:        #8a5a00;
+  --danger:         #d92d40;
+
+  --focus-ring:     #1f5fd6;
+  --scrim:          color-mix(in srgb, #ffffff 75%, transparent);
+
+  --tile-l:         82%;
+  --tile-glyph-l:   28%;
+
+  /* Compatibility Aliases */
+  --bg-color: var(--bg);
+  --bg-primary: var(--bg);
+  --bg-secondary: var(--surface-1);
+  --background: var(--bg);
+  --surface: var(--surface-1);
+  --surface-elevated: var(--surface-2);
+  --surface-hover: var(--surface-2);
+  --card-bg: var(--surface-1);
+  --card-hover-bg: var(--surface-2);
+  --card-border: var(--border);
+  --sidebar: var(--surface-1);
+  --sidebar-hover: var(--surface-2);
+  --text-primary: var(--text-1);
+  --text-secondary: var(--text-2);
+  --text-muted: var(--text-3);
+  --border-color: var(--border);
+  --border-subtle: var(--border);
+  --border-focus: var(--focus-ring);
+  --accent-color: var(--accent);
+  --accent-hover: var(--accent-fill);
+  --accent-glow: var(--accent-soft);
+}
+
+/* System Preference Fallback */
+@media (prefers-color-scheme: light) {
+  :root[data-theme="auto"] {
+    --bg:             #ECE7DD;
+    --surface-1:      #F5F1E8;
+    --surface-2:      #FAF7F0;
+    --surface-3:      #E4DED2;
+    --border:         #D9D2C4;
+    --control-border: #8A8274;
+    --text-1:         #25221D;
+    --text-2:         #57514A;
+    --text-3:         #675F52;
+    --accent:         #3A5CB0;
+    --accent-fill:    #3A5CB0;
+    --on-accent:      #F7F5EF;
+    --accent-soft:    rgba(58, 92, 176, 0.10);
+    --success:        #276F4D;
+    --warning:        #7A560F;
+    --danger:         #A83540;
+    --focus-ring:     #3A5CB0;
+    --scrim:          rgba(236, 231, 221, 0.8);
+    --tile-l:         82%;
+    --tile-glyph-l:   28%;
+  }
+}

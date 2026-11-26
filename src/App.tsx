@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, Component, useCallback, useMemo, type ReactNode } from 'react';
-import type { VideoItem, CustomAudioTrack, CustomSubtitleTrack } from './types/media';
+import { getVideoSourceType, type VideoItem, type CustomAudioTrack, type CustomSubtitleTrack } from './types/media';
 
 class ErrorBoundary extends Component<{ children: ReactNode }, { hasError: boolean; error: any }> {
   constructor(props: { children: ReactNode }) {
@@ -50,50 +50,81 @@ class ErrorBoundary extends Component<{ children: ReactNode }, { hasError: boole
 
 import './App.css';
 import { ffmpegService } from './services/ffmpeg';
-import { LocalVideoPlayer } from './components/LocalVideoPlayer';
+import { LocalVideoPlayer, disposeActiveLocalPlayer } from './components/LocalVideoPlayer';
 import { RemoteVideoPlayer } from './components/RemoteVideoPlayer';
+import { StreamLoadingOverlay } from './components/StreamLoadingOverlay';
 import { OnlineSearchTab } from './components/OnlineSearchTab';
 import { OnlineEmbedPlayer } from './components/OnlineEmbedPlayer';
 import { OnlineDetailsPage } from './components/OnlineDetailsPage';
 import { EmbedPlayerPage } from './pages/EmbedPlayerPage';
 import { GraphQLStorageProvider } from './services/storage/GraphQLStorageProvider';
 import { LocalIndexedDBProvider } from './services/storage/LocalIndexedDBProvider';
+import { collectLocalVideos, syncProfileDataToCloud } from './services/storage/cloudSync';
 import { ActorDetailsPage } from './components/ActorDetailsPage';
 import { OnlineVideoPlayer } from './components/OnlineVideoPlayer';
 import { CustomSelect } from './components/CustomSelect';
-import { Onboarding01 } from './components/Onboarding01';
 import { CalendarView } from './components/CalendarView';
 import { LibraryView } from './components/LibraryView';
 import { ApiSettingsView } from './components/ApiSettingsView';
-import { SpinnerSettingsView } from './components/SpinnerSettingsView';
+import { AuthModal } from './components/auth/AuthModal';
+import { CreateAccountModal } from './components/auth/CreateAccountModal';
+
 import { EsportsLiveOverlay } from './components/EsportsLiveOverlay';
 import Calendar02 from './components/creative-tim/blocks/calendar-02';
 import { classifyVideoTitle } from './utils/libraryClassifier';
+import { resolveRemoteMediaName, getCachedMediaFileName } from './utils/corsCheck';
+import { saveEmbedSubtitles, getEmbedSubtitlesSync } from './utils/embedSubtitleStorage';
 import { 
   Film, UploadCloud, Play, Settings, X, Calendar, List,
   History, Home, Layers, Type, Clock, Sliders, Volume2,
   Maximize, Zap, Coffee, SkipForward, Ban, FastForward, Lock, ChevronRight, ChevronLeft,
-  LogOut, Trash2, Plus, Download, UserPlus, Trophy, Radio, RotateCcw
+  LogOut, Trash2, Plus, Download, UserPlus, Trophy, Radio, RotateCcw,
+  HardDrive, Cloud, ShieldCheck, Check, Server, LogIn
 } from 'lucide-react';
-import { storeFileHandle, getFileHandle, removeFileHandle, verifyPermission, cleanupFileHandles } from './utils/indexedDB';
-import { HttpByteSource, CachedByteSource, detectUrlCapabilities } from './services/remote/remoteByteSource';
-import { probeContainer, parseMp4, parseMkv } from './utils/containerParser';
+import { storeFileHandle, getFileHandle, removeFileHandle, verifyPermission, cleanupFileHandles, savePlaylistToStore } from './utils/indexedDB';
+import { usePlaylist, makeFingerprint, naturalSortItems, resolveFile, stateToStored, type PlaylistItem } from './hooks/usePlaylist';
+import { PlaylistPanel } from './components/PlaylistPanel';
+import { getMediaTimestamp, saveMediaTimestamp } from './utils/mediaTimestampStorage';
+import { ReloadGuardModal } from './components/ReloadGuardModal';
+import { useReloadGuard } from './hooks/useReloadGuard';
+import { HttpByteSource, CachedByteSource, detectUrlCapabilities, getBackendProxyUrl, getProxyHeaders } from './services/remote/remoteByteSource';
+import { probeContainer, parseMp4, parseMkv, normalizeMkvCodec } from './utils/containerParser';
+import { FileByteSource } from './services/local/localByteSource';
 import { parseHlsManifest } from './utils/hlsParser';
-import { LoadingSpinner, SPINNER_PRESETS, SpinnerThumbnail } from './components/LoadingSpinner';
-import type { SpinnerPreset } from './components/LoadingSpinner';
+
 import { ToggleSwitch } from './components/ToggleSwitch';
 import { Sidebar } from './components/Sidebar';
+import { MobileTopBar } from './components/MobileTopBar';
 import { MobileBottomNav } from './components/MobileBottomNav';
+import { isMobileDevice, lockToLandscape, unlockOrientation } from './utils/screenOrientation';
 import { HomePage } from './pages/HomePage';
 import { HistoryPage } from './pages/HistoryPage';
 import { LibraryPage } from './pages/LibraryPage';
 import { OnlineStreamPage } from './pages/OnlineStreamPage';
 import { SettingsPage } from './pages/SettingsPage';
+import { AdminDashboard } from './pages/AdminDashboard';
+import { LocalServicePage } from './pages/LocalServicePage';
+import { UnderConstructionPage } from './pages/UnderConstructionPage';
+import { NotFoundPage } from './pages/NotFoundPage';
+import { featureFlagService } from './services/featureFlags';
+import { DEFAULT_CACHE_SETTINGS, type CacheSettings } from './services/cache/cachePolicy';
+import { 
+  initiateTraktPkceAuth, 
+  exchangeTraktCodeForToken, 
+  fetchTraktUserProfile, 
+  getTraktAuthAction, 
+  clearTraktAuthState, 
+  TRAKT_CLIENT_ID,
+  TRAKT_DEFAULT_REDIRECT_URI,
+  syncTraktHistory,
+  syncTraktRating
+} from './services/traktAuth';
 import { 
   audioOptions, subOptions, calendarStyleOptions, limitOptions, 
   intervalOptions, toastOptions, uiHideTimeoutOptions, fontOptions, 
   storageModeOptions, ratingThresholdOptions 
 } from './utils/constants';
+
 
 
 const NotchedFrame: React.FC<{ children: React.ReactNode; resetAction: React.ReactNode }> = ({ children, resetAction }) => {
@@ -237,9 +268,25 @@ const minimizeMessage = (msg: string): string => {
   return msg;
 };
 
+// Rate-limited log sender: at most 1 log every 2 minutes
+let lastLogApiSentTimestamp = 0;
+const LOG_API_RATE_LIMIT_MS = 2 * 60 * 1000; // 2 minutes
+
 const sendLogToServer = (type: string, args: any[]) => {
   try {
-    const rawMessage = args.map(a => typeof a === 'object' ? JSON.stringify(a) : String(a)).join(' ');
+    const now = Date.now();
+    if (now - lastLogApiSentTimestamp < LOG_API_RATE_LIMIT_MS) {
+      return;
+    }
+    lastLogApiSentTimestamp = now;
+
+    const rawMessage = args.map(a => {
+      if (a instanceof Error) return a.stack || a.message;
+      if (typeof a === 'object') {
+        try { return JSON.stringify(a); } catch { return String(a); }
+      }
+      return String(a);
+    }).join(' ');
     const message = minimizeMessage(rawMessage);
     fetch(`${BACKEND_ORIGIN}/api/log`, {
       method: 'POST',
@@ -250,24 +297,18 @@ const sendLogToServer = (type: string, args: any[]) => {
 };
 
 console.log = (...args) => {
-  const minimizedArgs = args.map(a => typeof a === 'string' ? minimizeMessage(a) : a);
-  originalConsoleLog(...minimizedArgs);
-  sendLogToServer('INFO', args);
+  originalConsoleLog(...args);
+};
+console.info = (...args) => {
+  originalConsoleInfo(...args);
 };
 console.warn = (...args) => {
-  const minimizedArgs = args.map(a => typeof a === 'string' ? minimizeMessage(a) : a);
-  originalConsoleWarn(...minimizedArgs);
+  originalConsoleWarn(...args);
   sendLogToServer('WARN', args);
 };
 console.error = (...args) => {
-  const minimizedArgs = args.map(a => typeof a === 'string' ? minimizeMessage(a) : a);
-  originalConsoleError(...minimizedArgs);
+  originalConsoleError(...args);
   sendLogToServer('ERROR', args);
-};
-console.info = (...args) => {
-  const minimizedArgs = args.map(a => typeof a === 'string' ? minimizeMessage(a) : a);
-  originalConsoleInfo(...minimizedArgs);
-  sendLogToServer('INFO', args);
 };
 
 const defaultSettings = {
@@ -291,13 +332,15 @@ const defaultSettings = {
   defaultSub: 'ENG',
   historyLimit: 10 as number | 'Infinite',
   historySaveInterval: 5 as number,
-  theme: 'dark' as 'dark' | 'black-and-white' | 'light' | 'garden' | 'black' | 'luxury' | 'dim' | 'abyss' | 'aqua' | 'valentine',
+  theme: 'midnight-slate' as 'midnight-slate' | 'ember-night' | 'forest-mist' | 'valor-crimson' | 'soft-paper' | 'black-ops' | 'auto' | string,
   hideUIOverlays: false,
   hideVideoName: false,
   uiHideTimeout: 1.5,
   toastDuration: 4.0,
   disableAnimations: false,
   pauseOnFocusChange: false,
+  focusOnClick: true,
+  focusOnClickNoPause: true,
   showPlayButton: true,
   showTimeDisplay: true,
   showPlayBar: true,
@@ -324,18 +367,22 @@ const defaultSettings = {
   theIntroDbMode: 'fetch' as 'fetch' | 'send_fetch',
   getOverlayDataFromTmdb: true as boolean,
   tmdbApiKey: '' as string,
-  experienceMode: 'cloud' as 'local' | 'cloud' | 'hybrid',
-  overlayPosition: 'bottom-left' as 'bottom-left' | 'bottom-right' | 'top-left' | 'top-right',
+  experienceMode: 'local' as 'local' | 'cloud' | 'hybrid',
+  overlayPosition: 'middle-left' as 'middle-left' | 'bottom-left' | 'bottom-right' | 'top-left' | 'top-right',
   overlayShowBackground: true as boolean,
   overlayShowRating: true as boolean,
   overlayShowOverview: true as boolean,
+  overlayActiveTime: 10 as number,
   openSubtitlesApiKey: '' as string,
   traktAccessToken: '' as string,
-  traktRedirectUri: 'http://localhost:50000' as string,
+  traktRefreshToken: '' as string,
+  traktUsername: '' as string,
+  traktAvatar: '' as string,
+  traktRedirectUri: '' as string,
   traktSyncHistory: true as boolean,
   traktSyncFavorites: true as boolean,
   calendarStyle: 'grid' as 'grid' | 'list',
-  isOnboarded: false as boolean,
+  isOnboarded: true as boolean,
   subSettings: {
     fontSize: 'medium' as 'small' | 'medium' | 'large' | 'extra-large',
     color: 'white' as 'white' | 'yellow' | 'cyan' | 'green',
@@ -359,7 +406,8 @@ const defaultSettings = {
     speed: true,
     pip: false,
     loop: false
-  }
+  },
+  cacheSettings: DEFAULT_CACHE_SETTINGS
 };
 
 function App() {
@@ -380,6 +428,9 @@ function App() {
       if (saved) {
         const parsed = JSON.parse(saved);
         if (parsed && typeof parsed === 'object') {
+          if (parsed.traktRedirectUri) {
+            parsed.traktRedirectUri = parsed.traktRedirectUri.trim().replace(/\/+$/, '');
+          }
           return {
             ...baseSettings,
             ...parsed,
@@ -392,6 +443,10 @@ function App() {
             subSettings: {
               ...defaultSettings.subSettings,
               ...(parsed.subSettings && typeof parsed.subSettings === 'object' ? parsed.subSettings : {})
+            },
+            cacheSettings: {
+              ...defaultSettings.cacheSettings,
+              ...(parsed.cacheSettings && typeof parsed.cacheSettings === 'object' ? parsed.cacheSettings : {})
             }
           };
         }
@@ -432,13 +487,36 @@ function App() {
       const saved = localStorage.getItem(videosKey);
       if (saved) {
         const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed)) {
+        if (Array.isArray(parsed) && parsed.length > 0) {
           const useIdStreamInit = getUseIdStreamFromStorage();
           return sanitizeVideoList(parsed.map((v: any) => ({
             ...v,
             audioTracks: [],
             subtitleTracks: []
           })), useIdStreamInit);
+        }
+      }
+
+      // Fallback: If current profile key had no videos, scan localStorage for any existing valor_videos*
+      const keys = Object.keys(localStorage);
+      for (const k of keys) {
+        if (k === 'valor_videos' || k.startsWith('valor_videos_')) {
+          const fallbackSaved = localStorage.getItem(k);
+          if (fallbackSaved) {
+            try {
+              const parsed = JSON.parse(fallbackSaved);
+              if (Array.isArray(parsed) && parsed.length > 0) {
+                // Recover and mirror to active user key
+                localStorage.setItem(videosKey, fallbackSaved);
+                const useIdStreamInit = getUseIdStreamFromStorage();
+                return sanitizeVideoList(parsed.map((v: any) => ({
+                  ...v,
+                  audioTracks: [],
+                  subtitleTracks: []
+                })), useIdStreamInit);
+              }
+            } catch {}
+          }
         }
       }
       return [];
@@ -498,25 +576,49 @@ function App() {
   }, [settings.userId]);
   const [playingVideoState, rawSetPlayingVideo] = useState<VideoItem | null>(() => {
     try {
-      const params = new URLSearchParams(window.location.search);
-      if (params.get('file')) return null;
+      // Clear legacy shared localStorage keys so other tabs/webpages are never hijacked
+      try {
+        localStorage.removeItem('valor_currently_playing');
+        localStorage.removeItem('valor_active_tab');
+      } catch {}
 
-      const saved = localStorage.getItem('valor_currently_playing');
-      const useIdStreamInit = getUseIdStreamFromStorage();
-      return saved ? sanitizeVideoItem(JSON.parse(saved), useIdStreamInit) : null;
+      const isReload = (() => {
+        try {
+          const navEntries = performance.getEntriesByType('navigation');
+          if (navEntries.length > 0) {
+            return (navEntries[0] as PerformanceNavigationTiming).type === 'reload';
+          }
+          return (performance as any).navigation?.type === 1;
+        } catch {
+          return false;
+        }
+      })();
+
+      if (!isReload) {
+        // Fresh navigation / typing URL: start clean on Home/Library, do not auto-jump into player
+        try {
+          sessionStorage.removeItem('valor_currently_playing');
+        } catch {}
+        return null;
+      }
+
+      // Page reload: keep user in player where they left off
+      const saved = sessionStorage.getItem('valor_currently_playing');
+      if (saved) {
+        const item = JSON.parse(saved);
+        if (item && item.id) {
+          return item;
+        }
+      }
+
+      return null;
     } catch (err) {
       console.error('Failed to parse currently playing video:', err);
       return null;
     }
   });
 
-  const [isPlaybackRestoring, setIsPlaybackRestoring] = useState(() => {
-    try {
-      return !!localStorage.getItem('valor_currently_playing');
-    } catch {
-      return false;
-    }
-  });
+  const [isPlaybackRestoring, setIsPlaybackRestoring] = useState(false);
 
   const videos = videosState;
   const playingVideo = playingVideoState;
@@ -541,37 +643,113 @@ function App() {
       rawSetPlayingVideo(val ? sanitizeVideoItem(val, useIdStream) : null);
     }
   }, [settings.storageMode, settings.userId]);
+  type DetailsHistoryItem = 
+    | { type: 'media'; video: VideoItem }
+    | { type: 'actor'; actor: { id: number; name: string; profilePath?: string } };
+
+  const [detailsHistory, setDetailsHistory] = useState<DetailsHistoryItem[]>([]);
   const [selectedDetailsMedia, setSelectedDetailsMedia] = useState<VideoItem | null>(null);
   const [selectedActor, setSelectedActor] = useState<{ id: number; name: string; profilePath?: string } | null>(null);
+
+  const handleOpenMediaDetails = (video: VideoItem) => {
+    setDetailsHistory(prev => [...prev, { type: 'media', video }]);
+    setSelectedDetailsMedia(video);
+    setSelectedActor(null);
+  };
+
+  const handleOpenActorDetails = (actor: { id: number; name: string; profilePath?: string }) => {
+    setDetailsHistory(prev => [...prev, { type: 'actor', actor }]);
+    setSelectedActor(actor);
+    setSelectedDetailsMedia(null);
+  };
+
+  const handleCloseDetails = () => {
+    setDetailsHistory(prev => {
+      if (prev.length <= 1) {
+        setSelectedActor(null);
+        setSelectedDetailsMedia(null);
+        return [];
+      }
+      const nextHistory = prev.slice(0, -1);
+      const top = nextHistory[nextHistory.length - 1];
+      if (top.type === 'actor') {
+        setSelectedActor(top.actor);
+        setSelectedDetailsMedia(null);
+      } else {
+        setSelectedDetailsMedia(top.video);
+        setSelectedActor(null);
+      }
+      return nextHistory;
+    });
+  };
+
+  useEffect(() => {
+    if (!selectedDetailsMedia && !selectedActor) {
+      setDetailsHistory([]);
+    }
+  }, [selectedDetailsMedia, selectedActor]);
   const [historyViewMode, setHistoryViewMode] = useState<'list' | 'calendar'>('list');
-  const [activeTab, setActiveTab] = useState<'home' | 'history' | 'calendar' | 'library' | 'settings' | 'online' | 'vlr'>(() => {
-    const saved = localStorage.getItem('valor_active_tab');
-    if (saved && ['home', 'history', 'calendar', 'library', 'settings', 'online', 'vlr'].includes(saved)) {
+  const [features, setFeatures] = useState(() => featureFlagService.getFeatures());
+
+  useEffect(() => {
+    return featureFlagService.subscribe(() => {
+      setFeatures({ ...featureFlagService.getFeatures() });
+    });
+  }, []);
+
+  const [activeTab, setActiveTab] = useState<'home' | 'history' | 'calendar' | 'library' | 'settings' | 'online' | 'vlr' | 'companion' | 'not-found' | 'under-construction'>(() => {
+    const urlTab = new URLSearchParams(window.location.search).get('tab');
+    if (urlTab) {
+      return urlTab as any;
+    }
+    const saved = sessionStorage.getItem('valor_active_tab');
+    if (saved && ['home', 'history', 'calendar', 'library', 'settings', 'online', 'vlr', 'companion', 'not-found', 'under-construction'].includes(saved)) {
       return saved as any;
     }
     return 'home';
   });
 
   useEffect(() => {
-    localStorage.setItem('valor_active_tab', activeTab);
+    sessionStorage.setItem('valor_active_tab', activeTab);
   }, [activeTab]);
 
   useEffect(() => {
     if (isPlaybackRestoring) return;
     if (playingVideo) {
-      localStorage.setItem('valor_currently_playing', JSON.stringify(playingVideo));
+      sessionStorage.setItem('valor_currently_playing', JSON.stringify(playingVideo));
+      if (typeof playingVideo.currentTime === 'number') {
+        saveMediaTimestamp(playingVideo, playingVideo.currentTime, parseDurationToSeconds(playingVideo.duration), playingVideo.title);
+      }
     } else {
-      localStorage.removeItem('valor_currently_playing');
+      sessionStorage.removeItem('valor_currently_playing');
     }
   }, [playingVideo, isPlaybackRestoring]);
 
-  const [settingsTab, setSettingsTab] = useState<'general' | 'hotkeys' | 'subtitle' | 'storage' | 'gridOverlay' | 'api' | 'bookmarks' | 'loader' | 'radialMenu'>('general');
+  // Flush media playback position on browser reload / pagehide
+  useEffect(() => {
+    const handleUnload = () => {
+      if (playingVideo && typeof playingVideo.currentTime === 'number') {
+        saveMediaTimestamp(playingVideo, playingVideo.currentTime, parseDurationToSeconds(playingVideo.duration), playingVideo.title);
+        sessionStorage.setItem('valor_currently_playing', JSON.stringify(playingVideo));
+      }
+    };
+    window.addEventListener('beforeunload', handleUnload);
+    window.addEventListener('pagehide', handleUnload);
+    return () => {
+      window.removeEventListener('beforeunload', handleUnload);
+      window.removeEventListener('pagehide', handleUnload);
+    };
+  }, [playingVideo]);
+
+  const [settingsTab, setSettingsTab] = useState<'general' | 'hotkeys' | 'subtitle' | 'storage' | 'gridOverlay' | 'api' | 'bookmarks' | 'loader' | 'radialMenu' | 'companion'>('general');
   const [uiOverlaySection, setUiOverlaySection] = useState<'gridOverlay' | 'pauseOverlay'>('gridOverlay');
   const [previewExpanded, setPreviewExpanded] = useState(false);
   const [showResetConfirm, setShowResetConfirm] = useState(false);
   const [hoveredHotkey, setHoveredHotkey] = useState<string | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const [processingStep, setProcessingStep] = useState('');
+  const [processingUrl, setProcessingUrl] = useState('');
+  const [processingTitle, setProcessingTitle] = useState('');
 
   const renderMockPreviewButton = (key: string) => {
     const iconSize = 14;
@@ -637,33 +815,6 @@ function App() {
     }
   };
 
-  if (false as boolean) {
-    console.log(isProcessing, processingStep);
-  }
-
-  // Heartbeat to keep the server alive while the app is active and receive commands
-  useEffect(() => {
-    const ping = async () => {
-      try {
-        const res = await fetch(`${BACKEND_ORIGIN}/api/heartbeat`, { method: 'POST' });
-        if (res.ok) {
-          const data = await res.json();
-          if (data && data.playFile) {
-            const localStreamUrl = `${BACKEND_ORIGIN}/local-video-stream?path=${encodeURIComponent(data.playFile)}`;
-            processRemoteUrl(localStreamUrl, true);
-            // Update URL query parameters without reloading the page
-            const newUrl = `${window.location.pathname}?file=${encodeURIComponent(data.playFile)}`;
-            window.history.replaceState({}, '', newUrl);
-          }
-        }
-      } catch (err) {
-        // ignore fetch/parse errors
-      }
-    };
-    ping();
-    const interval = setInterval(ping, 2500);
-    return () => clearInterval(interval);
-  }, []);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -693,81 +844,60 @@ function App() {
 
     const traktCode = params.get('code');
     if (traktCode) {
-      const exchangeTraktCode = async () => {
+      const handleTraktAuthReturn = async () => {
         try {
-          let redirectUri = 'http://localhost:50000';
-          try {
-            const activeUserId = localStorage.getItem('valor_active_user_id') || 'local';
-            const settingsKey = activeUserId === 'local' ? 'valor_settings' : `valor_settings_${activeUserId}`;
-            const savedSettings = localStorage.getItem(settingsKey);
-            if (savedSettings) {
-              const parsed = JSON.parse(savedSettings);
-              if (parsed.traktRedirectUri) {
-                redirectUri = parsed.traktRedirectUri;
-              }
-            }
-          } catch {}
+          const authAction = getTraktAuthAction();
+          const tokenData = await exchangeTraktCodeForToken(traktCode, BACKEND_ORIGIN);
+          const accessToken = tokenData.access_token;
+          const refreshToken = tokenData.refresh_token || '';
 
-          let accessToken = null;
-
-          // 1. Try Backend API exchange endpoint
-          try {
-            const res = await fetch(`${BACKEND_ORIGIN}/api/trakt/exchange`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                code: traktCode,
-                redirect_uri: redirectUri
-              })
-            });
-            if (res.ok) {
-              const data = await res.json();
-              if (data.access_token) accessToken = data.access_token;
-            }
-          } catch (e) {
-            console.warn('Backend Trakt exchange failed, trying client fallback');
-          }
-
-          // 2. Client-side direct Trakt token exchange fallback
           if (!accessToken) {
-            const traktRes = await fetch('https://api.trakt.tv/oauth/token', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                code: traktCode,
-                client_id: 'f2926f0d87d3e789c50a3c276ab6002f5027dec31089fe75792c2836165c7289',
-                redirect_uri: redirectUri,
-                grant_type: 'authorization_code'
-              })
-            });
-            if (traktRes.ok) {
-              const data = await traktRes.json();
-              if (data.access_token) accessToken = data.access_token;
-            }
+            throw new Error('No access token received from Trakt.tv');
           }
 
-          if (accessToken) {
-            setSettings(prev => {
-              const updated = {
-                ...prev,
-                traktAccessToken: accessToken
-              };
-              saveSettingsToStorage(updated);
-              return updated;
-            });
-            addToast('Successfully connected to Trakt.tv!', 'success');
-          } else {
-            throw new Error('Failed to exchange code for access token');
+          let traktProfile = null;
+          try {
+            traktProfile = await fetchTraktUserProfile(accessToken, BACKEND_ORIGIN);
+          } catch (profileErr) {
+            console.warn('[Trakt PKCE] Could not fetch user profile details:', profileErr);
           }
-        } catch (err) {
-          console.error('Error exchanging Trakt auth code:', err);
-          addToast('Failed to connect to Trakt.tv.', 'error');
+
+          const username = traktProfile?.username || '';
+          const avatar = traktProfile?.avatarUrl || '';
+
+          setSettings(prev => {
+            const updated = {
+              ...prev,
+              traktAccessToken: accessToken,
+              traktRefreshToken: refreshToken,
+              traktUsername: username || prev.traktUsername || '',
+              traktAvatar: avatar || prev.traktAvatar || ''
+            };
+            saveSettingsToStorage(updated);
+            return updated;
+          });
+
+          if (authAction === 'login' && username) {
+            setIsAuthModalOpen(false);
+            addToast(`Welcome, @${username}! Signed in via Trakt.tv.`, 'success');
+          } else {
+            addToast(
+              username
+                ? `Successfully connected to Trakt.tv as @${username}!`
+                : 'Successfully connected to Trakt.tv!',
+              'success'
+            );
+          }
+        } catch (err: any) {
+          console.error('[Trakt PKCE] Error handling Trakt auth return:', err);
+          addToast(`Trakt Auth Error: ${err.message || 'Failed to authenticate'}`, 'error');
         } finally {
+          clearTraktAuthState();
           const cleanUrl = window.location.pathname + window.location.hash;
           window.history.replaceState({}, document.title, cleanUrl);
         }
       };
-      exchangeTraktCode();
+      handleTraktAuthReturn();
     }
   }, []);
 
@@ -824,13 +954,10 @@ function App() {
         localStorage.setItem('valor_active_user_id', activeUserId);
       }
 
-      console.log('[VALOR INITIALIZATION] Starting setup. activeUserId in localStorage:', activeUserId);
-
       // 0. If using local browser profile, load it immediately and do not let server override it
       if (activeUserId === 'local' || activeUserId.startsWith('local_')) {
         const settingsKey = activeUserId === 'local' ? 'valor_settings' : `valor_settings_${activeUserId}`;
         const saved = localStorage.getItem(settingsKey);
-        console.log('[VALOR INITIALIZATION] Loading local profile settings. settingsKey:', settingsKey, 'savedContentLength:', saved ? saved.length : 0);
         if (saved) {
           try {
             const parsed = JSON.parse(saved);
@@ -840,7 +967,8 @@ function App() {
               userId: activeUserId,
               storageMode: 'localstorage',
               keybinds: { ...defaultSettings.keybinds, ...(parsed.keybinds || {}) },
-              subSettings: { ...defaultSettings.subSettings, ...(parsed.subSettings || {}) }
+              subSettings: { ...defaultSettings.subSettings, ...(parsed.subSettings || {}) },
+              cacheSettings: { ...defaultSettings.cacheSettings, ...(parsed.cacheSettings || {}) }
             };
             setSettings(loadedSettings);
           } catch {
@@ -863,7 +991,6 @@ function App() {
         
         const videosKey = activeUserId === 'local' ? 'valor_videos' : `valor_videos_${activeUserId}`;
         const savedVideos = localStorage.getItem(videosKey);
-        console.log('[VALOR INITIALIZATION] Loading local profile videos. videosKey:', videosKey, 'savedVideosContentLength:', savedVideos ? savedVideos.length : 0);
         if (savedVideos) {
           try {
             const parsed = JSON.parse(savedVideos);
@@ -892,19 +1019,38 @@ function App() {
             }
           `, { userId: activeUserId });
           const profileData = pData.profile || {};
-          if (profileData && profileData.settings) {
+          const fallbackName = localStorage.getItem('valor_logged_in_username') || '';
+          if (profileData && profileData.settings && Object.keys(profileData.settings).length > 0) {
             loadedSettings = {
               ...defaultSettings,
               ...profileData.settings,
               userId: activeUserId,
+              profileName: profileData.settings.profileName || fallbackName || 'User',
               storageMode: 'file',
               keybinds: { ...defaultSettings.keybinds, ...(profileData.settings.keybinds || {}) },
-              subSettings: { ...defaultSettings.subSettings, ...(profileData.settings.subSettings || {}) }
+              subSettings: { ...defaultSettings.subSettings, ...(profileData.settings.subSettings || {}) },
+              cacheSettings: { ...defaultSettings.cacheSettings, ...(profileData.settings.cacheSettings || {}) }
             };
             setSettings(loadedSettings);
             settingsLoaded = true;
+          } else {
+            const localSaved = localStorage.getItem(`valor_settings_${activeUserId}`);
+            if (localSaved) {
+              try {
+                const parsed = JSON.parse(localSaved);
+                loadedSettings = {
+                  ...defaultSettings,
+                  ...parsed,
+                  userId: activeUserId,
+                  profileName: parsed.profileName || fallbackName || 'User',
+                  storageMode: 'file'
+                };
+                setSettings(loadedSettings);
+                settingsLoaded = true;
+              } catch {}
+            }
           }
-          if (profileData && Array.isArray(profileData.history)) {
+          if (profileData && Array.isArray(profileData.history) && profileData.history.length > 0) {
             loadedVideos = profileData.history.map((v: any) => ({
               ...v,
               audioTracks: v.audioTracks || [],
@@ -912,6 +1058,14 @@ function App() {
             }));
             setVideos(loadedVideos);
             historyLoaded = true;
+          } else {
+            // Check local fallback: if cloud has no history yet, recover from sitting localStorage!
+            const localVideos = collectLocalVideos(activeUserId);
+            if (localVideos.length > 0) {
+              setVideos(localVideos);
+              historyLoaded = true;
+              syncProfileDataToCloud(activeUserId, { inMemoryVideos: localVideos, currentSettings: loadedSettings }).catch(() => {});
+            }
           }
         } catch (e) {
           console.warn('Failed to load profile data from saved local user ID');
@@ -951,7 +1105,8 @@ function App() {
                   userId: serverActiveUserId,
                   storageMode: 'file',
                   keybinds: { ...defaultSettings.keybinds, ...(profileData.settings.keybinds || {}) },
-                  subSettings: { ...defaultSettings.subSettings, ...(profileData.settings.subSettings || {}) }
+                  subSettings: { ...defaultSettings.subSettings, ...(profileData.settings.subSettings || {}) },
+                  cacheSettings: { ...defaultSettings.cacheSettings, ...(profileData.settings.cacheSettings || {}) }
                 };
                 setSettings(loadedSettings);
                 settingsLoaded = true;
@@ -989,7 +1144,8 @@ function App() {
                       userId: userId,
                       storageMode: 'file',
                       keybinds: { ...defaultSettings.keybinds, ...(profileData.settings.keybinds || {}) },
-                      subSettings: { ...defaultSettings.subSettings, ...(profileData.settings.subSettings || {}) }
+                      subSettings: { ...defaultSettings.subSettings, ...(profileData.settings.subSettings || {}) },
+                      cacheSettings: { ...defaultSettings.cacheSettings, ...(profileData.settings.cacheSettings || {}) }
                     };
                     setSettings(loadedSettings);
                     settingsLoaded = true;
@@ -1012,7 +1168,8 @@ function App() {
                     userId: 'local',
                     storageMode: 'file',
                     keybinds: { ...defaultSettings.keybinds, ...(serverSettings.keybinds || {}) },
-                    subSettings: { ...defaultSettings.subSettings, ...(serverSettings.subSettings || {}) }
+                    subSettings: { ...defaultSettings.subSettings, ...(serverSettings.subSettings || {}) },
+                    cacheSettings: { ...defaultSettings.cacheSettings, ...(serverSettings.cacheSettings || {}) }
                   };
                   setSettings(loadedSettings);
                   settingsLoaded = true;
@@ -1052,7 +1209,8 @@ function App() {
               ...defaultSettings,
               ...parsed,
               keybinds: { ...defaultSettings.keybinds, ...(parsed.keybinds || {}) },
-              subSettings: { ...defaultSettings.subSettings, ...(parsed.subSettings || {}) }
+              subSettings: { ...defaultSettings.subSettings, ...(parsed.subSettings || {}) },
+              cacheSettings: { ...defaultSettings.cacheSettings, ...(parsed.cacheSettings || {}) }
             };
             setSettings(loadedSettings);
           } catch {}
@@ -1084,14 +1242,37 @@ function App() {
 
 
 
-  const formatTime = (secs: number) => {
-    if (isNaN(secs) || secs < 0) return '00:00';
-    const h = Math.floor(secs / 3600);
-    const m = Math.floor((secs % 3600) / 60);
-    const s = Math.floor(secs % 60);
-    const mStr = m.toString().padStart(2, '0');
+  const parseDurationToSeconds = (duration: string | number | undefined): number => {
+    if (duration === undefined || duration === null) return 0;
+    if (typeof duration === 'number') return duration;
+    const clean = String(duration).trim();
+    if (!clean || clean.toLowerCase() === 'unknown') return 0;
+    if (!isNaN(Number(clean))) {
+      return Number(clean);
+    }
+    const parts = clean.split(':').map(Number);
+    if (parts.some(isNaN)) return 0;
+    if (parts.length === 2) {
+      return parts[0] * 60 + parts[1];
+    }
+    if (parts.length === 3) {
+      return parts[0] * 3600 + parts[1] * 60 + parts[2];
+    }
+    return 0;
+  };
+
+  const formatTime = (secs: number | string | undefined) => {
+    const num = typeof secs === 'number' ? secs : parseDurationToSeconds(secs);
+    if (isNaN(num) || num < 0) return '0:00';
+    const rounded = Math.round(num);
+    const h = Math.floor(rounded / 3600);
+    const m = Math.floor((rounded % 3600) / 60);
+    const s = Math.floor(rounded % 60);
     const sStr = s.toString().padStart(2, '0');
-    if (h > 0) return `${h}:${mStr}:${sStr}`;
+    if (h > 0) {
+      const mStr = m.toString().padStart(2, '0');
+      return `${h}:${mStr}:${sStr}`;
+    }
     return `${m}:${sStr}`;
   };
 
@@ -1112,63 +1293,74 @@ function App() {
     return false;
   };
 
-  const parseDurationToSeconds = (duration: string | number | undefined): number => {
-    if (duration === undefined || duration === null) return 0;
-    if (typeof duration === 'number') return duration;
-    const clean = String(duration).trim();
-    if (!clean || clean.toLowerCase() === 'unknown') return 0;
-    if (!isNaN(Number(clean))) {
-      return Number(clean);
-    }
-    const parts = clean.split(':').map(Number);
-    if (parts.some(isNaN)) return 0;
-    if (parts.length === 2) {
-      return parts[0] * 60 + parts[1];
-    }
-    if (parts.length === 3) {
-      return parts[0] * 3600 + parts[1] * 60 + parts[2];
-    }
-    return 0;
-  };
+  const getVideoIdentity = (
+    itemOrTitle: string | Partial<VideoItem>,
+    sourceHint?: 'local' | 'remote' | 'online' | Partial<VideoItem>
+  ): string => {
+    let title = '';
+    let source: 'local' | 'remote' | 'online' = 'local';
 
-  const getVideoIdentity = (title: string): string => {
+    if (typeof itemOrTitle === 'string') {
+      title = itemOrTitle;
+      if (typeof sourceHint === 'string') {
+        source = sourceHint;
+      } else if (sourceHint && typeof sourceHint === 'object') {
+        source = getVideoSourceType(sourceHint);
+      }
+    } else if (itemOrTitle) {
+      title = itemOrTitle.title || '';
+      if (typeof sourceHint === 'string') {
+        source = sourceHint;
+      } else {
+        source = getVideoSourceType(itemOrTitle);
+      }
+    }
+
     const info = classifyVideoTitle(title);
+    let baseKey = '';
     if (info.type === 'series' && info.season !== undefined && info.episode !== undefined) {
       const cleanSeries = info.seriesTitle ? info.seriesTitle.toLowerCase().trim() : info.displayTitle.toLowerCase().trim();
-      return `series:${cleanSeries}:s${info.season.toString().padStart(2, '0')}e${info.episode.toString().padStart(2, '0')}`;
+      baseKey = `series:${cleanSeries}:s${info.season.toString().padStart(2, '0')}e${info.episode.toString().padStart(2, '0')}`;
+    } else {
+      baseKey = `movie:${info.displayTitle.toLowerCase().trim()}`;
     }
-    return `movie:${info.displayTitle.toLowerCase().trim()}`;
+    return `${source}:${baseKey}`;
   };
 
   const mergeOrAddVideo = (prev: VideoItem[], newItem: VideoItem): VideoItem[] => {
-    const newIdentity = getVideoIdentity(newItem.title);
-    const existingIndex = prev.findIndex(v => getVideoIdentity(v.title) === newIdentity);
+    const itemWithSource: VideoItem = {
+      ...newItem,
+      sourceType: newItem.sourceType || getVideoSourceType(newItem)
+    };
+    const newIdentity = getVideoIdentity(itemWithSource);
+    const existingIndex = prev.findIndex(v => getVideoIdentity(v) === newIdentity);
     const nowIso = new Date().toISOString();
 
     if (existingIndex !== -1) {
       const existing = prev[existingIndex];
       const merged: VideoItem = {
         ...existing,
-        ...newItem,
+        ...itemWithSource,
         id: existing.id,
-        currentTime: existing.currentTime || newItem.currentTime || 0,
+        sourceType: itemWithSource.sourceType,
+        currentTime: existing.currentTime || itemWithSource.currentTime || 0,
         lastPlayedDate: nowIso,
         playedDates: Array.from(new Set([...(existing.playedDates || []), nowIso])),
-        rating: existing.rating || newItem.rating,
-        totalTimeWatched: existing.totalTimeWatched || newItem.totalTimeWatched || 0,
-        timeToFinish: existing.timeToFinish || newItem.timeToFinish
+        rating: existing.rating || itemWithSource.rating,
+        totalTimeWatched: existing.totalTimeWatched || itemWithSource.totalTimeWatched || 0,
+        timeToFinish: existing.timeToFinish || itemWithSource.timeToFinish
       };
       
       const filtered = prev.filter((_, idx) => idx !== existingIndex);
       return [merged, ...filtered];
     } else {
-      const initItem = {
-        ...newItem,
+      const initItem: VideoItem = {
+        ...itemWithSource,
         lastPlayedDate: nowIso,
         playedDates: [nowIso]
       };
-      const filtered = (newItem.url && newItem.url.trim() !== '')
-        ? prev.filter(v => v.url !== newItem.url)
+      const filtered = (itemWithSource.url && itemWithSource.url.trim() !== '')
+        ? prev.filter(v => v.url !== itemWithSource.url || getVideoSourceType(v) !== itemWithSource.sourceType)
         : prev;
       return [initItem, ...filtered];
     }
@@ -1182,6 +1374,76 @@ function App() {
   const historyVideoInputRef = useRef<HTMLInputElement>(null);
   const pendingLocalReassociateIdRef = useRef<string | null>(null);
   const isPickerOpenRef = useRef(false);
+
+  // ── Multi-file playlist ──────────────────────────────────────────────────
+  const {
+    playlist,
+    setPlaylist,
+    allPlaylists,
+    addItems: addPlaylistItems,
+    setIndex: setPlaylistIndex,
+    nextIndex: playlistNextIndex,
+    prevIndex: playlistPrevIndex,
+    removeItem: removePlaylistItem,
+    clearAll: clearPlaylist,
+    markError: markPlaylistError,
+    updateSavedTime: updatePlaylistSavedTime,
+    reorderItem: reorderPlaylistItem,
+    loadFolderPlaylist,
+    switchPlaylist,
+    renamePlaylist,
+    deletePlaylist,
+    createNewPlaylist,
+    locateFile,
+    resolveItemFile,
+    persist: persistPlaylist,
+  } = usePlaylist();
+
+  const [showPlaylistPanel, setShowPlaylistPanel] = useState(false);
+  const [isFilesAccessExpired, setIsFilesAccessExpired] = useState(false);
+  const restoreAttemptedRef = useRef(false);
+
+  // Check if a local collection / media is currently loaded in the local player
+  const isCollectionLoaded = Boolean(
+    playingVideo &&
+    !playingVideo.isRemote &&
+    (playlist.items.length > 0 || playingVideo.file || (playingVideo as any).hasHandle || playingVideo.type === 'local')
+  );
+
+  // Save playback position and playlist state to persistent storage
+  const handleSavePlaybackAndPlaylist = useCallback(() => {
+    if (playingVideo) {
+      const pos = typeof playingVideo.currentTime === 'number' ? playingVideo.currentTime : 0;
+      saveMediaTimestamp(playingVideo, pos, parseDurationToSeconds(playingVideo.duration), playingVideo.title);
+      try {
+        sessionStorage.setItem('valor_currently_playing', JSON.stringify({
+          ...playingVideo,
+          currentTime: pos,
+        }));
+      } catch {}
+    }
+    if (playlist && playlist.items && playlist.items.length > 0) {
+      try {
+        const stored = stateToStored(playlist);
+        savePlaylistToStore(stored);
+      } catch {}
+    }
+  }, [playingVideo, playlist]);
+
+  // Reload guard hook: intercepts F5, Ctrl+R, beforeunload, pagehide, visibilitychange
+  const {
+    showModal: showReloadModal,
+    dismissModal: handleDismissReloadModal,
+    reloadAnyway: handleReloadAnyway,
+  } = useReloadGuard({
+    isCollectionLoaded,
+    onSaveState: handleSavePlaybackAndPlaylist,
+  });
+
+  // Switch token: stale async loads see a different token and bail out
+  const switchTokenRef = useRef(0);
+  // Drop "play now vs queue" prompt state
+  const [pendingDropFiles, setPendingDropFiles] = useState<{ items: PlaylistItem[]; onPlayNow: () => void; onAddToQueue: () => void } | null>(null);
   const lastHistorySyncTimeRef = useRef<number>(0);
   const historySyncTimeoutRef = useRef<any>(null);
   const saveTimeoutRef = useRef<any>(null);
@@ -1203,28 +1465,38 @@ function App() {
     isPaused: boolean 
   }[]>([]);
   
-  const addToast = useCallback((text: string, type: 'success' | 'error' | 'warning' = 'success') => {
+  const addToast = useCallback((text: string, type: 'success' | 'error' | 'warning' = 'success', actionOrMessage?: { actionLabel: string; onAction: () => void } | string) => {
     const id = Math.random().toString(36).substring(2, 9);
     const title = type === 'success' ? 'Changes saved' : type === 'error' ? 'Error' : 'Warning';
     const durationMs = (settingsRef.current.toastDuration || 4.0) * 1000;
+    const action = typeof actionOrMessage === 'object' && actionOrMessage !== null ? actionOrMessage : undefined;
+    const displayText = typeof actionOrMessage === 'string' ? actionOrMessage : text;
     setToasts(prev => [...prev, { 
       id, 
       title, 
-      text, 
+      text: displayText, 
       type, 
       duration: durationMs, 
       timeLeft: durationMs, 
-      isPaused: false 
-    }]);
+      isPaused: false,
+      actionLabel: action?.actionLabel,
+      onAction: action?.onAction
+    } as any]);
   }, []);
 
   useEffect(() => {
     (window as any)._onShowMediaDetails = (video: VideoItem) => {
-      setSelectedActor(null);
-      setSelectedDetailsMedia(video);
+      handleOpenMediaDetails(video);
     };
     (window as any)._onRateCalendarVideo = (video: VideoItem, rating: number) => {
       handleUpdateVideo((prev) => ({ ...prev, rating }), false, video.id, true);
+      if (settings.traktAccessToken) {
+        syncTraktRating(video, rating, settings.traktAccessToken).then((res) => {
+          if (res.ok) {
+            addToast(`Trakt Rating: Synced ${rating <= 5 ? rating * 2 : rating}/10`, 'success');
+          }
+        }).catch(() => {});
+      }
     };
     (window as any)._onDeleteCalendarVideo = (video: VideoItem) => {
       const mockEvent = { stopPropagation: () => {} } as any;
@@ -1297,7 +1569,9 @@ function App() {
 
   // Direct Profile Creation Modal (directly in settings, bypassing onboarding)
   const [isCreateProfileModalOpen, setIsCreateProfileModalOpen] = useState(false);
+  const [createProfileType, setCreateProfileType] = useState<'local' | 'cloud'>('local');
   const [newProfileName, setNewProfileName] = useState('');
+  const [newProfileUsername, setNewProfileUsername] = useState('');
   const [newProfilePassword, setNewProfilePassword] = useState('');
   const [createProfileError, setCreateProfileError] = useState('');
   const [deleteConfirmText, setDeleteConfirmText] = useState('');
@@ -1386,16 +1660,52 @@ function App() {
   const handleSwitchProfile = (p: any) => {
     const isServer = p.userId && !p.userId.startsWith('local_') && p.userId !== 'local';
     if (isServer) {
-      openAuthModal('login', p);
+      if (p.hasPassword === false) {
+        // Direct switch for server profile without password
+        localStorage.setItem('valor_active_user_id', p.userId);
+        if (p.username) localStorage.setItem('valor_logged_in_username', p.username);
+        setSettings(prev => ({
+          ...prev,
+          userId: p.userId,
+          profileName: p.name || prev.profileName,
+          storageMode: 'file',
+          experienceMode: 'cloud'
+        }));
+        (async () => {
+          try {
+            const pData = await gqlFetch(`
+              query GetProfileData($userId: String!) {
+                profile(userId: $userId) { settings history }
+              }
+            `, { userId: p.userId });
+            const profileData = pData.profile || {};
+            if (profileData.settings) {
+              setSettings(prev => ({ ...prev, ...profileData.settings, userId: p.userId, storageMode: 'file' }));
+            }
+            if (Array.isArray(profileData.history) && profileData.history.length > 0) {
+              setVideos(profileData.history);
+            } else {
+              const localVideos = collectLocalVideos(p.userId);
+              if (localVideos.length > 0) {
+                setVideos(localVideos);
+                syncProfileDataToCloud(p.userId, { inMemoryVideos: localVideos }).catch(() => {});
+              }
+            }
+          } catch {}
+        })();
+        addToast(`Switched to profile: ${p.name || p.userId}`, 'success');
+      } else {
+        openAuthModal('login', p);
+      }
     } else {
       localStorage.setItem('valor_active_user_id', p.userId);
       const settingsKey = p.userId === 'local' ? 'valor_settings' : `valor_settings_${p.userId}`;
       const videosKey = p.userId === 'local' ? 'valor_videos' : `valor_videos_${p.userId}`;
       const savedSettings = localStorage.getItem(settingsKey);
       if (savedSettings) {
-        try { setSettings(prev => ({ ...prev, ...JSON.parse(savedSettings), userId: p.userId, storageMode: 'localstorage' })); } catch {}
+        try { setSettings(prev => ({ ...prev, ...JSON.parse(savedSettings), userId: p.userId, storageMode: 'localstorage', experienceMode: 'local' })); } catch {}
       } else {
-        setSettings(prev => ({ ...prev, userId: p.userId, profileName: p.name || 'Local Profile', storageMode: 'localstorage' }));
+        setSettings(prev => ({ ...prev, userId: p.userId, profileName: p.name || 'Local Profile', storageMode: 'localstorage', experienceMode: 'local' }));
       }
       const savedVideos = localStorage.getItem(videosKey);
       if (savedVideos) {
@@ -1429,6 +1739,20 @@ function App() {
           localProfiles = JSON.parse(localSaved);
         }
       } catch {}
+
+      // If user is logged into cloud or server profiles exist, clean up ghost local profile duplicates
+      const activeUserIdNow = localStorage.getItem('valor_active_user_id') || 'local';
+      const isCloudNow = activeUserIdNow !== 'local' && !activeUserIdNow.startsWith('local_');
+      if (isCloudNow || serverList.length > 0) {
+        localProfiles = localProfiles.filter((p: any) => 
+          p.userId !== 'local' && 
+          p.name !== 'Local Profile' && 
+          p.name !== 'Local profile' &&
+          p.name !== 'local' &&
+          !serverList.some((sp: any) => sp.userId === p.userId || sp.name === p.name)
+        );
+        localStorage.setItem('valor_local_profiles', JSON.stringify(localProfiles));
+      }
       
       const combined = [...localProfiles, ...serverList];
       setAvailableProfiles(combined);
@@ -1502,7 +1826,13 @@ function App() {
   }, []);
 
   useEffect(() => {
-    document.documentElement.setAttribute('data-theme', settings.theme || 'dark');
+    const urlTheme = new URLSearchParams(window.location.search).get('theme');
+    const theme = urlTheme || settings.theme || 'black-ops';
+    document.documentElement.setAttribute('data-theme', theme);
+    const metaTheme = document.querySelector('meta[name="theme-color"]');
+    if (metaTheme) {
+      metaTheme.setAttribute('content', (theme === 'black-ops' || theme === 'oled') ? '#000000' : (theme === 'soft-paper' ? '#ECE7DD' : '#0F1217'));
+    }
   }, [settings.theme]);
 
   const storageProvider = useMemo(() => {
@@ -1516,7 +1846,6 @@ function App() {
     let active = true;
     const loadFromProvider = async () => {
       try {
-        console.log('[StorageProvider] Loading settings and history from provider for userId:', settings.userId);
         
         // 1. Load latest settings
         const loadedSettings = await storageProvider.getSettings(defaultSettings);
@@ -1528,28 +1857,46 @@ function App() {
         }
 
         // 2. Load latest history
-        const loadedHistory = await storageProvider.getHistory();
-        if (active && loadedHistory) {
-          setVideos(loadedHistory);
+        let effectiveHistory = await storageProvider.getHistory();
+        if ((!effectiveHistory || effectiveHistory.length === 0) && active) {
+          // If provider returned 0 history, recover any sitting local history and sync to cloud!
+          const localVideos = collectLocalVideos(settings.userId);
+          if (localVideos.length > 0) {
+            effectiveHistory = localVideos;
+            syncProfileDataToCloud(settings.userId, { inMemoryVideos: localVideos, currentSettings: loadedSettings }).catch(() => {});
+          }
+        }
+
+        if (active && effectiveHistory && effectiveHistory.length > 0) {
+          setVideos(effectiveHistory);
           loadedVideosUserIdRef.current = settings.userId;
 
-          // 3. Recover currently playing video with full path and metadata
-          const currentlyPlaying = localStorage.getItem('valor_currently_playing');
+          // 3. Recover currently playing video with full path and metadata (per-tab)
+          const currentlyPlaying = sessionStorage.getItem('valor_currently_playing');
           if (currentlyPlaying) {
             try {
               let videoObj = JSON.parse(currentlyPlaying) as VideoItem;
               
               // Try to find a match in the loaded history
-              const matched = loadedHistory.find(h => h.id === videoObj.id || h.title === videoObj.title);
+              const matched = effectiveHistory.find(h => h.id === videoObj.id || h.title === videoObj.title);
               if (matched) {
                 const useIdStream = (loadedSettings?.storageMode === 'file' || settings.storageMode === 'file');
+                const storedPos = getMediaTimestamp(videoObj);
+                const resolvedTime = (storedPos > 0 && (!videoObj.currentTime || storedPos > videoObj.currentTime))
+                  ? storedPos
+                  : (videoObj.currentTime !== undefined ? videoObj.currentTime : matched.currentTime);
                 const merged = {
                   ...videoObj,
                   ...matched,
                   file: videoObj.file || matched.file,
-                  currentTime: videoObj.currentTime !== undefined ? videoObj.currentTime : matched.currentTime
+                  currentTime: resolvedTime
                 };
                 videoObj = sanitizeVideoItem(merged, useIdStream);
+              } else {
+                const storedPos = getMediaTimestamp(videoObj);
+                if (storedPos > 0 && (!videoObj.currentTime || storedPos > videoObj.currentTime)) {
+                  videoObj = { ...videoObj, currentTime: storedPos };
+                }
               }
               
               // If it's a local file and still using a blob URL (no localFilePath), try to recover from IndexedDB handle
@@ -1568,7 +1915,6 @@ function App() {
                         file,
                         url: newBlobUrl
                       };
-                      console.log('[Recovery] Successfully programmatically recovered local file handle and generated new blob URL.');
                     }
                   } catch (e) {
                     console.error('[Recovery] Failed to query permission on load:', e);
@@ -1584,7 +1930,6 @@ function App() {
                   }
                   if (videoObj.type === 'local' && !videoObj.localFilePath && (!isFileObj(videoObj.file) || !videoObj.url || videoObj.url.startsWith('blob:'))) {
                     if (hasHandle) {
-                      console.log('[Recovery] Local video has a saved handle. Retaining playingVideo for deferred permission grant.');
                       return {
                         ...videoObj,
                         hasHandle: true
@@ -1592,7 +1937,6 @@ function App() {
                     }
                     // No handle in IndexedDB, but still keep the video so the player's
                     // lock overlay can let the user re-select the file via onReassociate.
-                    console.log('[Recovery] Local video has no handle. Retaining for user-initiated reassociation.');
                     return videoObj;
                   }
                   return videoObj;
@@ -1764,6 +2108,16 @@ function App() {
     });
   };
 
+  // Automatically lock orientation to landscape on mobile when playing any video
+  useEffect(() => {
+    if (playingVideo && isMobileDevice()) {
+      lockToLandscape(document.documentElement);
+      return () => {
+        unlockOrientation();
+      };
+    }
+  }, [playingVideo]);
+
   // Global keybind for 'm' to play last played media when player is closed
   useEffect(() => {
     const handleGlobalKeyDown = (e: KeyboardEvent) => {
@@ -1818,13 +2172,6 @@ function App() {
     }
   }, [playingVideo, settings.saveHistory]);
 
-  useEffect(() => {
-    const limit = settings.historyLimit;
-    if (limit !== 'Infinite' && typeof limit === 'number' && videos.length > limit) {
-      setVideos(prev => prev.slice(0, limit));
-    }
-  }, [videos, settings.historyLimit]);
-
   const saveVideosToStorage = (videoList: VideoItem[], forceSync = false) => {
     if (saveTimeoutRef.current) {
       clearTimeout(saveTimeoutRef.current);
@@ -1834,9 +2181,7 @@ function App() {
     const performSave = async () => {
       try {
         const videosKey = settings.userId === 'local' || !settings.userId ? 'valor_videos' : `valor_videos_${settings.userId}`;
-        console.log('[VALOR HISTORY SAVE] saveVideosToStorage called. videosKey:', videosKey, 'videosLength:', videoList.length, 'saveHistorySetting:', settings.saveHistory, 'loadedVideosUserId:', loadedVideosUserIdRef.current, 'activeSettingsUserId:', settings.userId);
         if (loadedVideosUserIdRef.current !== settings.userId) {
-          console.log('[VALOR HISTORY SAVE] Aborting save. loadedVideosUserIdRef:', loadedVideosUserIdRef.current, 'does not match active settings.userId:', settings.userId);
           return;
         }
         if (!settings.saveHistory) {
@@ -1845,17 +2190,19 @@ function App() {
           return;
         }
 
-        const limit = settings.historyLimit;
-        let targetVideos = videoList;
-        if (limit !== 'Infinite' && typeof limit === 'number') {
-          targetVideos = videoList.slice(0, limit);
-        }
+        // Store all videos in the database and local storage without pruning
+        const targetVideos = videoList;
 
         await storageProvider.saveHistory(targetVideos, forceSync);
 
-        // Clean up stale file handles from IndexedDB (only removes entries for videos no longer in history)
-        const activeIds = targetVideos.map(v => v.id);
-        cleanupFileHandles(activeIds).catch(err => console.warn('[IndexedDB Cleanup] Failed:', err));
+        // Preserve all file handles in IndexedDB across reloads, playlists, and aliases
+
+        // Ensure subtitle tracks with cues are backed up into browser storage
+        targetVideos.forEach(v => {
+          if (v.subtitleTracks && v.subtitleTracks.some(t => t.cues && t.cues.length > 0)) {
+            saveEmbedSubtitles(v, v.subtitleTracks);
+          }
+        });
 
         const serialized = targetVideos.map(v => ({
           id: v.id,
@@ -1930,7 +2277,7 @@ function App() {
 
   useEffect(() => {
     saveVideosToStorage(videos, false);
-  }, [videos, settings.historyLimit]);
+  }, [videos]);
 
   useEffect(() => {
     // Check if the playingVideo is unplayable (dead local blob URL with no File object)
@@ -1959,7 +2306,6 @@ function App() {
             } else {
               // Permission is 'prompt'. Can't auto-request without user gesture.
               // The player will mount with the lock overlay for user-initiated permission.
-              console.log('[Recovery] Found IndexedDB handle but permission is prompt. Waiting for user interaction.');
               return;
             }
           }
@@ -1969,7 +2315,6 @@ function App() {
 
         // No handle found — the player will mount with the lock overlay.
         // User can click "Resume Playback" to trigger onReassociate (which falls back to file picker).
-        console.log('[Recovery] No handle in IndexedDB. Player will show lock overlay for user-initiated reassociation.');
       };
       triggerReassociate();
     }
@@ -1993,6 +2338,14 @@ function App() {
             targetVideo = (updatedVideoOrUpdater as Function)(current);
           }
         }
+      }
+
+      if (targetVideo && targetVideo.subtitleTracks && targetVideo.subtitleTracks.some(t => t.cues && t.cues.length > 0)) {
+        saveEmbedSubtitles(targetVideo, targetVideo.subtitleTracks);
+      }
+
+      if (targetVideo && typeof targetVideo.currentTime === 'number' && targetVideo.currentTime > 0) {
+        updatePlaylistSavedTime(targetVideo.id, targetVideo.currentTime, parseDurationToSeconds(targetVideo.duration));
       }
 
       let nextVideos: VideoItem[];
@@ -2091,41 +2444,157 @@ function App() {
     }
   };
 
+  /** Build a PlaylistItem from a File + optional FileSystemFileHandle */
+  const buildPlaylistItem = async (file: File, handle?: FileSystemFileHandle): Promise<PlaylistItem> => {
+    const fp = makeFingerprint(file);
+    const title = file.name.replace(/\.[^/.]+$/, '');
+    // Retrieve saved time from mediaTimestampStorage
+    const savedEntry = getMediaTimestamp({ id: fp, fileName: file.name, title } as any);
+    return {
+      id: fp,
+      fingerprint: fp,
+      name: file.name,
+      title,
+      fileName: file.name,
+      size: file.size,
+      lastModified: file.lastModified,
+      savedTime: savedEntry > 0 ? savedEntry : undefined,
+      file,
+      handle,
+    };
+  };
+
+  /**
+   * Flatten a DataTransferItemList into (File, FileSystemFileHandle | undefined)[] pairs.
+   * Uses getAsFileSystemHandle() where available so handles are persistent.
+   */
+  const extractDropItems = async (transfer: DataTransfer): Promise<{ file: File; handle?: FileSystemFileHandle }[]> => {
+    const result: { file: File; handle?: FileSystemFileHandle }[] = [];
+    const items = Array.from(transfer.items ?? []);
+    for (const item of items) {
+      if (item.kind !== 'file') continue;
+      try {
+        if ('getAsFileSystemHandle' in item) {
+          const h = await (item as any).getAsFileSystemHandle();
+          if (!h) continue;
+          if (h.kind === 'directory') {
+            // Recursively collect video files from directory
+            for await (const [, entry] of (h as any).entries()) {
+              if (entry.kind === 'file') {
+                try {
+                  const f: File = await (entry as FileSystemFileHandle).getFile();
+                  if (/\.(mp4|mkv|webm|mov|avi|m4v|ts|ogv)$/i.test(f.name)) {
+                    result.push({ file: f, handle: entry as FileSystemFileHandle });
+                  }
+                } catch {}
+              }
+            }
+          } else if (h.kind === 'file') {
+            const f: File = await (h as FileSystemFileHandle).getFile();
+            if (/\.(mp4|mkv|webm|mov|avi|m4v|ts|ogv)$/i.test(f.name)) {
+              result.push({ file: f, handle: h as FileSystemFileHandle });
+            }
+          }
+          continue;
+        }
+      } catch {}
+      // Fallback
+      const f = item.getAsFile();
+      if (f && /\.(mp4|mkv|webm|mov|avi|m4v|ts|ogv)$/i.test(f.name)) {
+        result.push({ file: f });
+      }
+    }
+    // Also handle legacy files list if items was empty
+    if (result.length === 0 && transfer.files.length > 0) {
+      for (const f of Array.from(transfer.files)) {
+        if (/\.(mp4|mkv|webm|mov|avi|m4v|ts|ogv)$/i.test(f.name)) {
+          result.push({ file: f });
+        }
+      }
+    }
+    return result;
+  };
+
   const handleDrop = async (e: React.DragEvent) => {
     e.preventDefault();
     e.stopPropagation();
     setIsDragActive(false);
 
-    if (e.dataTransfer.items && e.dataTransfer.items[0]) {
-      const item = e.dataTransfer.items[0];
-      if (item.kind === 'file') {
-        try {
-          if ('getAsFileSystemHandle' in item) {
-            const handle = await (item as any).getAsFileSystemHandle();
-            if (handle && handle.kind === 'file') {
-              const file = await handle.getFile();
-              const fingerprint = `local-${file.name}_${file.size}_${file.lastModified}`;
-              await storeFileHandle(fingerprint, handle);
-              await processLocalVideo(file, fingerprint, handle);
-              return;
-            }
+    // If a single directory handle was dropped, load as folder playlist
+    if (e.dataTransfer.items && e.dataTransfer.items.length === 1 && 'getAsFileSystemHandle' in e.dataTransfer.items[0]) {
+      try {
+        const h = await (e.dataTransfer.items[0] as any).getAsFileSystemHandle();
+        if (h && h.kind === 'directory') {
+          const folderItems = await loadFolderPlaylist(h, h.name);
+          if (folderItems.length > 0 && !playingVideo) {
+            await playIndex(0);
           }
-        } catch (err) {
-          console.error('Failed to get handle from drop:', err);
+          return;
         }
+      } catch {}
+    }
+
+    const dropped = await extractDropItems(e.dataTransfer);
+    if (dropped.length === 0) return;
+
+    // Store handles in IndexedDB
+    for (const { file, handle } of dropped) {
+      if (handle) {
+        const fp = makeFingerprint(file);
+        await storeFileHandle(fp, handle).catch(() => {});
       }
     }
 
-    if (e.dataTransfer.files && e.dataTransfer.files[0]) {
-      const file = e.dataTransfer.files[0];
-      await processLocalVideo(file);
+    // Build playlist items (natural-sorted, de-duplicated happens inside addPlaylistItems)
+    const newItems = await Promise.all(dropped.map(({ file, handle }) => buildPlaylistItem(file, handle)));
+
+    if (dropped.length === 1 && !playingVideo) {
+      // Single file, nothing playing → play immediately as standalone file without playlist
+      clearPlaylist();
+      await processLocalVideo(dropped[0].file, makeFingerprint(dropped[0].file), dropped[0].handle);
+      return;
+    }
+
+    if (playingVideo && dropped.length === 1) {
+      // Single file dropped while playing → offer choice
+      setPendingDropFiles({
+        items: newItems,
+        onPlayNow: async () => {
+          setPendingDropFiles(null);
+          clearPlaylist();
+          await processLocalVideo(dropped[0].file, makeFingerprint(dropped[0].file), dropped[0].handle);
+        },
+        onAddToQueue: () => {
+          setPendingDropFiles(null);
+          addPlaylistItems(newItems, false);
+        },
+      });
+      return;
+    }
+
+    // Multiple files → add to playlist and start first if nothing playing
+    addPlaylistItems(newItems, false);
+    if (!playingVideo && newItems.length > 0) {
+      const first = newItems[0];
+      await processLocalVideo(first.file!, makeFingerprint(first.file!), first.handle);
     }
   };
 
   const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files && e.target.files[0]) {
-      const file = e.target.files[0];
-      await processLocalVideo(file);
+    if (e.target.files && e.target.files.length > 0) {
+      if (e.target.files.length === 1) {
+        const file = e.target.files[0];
+        const fp = makeFingerprint(file);
+        clearPlaylist();
+        await processLocalVideo(file, fp);
+      } else {
+        const files = Array.from(e.target.files);
+        const items = await Promise.all(files.map(f => buildPlaylistItem(f)));
+        addPlaylistItems(items, false);
+        const sorted = naturalSortItems(items);
+        const first = sorted[0];
+        await processLocalVideo(first.file!, makeFingerprint(first.file!));
+      }
     }
   };
 
@@ -2140,42 +2609,182 @@ function App() {
     }
   };
 
-  // Select local file (using showOpenFilePicker with IndexedDB storage if supported)
+  // Select local file(s) — showOpenFilePicker({ multiple: true }) or fallback input
   const handleSelectLocalFile = async () => {
-    if (isPickerOpenRef.current) return;
+    isPickerOpenRef.current = false;
+
+    // Unlock Web Audio context while user gesture is active from the click
+    try {
+      const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+      if (AudioCtx) {
+        const dummyCtx = new AudioCtx();
+        dummyCtx.resume().then(() => dummyCtx.close()).catch(() => {});
+      }
+    } catch {}
+
+    const openWithInput = () => {
+      const input = document.createElement('input');
+      input.type = 'file';
+      input.multiple = true;
+      input.accept = 'video/*,.mp4,.mkv,.webm,.mov,.avi,.m4v';
+      input.style.display = 'none';
+      document.body.appendChild(input);
+      input.onchange = async () => {
+        if (input.files && input.files.length > 0) {
+          const files = Array.from(input.files);
+          if (files.length === 1) {
+            const file = files[0];
+            const fp = makeFingerprint(file);
+            clearPlaylist();
+            await processLocalVideo(file, fp);
+          } else {
+            const items: PlaylistItem[] = [];
+            for (const f of files) {
+              items.push(await buildPlaylistItem(f));
+            }
+            addPlaylistItems(items, false);
+            const sorted = naturalSortItems(items);
+            const first = sorted[0];
+            await processLocalVideo(first.file!, makeFingerprint(first.file!));
+          }
+        }
+        input.remove();
+      };
+      input.click();
+    };
+
+    // Chromium strictly blocks showOpenFilePicker in fullscreen; use input fallback
+    if (typeof document !== 'undefined' && document.fullscreenElement) {
+      openWithInput();
+      return;
+    }
+
     try {
       if ('showOpenFilePicker' in window) {
         isPickerOpenRef.current = true;
-        const [handle] = await (window as any).showOpenFilePicker({
-          types: [{
-            description: 'Video Files',
-            accept: {
-              'video/mp4': ['.mp4', '.m4v'],
-              'video/webm': ['.webm'],
-              'video/x-matroska': ['.mkv'],
-              'video/quicktime': ['.mov'],
-              'video/x-msvideo': ['.avi']
-            }
-          }]
-        });
-        const file = await handle.getFile();
-        const fingerprint = `local-${file.name}_${file.size}_${file.lastModified}`;
-        await storeFileHandle(fingerprint, handle);
-        await processLocalVideo(file, fingerprint, handle);
+        let handles: FileSystemFileHandle[] = [];
+        try {
+          handles = await (window as any).showOpenFilePicker({
+            multiple: true,
+            types: [{
+              description: 'Video Files',
+              accept: {
+                'video/mp4': ['.mp4', '.m4v'],
+                'video/webm': ['.webm'],
+                'video/x-matroska': ['.mkv'],
+                'video/quicktime': ['.mov'],
+                'video/x-msvideo': ['.avi']
+              }
+            }]
+          });
+        } catch (pickerErr: any) {
+          if (pickerErr?.name === 'AbortError') {
+            return;
+          }
+          console.warn('showOpenFilePicker failed, falling back to input:', pickerErr);
+          openWithInput();
+          return;
+        }
+
+        if (handles.length === 1) {
+          const handle = handles[0];
+          const file = await handle.getFile();
+          const fingerprint = makeFingerprint(file);
+          await storeFileHandle(fingerprint, handle).catch(() => {});
+          await storeFileHandle(`local-${fingerprint}`, handle).catch(() => {});
+          clearPlaylist();
+          await processLocalVideo(file, fingerprint, handle);
+        } else if (handles.length > 1) {
+          // Build items and store handles
+          const items: PlaylistItem[] = [];
+          for (const handle of handles) {
+            const file = await handle.getFile();
+            const fp = makeFingerprint(file);
+            await storeFileHandle(fp, handle).catch(() => {});
+            await storeFileHandle(`local-${fp}`, handle).catch(() => {});
+            items.push(await buildPlaylistItem(file, handle));
+          }
+          addPlaylistItems(items, false);
+          // Start playing the first one (natural-sorted order)
+          const sorted = naturalSortItems(items);
+          const first = sorted[0];
+          await processLocalVideo(first.file!, makeFingerprint(first.file!), first.handle);
+        }
       } else {
-        isPickerOpenRef.current = true;
-        fileInputRef.current?.click();
-        setTimeout(() => {
-          isPickerOpenRef.current = false;
-        }, 1000);
+        openWithInput();
       }
     } catch (err) {
       console.error('File picker cancelled or failed:', err);
     } finally {
-      if ('showOpenFilePicker' in window) {
-        isPickerOpenRef.current = false;
+      isPickerOpenRef.current = false;
+    }
+  };
+
+  /** Open a directory picker and add all video files from it. */
+  const handleSelectDirectory = async () => {
+    if (!('showDirectoryPicker' in window)) return;
+    try {
+      const dirHandle = await (window as any).showDirectoryPicker({ mode: 'read' });
+      const folderItems = await loadFolderPlaylist(dirHandle, dirHandle.name);
+      if (folderItems.length > 0 && !playingVideo) {
+        await playIndex(0);
+      }
+    } catch (err: any) {
+      if (err.name !== 'AbortError') {
+        console.error('Directory picker failed:', err);
       }
     }
+  };
+
+  /** Fast-probe MKV / MP4 container headers directly from File for instant track & duration readiness */
+  const fastProbeMediaFile = async (file: File): Promise<{
+    duration?: string;
+    format?: string;
+    streams?: any[];
+    seekMap?: any[];
+    timecodeScale?: number;
+  }> => {
+    try {
+      const fileSource = new FileByteSource(file);
+      const lowerName = file.name.toLowerCase();
+      if (lowerName.endsWith('.mkv') || lowerName.endsWith('.webm')) {
+        const mkvInfo = await parseMkv(fileSource);
+        if (mkvInfo && mkvInfo.tracks && mkvInfo.tracks.length > 0) {
+          return {
+            format: lowerName.endsWith('.webm') ? 'webm' : 'matroska',
+            duration: mkvInfo.duration > 0 ? String(mkvInfo.duration) : undefined,
+            seekMap: mkvInfo.seekMap && mkvInfo.seekMap.length > 0 ? mkvInfo.seekMap : undefined,
+            timecodeScale: mkvInfo.timecodeScale,
+            streams: mkvInfo.tracks.map((t, idx) => ({
+              index: t.number > 0 ? t.number - 1 : idx,
+              type: t.type,
+              codec: normalizeMkvCodec(t.codec),
+              language: t.language || 'und',
+              title: t.title || ''
+            }))
+          };
+        }
+      } else if (lowerName.endsWith('.mp4') || lowerName.endsWith('.m4v') || lowerName.endsWith('.mov')) {
+        const mp4Info = await parseMp4(fileSource);
+        if (mp4Info && mp4Info.tracks && mp4Info.tracks.length > 0) {
+          return {
+            format: 'mp4',
+            duration: mp4Info.duration > 0 ? String(mp4Info.duration) : undefined,
+            seekMap: mp4Info.tracks[0]?.seekMap?.timeToOffset,
+            streams: mp4Info.tracks.map((t: any, idx: number) => ({
+              index: idx,
+              type: t.type,
+              codec: t.codec || '',
+              language: t.language || 'und',
+              title: t.title || ''
+            }))
+          };
+        }
+      }
+    } catch (err) {
+      console.warn('[fastProbeMediaFile] Container fast-parse fallback to autoProbe:', err);
+    }
+    return {};
   };
 
   // Import a local video file with deduplication, merging, and handle storage
@@ -2225,6 +2834,28 @@ function App() {
     }
 
     let maxCurrentTime = 0;
+    // Check persistent site storage for exact saved timestamp position
+    const persistentTimestamp = getMediaTimestamp({
+      id: targetId,
+      fileName: file.name,
+      title: title,
+      localFilePath: (file as any).path || (file as any).localFilePath || undefined
+    });
+    if (persistentTimestamp > 0) {
+      maxCurrentTime = persistentTimestamp;
+    }
+
+    // Check if this item exists in playlist items with saved progress
+    const matchedPlaylistItem = playlist.items.find(it =>
+      (it.id && (it.id === targetId || it.id === customId || it.id === finalCustomId)) ||
+      (it.fingerprint && (it.fingerprint === targetId || it.fingerprint === customId || it.fingerprint === finalCustomId)) ||
+      (it.fileName && it.fileName.toLowerCase() === file.name.toLowerCase()) ||
+      (it.title && it.title.toLowerCase() === title.toLowerCase())
+    );
+    if (matchedPlaylistItem && typeof matchedPlaylistItem.savedTime === 'number' && matchedPlaylistItem.savedTime > maxCurrentTime) {
+      maxCurrentTime = matchedPlaylistItem.savedTime;
+    }
+
     const mergedAudioTracks: CustomAudioTrack[] = [];
     const mergedSubtitleTracks: CustomSubtitleTrack[] = [];
     let mergedDuration: string | undefined = undefined;
@@ -2291,17 +2922,71 @@ function App() {
       }
     });
 
+    let mergedSeekMap: any[] | undefined = undefined;
+    let mergedTimecodeScale: number | undefined = undefined;
+
+    // Fast container pre-probe for local files so PlaybackController and audio tracks
+    // are immediately available on first selection without needing a reload!
+    if (!mergedStreams && file) {
+      const probed = await fastProbeMediaFile(file);
+      if (probed.format) mergedFormat = probed.format;
+      if (probed.duration && !mergedDuration) mergedDuration = probed.duration;
+      if (probed.seekMap) mergedSeekMap = probed.seekMap;
+      if (probed.timecodeScale) mergedTimecodeScale = probed.timecodeScale;
+      if (probed.streams) mergedStreams = probed.streams;
+    }
+
+    if (mergedAudioTracks.length === 0 && mergedStreams) {
+      mergedStreams
+        .filter((s: any) => s.type === 'audio')
+        .forEach((s: any) => {
+          mergedAudioTracks.push({
+            id: String(s.index),
+            streamIndex: s.index,
+            name: s.title || (s.language && s.language !== 'und' ? `Audio (${s.language.toUpperCase()})` : `Audio Track ${s.index + 1}`),
+            language: s.language || 'und',
+            codec: s.codec,
+            url: '',
+            isExtracted: false
+          });
+        });
+    }
+
+    if (mergedSubtitleTracks.length === 0 && mergedStreams) {
+      mergedStreams
+        .filter((s: any) => s.type === 'subtitle')
+        .forEach((s: any) => {
+          const rawFormat = (s.codec || '').toLowerCase();
+          const format = rawFormat.includes('ass') || rawFormat.includes('ssa') ? 'ass' : (rawFormat.includes('srt') || rawFormat.includes('subrip') ? 'srt' : 'vtt');
+          mergedSubtitleTracks.push({
+            id: String(s.index),
+            streamIndex: s.index,
+            name: s.title || (s.language && s.language !== 'und' ? `Subtitle (${s.language.toUpperCase()})` : `Subtitle Track ${s.index + 1}`),
+            language: s.language || 'und',
+            format,
+            cues: [],
+            url: '',
+            isExtracted: false
+          });
+        });
+    }
+
     const newVideoItem: VideoItem = {
       id: targetId,
       title,
       url: blobUrl,
       type: 'local',
+      sourceType: 'local',
+      isRemote: false,
       file: file,
       fileName: file.name,
       currentTime: maxCurrentTime,
+      resumeTime: maxCurrentTime,
       duration: mergedDuration,
       format: mergedFormat,
       streams: mergedStreams,
+      seekMap: mergedSeekMap,
+      timecodeScale: mergedTimecodeScale,
       audioTracks: mergedAudioTracks,
       subtitleTracks: mergedSubtitleTracks,
       lastPlayedDate: new Date().toISOString(),
@@ -2309,8 +2994,8 @@ function App() {
     };
 
     setVideos(prev => {
-      const newIdentity = getVideoIdentity(newVideoItem.title);
-      const filtered = prev.filter(v => v.id !== targetId && getVideoIdentity(v.title) !== newIdentity && !matches.some(m => m.id === v.id));
+      const newIdentity = getVideoIdentity(newVideoItem);
+      const filtered = prev.filter(v => v.id !== targetId && getVideoIdentity(v) !== newIdentity && !matches.some(m => m.id === v.id));
       return mergeOrAddVideo(filtered, newVideoItem);
     });
 
@@ -2326,64 +3011,412 @@ function App() {
     }
   };
 
-  const handlePlayVideo = async (video: VideoItem) => {
-    if (isPickerOpenRef.current) return;
-    
-    if (video.type === 'online_movie' || video.type === 'online_tv' || video.type === 'online_anime') {
-      setVideos(prev => mergeOrAddVideo(prev, video));
-      setPlayingVideo(video);
+  /**
+   * playIndex — the central playlist switching function.
+   *
+   * Dispose order (see explanation at top of file):
+   *   1. Bump the switch token so stale async loads bail out early.
+   *   2. Persist outgoing timestamp and watch-history.
+   *   3. End the Trakt scrobble (fires synchronously via beforeunload-style flush).
+   *   4. Revoke the old blob URL (after the caller's player unmount disposes the
+   *      PlaybackController — the React key change on LocalVideoPlayer handles
+   *      controller.destroy() + audioScheduler.stopAll() + FFmpeg cleanup).
+   *   5. Resolve the new item's File (from memory, IndexedDB handle, or show-permission prompt).
+   *   6. Load via processLocalVideo.
+   *
+   * The token check at step 5/6 prevents a slow handle resolution from overwriting a
+   * newer switch that happened while this one was still pending.
+   */
+  const playIndex = async (targetIdx: number, preferredAudioLang?: string, preferredSubLang?: string) => {
+    const myToken = ++switchTokenRef.current;
+    const items = playlist.items;
+    if (targetIdx < 0 || targetIdx >= items.length) return;
+
+    const item = items[targetIdx];
+    setPlaylistIndex(targetIdx);
+
+    // If the item has an error state, do not cascade-skip the queue
+    if (item.error) {
+      addToast(`"${item.title || item.name}" – file missing or inaccessible. Click "Locate file" in playlist to re-link.`, 'error');
+      setShowPlaylistPanel(true);
       return;
     }
 
-    // Set picker open lock if we might open a file picker
-    if (video.type === 'local' && !video.file && !video.url) {
-      isPickerOpenRef.current = true;
+    // Step 1 - 5 in exact required dispose order:
+    // 1) Persist outgoing timestamp and watch history
+    // 2) End Trakt scrobble
+    // 3) Fully dispose PlaybackController and cancel scheduled AudioBufferSourceNodes and in-flight FFmpeg decode jobs
+    // 4) Reset BufferScheduler & video element
+    // 5) Revoke old blob URL
+    await disposeActiveLocalPlayer();
+    if (switchTokenRef.current !== myToken) return;
+
+    // ── Resolve File ────────────────────────────────────────────────────────
+    let resolvedFile: File | null = item.file ?? null;
+    let resolvedHandle: FileSystemFileHandle | undefined = item.handle;
+
+    if (!resolvedFile) {
+      try {
+        resolvedFile = await resolveItemFile(item);
+        resolvedHandle = item.handle;
+      } catch (err) {
+        console.warn(`[playIndex] resolveItemFile failed for ${item.title}:`, err);
+      }
+
+      if (!resolvedFile) {
+        const candidateKeys = [
+          item.id,
+          item.fingerprint,
+          item.id ? item.id.replace(/^local-/, '') : '',
+          item.fingerprint ? `local-${item.fingerprint}` : '',
+          item.name,
+          item.title,
+          item.fileName
+        ].filter(Boolean) as string[];
+
+        for (const k of candidateKeys) {
+          try {
+            const h = await getFileHandle(k);
+            if (h) {
+              const perm = await verifyPermission(h);
+              if (perm) {
+                resolvedFile = await h.getFile();
+                resolvedHandle = h;
+                break;
+              }
+            }
+          } catch {}
+        }
+      }
+    }
+
+    if (switchTokenRef.current !== myToken) return; // Stale load
+
+    if (!resolvedFile) {
+      // Missing or moved file: mark ONLY this item with Locate file; never cascade-skip or empty the list
+      markPlaylistError(item.id || item.fingerprint);
+      addToast(`"${item.title || item.name}" – file not accessible. Click "Locate file" in playlist to re-link.`, 'error');
+      setShowPlaylistPanel(true);
+      return;
+    }
+
+    if (switchTokenRef.current !== myToken) return;
+
+    // Step 6: Load the new item via processLocalVideo
+    await processLocalVideo(resolvedFile, item.id || item.fingerprint, resolvedHandle);
+
+    // Update playlist item with live handle/file for future switches
+    setPlaylist(prev => ({
+      ...prev,
+      items: prev.items.map(it =>
+        (it.id || it.fingerprint) === (item.id || item.fingerprint)
+          ? { ...it, file: resolvedFile!, handle: resolvedHandle, error: false }
+          : it
+      ),
+    }));
+  };
+
+  /** Finish playback session and return to home page */
+  const isFinishingSessionRef = useRef(false);
+
+  const handleFinishSession = useCallback(async () => {
+    if (isFinishingSessionRef.current) return;
+    isFinishingSessionRef.current = true;
+    const myToken = ++switchTokenRef.current;
+
+    const currentVideo = playingVideo;
+    if (!currentVideo) {
+      isFinishingSessionRef.current = false;
+      return;
+    }
+
+    // 1. Mark item completed in mediaTimestampStorage (reset resume timestamp to 0 so reopening starts at 0)
+    saveMediaTimestamp(currentVideo, 0, Number(currentVideo.duration) || 0, currentVideo.title, true);
+
+    // 2. Complete Trakt scrobble
+    const traktToken = settings.traktAccessToken;
+    if (traktToken) {
+      try {
+        syncTraktHistory(currentVideo, traktToken).catch(() => {});
+      } catch {}
+    }
+
+    // 3. Mark completed and update history at top of videos list
+    setVideos(prev => {
+      const existing = prev.find(v => v.id === currentVideo.id || (v.fileName && v.fileName === currentVideo.fileName));
+      const updatedItem: VideoItem = {
+        ...(existing || currentVideo),
+        currentTime: 0,
+        isWatched: true,
+        lastPlayedDate: new Date().toISOString(),
+        lastPlayedAt: Date.now(),
+      };
+      const remaining = prev.filter(v => v.id !== currentVideo.id && (!v.fileName || v.fileName !== currentVideo.fileName));
+      return [updatedItem, ...remaining];
+    });
+
+    // 4. Reset playlist's currentIndex to 0 while keeping per-item watched flags
+    setPlaylist(prev => ({
+      ...prev,
+      currentIndex: 0,
+      items: prev.items.map(it => {
+        if ((it.id || it.fingerprint) === currentVideo.id) {
+          return { ...it, isWatched: true, savedTime: 0 };
+        }
+        return it;
+      }),
+      updatedAt: Date.now(),
+    }));
+
+    // 5. Dispose PlaybackController, AudioBufferSourceNodes, FFmpeg decode jobs, and BufferScheduler
+    await disposeActiveLocalPlayer();
+
+    // 6. Token guard check
+    if (switchTokenRef.current !== myToken) {
+      isFinishingSessionRef.current = false;
+      return;
+    }
+
+    // 7. Revoke blob URL
+    if (currentVideo.url && currentVideo.url.startsWith('blob:')) {
+      try {
+        URL.revokeObjectURL(currentVideo.url);
+      } catch {}
+    }
+
+    // 8. Return to home page
+    setPlayingVideo(null);
+    setActiveTab('home');
+    isFinishingSessionRef.current = false;
+  }, [playingVideo, setPlaylist, setVideos]);
+
+  /** Open network stream prompt */
+  const handleOpenNetworkStream = useCallback((inputUrl?: string) => {
+    const raw = typeof inputUrl === 'string' ? inputUrl : window.prompt('Enter media stream or video URL (HLS / MP4 / etc.):');
+    if (raw && raw.trim()) {
+      const url = raw.trim();
+      const videoItem: VideoItem = {
+        id: `url-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+        title: url.split('/').pop()?.split('?')[0] || 'Network Stream',
+        url,
+        type: 'url',
+        sourceType: 'remote',
+        isRemote: true,
+        audioTracks: [],
+        subtitleTracks: []
+      };
+      handlePlayVideo(videoItem);
+    }
+  }, []);
+
+  /** Add file(s) to playlist via picker */
+  const handleAddToPlaylist = useCallback(async () => {
+    if ('showOpenFilePicker' in window) {
+      try {
+        const handles: FileSystemFileHandle[] = await (window as any).showOpenFilePicker({
+          multiple: true,
+          types: [{
+            description: 'Video Files',
+            accept: {
+              'video/*': ['.mp4', '.mkv', '.webm', '.mov', '.avi', '.m4v', '.ts', '.ogv']
+            }
+          }]
+        });
+        const items: PlaylistItem[] = [];
+        for (const h of handles) {
+          const f = await h.getFile();
+          const fp = makeFingerprint(f);
+          await storeFileHandle(fp, h).catch(() => {});
+          items.push(await buildPlaylistItem(f, h));
+        }
+        if (items.length > 0) {
+          addPlaylistItems(items, true);
+          addToast(`Added ${items.length} item${items.length > 1 ? 's' : ''} to playlist`, 'success');
+          setShowPlaylistPanel(true);
+        }
+      } catch (err: any) {
+        if (err.name !== 'AbortError') console.error(err);
+      }
+    } else {
+      const input = document.createElement('input');
+      input.type = 'file';
+      input.multiple = true;
+      input.accept = 'video/*';
+      input.onchange = async () => {
+        if (input.files) {
+          const files = Array.from(input.files);
+          const items = await Promise.all(files.map(f => buildPlaylistItem(f)));
+          addPlaylistItems(items, true);
+          addToast(`Added ${items.length} items to playlist`, 'success');
+          setShowPlaylistPanel(true);
+        }
+      };
+      input.click();
+    }
+  }, [addPlaylistItems, addToast]);
+
+  /** Locate missing / moved file */
+  const handleLocateFile = async (itemId: string) => {
+    const item = playlist.items.find(it => (it.id || it.fingerprint) === itemId);
+    if (!item) return;
+
+    if ('showOpenFilePicker' in window) {
+      try {
+        const handles: FileSystemFileHandle[] = await (window as any).showOpenFilePicker({
+          multiple: false,
+          types: [{
+            description: 'Video Files',
+            accept: {
+              'video/*': ['.mp4', '.mkv', '.webm', '.mov', '.avi', '.m4v', '.ts', '.ogv']
+            }
+          }]
+        });
+        if (handles.length > 0) {
+          const handle = handles[0];
+          const file = await handle.getFile();
+
+          // Match by name, size, lastModified
+          const nameMatch = file.name.toLowerCase() === (item.name || item.fileName || '').toLowerCase();
+          const sizeMatch = file.size === item.size;
+
+          if (!nameMatch && !sizeMatch) {
+            const proceed = window.confirm(
+              `The selected file "${file.name}" does not match the original "${item.name || item.title}". Do you want to use it anyway?`
+            );
+            if (!proceed) return;
+          }
+
+          await locateFile(itemId, file, handle);
+          await storeFileHandle(itemId, handle);
+          markPlaylistError(itemId, false);
+          addToast(`Located "${file.name}" successfully!`, 'success');
+        }
+      } catch (err: any) {
+        if (err.name !== 'AbortError') {
+          console.error('Error locating file:', err);
+        }
+      }
+    } else {
+      const input = document.createElement('input');
+      input.type = 'file';
+      input.accept = 'video/*';
+      input.onchange = async () => {
+        const file = input.files?.[0];
+        if (file) {
+          await locateFile(itemId, file);
+          markPlaylistError(itemId, false);
+          addToast(`Updated "${file.name}"`, 'success');
+        }
+      };
+      input.click();
+    }
+  };
+
+  /** Prefetch next item's container metadata in the last 60 seconds without decoding */
+  const handlePlaylistPrefetchNext = useCallback(async () => {
+    const curIdx = playlist.items.findIndex(it => (it.id || it.fingerprint) === playingVideo?.id);
+    if (curIdx < 0) return;
+    const nextIdx = playlistNextIndex(curIdx);
+    if (nextIdx < 0 || nextIdx >= playlist.items.length) return;
+    const nextItem = playlist.items[nextIdx];
+    try {
+      const file = await resolveItemFile(nextItem);
+      if (file) {
+        // Read first 64KB slice into memory to warm cache and file handle without decoding
+        await file.slice(0, 64 * 1024).arrayBuffer();
+      }
+    } catch (err) {
+      console.warn('[Playlist] Metadata prefetch error:', err);
+    }
+  }, [playlist, playingVideo?.id, playlistNextIndex, resolveItemFile]);
+
+  // ── Restore playlist on launch ──────────────────────────────────────────
+  useEffect(() => {
+    if (restoreAttemptedRef.current) return;
+    if (!playlist || !playlist.items || playlist.items.length === 0) return;
+
+    restoreAttemptedRef.current = true;
+    console.log(`[App Startup] Playlist "${playlist.name}" loaded with ${playlist.items.length} items rendered purely from stored metadata.`);
+  }, [playlist.items.length, playlist.name]);
+
+  const handlePlayVideo = async (video: VideoItem) => {
+    isPickerOpenRef.current = false;
+
+    // Deactivate playlist selection without deleting the stored playlist in IndexedDB
+    const normId = video.id.replace(/^local-/, '');
+    const inCurrentPlaylist = playlist.items.some(it => 
+      it.id === video.id || it.id === normId || it.fingerprint === video.id || it.fingerprint === normId
+    );
+    if (!inCurrentPlaylist) {
+      setPlaylistIndex(-1);
+    }
+    
+    const source = video.sourceType || getVideoSourceType(video);
+    const videoWithSource: VideoItem = {
+      ...video,
+      sourceType: source
+    };
+
+    if (videoWithSource.type === 'online_movie' || videoWithSource.type === 'online_tv' || videoWithSource.type === 'online_anime') {
+      setVideos(prev => mergeOrAddVideo(prev, videoWithSource));
+      setPlayingVideo(videoWithSource);
+      return;
     }
 
     try {
-      if (video.type === 'url') {
-        setVideos(prev => mergeOrAddVideo(prev, video));
-        setPlayingVideo(video);
-      } else if (video.type === 'local') {
-        if (video.localFilePath) {
+      const hasCues = videoWithSource.subtitleTracks && videoWithSource.subtitleTracks.some(t => t.cues && t.cues.length > 0);
+      if (!hasCues) {
+        const cachedSubs = getEmbedSubtitlesSync(videoWithSource);
+        if (cachedSubs && cachedSubs.length > 0) {
+          videoWithSource.subtitleTracks = cachedSubs;
+        }
+      }
+
+      if (videoWithSource.type === 'url') {
+        setVideos(prev => mergeOrAddVideo(prev, videoWithSource));
+        setPlayingVideo(videoWithSource);
+        return;
+      }
+
+      if (videoWithSource.type === 'local') {
+        if (videoWithSource.localFilePath) {
           const useIdStream = settings.storageMode === 'file' && settings.userId && settings.userId !== 'local' && !settings.userId.startsWith('local_');
-          const streamUrl = (useIdStream && !video.id.startsWith('url-'))
-            ? `${BACKEND_ORIGIN}/local-video-stream?id=${encodeURIComponent(video.id)}&path=${encodeURIComponent(video.localFilePath)}`
-            : `${BACKEND_ORIGIN}/local-video-stream?path=${encodeURIComponent(video.localFilePath)}`;
+          const streamUrl = (useIdStream && !videoWithSource.id.startsWith('url-'))
+            ? `${BACKEND_ORIGIN}/local-video-stream?id=${encodeURIComponent(videoWithSource.id)}&path=${encodeURIComponent(videoWithSource.localFilePath)}`
+            : `${BACKEND_ORIGIN}/local-video-stream?path=${encodeURIComponent(videoWithSource.localFilePath)}`;
           const updated = {
-            ...video,
+            ...videoWithSource,
             url: streamUrl
           };
           setVideos(prev => mergeOrAddVideo(prev, updated));
           setPlayingVideo(updated);
-          isPickerOpenRef.current = false;
           return;
         }
 
-        if (!video.file && video.url) {
-          // Play directly from the local stream URL (open-with) without picker
-          setVideos(prev => mergeOrAddVideo(prev, video));
-          setPlayingVideo(video);
+        if (!videoWithSource.file && videoWithSource.url && !videoWithSource.url.startsWith('blob:')) {
+          setVideos(prev => mergeOrAddVideo(prev, videoWithSource));
+          setPlayingVideo(videoWithSource);
           return;
         }
-        if (video.file) {
+
+        if (videoWithSource.file) {
           let readable = false;
           try {
-            await video.file.slice(0, 1).arrayBuffer();
+            await videoWithSource.file.slice(0, 1).arrayBuffer();
             readable = true;
           } catch (e) {
             console.warn('Local file object in state is no longer readable:', e);
           }
 
           if (readable) {
-            if (video.url && video.url.startsWith('blob:')) {
+            if (videoWithSource.url && videoWithSource.url.startsWith('blob:')) {
               try {
-                URL.revokeObjectURL(video.url);
+                URL.revokeObjectURL(videoWithSource.url);
               } catch (e) {}
             }
-            const newBlobUrl = URL.createObjectURL(video.file);
+            const newBlobUrl = URL.createObjectURL(videoWithSource.file);
             const updatedVideo = {
-              ...video,
+              ...videoWithSource,
               url: newBlobUrl
             };
             setVideos(prev => mergeOrAddVideo(prev, updatedVideo));
@@ -2392,75 +3425,117 @@ function App() {
           }
         }
 
-        // Try to load from IndexedDB
-        try {
-          const handle = await getFileHandle(video.id);
-          if (handle) {
-            const hasPermission = await verifyPermission(handle);
-            if (hasPermission) {
-              const file = await handle.getFile();
-              let fileReadable = false;
-              try {
-                await file.slice(0, 1).arrayBuffer();
-                fileReadable = true;
-              } catch (e) {
-                console.warn('File retrieved from IndexedDB handle is not readable:', e);
-              }
+        // 1. Check if item exists in currently loaded playlist items
+        if (playlist && playlist.items && playlist.items.length > 0) {
+          const normId = video.id.replace(/^local-/, '');
+          const pIdx = playlist.items.findIndex(it => 
+            it.id === video.id ||
+            it.id === normId ||
+            it.fingerprint === video.id ||
+            it.fingerprint === normId ||
+            (video.fileName && (it.name === video.fileName || it.title === video.fileName)) ||
+            (video.title && (it.title === video.title || it.name === video.title))
+          );
+          if (pIdx >= 0) {
+            await playIndex(pIdx);
+            return;
+          }
+        }
 
-              if (fileReadable) {
-                const blobUrl = URL.createObjectURL(file);
-                const updated = {
-                  ...video,
-                  url: blobUrl,
-                  file: file
-                };
-                setVideos(prev => {
-                  const filtered = prev.filter(v => v.id !== video.id);
-                  return [updated, ...filtered];
-                });
-                setPlayingVideo(updated);
-                isPickerOpenRef.current = false;
+        // 2. Check if item exists in any other loaded playlist
+        if (allPlaylists && allPlaylists.length > 0) {
+          const normId = video.id.replace(/^local-/, '');
+          for (const pl of allPlaylists) {
+            const pIdx = pl.items.findIndex(it =>
+              it.id === video.id ||
+              it.id === normId ||
+              (video.fileName && it.name === video.fileName) ||
+              (video.title && (it.name.startsWith(video.title) || it.name === video.title))
+            );
+            if (pIdx >= 0) {
+              if (switchPlaylist) {
+                await switchPlaylist(pl.id);
+                await playIndex(pIdx);
                 return;
               }
             }
           }
-        } catch (err) {
-          console.error('IndexedDB file restoration failed:', err);
         }
 
-        // Fallback to picker
-        pendingLocalReassociateIdRef.current = video.id;
+        // 3. Try to load handle from IndexedDB across all possible key aliases
+        const candidateKeys = [
+          videoWithSource.id,
+          videoWithSource.id.replace(/^local-/, ''),
+          `local-${videoWithSource.id}`,
+          (videoWithSource as any).fingerprint,
+          videoWithSource.fileName,
+          videoWithSource.title
+        ].filter(Boolean) as string[];
 
-        if ('showOpenFilePicker' in window) {
+        for (const key of candidateKeys) {
           try {
-            const [handle] = await (window as any).showOpenFilePicker({
-              types: [{
-                description: 'Video Files',
-                accept: {
-                  'video/mp4': ['.mp4', '.m4v'],
-                  'video/webm': ['.webm'],
-                  'video/x-matroska': ['.mkv'],
-                  'video/quicktime': ['.mov'],
-                  'video/x-msvideo': ['.avi']
+            const handle = await getFileHandle(key);
+            if (handle) {
+              const hasPermission = await verifyPermission(handle);
+              if (hasPermission) {
+                const file = await handle.getFile();
+                let fileReadable = false;
+                try {
+                  await file.slice(0, 1).arrayBuffer();
+                  fileReadable = true;
+                } catch (e) {
+                  console.warn('File retrieved from IndexedDB handle is not readable:', e);
                 }
-              }]
-            });
-            const file = await handle.getFile();
-            await processLocalVideo(file, video.id, handle);
+
+                if (fileReadable) {
+                  let probedStreams = videoWithSource.streams;
+                  let probedDuration = videoWithSource.duration;
+                  let probedFormat = videoWithSource.format;
+                  let probedSeekMap = videoWithSource.seekMap;
+                  let probedTimecodeScale = videoWithSource.timecodeScale;
+                  if (!probedStreams) {
+                    const probed = await fastProbeMediaFile(file);
+                    if (probed.streams) probedStreams = probed.streams;
+                    if (probed.duration && !probedDuration) probedDuration = probed.duration;
+                    if (probed.format && !probedFormat) probedFormat = probed.format;
+                    if (probed.seekMap && !probedSeekMap) probedSeekMap = probed.seekMap;
+                    if (probed.timecodeScale) probedTimecodeScale = probedTimecodeScale || probed.timecodeScale;
+                  }
+                  const blobUrl = URL.createObjectURL(file);
+                  const updated = {
+                    ...videoWithSource,
+                    url: blobUrl,
+                    file: file,
+                    streams: probedStreams,
+                    duration: probedDuration,
+                    format: probedFormat,
+                    seekMap: probedSeekMap,
+                    timecodeScale: probedTimecodeScale
+                  };
+                  setVideos(prev => {
+                    const filtered = prev.filter(v => v.id !== videoWithSource.id);
+                    return mergeOrAddVideo(filtered, updated);
+                  });
+                  setPlayingVideo(updated);
+                  return;
+                }
+              }
+            }
           } catch (err) {
-            console.error('Re-association picker cancelled:', err);
-          } finally {
-            isPickerOpenRef.current = false;
+            console.error(`IndexedDB handle check for key "${key}" failed:`, err);
           }
-        } else {
-          historyVideoInputRef.current?.click();
-          setTimeout(() => {
-            isPickerOpenRef.current = false;
-          }, 1000);
         }
+
+        // 4. File handle requires user gesture to restore access — mount player immediately
+        // so user enters the player view directly and clicks "Resume Playback"
+        pendingLocalReassociateIdRef.current = video.id;
+        setVideos(prev => mergeOrAddVideo(prev, videoWithSource));
+        setPlayingVideo(videoWithSource);
+        return;
       }
     } catch (err) {
       console.error('Playback re-association failed:', err);
+    } finally {
       isPickerOpenRef.current = false;
     }
   };
@@ -2478,150 +3553,30 @@ function App() {
         return;
       }
 
-      const seriesInfo = classifyVideoTitle(video.title);
-      const isTV = seriesInfo.type === 'series';
-      
-      let tmdbId = video.tmdbId;
+      const historyResult = await syncTraktHistory(video, token);
+      if (historyResult.ok) {
+        handleUpdateVideo((prev) => ({
+          ...prev,
+          hasScrobbledTrakt: true,
+          ...(historyResult.tmdbId ? { tmdbId: historyResult.tmdbId } : {})
+        }), false, video.id, true);
 
-      if (!tmdbId) {
-        const tmdbToken = "eyJhbGciOiJIUzI1NiJ9.eyJhdWQiOiJlMzQwMGRhZWZjODJjNTJlZDEyYzk1MWU1ZWFmYmVhYyIsIm5iZiI6MTc4MzU0MTI2OS44NzUsInN1YiI6IjZhNGVhZTE1MzFhOWUyYmNhZjBmY2RlMiIsInNjb3BlcyI6WyJhcGlfcmVhZCJdLCJ2ZXJzaW9uIjoxfQ.GT6_b6NSJwjYCXlbaCi_djq09ug0rKDxY9iouqVrYWY";
-        let searchUrl = "";
-        if (isTV && seriesInfo.seriesTitle) {
-          searchUrl = `https://api.themoviedb.org/3/search/tv?query=${encodeURIComponent(seriesInfo.seriesTitle)}&include_adult=false`;
-        } else {
-          searchUrl = `https://api.themoviedb.org/3/search/movie?query=${encodeURIComponent(seriesInfo.displayTitle || video.title)}&include_adult=false`;
-        }
-
-        const searchRes = await fetch(searchUrl, {
-          headers: {
-            'Authorization': `Bearer ${tmdbToken}`,
-            'accept': 'application/json'
-          }
-        });
-
-        if (searchRes.ok) {
-          const searchData = await searchRes.json();
-          if (searchData.results && searchData.results.length > 0) {
-            tmdbId = searchData.results[0].id;
-            handleUpdateVideo((prev) => ({ ...prev, tmdbId }), false, video.id, true);
-          }
-        }
-      }
-
-      const nowIso = new Date().toISOString();
-      const body: any = {};
-      if (isTV) {
-        if (!tmdbId) {
-          addToast("Trakt Sync: No TMDB ID resolved for series", "error");
-          return;
-        }
-        body.shows = [
-          {
-            ids: { tmdb: tmdbId },
-            seasons: [
-              {
-                number: seriesInfo.season || 1,
-                episodes: [
-                  {
-                    number: seriesInfo.episode || 1,
-                    watched_at: nowIso
-                  }
-                ]
-              }
-            ]
-          }
-        ];
-      } else {
-        body.movies = [
-          {
-            title: seriesInfo.displayTitle || video.title,
-            watched_at: nowIso,
-            ids: tmdbId ? { tmdb: tmdbId } : undefined
-          }
-        ];
-        if (!tmdbId && !seriesInfo.displayTitle) {
-          addToast("Trakt Sync: No title or TMDB ID resolved", "error");
-          return;
-        }
-      }
-
-      const res = await fetch('https://api.trakt.tv/sync/history', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`,
-          'trakt-api-key': 'f2926f0d87d3e789c50a3c276ab6002f5027dec31089fe75792c2836165c7289',
-          'trakt-api-version': '2'
-        },
-        body: JSON.stringify(body)
-      });
-
-      if (res.ok) {
-        const resData = await res.json();
-        let syncMessage = `Trakt Sync: Added ${resData.added?.movies || resData.added?.episodes || 1} item to history`;
-        handleUpdateVideo((prev) => ({ ...prev, hasScrobbledTrakt: true }), false, video.id, true);
+        let finalMessage = historyResult.message;
 
         // Sync rating to Trakt if present
         const userRating = video.rating;
         if (userRating && userRating > 0) {
-          const ratingBody: any = {};
-          if (isTV) {
-            ratingBody.shows = [
-              {
-                ids: { tmdb: tmdbId },
-                seasons: [
-                  {
-                    number: seriesInfo.season || 1,
-                    episodes: [
-                      {
-                        number: seriesInfo.episode || 1,
-                        rating: userRating * 2,
-                        rated_at: nowIso
-                      }
-                    ]
-                  }
-                ]
-              }
-            ];
+          const ratingResult = await syncTraktRating(video, userRating, token);
+          if (ratingResult.ok) {
+            finalMessage += ` & Rated (${userRating <= 5 ? userRating * 2 : userRating}/10)`;
           } else {
-            ratingBody.movies = [
-              {
-                title: seriesInfo.displayTitle || video.title,
-                rating: userRating * 2,
-                rated_at: nowIso,
-                ids: tmdbId ? { tmdb: tmdbId } : undefined
-              }
-            ];
-          }
-
-          console.log(`[Trakt Rating Sync] Syncing rating (${userRating * 2}/10) to Trakt.tv...`);
-          try {
-            const ratingRes = await fetch('https://api.trakt.tv/sync/ratings', {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${token}`,
-                'trakt-api-key': 'f2926f0d87d3e789c50a3c276ab6002f5027dec31089fe75792c2836165c7289',
-                'trakt-api-version': '2'
-              },
-              body: JSON.stringify(ratingBody)
-            });
-
-            if (ratingRes.ok) {
-              console.log('[Trakt Rating Sync] Successfully synced rating to Trakt.tv!');
-              syncMessage += ` & Rated ${userRating * 2}/10`;
-            } else {
-              console.warn(`[Trakt Rating Sync] Trakt.tv rating sync failed with status: ${ratingRes.status}`);
-            }
-          } catch (ratingErr) {
-            console.error('[Trakt Rating Sync] Error syncing rating:', ratingErr);
+            console.warn(`[Trakt Rating Sync] ${ratingResult.message}`);
           }
         }
-        
-        addToast(syncMessage, "success");
+
+        addToast(finalMessage, "success");
       } else {
-        const errText = await res.text();
-        addToast(`Trakt Sync Failed: ${res.status} - ${errText.substring(0, 40)}`, "error");
+        addToast(historyResult.message, "error");
       }
     } catch (err) {
       console.error(err);
@@ -2629,8 +3584,11 @@ function App() {
     }
   };
 
-  const handleRemoveVideo = async (id: string, e: React.MouseEvent) => {
-    e.stopPropagation();
+  const handleRemoveVideo = async (id: string, e?: React.MouseEvent) => {
+    if (e?.stopPropagation) {
+      e.stopPropagation();
+    }
+    const removedItem = videos.find(v => v.id === id);
     setVideos(prev => prev.filter(v => v.id !== id));
     try {
       await removeFileHandle(id);
@@ -2640,10 +3598,49 @@ function App() {
     if (playingVideo && playingVideo.id === id) {
       setPlayingVideo(null);
     }
+    if (removedItem) {
+      addToast('Removed from history', 'success', {
+        actionLabel: 'Undo',
+        onAction: () => {
+          setVideos(prev => [removedItem, ...prev]);
+        }
+      });
+    }
   };
 
-  const processRemoteUrl = async (url: string, isLocalFile = false) => {
+  const handleRateVideo = (id: string, rating: number) => {
+    try {
+      const stored = JSON.parse(localStorage.getItem('valor_ratings') || '{}');
+      stored[id] = rating;
+      const normId = id.replace(/^local-/, '');
+      stored[normId] = rating;
+      localStorage.setItem('valor_ratings', JSON.stringify(stored));
+    } catch {}
+
+    setVideos(prev => {
+      const updated = prev.map(v => {
+        if (v.id === id || v.id === `local-${id}` || v.id.replace(/^local-/, '') === id) {
+          return { ...v, rating, userRating: rating };
+        }
+        return v;
+      });
+      try {
+        const activeUserId = localStorage.getItem('valor_active_user_id') || 'local';
+        const videosKey = activeUserId === 'local' ? 'valor_videos' : `valor_videos_${activeUserId}`;
+        localStorage.setItem(videosKey, JSON.stringify(updated.map(v => ({ ...v, file: undefined, url: '' }))));
+      } catch (e) {
+        console.warn('Failed to save rated video to storage:', e);
+      }
+      return updated;
+    });
+
+    addToast(`Rated ${rating} star${rating > 1 ? 's' : ''}`, 'success');
+  };
+
+  const processRemoteUrl = async (url: string, isLocalFile = false, titleHint?: string) => {
     setIsProcessing(true);
+    setProcessingUrl(url);
+    setProcessingTitle(titleHint || '');
     setProcessingStep('Validating security protocols...');
     
     let localPathVal: string | undefined = undefined;
@@ -2679,18 +3676,14 @@ function App() {
       }
 
       setProcessingStep('Checking connection capabilities...');
-      const parserAvailable = await detectUrlCapabilities(url);
+      const capabilities = await detectUrlCapabilities(url);
       
-      if (!parserAvailable) {
-        console.log('[App] Remote byte access blocked or failed. Engaging Native Playback Mode.');
-        let rawTitle = localPathVal ? (localPathVal.split(/[/\\]/).pop() || localPathVal) : (url.substring(url.lastIndexOf('/') + 1) || 'Remote Stream');
-        let title = rawTitle.replace(/\.[^/.]+$/, '');
-        const parsedInfo = classifyVideoTitle(title);
-        if (parsedInfo.type !== 'unknown') {
-          title = parsedInfo.displayTitle;
-        }
+      if (!capabilities.supported) {
+        const parsedInfo = classifyVideoTitle(titleHint || localPathVal || url);
+        let title = parsedInfo.displayTitle || parsedInfo.cleanTitle || 'Remote Stream';
+        const expectedSource: 'local' | 'remote' = isLocalFile ? 'local' : 'remote';
         
-        // Match history by normalized identity
+        // Match history by normalized identity with source
         let match: VideoItem | undefined = undefined;
         try {
           const activeUserId = localStorage.getItem('valor_active_user_id') || 'local';
@@ -2698,23 +3691,37 @@ function App() {
           const savedHistory = localStorage.getItem(videosKey);
           if (savedHistory) {
             const parsedHistory = JSON.parse(savedHistory) as VideoItem[];
-            const targetIden = getVideoIdentity(title);
-            match = parsedHistory.find(v => getVideoIdentity(v.title) === targetIden);
+            const targetIden = getVideoIdentity(title, expectedSource);
+            match = parsedHistory.find(v => getVideoIdentity(v) === targetIden);
           }
         } catch (e) {}
+
+        let probingError: string | undefined = undefined;
+        if (capabilities.statusCode === 404) {
+          probingError = 'The file server responded with a status of 404 (Not Found). The file does not exist at this URL.';
+        } else if (capabilities.authRequired || capabilities.statusCode === 401) {
+          probingError = undefined;
+          capabilities.authRequired = true;
+        } else if (capabilities.isCorsBlocked) {
+          probingError = 'The remote server blocks cross-origin byte access (CORS).';
+        } else {
+          probingError = capabilities.error || undefined;
+        }
 
         const nativeItem: VideoItem = {
           id: match ? match.id : urlId,
           title,
           url,
           type: isLocalFile ? 'local' : 'url',
+          sourceType: expectedSource,
           isRemote: !isLocalFile,
+          authRequired: capabilities.authRequired,
           fileName: isLocalFile ? title : undefined,
           containerType: 'unknown',
           audioTracks: match ? match.audioTracks : [],
           subtitleTracks: match ? match.subtitleTracks : [],
-          playbackMode: 'native',
-          probingError: 'The remote server blocks cross-origin byte access (CORS).',
+          playbackMode: isLocalFile ? 'native' : undefined,
+          probingError,
           localFilePath: localPathVal,
           currentTime: 0,
           resumeTime: getResumeTimeFromMatch(match),
@@ -2737,7 +3744,6 @@ function App() {
 
       setProcessingStep('Probing stream format...');
       const container = await probeContainer(cachedSource);
-      console.log('Probed remote container type:', container);
 
       let duration = 'Unknown';
       let format: string = container;
@@ -2748,7 +3754,11 @@ function App() {
 
       if (container === 'hls') {
         setProcessingStep('Parsing HLS manifest...');
-        const res = await fetch(url);
+        const isCross = typeof window !== 'undefined' && new URL(url, window.location.href).origin !== window.location.origin;
+        const hlsFetchUrl = isCross ? getBackendProxyUrl(url) : url;
+        const res = await fetch(hlsFetchUrl, {
+          headers: isCross ? getProxyHeaders(url) : undefined
+        });
         if (!res.ok) {
           throw new Error(`Failed to fetch HLS manifest, status: ${res.status}`);
         }
@@ -2803,14 +3813,11 @@ function App() {
       const audioTracks: CustomAudioTrack[] = [];
       const subtitleTracks: CustomSubtitleTrack[] = [];
 
-      let rawTitle = localPathVal ? (localPathVal.split(/[/\\]/).pop() || localPathVal) : (url.substring(url.lastIndexOf('/') + 1) || 'Remote Stream');
-      let title = rawTitle.replace(/\.[^/.]+$/, '');
-      const parsedInfo = classifyVideoTitle(title);
-      if (parsedInfo.type !== 'unknown') {
-        title = parsedInfo.displayTitle;
-      }
+      const parsedInfo = classifyVideoTitle(titleHint || localPathVal || url);
+      let title = parsedInfo.displayTitle || parsedInfo.cleanTitle || 'Remote Stream';
+      const expectedSource: 'local' | 'remote' = isLocalFile ? 'local' : 'remote';
       
-      // Match history by normalized identity
+      // Match history by normalized identity with source
       let match: VideoItem | undefined = undefined;
       try {
         const activeUserId = localStorage.getItem('valor_active_user_id') || 'local';
@@ -2818,8 +3825,8 @@ function App() {
         const savedHistory = localStorage.getItem(videosKey);
         if (savedHistory) {
           const parsedHistory = JSON.parse(savedHistory) as VideoItem[];
-          const targetIden = getVideoIdentity(title);
-          match = parsedHistory.find(v => getVideoIdentity(v.title) === targetIden);
+          const targetIden = getVideoIdentity(title, expectedSource);
+          match = parsedHistory.find(v => getVideoIdentity(v) === targetIden);
         }
       } catch (e) {}
 
@@ -2828,6 +3835,7 @@ function App() {
         title,
         url,
         type: isLocalFile ? 'local' : 'url',
+        sourceType: expectedSource,
         isRemote: !isLocalFile,
         fileName: isLocalFile ? title : undefined,
         containerType: container,
@@ -2869,14 +3877,11 @@ function App() {
         probingError = err?.message || errStr;
       }
 
-      let rawTitle = localPathVal ? (localPathVal.split(/[/\\]/).pop() || localPathVal) : (url.substring(url.lastIndexOf('/') + 1) || 'Remote Stream');
-      let title = rawTitle.replace(/\.[^/.]+$/, '');
-      const parsedInfo = classifyVideoTitle(title);
-      if (parsedInfo.type !== 'unknown') {
-        title = parsedInfo.displayTitle;
-      }
+      const parsedInfo = classifyVideoTitle(titleHint || localPathVal || url);
+      let title = parsedInfo.displayTitle || parsedInfo.cleanTitle || 'Remote Stream';
+      const expectedFallbackSource: 'local' | 'remote' = isLocalFile ? 'local' : 'remote';
       
-      // Match history by normalized identity
+      // Match history by normalized identity with source
       let match: VideoItem | undefined = undefined;
       try {
         const activeUserId = localStorage.getItem('valor_active_user_id') || 'local';
@@ -2884,8 +3889,8 @@ function App() {
         const savedHistory = localStorage.getItem(videosKey);
         if (savedHistory) {
           const parsedHistory = JSON.parse(savedHistory) as VideoItem[];
-          const targetIden = getVideoIdentity(title);
-          match = parsedHistory.find(v => getVideoIdentity(v.title) === targetIden);
+          const targetIden = getVideoIdentity(title, expectedFallbackSource);
+          match = parsedHistory.find(v => getVideoIdentity(v) === targetIden);
         }
       } catch (e) {}
 
@@ -2894,12 +3899,13 @@ function App() {
         title,
         url,
         type: isLocalFile ? 'local' : 'url',
+        sourceType: expectedFallbackSource,
         isRemote: !isLocalFile,
         fileName: isLocalFile ? title : undefined,
         containerType: 'unknown',
         audioTracks: match ? match.audioTracks : [],
         subtitleTracks: match ? match.subtitleTracks : [],
-        playbackMode: 'native',
+        playbackMode: isLocalFile ? 'native' : undefined,
         probingError: probingError || undefined,
         currentTime: 0,
         resumeTime: getResumeTimeFromMatch(match),
@@ -2914,6 +3920,7 @@ function App() {
     } finally {
       setIsProcessing(false);
       setProcessingStep('');
+      setProcessingUrl('');
     }
   };
 
@@ -2935,6 +3942,172 @@ function App() {
     setVideoUrl('');
     await processRemoteUrl(url, isLocalFile);
   };
+
+  // Verify file access permissions for playlist & local media
+  useEffect(() => {
+    let active = true;
+    const verifyAccess = async () => {
+      if (!playlist.items || playlist.items.length === 0) {
+        if (active) setIsFilesAccessExpired(false);
+        return;
+      }
+
+      let isGranted = false;
+      try {
+        if (playlist.rootHandle && 'queryPermission' in playlist.rootHandle) {
+          const q = await (playlist.rootHandle as any).queryPermission({ mode: 'read' });
+          if (q === 'granted') isGranted = true;
+        }
+      } catch {}
+
+      if (!isGranted) {
+        const target = playlist.items[playlist.currentIndex >= 0 ? playlist.currentIndex : 0] || playlist.items[0];
+        if (target) {
+          try {
+            if (target.handle && 'queryPermission' in target.handle) {
+              const q = await (target.handle as any).queryPermission({ mode: 'read' });
+              if (q === 'granted') isGranted = true;
+            } else {
+              const id = target.id || (target as any).fingerprint;
+              const h = await getFileHandle(id);
+              if (h && 'queryPermission' in h) {
+                const q = await (h as any).queryPermission({ mode: 'read' });
+                if (q === 'granted') isGranted = true;
+              }
+            }
+          } catch {}
+        }
+      }
+
+      if (active) {
+        const isFileObjCheck = (obj: any): obj is File => obj instanceof File || (obj && typeof obj.size === 'number' && typeof obj.slice === 'function');
+        const hasInMemoryFile = playingVideo && isFileObjCheck(playingVideo.file);
+        if (!isGranted && !hasInMemoryFile) {
+          setIsFilesAccessExpired(true);
+        } else {
+          setIsFilesAccessExpired(false);
+        }
+      }
+    };
+
+    verifyAccess();
+    return () => { active = false; };
+  }, [playlist.items, playlist.rootHandle, playlist.currentIndex, playingVideo]);
+
+  // Request file access permission and resume where left off at saved timestamp
+  const handleContinueWhereLeftOff = useCallback(async (targetVideoId?: string) => {
+    const activeItem = (targetVideoId ? playlist.items.find(it => it.id === targetVideoId || it.fingerprint === targetVideoId) : null)
+      || playlist.items[playlist.currentIndex >= 0 ? playlist.currentIndex : 0]
+      || playlist.items[0];
+
+    const targetVideo = (targetVideoId && playingVideo?.id === targetVideoId ? playingVideo : null)
+      || playingVideo
+      || (activeItem ? {
+          id: activeItem.id || activeItem.fingerprint,
+          title: activeItem.title || activeItem.name,
+          fileName: activeItem.name || activeItem.fileName,
+          type: 'local' as const,
+          duration: activeItem.duration || '0',
+          currentTime: activeItem.savedTime || 0,
+        } : null);
+
+    if (!targetVideo && !activeItem) return;
+
+    const targetId = targetVideoId || targetVideo?.id || activeItem?.id || (activeItem as any)?.fingerprint;
+    const savedTime = (targetVideo ? getMediaTimestamp(targetVideo) : 0)
+      || (activeItem ? (activeItem.savedTime || getMediaTimestamp({ id: targetId, fileName: activeItem.name, title: activeItem.title } as any)) : 0)
+      || ((targetVideo as any)?.currentTime || 0)
+      || 0;
+
+    pendingLocalReassociateIdRef.current = targetId;
+
+    // 1. Try root directory handle first if available
+    if (playlist.rootHandle && 'requestPermission' in playlist.rootHandle) {
+      try {
+        const perm = await (playlist.rootHandle as any).requestPermission({ mode: 'read' }).catch(() => 'denied');
+        if (perm === 'granted') {
+          if (activeItem) {
+            const file = await resolveFile(activeItem, playlist.rootHandle);
+            if (file) {
+              setIsFilesAccessExpired(false);
+              await processLocalVideo(file, targetId, activeItem.handle);
+              return;
+            }
+          }
+        }
+      } catch (e) {
+        console.warn('[handleContinueWhereLeftOff] rootHandle permission error:', e);
+      }
+    }
+
+    // 2. Try candidate keys in IndexedDB handle store or item.handle
+    const candidateKeys = [
+      targetId,
+      targetId?.replace(/^local-/, ''),
+      `local-${targetId}`,
+      targetVideo?.fileName,
+      targetVideo?.title,
+      activeItem?.name,
+      activeItem?.fileName,
+      activeItem?.title
+    ].filter(Boolean) as string[];
+
+    for (const k of candidateKeys) {
+      try {
+        const handle = (activeItem && activeItem.handle) || await getFileHandle(k);
+        if (handle && 'requestPermission' in handle) {
+          const perm = await (handle as any).requestPermission({ mode: 'read' }).catch(() => 'denied');
+          if (perm === 'granted') {
+            const file = await handle.getFile();
+            setIsFilesAccessExpired(false);
+            await processLocalVideo(file, targetId, handle);
+            return;
+          }
+        }
+      } catch (e) {
+        console.warn('[handleContinueWhereLeftOff] Handle requestPermission failed for:', k, e);
+      }
+    }
+
+    // 3. Fallback: prompt with file picker
+    if ('showOpenFilePicker' in window) {
+      try {
+        const [handle] = await (window as any).showOpenFilePicker({
+          types: [{
+            description: 'Video Files',
+            accept: {
+              'video/mp4': ['.mp4', '.m4v'],
+              'video/webm': ['.webm'],
+              'video/x-matroska': ['.mkv'],
+              'video/quicktime': ['.mov'],
+              'video/x-msvideo': ['.avi']
+            }
+          }]
+        });
+        const file = await handle.getFile();
+        setIsFilesAccessExpired(false);
+        await processLocalVideo(file, targetId, handle);
+        return;
+      } catch (pickerErr: any) {
+        if (pickerErr?.name === 'AbortError') return;
+      }
+    }
+
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = 'video/*,.mp4,.mkv,.webm,.mov,.avi,.m4v';
+    input.style.display = 'none';
+    input.onchange = async () => {
+      if (input.files && input.files[0]) {
+        const file = input.files[0];
+        setIsFilesAccessExpired(false);
+        await processLocalVideo(file, targetId);
+      }
+      input.remove();
+    };
+    document.body.appendChild(input);
+    input.click();
+  }, [playlist, playingVideo]);
 
   const isFileObj = (obj: any): obj is File => obj instanceof File || (obj && typeof obj.size === 'number' && typeof obj.slice === 'function');
   const isPlayable = playingVideo && (
@@ -3003,6 +4176,8 @@ function App() {
       toastDuration: settings.toastDuration,
       disableAnimations: settings.disableAnimations,
       pauseOnFocusChange: settings.pauseOnFocusChange,
+      focusOnClick: (settings as any).focusOnClick !== false && (settings as any).focusOnClickNoPause !== false,
+      focusOnClickNoPause: (settings as any).focusOnClickNoPause !== false && (settings as any).focusOnClick !== false,
       showPlayButton: settings.showPlayButton,
       showTimeDisplay: settings.showTimeDisplay,
       showPlayBar: settings.showPlayBar,
@@ -3017,6 +4192,7 @@ function App() {
       overlayShowBackground: settings.overlayShowBackground !== false,
       overlayShowRating: settings.overlayShowRating !== false,
       overlayShowOverview: settings.overlayShowOverview !== false,
+      overlayActiveTime: typeof settings.overlayActiveTime === 'number' ? settings.overlayActiveTime : 10,
       openSubtitlesApiKey: settings.openSubtitlesApiKey,
       allowUiSkipping: settings.allowUiSkipping,
       blockSeekingCompletely: settings.blockSeekingCompletely,
@@ -3025,6 +4201,18 @@ function App() {
       lockModeActive: settings.lockModeActive,
       settingsOrder: settings.settingsOrder,
       radialMenuConfig: settings.radialMenuConfig,
+      cacheSettings: settings.cacheSettings,
+      onUpdateCacheSettings: (newCacheSettings: Partial<CacheSettings>) => {
+        const updated = {
+          ...settings,
+          cacheSettings: {
+            ...settings.cacheSettings,
+            ...newCacheSettings
+          }
+        };
+        setSettings(updated);
+        saveSettingsToStorage(updated);
+      },
       onUpdateSubSettings: (newSubSettings: any) => {
         const updated = {
           ...settings,
@@ -3034,6 +4222,9 @@ function App() {
           }
         };
         setSettings(updated);
+        try {
+          localStorage.setItem('valor_sub_settings', JSON.stringify(updated.subSettings));
+        } catch {}
         saveSettingsToStorage(updated);
       },
       onUpdateSettings: (updatedSettings: any) => {
@@ -3043,57 +4234,24 @@ function App() {
           return updated;
         });
       },
+      onOpenFile: async (file: File) => {
+        await processLocalVideo(file);
+      },
+      onOpenUrl: async (url: string) => {
+        await processRemoteUrl(url, false);
+      },
+      onAddToPlaylist: async (file: File) => {
+        const fp = makeFingerprint(file);
+        const item = await buildPlaylistItem(file);
+        addPlaylistItems([item], true);
+        // Also process so it appears in history
+        await processLocalVideo(file, fp);
+      },
+      onPlayVideo: (video: VideoItem) => {
+        handlePlayVideo(video);
+      },
       onReassociate: async (videoId: string) => {
-        pendingLocalReassociateIdRef.current = videoId;
-        
-        // Try IndexedDB handle first — but we must also start the file picker
-        // synchronously to preserve the user gesture activation for showOpenFilePicker.
-        // Strategy: start both paths, use whichever succeeds.
-        
-        // Path 1: Try IndexedDB handle (fast path — no user interaction needed)
-        let handleRestored = false;
-        try {
-          const handle = await getFileHandle(videoId);
-          if (handle) {
-            const hasPermission = await verifyPermission(handle);
-            if (hasPermission) {
-              const file = await handle.getFile();
-              await processLocalVideo(file, videoId, handle);
-              handleRestored = true;
-            }
-          }
-        } catch (err) {
-          console.error('[Recovery] Failed to restore from IndexedDB in onReassociate:', err);
-        }
-        
-        if (handleRestored) return;
-
-        // Path 2: Fallback to file picker.
-        // The hidden file input may not be in the DOM (we're in the player render path),
-        // so we create a temporary one on-the-fly. This works even after async awaits
-        // because <input>.click() doesn't require transient user activation like showOpenFilePicker.
-        const input = document.createElement('input');
-        input.type = 'file';
-        input.accept = 'video/*';
-        input.style.display = 'none';
-        input.onchange = async () => {
-          if (input.files && input.files[0]) {
-            const file = input.files[0];
-            pendingLocalReassociateIdRef.current = null;
-            
-            // Try to get a persistent handle via showOpenFilePicker for future reloads
-            let handle: FileSystemFileHandle | undefined;
-            if ('showOpenFilePicker' in window) {
-              // We can't call showOpenFilePicker here (no gesture), but we have the file.
-              // The handle won't be saved this time, but the file will work for this session.
-            }
-            
-            await processLocalVideo(file, videoId);
-          }
-          document.body.removeChild(input);
-        };
-        document.body.appendChild(input);
-        input.click();
+        await handleContinueWhereLeftOff(videoId);
       }
     };
 
@@ -3105,89 +4263,197 @@ function App() {
         />
       );
     } else {
+      // ── Playlist-aware local player render ──────────────────────────────
+      const normPlayingId = playingVideo.id.replace(/^local-/, '');
+      const currentPlaylistIdx = playlist.items.findIndex(
+        it => it.id === playingVideo.id ||
+              it.fingerprint === playingVideo.id ||
+              it.id === normPlayingId ||
+              it.fingerprint === normPlayingId ||
+              (playingVideo.fileName && (it.name === playingVideo.fileName || it.title === playingVideo.fileName)) ||
+              (playingVideo.title && (it.title === playingVideo.title || it.name === playingVideo.title))
+      );
+      const hasNext = currentPlaylistIdx >= 0
+        ? playlistNextIndex(currentPlaylistIdx) >= 0
+        : false;
+      const hasPrev = currentPlaylistIdx > 0;
+
+      const handlePlaylistEnded = () => {
+        const next = currentPlaylistIdx >= 0
+          ? playlistNextIndex(currentPlaylistIdx)
+          : -1;
+        if (next >= 0) {
+          playIndex(next);
+        } else {
+          // Repeat off and no next item → idle
+          setPlayingVideo(null);
+          setPlaylistIndex(-1);
+        }
+      };
+
+      const handlePlaylistNext = () => {
+        const next = currentPlaylistIdx >= 0
+          ? playlistNextIndex(currentPlaylistIdx)
+          : -1;
+        if (next >= 0) playIndex(next);
+      };
+
+      const handlePlaylistPrev = () => {
+        // If currentTime > 3s the player restarts; < 3s we go to previous
+        // The player checks this internally and calls onPrev or resets
+        const prev = currentPlaylistIdx > 0
+          ? playlistPrevIndex(currentPlaylistIdx)
+          : -1;
+        if (prev >= 0) playIndex(prev);
+      };
+
       return (
         <LocalVideoPlayer 
           key={playingVideo.id}
           {...playerProps}
-        />
+          isPermissionExpired={isFilesAccessExpired}
+          onContinueWhereLeftOff={() => handleContinueWhereLeftOff(playingVideo.id)}
+          playlist={playlist}
+          onPlaylistEnded={handlePlaylistEnded}
+          onPlaylistNext={handlePlaylistNext}
+          onPlaylistPrev={handlePlaylistPrev}
+          onPlaylistPrefetchNext={handlePlaylistPrefetchNext}
+          autoNextCountdown={5}
+          onFinishSession={handleFinishSession}
+          whenFinished={(settings as any).whenFinished || 'home'}
+          playbackFinishDelay={(settings as any).playbackFinishDelay ?? 5}
+          onOpenFile={handleSelectLocalFile}
+          onOpenNetworkStream={handleOpenNetworkStream}
+          onAddToPlaylist={handleAddToPlaylist}
+          onPlayIndex={playIndex}
+          onTogglePlaylistPanel={() => setShowPlaylistPanel(p => !p)}
+          onTimelineOnlyChange={(isTimeline) => {
+            if (isTimeline) setShowPlaylistPanel(false);
+          }}
+          playlistIndex={currentPlaylistIdx}
+          isPlaylistOpen={showPlaylistPanel}
+          onClosePlaylistPanel={() => setShowPlaylistPanel(false)}
+        >
+          {/* Playlist slide-in panel */}
+          <PlaylistPanel
+            playlist={playlist}
+            allPlaylists={allPlaylists}
+            currentFP={playingVideo.id}
+            isOpen={showPlaylistPanel}
+            isPermissionExpired={isFilesAccessExpired}
+            onContinueWhereLeftOff={() => handleContinueWhereLeftOff()}
+            onClose={() => setShowPlaylistPanel(false)}
+            onPlayIndex={(i) => playIndex(i)}
+            onRemoveItem={(fp) => {
+              const newIdx = removePlaylistItem(fp, currentPlaylistIdx);
+              if (playingVideo.id === fp) {
+                if (newIdx >= 0 && newIdx < playlist.items.length - 1) {
+                  playIndex(newIdx);
+                } else {
+                  setPlayingVideo(null);
+                }
+              }
+            }}
+            onClearAll={() => {
+              clearPlaylist();
+              setPlayingVideo(null);
+            }}
+            onReorder={(from, to) => {
+              reorderPlaylistItem(from, to);
+            }}
+            onSetRepeat={(r) => setPlaylist(prev => ({ ...prev, repeat: r }))}
+            onSetShuffle={(s) => setPlaylist(prev => ({ ...prev, shuffle: s }))}
+            onSwitchPlaylist={async (id) => {
+              const ok = await switchPlaylist(id);
+              if (ok) addToast('Switched playlist', 'success');
+            }}
+            onRenamePlaylist={(newName, id) => {
+              renamePlaylist(newName, id);
+            }}
+            onDeletePlaylist={(id) => {
+              deletePlaylist(id);
+              addToast('Deleted playlist', 'warning');
+            }}
+            onCreatePlaylist={(name) => {
+              createNewPlaylist(name);
+              addToast('Created new playlist', 'success');
+            }}
+            onLocateFile={handleLocateFile}
+            formatTime={formatTime}
+          />
+          {/* Drop "Play now / Add to queue" prompt */}
+          {pendingDropFiles && (
+            <div
+              style={{
+                position: 'fixed', inset: 0,
+                zIndex: 9995,
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                background: 'rgba(0,0,0,0.6)',
+                backdropFilter: 'blur(8px)',
+              }}
+              onClick={() => setPendingDropFiles(null)}
+            >
+              <div
+                onClick={e => e.stopPropagation()}
+                style={{
+                  background: '#161616',
+                  border: '1px solid rgba(255,255,255,0.1)',
+                  borderRadius: 14,
+                  padding: '24px 28px',
+                  display: 'flex', flexDirection: 'column', gap: 12,
+                  fontFamily: 'Outfit, sans-serif',
+                  minWidth: 280,
+                }}
+              >
+                <div style={{ fontSize: '1rem', fontWeight: 700, color: '#fff' }}>
+                  Add to playlist?
+                </div>
+                <div style={{ fontSize: '0.82rem', color: 'rgba(255,255,255,0.6)' }}>
+                  {pendingDropFiles.items[0]?.title}
+                </div>
+                <div style={{ display: 'flex', gap: 10, marginTop: 8 }}>
+                  <button
+                    onClick={pendingDropFiles.onPlayNow}
+                    style={{
+                      flex: 1, background: '#e50914', border: 'none',
+                      color: '#fff', borderRadius: 8, padding: '10px',
+                      cursor: 'pointer', fontWeight: 600, fontSize: '0.85rem',
+                    }}
+                  >
+                    Play now
+                  </button>
+                  <button
+                    onClick={pendingDropFiles.onAddToQueue}
+                    style={{
+                      flex: 1,
+                      background: 'rgba(255,255,255,0.08)',
+                      border: '1px solid rgba(255,255,255,0.12)',
+                      color: '#fff', borderRadius: 8, padding: '10px',
+                      cursor: 'pointer', fontWeight: 600, fontSize: '0.85rem',
+                    }}
+                  >
+                    Add to queue
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+        </LocalVideoPlayer>
       );
     }
   }
 
-  if (!settings.isOnboarded) {
+
+
+  if (!features.app.enabled) {
     return (
-      <Onboarding01 
-        settings={settings}
-        handleDefaultLangChange={handleDefaultLangChange as any}
-        audioOptions={audioOptions}
-        subOptions={subOptions}
-        onComplete={() => {
-          const updated = { ...settings, isOnboarded: true };
-          setSettings(updated);
-          saveSettingsToStorage(updated);
+      <UnderConstructionPage
+        isEntireApp
+        message={features.app.maintenanceMessage}
+        onRetry={() => {
+          featureFlagService.setFeatureState('app', true, true);
+          setFeatures({ ...featureFlagService.getFeatures() });
         }}
-        onSelectProfile={async (userId, _storageMode) => {
-          localStorage.setItem('valor_active_user_id', userId);
-          
-          if (userId !== 'local' && !userId.startsWith('local_')) {
-            try {
-              const pData = await gqlFetch(`
-                query GetProfileData($userId: String!) {
-                  profile(userId: $userId) {
-                    settings
-                    history
-                  }
-                }
-              `, { userId });
-              const profileData = pData.profile || {};
-              const loaded = {
-                ...defaultSettings,
-                ...(profileData.settings || {}),
-                userId: userId,
-                storageMode: 'file'
-              };
-              setSettings(loaded);
-              saveSettingsToStorage(loaded);
-              if (profileData && Array.isArray(profileData.history)) {
-                setVideos(profileData.history.map((v: any) => ({
-                  ...v,
-                  audioTracks: v.audioTracks || [],
-                  subtitleTracks: v.subtitleTracks || []
-                })));
-              }
-            } catch (e) {
-              console.warn('Failed to load profile data from server');
-            }
-          } else {
-            const settingsKey = userId === 'local' ? 'valor_settings' : `valor_settings_${userId}`;
-            const videosKey = userId === 'local' ? 'valor_videos' : `valor_videos_${userId}`;
-            
-            const saved = localStorage.getItem(settingsKey);
-            let loaded;
-            if (saved) {
-              try {
-                loaded = { ...defaultSettings, ...JSON.parse(saved), userId: userId, storageMode: 'localstorage' };
-              } catch {
-                loaded = { ...defaultSettings, userId: userId, storageMode: 'localstorage' };
-              }
-            } else {
-              loaded = { ...defaultSettings, userId: userId, storageMode: 'localstorage' };
-            }
-            setSettings(loaded);
-            saveSettingsToStorage(loaded);
-            const savedVideos = localStorage.getItem(videosKey);
-            if (savedVideos) {
-              try {
-                setVideos(JSON.parse(savedVideos));
-              } catch {}
-            } else {
-              setVideos([]);
-            }
-          }
-        }}
-        videos={videos}
-        openAuthModal={(tab, targetProfile, onSuccess) => openAuthModal(tab, targetProfile, onSuccess)}
-        availableProfiles={availableProfiles}
       />
     );
   }
@@ -3213,53 +4479,88 @@ function App() {
 
       {/* Main Content Area */}
       <div className="main-layout-wrapper">
+        {/* Mobile Top Bar (<= 768px) */}
+        <MobileTopBar
+          onNavigateSettings={() => {
+            setSelectedActor(null);
+            setSelectedDetailsMedia(null);
+            setActiveTab('settings');
+          }}
+          onNavigateHome={() => {
+            setSelectedActor(null);
+            setSelectedDetailsMedia(null);
+            setActiveTab('home');
+          }}
+        />
+
         {/* Main Content Pane */}
         <main className="main-content full-width-details animate-fade-in">
           {selectedActor ? (
-            <ActorDetailsPage
-              actorId={selectedActor.id}
-              actorName={selectedActor.name}
-              onClose={() => setSelectedActor(null)}
-              onSelectMedia={(clickedMedia) => {
-                setSelectedActor(null);
-                setSelectedDetailsMedia(clickedMedia);
-              }}
-              tmdbApiKey={settings.tmdbApiKey}
-              profilePath={selectedActor.profilePath}
-            />
+            !features.onlineStream.enabled ? (
+              <UnderConstructionPage
+                featureName="Online Stream"
+                message={features.onlineStream.maintenanceMessage}
+                onBackHome={handleCloseDetails}
+              />
+            ) : (
+              <ActorDetailsPage
+                actorId={selectedActor.id}
+                actorName={selectedActor.name}
+                onClose={handleCloseDetails}
+                onSelectMedia={(clickedMedia) => {
+                  handleOpenMediaDetails(clickedMedia);
+                }}
+                tmdbApiKey={settings.tmdbApiKey}
+                profilePath={selectedActor.profilePath}
+              />
+            )
           ) : selectedDetailsMedia ? (
-            <OnlineDetailsPage
-              video={selectedDetailsMedia}
-              onClose={() => setSelectedDetailsMedia(null)}
-              onPlay={(selectedVideo, season, episode) => {
-                const match = videos.find(v => {
-                  if (selectedVideo.type === 'online_movie') {
-                    return v.id === selectedVideo.id;
-                  } else {
-                    return v.id === selectedVideo.id && v.season === season && v.episode === episode;
-                  }
-                });
-                const toPlay = {
-                  ...selectedVideo,
-                  season,
-                  episode,
-                  currentTime: match ? (match.currentTime || 0) : 0
-                };
-                handlePlayVideo(toPlay);
-              }}
-              onSelectMedia={setSelectedDetailsMedia}
-              onSelectActor={(actor) => setSelectedActor(actor)}
-              tmdbApiKey={settings.tmdbApiKey}
-            />
+            !features.onlineStream.enabled ? (
+              <UnderConstructionPage
+                featureName="Online Stream"
+                message={features.onlineStream.maintenanceMessage}
+                onBackHome={handleCloseDetails}
+              />
+            ) : (
+              <OnlineDetailsPage
+                video={selectedDetailsMedia}
+                onClose={handleCloseDetails}
+                onPlay={(selectedVideo, season, episode) => {
+                  const match = videos.find(v => {
+                    if (selectedVideo.type === 'online_movie') {
+                      return v.id === selectedVideo.id;
+                    } else {
+                      return v.id === selectedVideo.id && v.season === season && v.episode === episode;
+                    }
+                  });
+                  const toPlay: VideoItem = {
+                    ...selectedVideo,
+                    sourceType: 'online',
+                    season,
+                    episode,
+                    currentTime: match ? (match.currentTime || 0) : 0
+                  };
+                  handlePlayVideo(toPlay);
+                }}
+                onSelectMedia={handleOpenMediaDetails}
+                onSelectActor={handleOpenActorDetails}
+                tmdbApiKey={settings.tmdbApiKey}
+                videos={videos}
+                setVideos={setVideos}
+                addToast={addToast}
+              />
+            )
           ) : (
             <>
               {activeTab === 'home' && (
                 <HomePage
+                  isProcessing={isProcessing}
                   videos={videos}
                   isDragActive={isDragActive}
                   handleDrag={handleDrag}
                   handleDrop={handleDrop}
                   handleSelectLocalFile={handleSelectLocalFile}
+                  handleSelectDirectory={handleSelectDirectory}
                   fileInputRef={fileInputRef}
                   handleFileSelect={handleFileSelect}
                   historyVideoInputRef={historyVideoInputRef}
@@ -3272,6 +4573,14 @@ function App() {
                   parseDurationToSeconds={parseDurationToSeconds}
                   formatTime={formatTime}
                   theme={settings.theme}
+                  storageMode={settings.storageMode}
+                  onToggleStorageMode={(mode) => {
+                    const newMode: 'file' | 'localstorage' = mode === 'server' ? 'file' : 'localstorage';
+                    const updated = { ...settings, storageMode: newMode };
+                    setSettings(updated);
+                    saveSettingsToStorage(updated);
+                  }}
+                  userId={settings.userId}
                 />
               )}
 
@@ -3283,6 +4592,7 @@ function App() {
                   settings={settings}
                   handlePlayVideo={handlePlayVideo}
                   handleRemoveVideo={handleRemoveVideo}
+                  onRateVideo={handleRateVideo}
                   syncVideoToTraktHistory={syncVideoToTraktHistory}
                   isInstantlyPlayable={isInstantlyPlayable}
                   parseDurationToSeconds={parseDurationToSeconds}
@@ -3295,15 +4605,40 @@ function App() {
                   videos={videos}
                   onPlayVideo={handlePlayVideo}
                   isInstantlyPlayable={isInstantlyPlayable}
+                  onNavigateToSelectMedia={() => setActiveTab('home')}
+                  onRemoveVideo={handleRemoveVideo}
+                  addToast={addToast}
+                  setVideos={setVideos}
+                  onSelectMedia={handleOpenMediaDetails}
+                  tmdbApiKey={settings.tmdbApiKey}
+                  playlist={playlist}
+                  allPlaylists={allPlaylists}
+                  onSwitchPlaylist={async (id) => {
+                    await switchPlaylist(id);
+                    await playIndex(0);
+                  }}
+                  onDeletePlaylist={deletePlaylist}
+                  onCreatePlaylist={createNewPlaylist}
+                  onPlayIndex={playIndex}
                 />
               )}
 
               {activeTab === 'online' && (
-                <OnlineStreamPage
-                  onSelectMedia={setSelectedDetailsMedia}
-                  tmdbApiKey={settings.tmdbApiKey}
-                  traktAccessToken={settings.traktAccessToken}
-                />
+                !features.onlineStream.enabled ? (
+                  <UnderConstructionPage
+                    featureName="Online Stream"
+                    message={features.onlineStream.maintenanceMessage}
+                    onBackHome={() => setActiveTab('home')}
+                  />
+                ) : (
+                  <OnlineStreamPage
+                    onSelectMedia={handleOpenMediaDetails}
+                    onPlayVideo={handlePlayVideo}
+                    tmdbApiKey={settings.tmdbApiKey}
+                    traktAccessToken={settings.traktAccessToken}
+                    videos={videos}
+                  />
+                )
               )}
 
               {activeTab === 'settings' && (
@@ -3324,18 +4659,47 @@ function App() {
                   handleSwitchProfile={handleSwitchProfile}
                   openAuthModal={openAuthModal}
                   setDeleteTargetProfile={setDeleteTargetProfile}
+                  setIsDeleteModalOpen={setIsDeleteModalOpen}
                   setRemoveError={setRemoveError}
                   setIsRemoveModalOpen={setIsRemoveModalOpen}
+                  setRemoveTargetProfile={setRemoveTargetProfile}
                   setNewProfileName={setNewProfileName}
                   setNewProfilePassword={setNewProfilePassword}
                   setCreateProfileError={setCreateProfileError}
                   setIsCreateProfileModalOpen={setIsCreateProfileModalOpen}
                   addToast={addToast}
+                  videos={videos}
                   setVideos={setVideos}
                   previewExpanded={previewExpanded}
                   setPreviewExpanded={setPreviewExpanded}
                   renderMockPreviewButton={renderMockPreviewButton}
                   setShowResetConfirm={setShowResetConfirm}
+                />
+              )}
+
+              {activeTab === 'companion' && (
+                !features.localEngine.enabled ? (
+                  <NotFoundPage
+                    requestedRoute="companion"
+                    onBackHome={() => setActiveTab('home')}
+                    onNavigate={(t) => setActiveTab(t)}
+                  />
+                ) : (
+                  <LocalServicePage />
+                )
+              )}
+
+              {activeTab === 'under-construction' && (
+                <UnderConstructionPage
+                  onBackHome={() => setActiveTab('home')}
+                />
+              )}
+
+              {(!['home', 'history', 'calendar', 'library', 'online', 'settings', 'companion', 'under-construction'].includes(activeTab) || activeTab === 'not-found') && (
+                <NotFoundPage
+                  requestedRoute={activeTab}
+                  onBackHome={() => setActiveTab('home')}
+                  onNavigate={(t) => setActiveTab(t)}
                 />
               )}
             </>
@@ -3349,6 +4713,20 @@ function App() {
         setActiveTab={setActiveTab}
         setSelectedActor={setSelectedActor}
         setSelectedDetailsMedia={setSelectedDetailsMedia}
+      />
+
+      {/* Fullscreen Stream Loading Transition Overlay */}
+      <StreamLoadingOverlay
+        isOpen={isProcessing}
+        step={processingStep}
+        url={processingUrl}
+        title={processingTitle}
+        onCancel={() => {
+          setIsProcessing(false);
+          setProcessingStep('');
+          setProcessingUrl('');
+          setProcessingTitle('');
+        }}
       />
 
       {/* Reset settings confirmation modal */}
@@ -3430,6 +4808,45 @@ function App() {
       )}
 
       
+
+      {/* Playlist slide-in panel */}
+      <PlaylistPanel
+        playlist={playlist}
+        allPlaylists={allPlaylists}
+        isOpen={showPlaylistPanel}
+        isPermissionExpired={isFilesAccessExpired}
+        onContinueWhereLeftOff={() => handleContinueWhereLeftOff()}
+        onClose={() => setShowPlaylistPanel(false)}
+        onPlayIndex={(i) => playIndex(i)}
+        onRemoveItem={(fp) => {
+          removePlaylistItem(fp, -1);
+        }}
+        onClearAll={() => {
+          clearPlaylist();
+        }}
+        onReorder={(from, to) => {
+          reorderPlaylistItem(from, to);
+        }}
+        onSetRepeat={(r) => setPlaylist(prev => ({ ...prev, repeat: r }))}
+        onSetShuffle={(s) => setPlaylist(prev => ({ ...prev, shuffle: s }))}
+        onSwitchPlaylist={async (id) => {
+          const ok = await switchPlaylist(id);
+          if (ok) addToast('Switched playlist', 'success');
+        }}
+        onRenamePlaylist={(newName, id) => {
+          renamePlaylist(newName, id);
+        }}
+        onDeletePlaylist={(id) => {
+          deletePlaylist(id);
+          addToast('Deleted playlist', 'warning');
+        }}
+        onCreatePlaylist={(name) => {
+          createNewPlaylist(name);
+          addToast('Created new playlist', 'success');
+        }}
+        onLocateFile={handleLocateFile}
+        formatTime={formatTime}
+      />
 
       {/* Global Toast Container */}
       <div style={{
@@ -3521,14 +4938,38 @@ function App() {
                 </button>
               </div>
 
-              {/* Subtitle text */}
+              {/* Subtitle text and optional Action */}
               <div style={{
-                fontSize: '0.8rem',
-                color: 'rgba(255, 255, 255, 0.65)',
-                lineHeight: 1.4,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                gap: '12px',
                 padding: '0 18px 12px 46px'
               }}>
-                {t.text}
+                <span style={{ fontSize: '0.82rem', color: 'rgba(255, 255, 255, 0.75)', lineHeight: 1.4 }}>{t.text}</span>
+                {(t as any).onAction && (
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      (t as any).onAction();
+                      setToasts(prev => prev.filter(item => item.id !== t.id));
+                    }}
+                    style={{
+                      background: 'var(--surface-3, #232b36)',
+                      border: '1px solid var(--control-border, #6c778a)',
+                      color: 'var(--text-1, #ffffff)',
+                      borderRadius: '6px',
+                      padding: '4px 10px',
+                      fontSize: '0.75rem',
+                      fontWeight: 700,
+                      cursor: 'pointer',
+                      flexShrink: 0
+                    }}
+                  >
+                    {(t as any).actionLabel || 'Undo'}
+                  </button>
+                )}
               </div>
 
               {/* Bottom countdown strip */}
@@ -3572,749 +5013,45 @@ function App() {
         })}
       </div>
 
-      {/* Global Auth Modal (Login / Signup) */}
-      {isAuthModalOpen && (
-        <div style={{
-          position: 'fixed',
-          top: 0,
-          left: 0,
-          right: 0,
-          bottom: 0,
-          background: 'rgba(0,0,0,0.6)',
-          backdropFilter: 'blur(8px)',
-          zIndex: 9990,
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          animation: 'fadeIn 0.2s ease-out'
-        }}>
-          <div style={{
-            width: '380px',
-            background: '#141414',
-            borderRadius: '16px',
-            boxShadow: '0 0 35px rgba(239, 68, 68, 0.18)',
-            overflow: 'hidden',
-            padding: '32px 24px 28px 24px',
-            display: 'flex',
-            flexDirection: 'column',
-            gap: '20px',
-            animation: 'scaleIn 0.3s cubic-bezier(0.34, 1.56, 0.64, 1)',
-            position: 'relative',
-            border: '1px solid rgba(239, 68, 68, 0.25)'
-          }}>
-            {/* Close Button */}
-            <button
-              type="button"
-              onClick={() => {
-                setAuthName('');
-                setAuthUsername('');
-                setAuthPassword('');
-                setSelectedProfileForLogin(null);
-                setIsAuthModalOpen(false);
-                setAuthError('');
-              }}
-              style={{
-                position: 'absolute',
-                top: '16px',
-                right: '16px',
-                background: 'none',
-                border: 'none',
-                color: 'rgba(255, 255, 255, 0.4)',
-                cursor: 'pointer',
-                fontSize: '1.25rem',
-                fontWeight: 'bold',
-                padding: 0,
-                lineHeight: 1
-              }}
-              title="Close"
-            >
-              ×
-            </button>
+      {/* Modal 1: "Log in or create account" */}
+      <AuthModal
+        isOpen={isAuthModalOpen}
+        initialTab={authModalTab}
+        onClose={() => {
+          setIsAuthModalOpen(false);
+          setSelectedProfileForLogin(null);
+        }}
+        selectedProfileForLogin={selectedProfileForLogin}
+        onAuthSuccess={onAuthSuccess ? (uid, uname) => {
+          if (onAuthSuccess) onAuthSuccess(uid);
+        } : undefined}
+        initiateTraktPkceAuth={initiateTraktPkceAuth}
+        settings={settings}
+        setSettings={setSettings}
+        saveSettingsToStorage={saveSettingsToStorage}
+        videos={videos}
+        setVideos={setVideos}
+        addToast={addToast}
+        fetchProfiles={fetchProfiles}
+        defaultSettings={defaultSettings}
+      />
 
-            {/* Header Title */}
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', textAlign: 'center' }}>
-              <h2 style={{ 
-                margin: 0, 
-                fontSize: '1.35rem', 
-                fontWeight: 700, 
-                color: '#ef4444', 
-                fontFamily: 'Outfit, sans-serif' 
-              }}>
-                {selectedProfileForLogin ? "Enter Profile Password" : "Log in or create account"}
-              </h2>
-              {selectedProfileForLogin && (
-                <span style={{ fontSize: '0.8rem', color: 'rgba(255,255,255,0.5)', fontFamily: 'Outfit, sans-serif' }}>
-                  Logging into profile <strong>{selectedProfileForLogin.name}</strong>
-                </span>
-              )}
-            </div>
-
-            {/* Tab Selection (Centered in the middle) */}
-            {!selectedProfileForLogin && (
-              <div style={{ 
-                display: 'flex', 
-                justifyContent: 'center', 
-                gap: '24px', 
-                borderBottom: '1px solid rgba(255, 255, 255, 0.08)', 
-                paddingBottom: '8px' 
-              }}>
-                <button
-                  type="button"
-                  onClick={() => { setAuthModalTab('login'); setAuthError(''); }}
-                  style={{
-                    background: 'none',
-                    border: 'none',
-                    color: authModalTab === 'login' ? '#ef4444' : 'rgba(255, 255, 255, 0.4)',
-                    fontWeight: 700,
-                    fontSize: '0.9rem',
-                    cursor: 'pointer',
-                    position: 'relative',
-                    paddingBottom: '6px',
-                    fontFamily: 'Outfit, sans-serif'
-                  }}
-                >
-                  Login
-                  {authModalTab === 'login' && (
-                    <div style={{
-                      position: 'absolute',
-                      bottom: '-9px',
-                      left: 0,
-                      right: 0,
-                      height: '2px',
-                      background: 'linear-gradient(90deg, #ef4444, #f97316)'
-                    }} />
-                  )}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => { setAuthModalTab('signup'); setAuthError(''); }}
-                  style={{
-                    background: 'none',
-                    border: 'none',
-                    color: authModalTab === 'signup' ? '#ef4444' : 'rgba(255, 255, 255, 0.4)',
-                    fontWeight: 700,
-                    fontSize: '0.9rem',
-                    cursor: 'pointer',
-                    position: 'relative',
-                    paddingBottom: '6px',
-                    fontFamily: 'Outfit, sans-serif'
-                  }}
-                >
-                  Sign Up
-                  {authModalTab === 'signup' && (
-                    <div style={{
-                      position: 'absolute',
-                      bottom: '-9px',
-                      left: 0,
-                      right: 0,
-                      height: '2px',
-                      background: 'linear-gradient(90deg, #ef4444, #f97316)'
-                    }} />
-                  )}
-                </button>
-              </div>
-            )}
-
-            {/* Error Message */}
-            {authError && (
-              <div style={{
-                background: 'rgba(239, 68, 68, 0.1)',
-                border: '1px solid rgba(239, 68, 68, 0.2)',
-                color: '#ef4444',
-                fontSize: '0.78rem',
-                padding: '10px',
-                borderRadius: '8px',
-                fontWeight: 500,
-                fontFamily: 'Outfit, sans-serif'
-              }}>
-                ⚠️ {authError}
-              </div>
-            )}
-
-            {/* Form Fields */}
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
-              {/* Profile Name Input (Only on Sign Up) */}
-              {authModalTab === 'signup' && !selectedProfileForLogin && (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                  <label style={{ fontSize: '0.85rem', color: 'rgba(255, 255, 255, 0.7)', fontWeight: 600, fontFamily: 'Outfit, sans-serif' }}>
-                    Profile Name
-                  </label>
-                  <input
-                    type="text"
-                    placeholder="Enter profile name..."
-                    value={authName}
-                    onChange={e => setAuthName(e.target.value)}
-                    style={{
-                      background: 'rgba(0, 0, 0, 0.3)',
-                      border: '1px solid rgba(255, 255, 255, 0.12)',
-                      borderRadius: '8px',
-                      padding: '12px 14px',
-                      fontSize: '0.88rem',
-                      color: '#ffffff',
-                      outline: 'none',
-                      fontFamily: 'Outfit, sans-serif'
-                    }}
-                  />
-                </div>
-              )}
-
-              {/* Username Input */}
-              {!selectedProfileForLogin && (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                  <label style={{ fontSize: '0.85rem', color: 'rgba(255, 255, 255, 0.7)', fontWeight: 600, fontFamily: 'Outfit, sans-serif' }}>
-                    Username
-                  </label>
-                  <input
-                    type="text"
-                    placeholder="Enter username..."
-                    value={authUsername}
-                    onChange={e => setAuthUsername(e.target.value)}
-                    style={{
-                      background: 'rgba(0, 0, 0, 0.3)',
-                      border: '1px solid rgba(255, 255, 255, 0.12)',
-                      borderRadius: '8px',
-                      padding: '12px 14px',
-                      fontSize: '0.88rem',
-                      color: '#ffffff',
-                      outline: 'none',
-                      fontFamily: 'Outfit, sans-serif'
-                    }}
-                  />
-                </div>
-              )}
-
-              {/* Password Input */}
-              {(selectedProfileForLogin || authModalTab === 'login' || authModalTab === 'signup') && (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                  <label style={{ fontSize: '0.85rem', color: 'rgba(255, 255, 255, 0.7)', fontWeight: 600, fontFamily: 'Outfit, sans-serif' }}>
-                    Password
-                  </label>
-                  <input
-                    type="password"
-                    placeholder="••••••••••••"
-                    value={authPassword}
-                    onChange={e => setAuthPassword(e.target.value)}
-                    style={{
-                      background: 'rgba(0, 0, 0, 0.3)',
-                      border: '1px solid rgba(255, 255, 255, 0.12)',
-                      borderRadius: '8px',
-                      padding: '12px 14px',
-                      fontSize: '0.88rem',
-                      color: '#ffffff',
-                      outline: 'none',
-                      fontFamily: 'Outfit, sans-serif'
-                    }}
-                    onKeyDown={e => {
-                      if (e.key === 'Enter') {
-                        document.getElementById('auth-modal-submit-btn')?.click();
-                      }
-                    }}
-                  />
-                </div>
-              )}
-            </div>
-
-            {/* Actions Submit Button */}
-            <button
-              id="auth-modal-submit-btn"
-              type="button"
-              onClick={async () => {
-                setAuthError('');
-                const isSignUp = authModalTab === 'signup' && !selectedProfileForLogin;
-                
-                if (isSignUp) {
-                  const profileName = authName.trim() || authUsername.trim() || 'New User';
-                  const currentIsOnboarded = settings.isOnboarded;
-                  try {
-                    const res = await secureFetch(`${BACKEND_ORIGIN}/api/profile/migrate`, {
-                      method: 'POST',
-                      headers: { 'Content-Type': 'application/json' },
-                      body: JSON.stringify({ 
-                        name: profileName, 
-                        username: authUsername.trim() || undefined,
-                        password: authPassword || undefined,
-                        isSignUp: true,
-                        settings: { ...settings, isOnboarded: currentIsOnboarded }, 
-                        history: videos 
-                      })
-                    });
-                    const resData = await res.json();
-                    if (resData.success) {
-                      const oldUserId = settings.userId;
-                      localStorage.setItem('valor_active_user_id', resData.userId);
-                      localStorage.setItem('valor_logged_in_username', authUsername.trim());
-                      const updated = {
-                         ...settings,
-                         userId: resData.userId,
-                         storageMode: 'file' as const,
-                         isOnboarded: currentIsOnboarded
-                       };
-                       setSettings(updated);
-                       saveSettingsToStorage(updated);
-                      
-                      // Remove local profile from localStorage
-                      if (oldUserId && (oldUserId === 'local' || oldUserId.startsWith('local_'))) {
-                        let localProfiles = [];
-                        try {
-                          const localSaved = localStorage.getItem('valor_local_profiles');
-                          if (localSaved) localProfiles = JSON.parse(localSaved);
-                        } catch {}
-                        localProfiles = localProfiles.filter((p: any) => p.userId !== oldUserId);
-                        localStorage.setItem('valor_local_profiles', JSON.stringify(localProfiles));
-                        
-                        const oldSettingsKey = oldUserId === 'local' ? 'valor_settings' : `valor_settings_${oldUserId}`;
-                        const oldVideosKey = oldUserId === 'local' ? 'valor_videos' : `valor_videos_${oldUserId}`;
-                        localStorage.removeItem(oldSettingsKey);
-                        localStorage.removeItem(oldVideosKey);
-                      }
-                      
-                      addToast(`Successfully created Server Profile: ${profileName}!`, 'success');
-                      addToast('Starting synchronization of watch history and settings...', 'success');
-                      
-                      const historyRes = await secureFetch(`${BACKEND_ORIGIN}/api/history?userId=${resData.userId}`);
-                      const serverHistory = await historyRes.json();
-                      if (Array.isArray(serverHistory)) {
-                        setVideos(serverHistory);
-                      }
-                      
-                      addToast('Synchronization complete! All settings and watch history synced.', 'success');
-                      
-                      if (onAuthSuccess) {
-                        onAuthSuccess(resData.userId);
-                      }
-                      
-                      setAuthName('');
-                      setAuthUsername('');
-                      setAuthPassword('');
-                      setIsAuthModalOpen(false);
-                      await fetchProfiles();
-                    } else {
-                      setAuthError(resData.error || 'Failed to create profile');
-                    }
-                  } catch (err: any) {
-                    setAuthError(err.message || 'Profile generation failed.');
-                  }
-                } else {
-                  try {
-                    const isAccountLoginAndSync = !selectedProfileForLogin && (!settings.userId || settings.userId === 'local' || settings.userId.startsWith('local_'));
-                    
-                    if (isAccountLoginAndSync) {
-                      // 1. Verify credentials by attempting a login
-                      const verifyRes = await secureFetch(`${BACKEND_ORIGIN}/api/profile/login`, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ username: authUsername.trim(), password: authPassword })
-                      });
-                      const verifyData = await verifyRes.json();
-                      if (!verifyData.success) {
-                        setAuthError(verifyData.error || 'Incorrect username or password');
-                        return;
-                      }
-                      
-                      // 2. Credentials are correct! Create a new profile under this account with the current local data
-                      const profileName = settings.profileName || 'Local Browser Saves';
-                      const migrateRes = await secureFetch(`${BACKEND_ORIGIN}/api/profile/migrate`, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ 
-                          name: profileName, 
-                          username: authUsername.trim(),
-                          password: authPassword,
-                          isLoginAndSync: true,
-                          settings: { ...settings, isOnboarded: true }, 
-                          history: videos 
-                        })
-                      });
-                      const migrateData = await migrateRes.json();
-                      if (migrateData.success) {
-                        const oldUserId = settings.userId;
-                        const pId = migrateData.userId;
-                        localStorage.setItem('valor_active_user_id', pId);
-                        localStorage.setItem('valor_logged_in_username', authUsername.trim());
-                        
-                        const updated = {
-                          ...settings,
-                          userId: pId,
-                          storageMode: 'file' as const,
-                          isOnboarded: true
-                        };
-                        setSettings(updated);
-                        saveSettingsToStorage(updated);
-                        
-                        // Remove local profile from localStorage
-                        if (oldUserId && (oldUserId === 'local' || oldUserId.startsWith('local_'))) {
-                          let localProfiles = [];
-                          try {
-                            const localSaved = localStorage.getItem('valor_local_profiles');
-                            if (localSaved) localProfiles = JSON.parse(localSaved);
-                          } catch {}
-                          localProfiles = localProfiles.filter((p: any) => p.userId !== oldUserId);
-                          localStorage.setItem('valor_local_profiles', JSON.stringify(localProfiles));
-                          
-                          const oldSettingsKey = oldUserId === 'local' ? 'valor_settings' : `valor_settings_${oldUserId}`;
-                          const oldVideosKey = oldUserId === 'local' ? 'valor_videos' : `valor_videos_${oldUserId}`;
-                          localStorage.removeItem(oldSettingsKey);
-                          localStorage.removeItem(oldVideosKey);
-                        }
-                        
-                        addToast(`Successfully created Server Profile under account: ${profileName}!`, 'success');
-                        addToast('Starting synchronization of watch history and settings...', 'success');
-                        
-                        const historyRes = await secureFetch(`${BACKEND_ORIGIN}/api/history?userId=${pId}`);
-                        const serverHistory = await historyRes.json();
-                        if (Array.isArray(serverHistory)) {
-                          setVideos(serverHistory);
-                        }
-                        
-                        addToast('Synchronization complete! All settings and watch history synced.', 'success');
-                        
-                        if (onAuthSuccess) {
-                          onAuthSuccess(pId);
-                        }
-                        
-                        setAuthName('');
-                        setAuthUsername('');
-                        setAuthPassword('');
-                        setIsAuthModalOpen(false);
-                        await fetchProfiles();
-                      } else {
-                        setAuthError(migrateData.error || 'Failed to create profile under account');
-                      }
-                    } else {
-                      // Regular login (unlocking an existing profile, or server profile switch)
-                      const payload = selectedProfileForLogin 
-                        ? { userId: selectedProfileForLogin.userId, password: authPassword }
-                        : { username: authUsername.trim(), password: authPassword };
-                        
-                      const res = await secureFetch(`${BACKEND_ORIGIN}/api/profile/login`, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify(payload)
-                      });
-                      const resData = await res.json();
-                      if (resData.success) {
-                        const pId = resData.userId;
-                        const finalUsername = selectedProfileForLogin ? selectedProfileForLogin.username : authUsername.trim();
-                        localStorage.setItem('valor_active_user_id', pId);
-                        if (finalUsername) {
-                          localStorage.setItem('valor_logged_in_username', finalUsername);
-                        }
-                        const initialLoaded = {
-                          ...settings,
-                          userId: pId,
-                          storageMode: 'file' as const
-                        };
-                        setSettings(initialLoaded);
-                        saveSettingsToStorage(initialLoaded);
-                        
-                        const profileRes = await secureFetch(`${BACKEND_ORIGIN}/api/profile/data?userId=${pId}`);
-                        const profileData = await profileRes.json();
-                        if (profileData && profileData.settings) {
-                          const loaded = {
-                            ...defaultSettings,
-                            ...profileData.settings,
-                            userId: pId,
-                            storageMode: 'file' as const
-                          };
-                          setSettings(loaded);
-                          saveSettingsToStorage(loaded);
-                        }
-                        if (profileData && Array.isArray(profileData.history)) {
-                          setVideos(profileData.history.map((v: any) => ({
-                            ...v,
-                            audioTracks: v.audioTracks || [],
-                            subtitleTracks: v.subtitleTracks || []
-                          })));
-                        }
-                        
-                        addToast(`Logged in and switched to profile: ${resData.name}`, 'success');
-                        
-                        if (onAuthSuccess) {
-                          onAuthSuccess(pId);
-                        }
-                        
-                        setAuthName('');
-                        setAuthUsername('');
-                        setAuthPassword('');
-                        setSelectedProfileForLogin(null);
-                        setIsAuthModalOpen(false);
-                        await fetchProfiles();
-                      } else {
-                        setAuthError(resData.error || 'Incorrect username or password');
-                      }
-                    }
-                  } catch (err: any) {
-                    setAuthError(err.message || 'Login / Sync failed.');
-                  }
-                }
-              }}
-              style={{
-                width: '100%',
-                background: 'linear-gradient(135deg, #ef4444, #f97316)',
-                border: 'none',
-                color: '#ffffff',
-                padding: '14px',
-                fontSize: '0.9rem',
-                borderRadius: '999px',
-                cursor: 'pointer',
-                fontWeight: 600,
-                marginTop: '10px',
-                transition: 'opacity 0.2s',
-                fontFamily: 'Outfit, sans-serif',
-                boxShadow: '0 4px 15px rgba(249, 115, 22, 0.3)'
-              }}
-              onMouseEnter={e => e.currentTarget.style.opacity = '0.9'}
-              onMouseLeave={e => e.currentTarget.style.opacity = '1'}
-            >
-              {selectedProfileForLogin || authModalTab === 'login' ? 'Sign in' : 'Create account'}
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* Direct Profile Creation Modal (Bypasses onboarding) */}
-      {isCreateProfileModalOpen && (() => {
-        const isServerMode = settings.userId && settings.userId !== 'local' && !settings.userId.startsWith('local_');
-        const activeServerProfile = (availableProfiles || []).find(p => p.userId === settings.userId);
-        const loggedInUsername = activeServerProfile?.username || localStorage.getItem('valor_logged_in_username') || '';
-        
-        const themeColor = isServerMode ? '#ef4444' : '#2ecc71';
-        const themeBorder = isServerMode ? 'rgba(239, 68, 68, 0.25)' : 'rgba(46, 204, 113, 0.25)';
-        const themeTitle = isServerMode ? 'Create Server Profile' : 'Create Local Profile';
-        const themeButtonBg = isServerMode ? 'linear-gradient(135deg, #ef4444, #f97316)' : 'linear-gradient(135deg, #2ecc71, #27ae60)';
-        
-        return (
-          <div style={{
-            position: 'fixed',
-            top: 0,
-            left: 0,
-            right: 0,
-            bottom: 0,
-            background: 'rgba(0,0,0,0.7)',
-            backdropFilter: 'blur(8px)',
-            zIndex: 9990,
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            animation: 'fadeIn 0.2s ease-out'
-          }}>
-            <div style={{
-              width: '380px',
-              background: '#141414',
-              borderRadius: '16px',
-              border: `1px solid ${themeBorder}`,
-              boxShadow: isServerMode ? '0 0 30px rgba(239,68,68,0.15)' : '0 0 30px rgba(46,204,113,0.15)',
-              padding: '28px 24px',
-              display: 'flex',
-              flexDirection: 'column',
-              gap: '18px',
-              animation: 'scaleIn 0.3s cubic-bezier(0.34, 1.56, 0.64, 1)',
-              position: 'relative'
-            }}>
-              {/* Close Button */}
-              <button
-                type="button"
-                onClick={() => setIsCreateProfileModalOpen(false)}
-                style={{
-                  position: 'absolute',
-                  top: '16px',
-                  right: '16px',
-                  background: 'none',
-                  border: 'none',
-                  color: 'rgba(255, 255, 255, 0.4)',
-                  cursor: 'pointer',
-                  fontSize: '1.25rem',
-                  fontWeight: 'bold',
-                  padding: 0
-                }}
-              >
-                ×
-              </button>
-
-              <div style={{ textAlign: 'center', display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                <h3 style={{ margin: 0, fontSize: '1.3rem', fontWeight: 700, color: themeColor, fontFamily: 'Outfit, sans-serif' }}>
-                  {themeTitle}
-                </h3>
-                <p style={{ margin: 0, fontSize: '0.78rem', color: 'rgba(255,255,255,0.5)', fontFamily: 'Outfit, sans-serif', lineHeight: 1.4 }}>
-                  {isServerMode 
-                    ? `Create a new syncing profile under your account: ${loggedInUsername}`
-                    : 'Create a new local storage profile inside your browser.'}
-                </p>
-              </div>
-
-              {createProfileError && (
-                <div style={{
-                  background: 'rgba(239, 68, 68, 0.1)',
-                  border: '1px solid rgba(239, 68, 68, 0.2)',
-                  color: '#ef4444',
-                  fontSize: '0.75rem',
-                  padding: '8px 10px',
-                  borderRadius: '6px',
-                  fontFamily: 'Outfit, sans-serif'
-                }}>
-                  ⚠️ {createProfileError}
-                </div>
-              )}
-
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                  <label style={{ fontSize: '0.8rem', color: 'rgba(255,255,255,0.7)', fontWeight: 600, fontFamily: 'Outfit, sans-serif' }}>
-                    Profile Name
-                  </label>
-                  <input
-                    type="text"
-                    placeholder="Enter profile name..."
-                    value={newProfileName}
-                    onChange={e => setNewProfileName(e.target.value)}
-                    style={{
-                      background: 'rgba(0, 0, 0, 0.3)',
-                      border: '1px solid rgba(255, 255, 255, 0.12)',
-                      borderRadius: '8px',
-                      padding: '10px 12px',
-                      fontSize: '0.88rem',
-                      color: '#ffffff',
-                      outline: 'none',
-                      fontFamily: 'Outfit, sans-serif'
-                    }}
-                  />
-                </div>
-
-                 {isServerMode && (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                    <label style={{ fontSize: '0.8rem', color: 'rgba(255,255,255,0.7)', fontWeight: 600, fontFamily: 'Outfit, sans-serif' }}>
-                      Profile Password (Optional)
-                    </label>
-                    <input
-                      type="password"
-                      placeholder="••••••••••••"
-                      value={newProfilePassword}
-                      onChange={e => setNewProfilePassword(e.target.value)}
-                      style={{
-                        background: 'rgba(0, 0, 0, 0.3)',
-                        border: '1px solid rgba(255, 255, 255, 0.12)',
-                        borderRadius: '8px',
-                        padding: '10px 12px',
-                        fontSize: '0.88rem',
-                        color: '#ffffff',
-                        outline: 'none',
-                        fontFamily: 'Outfit, sans-serif'
-                      }}
-                    />
-                  </div>
-                )}
-              </div>
-
-              <button
-                type="button"
-                onClick={async () => {
-                  setCreateProfileError('');
-                  if (!newProfileName.trim()) {
-                    setCreateProfileError('Profile name is required');
-                    return;
-                  }
-
-                  if (isServerMode) {
-                    try {
-                      const res = await secureFetch(`${BACKEND_ORIGIN}/api/profile/migrate`, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ 
-                          name: newProfileName.trim(), 
-                          username: loggedInUsername,
-                          password: newProfilePassword,
-                          isLoggedIn: true,
-                          settings: { ...settings, isOnboarded: true },
-                          history: [] 
-                        })
-                      });
-                      const resData = await res.json();
-                      if (resData.success) {
-                        localStorage.setItem('valor_active_user_id', resData.userId);
-                        setSettings({
-                          ...defaultSettings,
-                          userId: resData.userId,
-                          profileName: newProfileName.trim(),
-                          storageMode: 'file',
-                          isOnboarded: true
-                        });
-                        setVideos([]);
-                        addToast(`Successfully created Server Profile: ${newProfileName.trim()}`, 'success');
-                        setIsCreateProfileModalOpen(false);
-                        await fetchProfiles();
-                      } else {
-                        setCreateProfileError(resData.error || 'Failed to create profile');
-                      }
-                    } catch (err: any) {
-                      setCreateProfileError(err.message || 'Creation failed.');
-                    }
-                  } else {
-                    const newUserId = 'local_' + Math.random().toString(36).substring(2, 11);
-                    localStorage.setItem('valor_active_user_id', newUserId);
-                    
-                    let localProfiles = [];
-                    try {
-                      const localSaved = localStorage.getItem('valor_local_profiles');
-                      if (localSaved) localProfiles = JSON.parse(localSaved);
-                    } catch {}
-                    
-                    const newProfile = {
-                      userId: newUserId,
-                      name: newProfileName.trim(),
-                      storageMode: 'localstorage',
-                      hasPassword: false
-                    };
-                    localProfiles.push(newProfile);
-                    localStorage.setItem('valor_local_profiles', JSON.stringify(localProfiles));
-                    
-                    try {
-                      const settingsKey = `valor_settings_${newUserId}`;
-                      localStorage.setItem(settingsKey, JSON.stringify({
-                        ...defaultSettings,
-                        profileName: newProfileName.trim(),
-                        userId: newUserId,
-                        storageMode: 'localstorage',
-                        isOnboarded: true
-                      }));
-                    } catch {}
-                    
-                    // Switch profile
-                    setSettings({
-                      ...defaultSettings,
-                      profileName: newProfileName.trim(),
-                      userId: newUserId,
-                      storageMode: 'localstorage',
-                      isOnboarded: true
-                    });
-                    setVideos([]);
-                    
-                    addToast(`Successfully created Local Profile: ${newProfileName.trim()}`, 'success');
-                    setIsCreateProfileModalOpen(false);
-                    await fetchProfiles();
-                  }
-                }}
-                style={{
-                  width: '100%',
-                  background: themeButtonBg,
-                  border: 'none',
-                  color: '#ffffff',
-                  padding: '12px',
-                  fontSize: '0.88rem',
-                  borderRadius: '999px',
-                  cursor: 'pointer',
-                  fontWeight: 600,
-                  marginTop: '6px',
-                  transition: 'opacity 0.2s',
-                  fontFamily: 'Outfit, sans-serif'
-                }}
-                onMouseEnter={e => e.currentTarget.style.opacity = '0.9'}
-                onMouseLeave={e => e.currentTarget.style.opacity = '1'}
-              >
-                Create Profile
-              </button>
-            </div>
-          </div>
-        );
-      })()}
+      {/* Modal 2: "Create Account" (account type picker) */}
+      <CreateAccountModal
+        isOpen={isCreateProfileModalOpen}
+        onClose={() => setIsCreateProfileModalOpen(false)}
+        settings={settings}
+        setSettings={setSettings}
+        saveSettingsToStorage={saveSettingsToStorage}
+        videos={videos}
+        setVideos={setVideos}
+        addToast={addToast}
+        fetchProfiles={fetchProfiles}
+        defaultSettings={defaultSettings}
+        onAuthSuccess={onAuthSuccess ? (uid) => {
+          if (onAuthSuccess) onAuthSuccess(uid);
+        } : undefined}
+      />
 
       {/* Delete Confirmation Modal */}
       {isDeleteModalOpen && (
@@ -4333,16 +5070,17 @@ function App() {
           animation: 'fadeIn 0.2s ease-out'
         }}>
           <div style={{
-            width: '380px',
-            background: 'rgba(22,22,22,0.95)',
-            border: '1px solid rgba(239,68,68,0.2)',
-            borderRadius: '12px',
-            boxShadow: '0 25px 50px -12px rgba(0,0,0,0.7)',
+            width: '400px',
+            background: '#121622',
+            border: '1px solid rgba(239, 68, 68, 0.25)',
+            borderRadius: '18px',
+            boxShadow: '0 25px 60px rgba(0, 0, 0, 0.8), 0 0 35px rgba(239, 68, 68, 0.15)',
             overflow: 'hidden',
-            padding: '24px',
+            padding: '26px 22px',
             display: 'flex',
             flexDirection: 'column',
             gap: '16px',
+            fontFamily: 'Outfit, sans-serif',
             animation: 'scaleIn 0.3s cubic-bezier(0.34, 1.56, 0.64, 1)'
           }}>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
@@ -4350,7 +5088,15 @@ function App() {
                 ⚠️ Permanent Deletion
               </span>
               <span style={{ fontSize: '0.78rem', color: 'rgba(255,255,255,0.7)', lineHeight: 1.4 }}>
-                Are you sure you want to permanently delete profile <strong>{deleteTargetProfile?.name}</strong>? All associated watch history, bookmarks, and settings will be permanently destroyed.
+                {deleteTargetProfile?.isOnlyProfile ? (
+                  <>
+                    Are you sure you want to delete profile <strong>{deleteTargetProfile?.name}</strong>? Because this is the only profile on your cloud account, <strong>deleting this profile will permanently delete your account and all associated data</strong>.
+                  </>
+                ) : (
+                  <>
+                    Are you sure you want to permanently delete profile <strong>{deleteTargetProfile?.name}</strong>? All associated watch history, bookmarks, and settings will be permanently destroyed.
+                  </>
+                )}
               </span>
             </div>
 
@@ -4487,18 +5233,53 @@ function App() {
                       });
                       const resData = await res.json();
                       if (resData.success) {
-                        addToast(`Successfully deleted profile: ${deleteTargetProfile.name}`, 'success');
-                        
-                        if (settings.userId === deleteTargetProfile.userId) {
-                          localStorage.setItem('valor_active_user_id', 'local');
-                          setSettings(prev => ({
-                            ...prev,
-                            userId: 'local',
-                            storageMode: 'localstorage'
-                          }));
-                          const savedVideos = localStorage.getItem('valor_videos');
-                          if (savedVideos) {
-                            try { setVideos(JSON.parse(savedVideos)); } catch {}
+                        if (resData.accountDeleted) {
+                          try {
+                            await fetch('/auth/logout', { method: 'POST', credentials: 'include' });
+                          } catch {}
+                          localStorage.removeItem('valor_logged_in_username');
+                          const localUserId = 'local_' + Math.random().toString(36).substring(2, 11);
+                          localStorage.setItem('valor_active_user_id', localUserId);
+                          const freshSettings = {
+                            ...defaultSettings,
+                            userId: localUserId,
+                            profileName: 'Local Profile',
+                            storageMode: 'localstorage' as const,
+                            experienceMode: 'local' as const,
+                            isOnboarded: true
+                          };
+                          try {
+                            localStorage.setItem(`valor_settings_${localUserId}`, JSON.stringify(freshSettings));
+                            localStorage.setItem('valor_settings', JSON.stringify(freshSettings));
+                          } catch {}
+                          setSettings(freshSettings);
+                          setVideos([]);
+                          addToast(`Permanently deleted profile and cloud account: ${deleteTargetProfile.name}`, 'success');
+                        } else {
+                          addToast(`Successfully deleted profile: ${deleteTargetProfile.name}`, 'success');
+                          
+                          if (settings.userId === deleteTargetProfile.userId) {
+                            const rem = resData.remainingProfiles || [];
+                            if (rem.length > 0) {
+                              const nextP = rem[0];
+                              localStorage.setItem('valor_active_user_id', nextP.userId);
+                              setSettings(prev => ({
+                                ...prev,
+                                userId: nextP.userId,
+                                profileName: nextP.name || prev.profileName,
+                                storageMode: 'file' as const
+                              }));
+                            } else {
+                              const localUserId = 'local_' + Math.random().toString(36).substring(2, 11);
+                              localStorage.setItem('valor_active_user_id', localUserId);
+                              setSettings(prev => ({
+                                ...prev,
+                                userId: localUserId,
+                                profileName: 'Local Profile',
+                                storageMode: 'localstorage' as const,
+                                experienceMode: 'local' as const
+                              }));
+                            }
                           }
                         }
                         
@@ -4571,16 +5352,17 @@ function App() {
           animation: 'fadeIn 0.2s ease-out'
         }}>
           <div style={{
-            width: '380px',
-            background: 'rgba(22,22,22,0.95)',
-            border: '1px solid rgba(255,255,255,0.08)',
-            borderRadius: '12px',
-            boxShadow: '0 25px 50px -12px rgba(0,0,0,0.7)',
+            width: '400px',
+            background: '#121622',
+            border: '1px solid rgba(255, 255, 255, 0.08)',
+            borderRadius: '18px',
+            boxShadow: '0 25px 60px rgba(0, 0, 0, 0.8), 0 0 35px rgba(99, 102, 241, 0.15)',
             overflow: 'hidden',
-            padding: '24px',
+            padding: '26px 22px',
             display: 'flex',
             flexDirection: 'column',
             gap: '16px',
+            fontFamily: 'Outfit, sans-serif',
             animation: 'scaleIn 0.3s cubic-bezier(0.34, 1.56, 0.64, 1)'
           }}>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
@@ -4870,15 +5652,78 @@ function App() {
           </div>
         </div>
       )}
+
+      {/* Local Player Reload Guard Modal */}
+      <ReloadGuardModal
+        isOpen={showReloadModal}
+        onStay={handleDismissReloadModal}
+        onReloadAnyway={handleReloadAnyway}
+      />
     </div>
   );
 }
 
 export default function AppWithErrorBoundary() {
-  if (window.location.pathname.startsWith('/embed')) {
+  const [currentPath, setCurrentPath] = useState(() => window.location.pathname + window.location.hash);
+
+  useEffect(() => {
+    const handleRoute = () => {
+      setCurrentPath(window.location.pathname + window.location.hash);
+    };
+    window.addEventListener('popstate', handleRoute);
+    window.addEventListener('hashchange', handleRoute);
+    return () => {
+      window.removeEventListener('popstate', handleRoute);
+      window.removeEventListener('hashchange', handleRoute);
+    };
+  }, []);
+
+  if (currentPath.startsWith('/embed')) {
     return (
       <ErrorBoundary>
         <EmbedPlayerPage />
+      </ErrorBoundary>
+    );
+  }
+
+  // Dedicated /service and /sidecar routes
+  const isServiceRoute = 
+    currentPath.startsWith('/service') ||
+    currentPath.startsWith('/sidecar') ||
+    window.location.pathname === '/service' ||
+    window.location.pathname.startsWith('/service') ||
+    window.location.pathname === '/sidecar' ||
+    window.location.hash.startsWith('#/service');
+
+  if (isServiceRoute) {
+    if (!featureFlagService.isFeatureEnabled('localEngine')) {
+      return (
+        <ErrorBoundary>
+          <NotFoundPage requestedRoute="service" onBackHome={() => { window.location.href = '/'; }} />
+        </ErrorBoundary>
+      );
+    }
+    return (
+      <ErrorBoundary>
+        <div style={{ minHeight: '100vh', backgroundColor: 'var(--bg-color, #0b0f19)' }}>
+          <LocalServicePage standalone={true} />
+        </div>
+      </ErrorBoundary>
+    );
+  }
+
+  // Hidden Admin Route - strictly accessed via /users/admin/usure
+  const isHiddenAdminPoint = 
+    window.location.pathname === '/users/admin/usure' ||
+    window.location.pathname.startsWith('/users/admin/usure') ||
+    window.location.hash.startsWith('#/users/admin/usure');
+
+  if (isHiddenAdminPoint) {
+    return (
+      <ErrorBoundary>
+        <div style={{ minHeight: '100vh', backgroundColor: 'var(--bg-color, #0b0f19)' }}>
+          <AdminDashboard />
+        </div>
       </ErrorBoundary>
     );
   }

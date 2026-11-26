@@ -2,6 +2,8 @@ import { ffmpegService, getOutputFormat, isCopyCodec } from '../ffmpeg';
 import type { StreamInfo, ExtractionResult } from '../ffmpeg';
 import type { ByteSource } from '../local/localByteSource';
 import { logger } from '../../utils/logger';
+import { remoteMediaAccess } from './remoteMediaAccess';
+import { probeContainer } from '../../utils/containerParser';
 
 /**
  * Extract audio segment from a remote byte source using a seek offset
@@ -22,25 +24,17 @@ export async function extractRemoteAudioSegment(
     const { ext, mimeType } = getOutputFormat(stream.codec);
     const tempOutFile = `audio_remote_${stream.index}.${ext}`;
 
-    // Read headers (first 1MB) and target chunk, then concatenate them
-    const size = await source.getSize();
-    const headerLimit = Math.min(1024 * 1024, size - 1);
-    
-    let concatenated: Uint8Array;
-    if (startOffset < headerLimit) {
-      concatenated = await source.read(0, endOffset, signal);
+    const containerType = await probeContainer(source);
+    let segmentBytes: Uint8Array;
+    if (containerType === 'mkv') {
+      const built = await remoteMediaAccess.buildMkvStreamingSegment(source, 0, 30, undefined, 0, signal);
+      segmentBytes = built.segmentBytes;
     } else {
-      const headerBytes = await source.read(0, headerLimit, signal);
-      if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
-      const chunkBytes = await source.read(startOffset, endOffset, signal);
-
-      concatenated = new Uint8Array(headerBytes.length + chunkBytes.length);
-      concatenated.set(headerBytes, 0);
-      concatenated.set(chunkBytes, headerBytes.length);
+      segmentBytes = await source.read(startOffset, endOffset, signal);
     }
 
     if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
-    await ff.writeFile(tempInFile, concatenated);
+    await ff.writeFile(tempInFile, segmentBytes);
 
     try {
       const selectStream = [`-map`, `0:${stream.index}`];
@@ -140,24 +134,26 @@ export async function extractRemoteSubtitleSegment(
     let format = ffmpegService.detectSubtitleFormat(stream.codec);
     let tempOutFile = `sub_remote_${stream.index}.${format}`;
 
-    const size = await source.getSize();
-    const headerLimit = Math.min(1024 * 1024, size - 1);
-
-    let concatenated: Uint8Array;
-    if (startOffset < headerLimit) {
-      concatenated = await source.read(0, endOffset, signal);
-    } else {
-      const headerBytes = await source.read(0, headerLimit, signal);
-      if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
-      const chunkBytes = await source.read(startOffset, endOffset, signal);
-
-      concatenated = new Uint8Array(headerBytes.length + chunkBytes.length);
-      concatenated.set(headerBytes, 0);
-      concatenated.set(chunkBytes, headerBytes.length);
+    const containerType = await probeContainer(source);
+    if (containerType === 'mkv') {
+      const { vttText } = await remoteMediaAccess.extractRemoteSubtitles(
+        source,
+        stream.index,
+        stream.codec,
+        undefined,
+        0,
+        300,
+        undefined,
+        undefined,
+        0,
+        signal
+      );
+      return vttText;
     }
 
+    const segmentBytes = await source.read(startOffset, endOffset, signal);
     if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
-    await ff.writeFile(tempInFile, concatenated);
+    await ff.writeFile(tempInFile, segmentBytes);
 
     try {
       if (signal?.aborted) throw new DOMException("Aborted", "AbortError");

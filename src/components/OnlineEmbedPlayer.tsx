@@ -1,5 +1,10 @@
+import { OnlineStreamAdBanner } from './OnlineStreamAdBanner';
 import React, { useState, useEffect, useRef } from 'react';
 import { X, Server, Bookmark, List, Play } from 'lucide-react';
+import { CustomSelect } from './CustomSelect';
+import { PlayerIsland } from './player';
+import { useAutoLandscape } from '../utils/screenOrientation';
+import { getEmbedProviders, buildEmbedUrl, fetchEmbedProvidersFromServer, getProviderDisplayName } from '../services/embedProviders';
 import type { VideoItem } from '../types/media';
 
 interface OnlineEmbedPlayerProps {
@@ -10,7 +15,7 @@ interface OnlineEmbedPlayerProps {
   tmdbApiKey?: string;
 }
 
-const DEFAULT_TMDB_TOKEN = "eyJhbGciOiJIUzI1NiJ9.eyJhdWQiOiJlMzQwMGRhZWZjODJjNTJlZDEyYzk1MWU1ZWFmYmVhYyIsIm5iZiI6MTc4MzU0MTI2OS44NzUsInN1YiI6IjZhNGVhZTE1MzFhOWUyYmNhZjBmY2RlMiIsInNjb3BlcyI6WyJhcGlfcmVhZCJdLCJ2ZXJzaW9uIjoxfQ.GT6_b6NSJwjYCXlbaCi_djq09ug0rKDxY9iouqVrYWY";
+import { DEFAULT_TMDB_TOKEN } from '../utils/constants';
 
 export const OnlineEmbedPlayer: React.FC<OnlineEmbedPlayerProps> = ({
   video,
@@ -19,7 +24,42 @@ export const OnlineEmbedPlayer: React.FC<OnlineEmbedPlayerProps> = ({
   onAddBookmark,
   tmdbApiKey
 }) => {
-  const [server, setServer] = useState<'videasy' | 'vidking'>('videasy');
+  useAutoLandscape(true);
+  const [server, setServer] = useState<string>('videasy');
+  const iframeRef = useRef<HTMLIFrameElement>(null);
+  const topRightControlsRef = useRef<HTMLDivElement>(null);
+  const [controlsHovered, setControlsHovered] = useState(false);
+  const [controlsOpacity, setControlsOpacity] = useState(0.1);
+
+  useEffect(() => {
+    const handleProximityMouseMove = (e: MouseEvent) => {
+      if (controlsHovered) {
+        setControlsOpacity(1.0);
+        return;
+      }
+      const el = topRightControlsRef.current;
+      if (!el) return;
+
+      const rect = el.getBoundingClientRect();
+      const centerX = rect.left + rect.width / 2;
+      const centerY = rect.top + rect.height / 2;
+      const distance = Math.hypot(e.clientX - centerX, e.clientY - centerY);
+
+      const maxDistance = 350;
+      if (distance >= maxDistance) {
+        setControlsOpacity(0.1);
+      } else {
+        const proximity = 1 - (distance / maxDistance);
+        const calculated = 0.1 + 0.9 * Math.pow(proximity, 1.2);
+        setControlsOpacity(Math.min(1.0, Math.max(0.1, Number(calculated.toFixed(3)))));
+      }
+    };
+
+    window.addEventListener('mousemove', handleProximityMouseMove, { passive: true });
+    return () => {
+      window.removeEventListener('mousemove', handleProximityMouseMove);
+    };
+  }, [controlsHovered]);
   const [currentTime, setCurrentTime] = useState(video.currentTime || 0);
   const [duration, setDuration] = useState(0);
   
@@ -161,30 +201,56 @@ export const OnlineEmbedPlayer: React.FC<OnlineEmbedPlayerProps> = ({
     };
   }, [video, currentSeason, currentEpisode, onUpdateProgress]);
 
+  // Anti-Sandbox Protection: Blocks browser extensions / ad-blockers from injecting restrictive sandbox attributes into the stream iframe
+  useEffect(() => {
+    const iframe = iframeRef.current;
+    if (!iframe) return;
+
+    const fullPermissions = 'allow-forms allow-modals allow-orientation-lock allow-pointer-lock allow-popups allow-popups-to-escape-sandbox allow-presentation allow-same-origin allow-scripts';
+
+    const sanitizeIframe = () => {
+      if (iframe.hasAttribute('sandbox')) {
+        const current = iframe.getAttribute('sandbox') || '';
+        if (!current.includes('allow-forms') || !current.includes('allow-scripts') || !current.includes('allow-same-origin')) {
+          console.warn('[Valor] Upgrading restrictive 3rd-party sandbox attribute on online stream iframe to allow all player permissions');
+          iframe.setAttribute('sandbox', fullPermissions);
+        }
+      }
+    };
+
+    sanitizeIframe();
+
+    // Hook setAttribute to prevent extensions from adding a restrictive sandbox
+    try {
+      const origSetAttribute = iframe.setAttribute.bind(iframe);
+      iframe.setAttribute = function(name: string, val: string) {
+        if (name && name.toLowerCase() === 'sandbox') {
+          console.warn('[Valor] Intercepted 3rd-party sandbox setAttribute on online stream iframe, granting all permissions');
+          return origSetAttribute(name, fullPermissions);
+        }
+        return origSetAttribute(name, val);
+      };
+    } catch {}
+
+    // MutationObserver to ensure sandbox is never restrictive
+    const observer = new MutationObserver((mutations) => {
+      for (const m of mutations) {
+        if (m.type === 'attributes' && m.attributeName?.toLowerCase() === 'sandbox') {
+          sanitizeIframe();
+        }
+      }
+    });
+
+    observer.observe(iframe, { attributes: true, attributeFilter: ['sandbox'] });
+
+    return () => {
+      observer.disconnect();
+    };
+  }, [server, video.id, currentSeason, currentEpisode]);
+
   // Construct Player URL
   const getEmbedUrl = () => {
-    const id = video.type === 'online_anime' ? video.anilistId : video.tmdbId;
-    const startProgress = video.currentTime && Math.floor(video.currentTime) > 10 ? `?progress=${Math.floor(video.currentTime)}` : '';
-    
-    if (server === 'videasy') {
-      const colorParam = startProgress ? '&color=8B5CF6' : '?color=8B5CF6';
-      
-      if (video.type === 'online_movie') {
-        return `https://player.videasy.net/movie/${id}${startProgress}${colorParam}`;
-      } else if (video.type === 'online_tv') {
-        return `https://player.videasy.net/tv/${id}/${currentSeason}/${currentEpisode}${startProgress}${colorParam}&nextEpisode=true&episodeSelector=true`;
-      } else { // online_anime
-        return `https://player.videasy.net/anime/${id}/${currentEpisode}${startProgress}${colorParam}`;
-      }
-    } else { // vidking
-      const colorParam = startProgress ? '&color=e50914' : '?color=e50914';
-      
-      if (video.type === 'online_movie') {
-        return `https://www.vidking.net/embed/movie/${id}${startProgress}${colorParam}&autoPlay=true`;
-      } else { // online_tv
-        return `https://www.vidking.net/embed/tv/${id}/${currentSeason}/${currentEpisode}${startProgress}${colorParam}&nextEpisode=true&episodeSelector=true`;
-      }
-    }
+    return buildEmbedUrl(server, video, currentTime, currentSeason, currentEpisode);
   };
 
   const handleEpisodeChange = (epNum: number) => {
@@ -207,17 +273,69 @@ export const OnlineEmbedPlayer: React.FC<OnlineEmbedPlayerProps> = ({
 
   return (
     <div className="online-player-overlay">
+      <PlayerIsland />
       {/* Top Header Bar Overlay - ONLY X Close Button */}
       <header className="online-player-header" style={{ background: 'transparent', justifyContent: 'flex-end', padding: '16px 20px', zIndex: 100 }}>
-        <div className="header-right" style={{ display: 'flex', alignItems: 'center', gap: '10px', marginLeft: 'auto' }}>
+        <div 
+          ref={topRightControlsRef}
+          className="header-right" 
+          style={{ 
+            display: 'flex', 
+            alignItems: 'center', 
+            gap: '10px', 
+            marginLeft: 'auto',
+            opacity: controlsOpacity,
+            transition: 'opacity 0.15s ease-out'
+          }}
+          onMouseEnter={() => setControlsHovered(true)}
+          onMouseLeave={() => setControlsHovered(false)}
+        >
+          {/* Simple Hazard Icon for Ad Notice & Shortcuts */}
+          <OnlineStreamAdBanner />
+
+          {/* Source Selector Dropdown */}
+          <CustomSelect
+            value={server}
+            onChange={(val) => setServer(val)}
+            options={getEmbedProviders().filter(p => p.enabled).map((p, idx) => ({ 
+              value: p.id, 
+              label: getProviderDisplayName(p, idx) 
+            }))}
+            hideSearch={true}
+            width="115px"
+          />
+
           {/* Close Player X Button */}
           <button 
             className="header-close-btn" 
             onClick={onClose} 
             title="Exit Player"
-            style={{ background: 'rgba(0,0,0,0.6)', border: '1px solid rgba(255,255,255,0.15)', borderRadius: '8px', width: '32px', height: '32px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', cursor: 'pointer' }}
+            style={{ 
+              background: 'rgba(10, 10, 15, 0.85)', 
+              border: '1px solid rgba(255,255,255,0.15)', 
+              borderRadius: '50%', 
+              width: '36px', 
+              height: '36px', 
+              display: 'flex', 
+              alignItems: 'center', 
+              justifyContent: 'center', 
+              color: 'rgba(255, 255, 255, 0.85)', 
+              cursor: 'pointer',
+              boxShadow: '0 4px 20px rgba(0,0,0,0.5)',
+              transition: 'all 0.2s ease'
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.color = '#fff';
+              e.currentTarget.style.background = '#e50914';
+              e.currentTarget.style.borderColor = '#e50914';
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.color = 'rgba(255, 255, 255, 0.85)';
+              e.currentTarget.style.background = 'rgba(10, 10, 15, 0.85)';
+              e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.15)';
+            }}
           >
-            <X size={20} />
+            <X size={18} />
           </button>
         </div>
       </header>
@@ -225,13 +343,14 @@ export const OnlineEmbedPlayer: React.FC<OnlineEmbedPlayerProps> = ({
       {/* Main Iframe Player Wrapper */}
       <main className="online-player-iframe-wrapper">
         <iframe
+          ref={iframeRef}
           key={getEmbedUrl()}
           src={getEmbedUrl()}
           className="online-player-iframe"
           allowFullScreen
           frameBorder="0"
-          allow="autoplay; encrypted-media"
-          {...{ credentialless: "true" }}
+          allow="autoplay; encrypted-media; fullscreen; picture-in-picture"
+
         ></iframe>
       </main>
 

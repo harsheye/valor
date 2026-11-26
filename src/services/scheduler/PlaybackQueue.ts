@@ -1,3 +1,4 @@
+import { logger } from '../../utils/logger';
 import { PacketCache } from '../cache/PacketCache';
 import { AudioScheduler } from './AudioScheduler';
 import { ChunkManifest } from './ChunkManifest';
@@ -29,9 +30,9 @@ export class PlaybackQueue {
         if (!this.scheduledTimes.has(chunkKey)) {
           this.scheduledTimes.add(chunkKey);
           this.manifest.transitionTo(chunkKey, 'QUEUED');
-          console.log(`[PlaybackQueue-${this.instanceId}] Scheduling Audio:`, chunkKey);
+          logger.scheduler(`[PlaybackQueue-${this.instanceId}] Scheduling Audio:`, chunkKey);
           this.audioScheduler.schedule(packet, currentTime, playbackRate);
-          console.log(`[PlaybackQueue-${this.instanceId}] Scheduled cached chunk ${chunkKey}s on-the-fly.`);
+          logger.scheduler(`[PlaybackQueue-${this.instanceId}] Scheduled cached chunk ${chunkKey}s on-the-fly.`);
         }
       }
     }

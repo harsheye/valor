@@ -1,5 +1,6 @@
 import type { StorageProvider } from './StorageProvider';
 import type { VideoItem } from '../../types/media';
+import { collectLocalVideos } from './cloudSync';
 
 export class GraphQLStorageProvider implements StorageProvider {
   private lastSyncTime: number;
@@ -28,11 +29,13 @@ export class GraphQLStorageProvider implements StorageProvider {
       `, { userId: this.userId });
       
       const serverSettings = pData?.profile?.settings;
-      if (serverSettings) {
+      if (serverSettings && Object.keys(serverSettings).length > 0) {
+        const fallbackName = localStorage.getItem('valor_logged_in_username') || '';
         return {
           ...defaultSettings,
           ...serverSettings,
           userId: this.userId,
+          profileName: serverSettings.profileName || fallbackName || defaultSettings.profileName || 'User',
           storageMode: 'file',
           isOnboarded: true
         };
@@ -46,10 +49,26 @@ export class GraphQLStorageProvider implements StorageProvider {
     const localVal = localStorage.getItem(settingsKey);
     if (localVal) {
       try {
-        return JSON.parse(localVal);
+        const parsed = JSON.parse(localVal);
+        const fallbackName = localStorage.getItem('valor_logged_in_username') || '';
+        return {
+          ...defaultSettings,
+          ...parsed,
+          userId: this.userId,
+          profileName: parsed.profileName || fallbackName || defaultSettings.profileName || 'User',
+          storageMode: 'file',
+          isOnboarded: true
+        };
       } catch {}
     }
-    return defaultSettings;
+    const loggedName = localStorage.getItem('valor_logged_in_username') || '';
+    return {
+      ...defaultSettings,
+      userId: this.userId,
+      profileName: loggedName || defaultSettings.profileName || 'User',
+      storageMode: 'file',
+      isOnboarded: true
+    };
   }
 
   async saveSettings(settings: any): Promise<void> {
@@ -81,7 +100,7 @@ export class GraphQLStorageProvider implements StorageProvider {
       `, { userId: this.userId });
 
       const history = pData?.profile?.history;
-      if (Array.isArray(history)) {
+      if (Array.isArray(history) && history.length > 0) {
         return history.map((v: any) => ({
           ...v,
           audioTracks: v.audioTracks || [],
@@ -91,15 +110,25 @@ export class GraphQLStorageProvider implements StorageProvider {
     } catch (err) {
       console.error('Failed to get history via GraphQL:', err);
     }
+
+    // Try REST endpoint fallback
+    try {
+      const restRes = await fetch(`/api/history?userId=${encodeURIComponent(this.userId)}`, { credentials: 'include' });
+      if (restRes.ok) {
+        const hist = await restRes.json();
+        if (Array.isArray(hist) && hist.length > 0) {
+          return hist;
+        }
+      }
+    } catch (err) {
+      console.error('Failed to get history via REST:', err);
+    }
     
-    // Fallback to local history
-    const videosKey = `valor_videos_${this.userId}`;
-    const localVal = localStorage.getItem(videosKey);
-    if (localVal) {
-      try {
-        const parsed = JSON.parse(localVal);
-        if (Array.isArray(parsed)) return parsed;
-      } catch {}
+    // Fallback to local history and push to cloud database if found
+    const localVideos = collectLocalVideos(this.userId);
+    if (localVideos.length > 0) {
+      this.saveHistory(localVideos, true).catch(() => {});
+      return localVideos;
     }
     return [];
   }
@@ -133,6 +162,12 @@ export class GraphQLStorageProvider implements StorageProvider {
         hasScrobbledTrakt: v.hasScrobbledTrakt
       }));
 
+      // Mirror to browser cache (localStorage)
+      try {
+        const videosKey = this.userId === 'local' || !this.userId ? 'valor_videos' : `valor_videos_${this.userId}`;
+        localStorage.setItem(videosKey, JSON.stringify(serialized));
+      } catch (e) {}
+
       const saveHistoryMut = `
         mutation SaveHistory($userId: String!, $history: [HistoryInput!]!) {
           saveHistory(userId: $userId, history: $history) {
@@ -145,6 +180,47 @@ export class GraphQLStorageProvider implements StorageProvider {
         await this.gqlFetch(saveHistoryMut, { userId: this.userId, history: serialized });
       } catch (err) {
         console.error('Failed to sync history via GraphQL:', err);
+      }
+
+      // Also push to REST history API to ensure database persistence
+      try {
+        await fetch(`/api/history?userId=${encodeURIComponent(this.userId)}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({ userId: this.userId, history: serialized })
+        });
+      } catch (err) {}
+
+      // Push bookmarks to /api/timestamps if any exist
+      const allBookmarks: any[] = [];
+      for (const v of serialized) {
+        if (Array.isArray(v.bookmarks) && v.bookmarks.length > 0) {
+          for (const bm of v.bookmarks) {
+            allBookmarks.push({
+              ...bm,
+              videoId: v.id,
+              userId: this.userId,
+              tmdbId: v.tmdbId,
+              season: v.season,
+              episode: v.episode,
+              mediaName: v.title
+            });
+          }
+        }
+      }
+      if (allBookmarks.length > 0) {
+        try {
+          await fetch('/api/timestamps', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'include',
+            body: JSON.stringify({
+              userId: this.userId,
+              bookmarks: allBookmarks
+            })
+          });
+        } catch (err) {}
       }
     };
 

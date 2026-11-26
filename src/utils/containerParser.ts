@@ -6,12 +6,12 @@ export type ContainerType = 'mp4' | 'mkv' | 'ts' | 'hls' | 'unknown';
 
 export async function probeContainer(source: ByteSource): Promise<ContainerType> {
   try {
-    const bytes = await source.read(0, 15);
+    const bytes = await source.read(0, Math.min(256, (await source.getSize().catch(() => 256)) - 1));
     if (bytes.length < 4) return 'unknown';
 
-    // HLS check: begins with "#EXTM3U"
-    const text = new TextDecoder('utf-8').decode(bytes.subarray(0, 7));
-    if (text.startsWith('#EXTM3U')) {
+    // HLS check: begins with "#EXTM3U" (accounting for optional UTF-8 BOM or whitespace)
+    const text = new TextDecoder('utf-8').decode(bytes.subarray(0, Math.min(bytes.length, 32)));
+    if (text.trim().startsWith('#EXTM3U') || text.includes('#EXT-X-')) {
       return 'hls';
     }
 
@@ -20,19 +20,22 @@ export async function probeContainer(source: ByteSource): Promise<ContainerType>
       return 'mkv';
     }
 
-    // MP4 check: ftyp box at byte 4-7
-    const type = new TextDecoder('utf-8').decode(bytes.subarray(4, 8));
-    if (type === 'ftyp') {
-      return 'mp4';
+    // MP4 check: standard box at byte 4-7 (ftyp, moov, mdat, free, wide)
+    if (bytes.length >= 8) {
+      const type = new TextDecoder('utf-8').decode(bytes.subarray(4, 8)).toLowerCase();
+      if (['ftyp', 'moov', 'mdat', 'free', 'wide', 'styp'].includes(type)) {
+        return 'mp4';
+      }
     }
 
-    // TS check: sync byte 0x47
+    // MPEG-TS check: 0x47 sync byte at index 0 and 188
     if (bytes[0] === 0x47) {
-      return 'ts';
+      if (bytes.length < 189 || bytes[188] === 0x47) {
+        return 'ts';
+      }
     }
   } catch (e) {
     console.error('Failed to probe magic bytes:', e);
-    throw e;
   }
   return 'unknown';
 }
@@ -94,7 +97,7 @@ export async function parseMp4(source: ByteSource): Promise<{ duration: number; 
   let duration = 0;
 
   while (offset < size) {
-    const headerBytes = await source.read(offset, offset + 7);
+    const headerBytes = await source.read(offset, Math.min(offset + 7, size - 1));
     if (headerBytes.length < 8) break;
 
     const reader = new DataViewReader(headerBytes);
@@ -103,7 +106,7 @@ export async function parseMp4(source: ByteSource): Promise<{ duration: number; 
     let headerSize = 8;
 
     if (boxSize === 1) {
-      const sizeBytes = await source.read(offset + 8, offset + 15);
+      const sizeBytes = await source.read(offset + 8, Math.min(offset + 15, size - 1));
       const sizeReader = new DataViewReader(sizeBytes);
       boxSize = sizeReader.readUint64();
       headerSize = 16;
@@ -118,10 +121,47 @@ export async function parseMp4(source: ByteSource): Promise<{ duration: number; 
     }
 
     if (boxSize === 0) {
+      // Box extends to EOF (typical of non-faststart mdat)
       break;
     }
 
+    if (boxSize <= 0) break;
     offset += boxSize;
+  }
+
+  // Non-faststart MP4 fallback: If moov was not found near the beginning, search the tail of the file
+  if (tracks.length === 0 && size > 16) {
+    try {
+      const tailLen = Math.min(size, 4 * 1024 * 1024);
+      const tailStart = size - tailLen;
+      const tailBytes = await source.read(tailStart, size - 1);
+      for (let i = 0; i <= tailBytes.length - 8; i++) {
+        if (tailBytes[i + 4] === 0x6d && tailBytes[i + 5] === 0x6f && tailBytes[i + 6] === 0x6f && tailBytes[i + 7] === 0x76) {
+          const view = new DataView(tailBytes.buffer, tailBytes.byteOffset + i, 8);
+          let boxSize = view.getUint32(0, false);
+          let headerSize = 8;
+          if (boxSize === 1 && i + 16 <= tailBytes.length) {
+            const high = view.getUint32(8, false);
+            const low = view.getUint32(12, false);
+            boxSize = high * 0x100000000 + low;
+            headerSize = 16;
+          }
+          if (boxSize > headerSize) {
+            const moovPayloadStart = tailStart + i + headerSize;
+            const moovPayloadEnd = Math.min(size - 1, tailStart + i + boxSize - 1);
+            const moovData = await source.read(moovPayloadStart, moovPayloadEnd);
+            const moovResult = parseMoov(moovData);
+            if (moovResult.tracks.length > 0) {
+              duration = moovResult.duration;
+              tracks = moovResult.tracks;
+              break;
+            }
+          }
+        }
+      }
+    } catch (e) {
+      console.warn('[parseMp4] Fallback tail probe for moov atom failed:', e);
+    }
   }
 
   return { duration, tracks };
@@ -395,7 +435,7 @@ function buildMp4SeekMap(
   };
 }
 
-class EbmlReader {
+export class EbmlReader {
   public data: Uint8Array;
   public offset = 0;
 
@@ -477,11 +517,34 @@ class EbmlReader {
   }
 }
 
+export function normalizeMkvCodec(codecId: string): string {
+  if (!codecId) return '';
+  const c = codecId.toUpperCase();
+  if (c.includes('EAC3') || c.includes('EC3') || c.includes('DDP')) return 'eac3';
+  if (c.includes('AC3')) return 'ac3';
+  if (c.includes('AAC')) return 'aac';
+  if (c.includes('OPUS')) return 'opus';
+  if (c.includes('VORBIS')) return 'vorbis';
+  if (c.includes('DTS')) return 'dts';
+  if (c.includes('TRUEHD') || c.includes('MLP')) return 'truehd';
+  if (c.includes('FLAC')) return 'flac';
+  if (c.includes('MP3') || c.includes('MPEG/L3')) return 'mp3';
+  if (c.includes('HEVC') || c.includes('H265')) return 'hevc';
+  if (c.includes('AVC') || c.includes('H264')) return 'h264';
+  if (c.includes('VP9')) return 'vp9';
+  if (c.includes('AV1')) return 'av1';
+  if (c.includes('UTF8') || c.includes('SRT')) return 'subrip';
+  if (c.includes('ASS')) return 'ass';
+  if (c.includes('SSA')) return 'ssa';
+  return codecId.toLowerCase();
+}
+
 export interface MKVTrackInfo {
   number: number;
   type: 'video' | 'audio' | 'subtitle';
   codec: string;
   language?: string;
+  title?: string;
 }
 
 export async function parseMkv(source: ByteSource): Promise<{ duration: number; tracks: MKVTrackInfo[]; seekMap: { time: number; offset: number }[]; timecodeScale: number; firstClusterOffset: number }> {
@@ -514,14 +577,14 @@ export async function parseMkv(source: ByteSource): Promise<{ duration: number; 
     
     const headerSize = r.offset;
 
-    // Break early if we hit a Cluster (media body) or if we already have the track metadata & duration.
-    // This avoids scanning the entire file's cluster headers sequentially, which is extremely slow.
+    // If we hit a Cluster (media body), record firstClusterOffset
     if (id === 0x1F43B675) { // Cluster
-      firstClusterOffset = offset;
-      break;
-    }
-    if (tracks.length > 0 && duration > 0) {
-      break;
+      if (firstClusterOffset === 0) {
+        firstClusterOffset = offset;
+      }
+      if (tracks.length > 0 && duration > 0) {
+        break;
+      }
     }
 
     if (id === 0x18538067) { // Segment
@@ -591,6 +654,7 @@ export async function parseMkv(source: ByteSource): Promise<{ duration: number; 
           let trackTypeVal = 0;
           let codecId = '';
           let lang = 'und';
+          let trackTitle: string | undefined = undefined;
           while (entryReader.hasMore(2)) {
             const entryId = entryReader.readId();
             const entrySize = entryReader.readVint().value;
@@ -600,8 +664,10 @@ export async function parseMkv(source: ByteSource): Promise<{ duration: number; 
               trackTypeVal = entryReader.readUint(entrySize);
             } else if (entryId === 0x86) {
               codecId = entryReader.readString(entrySize);
-            } else if (entryId === 0x22B59C) {
+            } else if (entryId === 0x22B59C || entryId === 0x22B59D) {
               lang = entryReader.readString(entrySize);
+            } else if (entryId === 0x536E) {
+              trackTitle = entryReader.readString(entrySize);
             } else {
               entryReader.skip(entrySize);
             }
@@ -612,7 +678,7 @@ export async function parseMkv(source: ByteSource): Promise<{ duration: number; 
           else if (trackTypeVal === 17) type = 'subtitle';
           
           if (type) {
-            tracks.push({ number: num, type, codec: codecId, language: lang });
+            tracks.push({ number: num, type, codec: codecId, language: lang, title: trackTitle });
           }
           tr.skip(subSize);
         } else {
@@ -621,7 +687,28 @@ export async function parseMkv(source: ByteSource): Promise<{ duration: number; 
       }
     }
 
-    offset += headerSize + elementSize;
+    if (elementSize < 0) {
+      offset += headerSize;
+    } else {
+      offset += headerSize + elementSize;
+    }
+  }
+
+  // If cuesOffset wasn't found in SeekHead, probe the tail of the MKV file for Cues (0x1C53BB6B)
+  if (cuesOffset === 0 && size > 16) {
+    try {
+      const tailLen = Math.min(size, 2 * 1024 * 1024);
+      const tailStart = size - tailLen;
+      const tailBytes = await source.read(tailStart, size - 1);
+      for (let i = 0; i <= tailBytes.length - 4; i++) {
+        if (tailBytes[i] === 0x1C && tailBytes[i + 1] === 0x53 && tailBytes[i + 2] === 0xBB && tailBytes[i + 3] === 0x6B) {
+          cuesOffset = tailStart + i;
+          break;
+        }
+      }
+    } catch (tailErr) {
+      console.warn('[parseMkv] Tail probe for Cues failed:', tailErr);
+    }
   }
 
   if (cuesOffset > 0) {
@@ -684,7 +771,7 @@ async function readIdAndSize(
   source: ByteSource,
   offset: number,
   signal?: AbortSignal
-): Promise<{ id: number; size: number; headerSize: number; vintLength: number }> {
+): Promise<{ id: number; size: number; headerSize: number; vintLength: number; buffer?: Uint8Array }> {
   // Read up to 12 bytes
   const bytes = await source.read(offset, offset + 11, signal);
   if (bytes.length === 0) {
@@ -697,7 +784,8 @@ async function readIdAndSize(
     id,
     size: vint.value,
     headerSize: r.offset,
-    vintLength: vint.length
+    vintLength: vint.length,
+    buffer: bytes
   };
 }
 
@@ -742,7 +830,6 @@ export async function extractMkvSubtitles(
   signal?: AbortSignal,
   isAss?: boolean
 ): Promise<SubtitleCue[]> {
-  console.log('[extractMkvSubtitles] Started. TargetTrackNumber:', targetTrackNumber, 'SeekMap size:', seekMap.length, 'Time:', time);
   const cues: SubtitleCue[] = [];
   const fileSize = await source.getSize();
   
@@ -759,7 +846,6 @@ export async function extractMkvSubtitles(
     startOffset = startEntry ? startEntry.offset : (firstClusterOffset || 0);
   } else {
     // Sequential Cluster Scan Fallback
-    console.log('[extractMkvSubtitles] SeekMap empty. Doing sequential cluster scan from first cluster offset:', firstClusterOffset);
     let scanOffset = firstClusterOffset || 0;
     while (scanOffset < fileSize) {
       if (signal?.aborted) break;
@@ -786,7 +872,10 @@ export async function extractMkvSubtitles(
                 cr.skip(childSize);
               }
             }
-          } catch (e) {
+          } catch (e: any) {
+            if (signal?.aborted || e?.name === 'AbortError' || String(e?.message || e).toLowerCase().includes('abort')) {
+              return cues;
+            }
             console.warn('[extractMkvSubtitles] Failed to parse cluster timecode:', e);
           }
           const clusterTimeSec = (clusterTimecode * timecodeScale) / 1000000000;
@@ -794,7 +883,6 @@ export async function extractMkvSubtitles(
           if (clusterTimeSec >= Math.max(0, time - 15)) {
             // Found target cluster!
             startOffset = scanOffset;
-            console.log('[extractMkvSubtitles] Scan found target Cluster at offset:', startOffset, 'time:', clusterTimeSec);
             break;
           }
           
@@ -820,21 +908,65 @@ export async function extractMkvSubtitles(
 
   // Cues parsing contiguous loop
   const endOffset = fileSize;
-  console.log('[extractMkvSubtitles] Contiguous range starts at:', startOffset, 'to', endOffset);
 
   let currentOffset = startOffset;
   let clusterTimecode = 0;
+  let iterations = 0;
 
   while (currentOffset < endOffset) {
     if (signal?.aborted) break;
+
+    // Yield to the event loop every 100 iterations to avoid freezing the main thread and stalling audio/video sync
+    if (++iterations % 100 === 0) {
+      await new Promise(resolve => setTimeout(resolve, 0));
+    }
+
+    if (iterations > 50000) {
+      console.warn('[extractMkvSubtitles] Safety iteration limit reached (50,000), stopping scan');
+      break;
+    }
 
     try {
       const sub = await readIdAndSize(source, currentOffset, signal);
       const subHeaderOffset = currentOffset + sub.headerSize;
 
       if (sub.id === 0x1F43B675) { // Cluster
+        // Inspect Cluster's timecode directly from its first few bytes to fast-skip clusters outside window
+        let cTimeSec = -1;
+        try {
+          const previewLen = Math.min(80, sub.size > 0 ? sub.size : 80);
+          const previewBytes = await source.read(subHeaderOffset, Math.min(subHeaderOffset + previewLen - 1, fileSize - 1), signal);
+          const cr = new EbmlReader(previewBytes);
+          while (cr.hasMore(2)) {
+            const childId = cr.readId();
+            const childSize = cr.readVint().value;
+            if (childId === 0xE7) {
+              const cTimecode = cr.readUint(childSize);
+              cTimeSec = (cTimecode * timecodeScale) / 1000000000;
+              break;
+            } else {
+              cr.skip(childSize);
+            }
+          }
+        } catch (e: any) {
+          if (signal?.aborted || e?.name === 'AbortError') return cues;
+        }
+
+        if (cTimeSec >= 0) {
+          // Stop if past the target subtitle duration window
+          if (cTimeSec > time + subDuration + 2) {
+            break;
+          }
+          // Fast skip if cluster is well before our target time window
+          if (cTimeSec < time - 10 && sub.size > 0) {
+            currentOffset += sub.headerSize + sub.size;
+            continue;
+          }
+          clusterTimecode = Math.round((cTimeSec * 1000000000) / timecodeScale);
+        }
+
         // Move inside the Cluster payload contiguously
-        currentOffset += sub.headerSize;
+        currentOffset += Math.max(1, sub.headerSize);
         continue;
       }
 
@@ -843,24 +975,39 @@ export async function extractMkvSubtitles(
         const timecodeBytes = await source.read(subHeaderOffset, subHeaderOffset + sub.size - 1, signal);
         clusterTimecode = new EbmlReader(timecodeBytes).readUint(sub.size);
         const clusterTimeSec = (clusterTimecode * timecodeScale) / 1000000000;
-        if (clusterTimeSec > time + subDuration) {
-          console.log('[extractMkvSubtitles] Reached duration limit. Breaking at time:', clusterTimeSec);
+        if (clusterTimeSec > time + subDuration + 2) {
           break;
         }
       } else if (sub.id === 0xA3 || sub.id === 0xA1) {
         // SimpleBlock or Block
-        const headerLen = Math.min(8, sub.size);
-        const blockHeaderBytes = await source.read(subHeaderOffset, subHeaderOffset + headerLen - 1, signal);
-        
-        const br = new EbmlReader(blockHeaderBytes);
-        const trackNumVint = br.readVint();
-        const blockTrackNumber = trackNumVint.value;
+        // Fast path: use already read bytes in sub.buffer if available to check track number without extra I/O
+        let blockTrackNumber: number;
+        let relativeTimecode: number;
+        let trackNumVintLen: number;
+
+        const subBuf = sub.buffer;
+        const availableInBuf = subBuf ? subBuf.length - sub.headerSize : 0;
+
+        if (subBuf && availableInBuf >= 4) {
+          const br = new EbmlReader(subBuf.subarray(sub.headerSize));
+          const trackNumVint = br.readVint();
+          blockTrackNumber = trackNumVint.value;
+          trackNumVintLen = trackNumVint.length;
+          relativeTimecode = (subBuf[sub.headerSize + br.offset] << 8) | subBuf[sub.headerSize + br.offset + 1];
+          relativeTimecode = (relativeTimecode << 16) >> 16;
+        } else {
+          const headerLen = Math.min(8, sub.size);
+          const blockHeaderBytes = await source.read(subHeaderOffset, subHeaderOffset + headerLen - 1, signal);
+          const br = new EbmlReader(blockHeaderBytes);
+          const trackNumVint = br.readVint();
+          blockTrackNumber = trackNumVint.value;
+          trackNumVintLen = trackNumVint.length;
+          relativeTimecode = (blockHeaderBytes[br.offset] << 8) | blockHeaderBytes[br.offset + 1];
+          relativeTimecode = (relativeTimecode << 16) >> 16;
+        }
 
         if (blockTrackNumber === targetTrackNumber) {
-          let relativeTimecode = (blockHeaderBytes[br.offset] << 8) | blockHeaderBytes[br.offset + 1];
-          relativeTimecode = (relativeTimecode << 16) >> 16;
-
-          const payloadStart = subHeaderOffset + trackNumVint.length + 3;
+          const payloadStart = subHeaderOffset + trackNumVintLen + 3;
           const payloadEnd = subHeaderOffset + sub.size - 1;
           
           if (payloadEnd >= payloadStart) {
@@ -875,6 +1022,9 @@ export async function extractMkvSubtitles(
               endTime: startTime + 4.0, // default duration, capped below
               text: cleanSubtitleText(processSubtitleText(text, isAss))
             });
+            if (onCuesProgress && cues.length % 3 === 0) {
+              onCuesProgress([...cues]);
+            }
           }
         }
       } else if (sub.id === 0xA0) {
@@ -917,7 +1067,7 @@ export async function extractMkvSubtitles(
             const durBytes = await source.read(bgSubHeaderOffset, bgSubHeaderOffset + bgSub.size - 1, signal);
             blockDurationVal = new EbmlReader(durBytes).readUint(bgSub.size);
           }
-          bgOffset += bgSub.headerSize + bgSub.size;
+          bgOffset += Math.max(1, bgSub.headerSize + bgSub.size);
         }
 
         if (gotBlock && blockText) {
@@ -928,11 +1078,18 @@ export async function extractMkvSubtitles(
             endTime: blockStartTime + duration,
             text: cleanSubtitleText(processSubtitleText(blockText, isAss))
           });
+          if (onCuesProgress && cues.length % 3 === 0) {
+            onCuesProgress([...cues]);
+          }
         }
       }
 
-      currentOffset += sub.headerSize + sub.size;
-    } catch (err) {
+      currentOffset += Math.max(1, sub.headerSize + sub.size);
+    } catch (err: any) {
+      const errMsg = String(err?.message || err).toLowerCase();
+      if (signal?.aborted || err?.name === 'AbortError' || errMsg.includes('abort')) {
+        return cues;
+      }
       console.warn('[extractMkvSubtitles] Parsing error at offset', currentOffset, err);
       // Attempt to resynchronize by searching for the next Cluster ID (0x1F43B675)
       let found = false;
@@ -942,24 +1099,30 @@ export async function extractMkvSubtitles(
       const bufferSize = 64 * 1024;
       while (scan < scanLimit) {
         if (signal?.aborted) break;
-        const readEnd = Math.min(scan + bufferSize - 1, scanLimit);
-        const bytes = await source.read(scan, readEnd, signal);
-        if (bytes.length < 4) break;
-        
-        let matchIdx = -1;
-        for (let i = 0; i < bytes.length - 3; i++) {
-          if (bytes[i] === 0x1F && bytes[i+1] === 0x43 && bytes[i+2] === 0xB6 && bytes[i+3] === 0x75) {
-            matchIdx = i;
+        try {
+          const readEnd = Math.min(scan + bufferSize - 1, scanLimit);
+          const bytes = await source.read(scan, readEnd, signal);
+          if (bytes.length < 4) break;
+          
+          let matchIdx = -1;
+          for (let i = 0; i < bytes.length - 3; i++) {
+            if (bytes[i] === 0x1F && bytes[i+1] === 0x43 && bytes[i+2] === 0xB6 && bytes[i+3] === 0x75) {
+              matchIdx = i;
+              break;
+            }
+          }
+          if (matchIdx !== -1) {
+            currentOffset = scan + matchIdx;
+            found = true;
             break;
           }
+          scan += bytes.length - 3;
+        } catch (scanErr: any) {
+          if (signal?.aborted || scanErr?.name === 'AbortError' || (typeof scanErr?.message === 'string' && scanErr.message.toLowerCase().includes('abort'))) {
+            break;
+          }
+          scan += bufferSize;
         }
-        if (matchIdx !== -1) {
-          currentOffset = scan + matchIdx;
-          found = true;
-          console.log('[extractMkvSubtitles] Resynchronized to next Cluster at offset:', currentOffset);
-          break;
-        }
-        scan += bytes.length - 3;
       }
       if (!found) {
         break;

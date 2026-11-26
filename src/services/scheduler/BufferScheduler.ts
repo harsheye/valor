@@ -4,9 +4,9 @@ import { ChunkManifest } from './ChunkManifest';
 
 export class BufferScheduler {
   private readonly lowWaterMark = 30;   // seconds (keep 30s minimum buffer)
-  private readonly highWaterMark = 60;  // seconds (buffer up to 60s ahead)
+  private readonly highWaterMark = 120; // seconds (buffer up to 120s ahead)
   private readonly chunkSize = 10;      // seconds
-  private isBufferingState = true;      // Start true to buffer 60s initially
+  private isBufferingState = true;      // Start true to buffer 120s initially
 
   constructor(private cache: PacketCache, private manifest: ChunkManifest) {}
 

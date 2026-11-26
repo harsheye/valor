@@ -53,8 +53,6 @@ export class LocalIndexedDBProvider implements StorageProvider {
     if (localStorage.getItem(migrationFlag)) {
       return;
     }
-
-    console.log('[IndexedDB Migration] Migrating legacy localStorage data to IndexedDB...');
     const transaction = db.transaction(STORE_NAME, 'readwrite');
     const store = transaction.objectStore(STORE_NAME);
 
@@ -76,7 +74,6 @@ export class LocalIndexedDBProvider implements StorageProvider {
       const checkDone = () => {
         if (succeeded + failed === count) {
           localStorage.setItem(migrationFlag, 'true');
-          console.log(`[IndexedDB Migration] Completed: migrated ${succeeded} keys to IndexedDB.`);
           resolve();
         }
       };
@@ -150,7 +147,6 @@ export class LocalIndexedDBProvider implements StorageProvider {
       // Auto-purge any bloated File objects from previous versions to reclaim space
       const needsPurge = idbVal.some(v => v.file !== undefined);
       if (needsPurge) {
-        console.log('[IndexedDB] Purging bloated File objects from history to reclaim space...');
         const sanitizedHistory = idbVal.map(item => {
           const { file, ...rest } = item;
           return rest as VideoItem;

@@ -4,10 +4,13 @@ import type { ByteSource } from '../local/localByteSource';
 import { FFmpegManager } from './FFmpegManager';
 import { parseChaptersFromFfmpegLogs, type MediaChapter } from '../ffmpeg';
 import type { ProbeResult, MediaStreamInfo } from '../pipeline/MediaPipeline';
+import { sidecarService } from '../remote/sidecarService';
+import { getSavedCredentials } from '../remote/mediaAuthStore';
 
 export class DemuxManager {
   private mountedPath: string | null = null;
   private uniqueId = Math.random().toString(36).substring(2, 9);
+  private probedDuration = 0;
 
   constructor(
     private ffmpegMgr: FFmpegManager,
@@ -40,21 +43,36 @@ export class DemuxManager {
       const ext = this.videoFileOrSource.name.substring(this.videoFileOrSource.name.lastIndexOf('.')) || '.mkv';
       const cleanName = `input${ext}`;
       const inputPath = `${mountPoint}/${cleanName}`;
-      const cleanFile = new File([this.videoFileOrSource], cleanName, { type: this.videoFileOrSource.type });
 
       try {
         await ff.createDir(mountPoint);
       } catch {}
 
       try {
-        await ff.mount('WORKERFS' as any, { files: [cleanFile] }, mountPoint);
+        // Mount original native File directly via WORKERFS blobs options
+        // This avoids creating a synthetic composite File wrapper that fails FileReaderSync in workers
+        await ff.mount('WORKERFS' as any, {
+          blobs: [{ name: cleanName, data: this.videoFileOrSource }]
+        }, mountPoint);
         this.mountedPath = inputPath;
         logger.success(`[DemuxManager] WORKERFS mounted at ${inputPath}`);
       } catch (err) {
-        logger.warn('[DemuxManager] WORKERFS mount failed, writing to MEMFS:', err);
-        const buffer = await new Response(this.videoFileOrSource).arrayBuffer();
-        await ff.writeFile(inputPath, new Uint8Array(buffer));
-        this.mountedPath = inputPath;
+        logger.warn('[DemuxManager] WORKERFS blobs mount failed, trying direct files array:', err);
+        try {
+          await ff.mount('WORKERFS' as any, { files: [this.videoFileOrSource] }, mountPoint);
+          this.mountedPath = `${mountPoint}/${this.videoFileOrSource.name}`;
+          logger.success(`[DemuxManager] WORKERFS mounted directly at ${this.mountedPath}`);
+        } catch (filesErr) {
+          logger.error('[DemuxManager] WORKERFS mount failed:', filesErr);
+          // Only attempt MEMFS for small files (under 64MB) to prevent browser memory exhaustion
+          if (this.videoFileOrSource.size < 64 * 1024 * 1024) {
+            const buffer = await new Response(this.videoFileOrSource).arrayBuffer();
+            await ff.writeFile(inputPath, new Uint8Array(buffer));
+            this.mountedPath = inputPath;
+          } else {
+            throw filesErr;
+          }
+        }
       }
     } else {
       // Remote source fallback
@@ -80,7 +98,9 @@ export class DemuxManager {
     } catch {}
 
     const logs = this.ffmpegMgr.getLogs().join('\n');
-    return this.parseProbeLogs(logs);
+    const result = this.parseProbeLogs(logs);
+    if (result.duration > 0) this.probedDuration = result.duration;
+    return result;
   }
 
   private parseProbeLogs(logText: string): ProbeResult {
@@ -144,6 +164,16 @@ export class DemuxManager {
     return bytes;
   }
 
+  private findFirstMkvCluster(bytes: Uint8Array): number {
+    const limit = Math.min(bytes.length - 4, 128 * 1024);
+    for (let i = 0; i <= limit; i++) {
+      if (bytes[i] === 0x1f && bytes[i + 1] === 0x43 && bytes[i + 2] === 0xb6 && bytes[i + 3] === 0x75) {
+        return i;
+      }
+    }
+    return 0;
+  }
+
   /**
    * Slice a short segment of audio into WAV bytes
    */
@@ -155,109 +185,192 @@ export class DemuxManager {
     seekMap?: any[],
     signal?: AbortSignal
   ): Promise<Uint8Array> {
-    const mountedInputPath = await this.getMountedInputPath(ff);
-    const tempOutFile = `slice_${streamIndex}_${startTime}.wav`;
     const isRemoteSource = !this.isFile(this.videoFileOrSource);
-    const inputPath = isRemoteSource
-      ? `remote_input_${this.uniqueId}_${streamIndex}_${Math.floor(startTime * 1000)}_${Math.random().toString(36).substring(2, 7)}.mkv`
-      : mountedInputPath;
-    let ffmpegSeekTime = startTime;
 
-    if (isRemoteSource) {
-      // Remote chunk: resolve byte range and write chunk
-      const source = this.videoFileOrSource as ByteSource;
-      const seekList = seekMap || [];
-      
-      let startOffset = 0;
-      let endOffset = 8 * 1024 * 1024;
-      let offsetTime = 0;
-      const fileSize = await this.getSizeFallback(source);
-
-      const matchedStart = seekList.reduce((prev: any, curr: any) => {
-        return curr.time <= startTime ? curr : prev;
-      }, seekList[0]);
-
-      if (matchedStart) {
-        startOffset = matchedStart.offset;
-        offsetTime = matchedStart.time || 0;
-        const targetEndTime = startTime + duration + 30;
-        const matchedEnd = seekList.reduce((prev: any, curr: any) => {
-          return curr.time <= targetEndTime ? curr : prev;
-        }, matchedStart);
-        endOffset = matchedEnd ? matchedEnd.offset + 8 * 1024 * 1024 : startOffset + 24 * 1024 * 1024;
-      } else {
-        // Linear fallback
-        const size = await this.getSizeFallback(source);
-        startOffset = Math.floor((startTime / 3600) * size);
-        endOffset = Math.min(startOffset + 24 * 1024 * 1024, size);
-        offsetTime = startTime;
-      }
-
-      endOffset = Math.min(endOffset, fileSize - 1);
-      ffmpegSeekTime = Math.max(0, startTime - offsetTime);
-
-      // Fetch chunk
-      const headerProbeBytes = await source.read(0, Math.min(2 * 1024 * 1024, fileSize - 1), signal);
-      const headerBytes = this.getMkvHeaderOnly(headerProbeBytes);
-      const chunkBytes = await source.read(startOffset, endOffset, signal);
-
-      const concatenated = new Uint8Array(headerBytes.length + chunkBytes.length);
-      concatenated.set(headerBytes, 0);
-      concatenated.set(chunkBytes, headerBytes.length);
-
-      await ff.writeFile(inputPath, concatenated);
-      console.log(
-        `[DemuxManager] Remote audio slice start=${startTime}s offset=${offsetTime}s ffmpegSeek=${ffmpegSeekTime}s header=${headerBytes.length} bytes=${startOffset}-${endOffset}`
-      );
-    }
-
+    // Try client-side WebAssembly demuxing first (optimized for high-end PCs / laptops with 4K adaptive window & video discard)
+    let wasmError: any = null;
     try {
-      const runSlice = async (seekSeconds: number): Promise<Uint8Array> => {
-        const args = [
-          '-ss', seekSeconds.toString(),
-          '-i', inputPath,
-          '-t', duration.toString(),
-          '-map', `0:${streamIndex}`,
-          '-vn',
-          '-acodec', 'pcm_s16le',
-          '-ac', '2',
-          '-ar', '44100',
-          '-f', 'wav',
-          tempOutFile
-        ];
+      const mountedInputPath = await this.getMountedInputPath(ff);
+      const tempOutFile = `slice_${streamIndex}_${startTime}.wav`;
+      const source = this.videoFileOrSource as ByteSource;
+      const rawUrl = isRemoteSource ? (source as any)?.url : undefined;
+      const isMkv = rawUrl ? (rawUrl.toLowerCase().includes('.mkv') || !rawUrl.toLowerCase().includes('.mp4')) : true;
+      const ext = isMkv ? 'mkv' : 'mp4';
+      const inputPath = isRemoteSource
+        ? `remote_input_${this.uniqueId}_${streamIndex}_${Math.floor(startTime * 1000)}_${Math.random().toString(36).substring(2, 7)}.${ext}`
+        : mountedInputPath;
+      let ffmpegSeekTime = startTime;
 
-        console.log(`[FFmpeg Command] ffmpeg ${args.join(" ")}`);
-        const startTimeMs = performance.now();
-        const code = await ff.exec(args);
-        const durationMs = performance.now() - startTimeMs;
-        console.log(`[FFmpeg Status] Exit code: ${code}, Duration: ${durationMs.toFixed(2)}ms`);
-        if (code !== 0) {
-          throw new Error(`FFmpeg Slicing returned exit code ${code}`);
+      if (isRemoteSource) {
+        const seekList = seekMap || [];
+        const fileSize = await this.getSizeFallback(source);
+
+        // High-end PC adaptive byte window: dynamically scale window for 4K / high bitrate media
+        const estDuration = Math.max(startTime + duration + 60, this.probedDuration || 7200);
+        const estBitrateBytesPerSec = fileSize / estDuration;
+        const targetWindowDuration = duration + 25; // 35 seconds of media coverage
+        const adaptiveWindowBytes = Math.max(24 * 1024 * 1024, Math.min(80 * 1024 * 1024, Math.ceil(estBitrateBytesPerSec * targetWindowDuration)));
+
+        let startOffset = 0;
+        let endOffset = adaptiveWindowBytes;
+        let offsetTime = 0;
+
+        const matchedStart = seekList.reduce((prev: any, curr: any) => {
+          return curr.time <= startTime ? curr : prev;
+        }, seekList[0]);
+
+        if (matchedStart) {
+          startOffset = matchedStart.offset;
+          offsetTime = matchedStart.time || 0;
+          const targetEndTime = startTime + duration + 30;
+          const matchedEnd = seekList.reduce((prev: any, curr: any) => {
+            return curr.time <= targetEndTime ? curr : prev;
+          }, matchedStart);
+          endOffset = matchedEnd ? matchedEnd.offset + 16 * 1024 * 1024 : startOffset + adaptiveWindowBytes;
+        } else {
+          startOffset = Math.floor((startTime / estDuration) * fileSize);
+          endOffset = Math.min(startOffset + adaptiveWindowBytes, fileSize);
+          offsetTime = (startOffset / fileSize) * estDuration;
         }
 
-        const outputData = await ff.readFile(tempOutFile);
-        return outputData as Uint8Array;
-      };
+        endOffset = Math.min(endOffset, fileSize - 1);
+        ffmpegSeekTime = Math.max(0, startTime - offsetTime);
 
-      let outputData = await runSlice(ffmpegSeekTime);
-      if (isRemoteSource && outputData.byteLength <= 512 && ffmpegSeekTime > 0) {
-        console.warn(
-          `[DemuxManager] Remote audio slice was empty at seek ${ffmpegSeekTime}s; retrying from start of byte window.`
-        );
+        // Fetch chunk bytes
+        const headerProbeBytes = await source.read(0, Math.min(2 * 1024 * 1024, fileSize - 1), signal);
+        const headerBytes = this.getMkvHeaderOnly(headerProbeBytes);
+        const chunkBytes = await source.read(startOffset, endOffset, signal);
+
+        // Matroska cluster alignment
+        let finalChunk = chunkBytes;
+        if (isMkv && startOffset > 0) {
+          const shift = this.findFirstMkvCluster(chunkBytes);
+          if (shift > 0 && shift < chunkBytes.length - 1024) {
+            finalChunk = chunkBytes.subarray(shift);
+          }
+        }
+
+        const concatenated = new Uint8Array(headerBytes.length + finalChunk.length);
+        concatenated.set(headerBytes, 0);
+        concatenated.set(finalChunk, headerBytes.length);
+
+        await ff.writeFile(inputPath, concatenated);
+        logger.ffmpeg(`[DemuxManager] Client WASM audio slice start=${startTime}s offset=${offsetTime}s ffmpegSeek=${ffmpegSeekTime}s window=${((endOffset - startOffset) / (1024 * 1024)).toFixed(1)}MB bytes=${startOffset}-${endOffset}`);
+      }
+
+      try {
+        const runSlice = async (seekSeconds: number): Promise<Uint8Array> => {
+          const args = [
+            '-ss', seekSeconds.toString(),
+            '-accurate_seek',
+            '-i', inputPath,
+            '-t', duration.toString(),
+            '-map', `0:${streamIndex}`,
+            '-vn',
+            '-avoid_negative_ts', 'make_zero',
+            '-acodec', 'pcm_s16le',
+            '-ac', '2',
+            '-ar', '44100',
+            '-f', 'wav',
+            tempOutFile
+          ];
+
+          logger.ffmpeg(`[FFmpeg Command] ffmpeg ${args.join(' ')}`);
+          const startTimeMs = performance.now();
+          let code = await ff.exec(args);
+          if (code !== 0) {
+            logger.ffmpegWarning(`[DemuxManager] Primary map 0:${streamIndex} exited with ${code}; retrying with audio map 0:a:0`);
+            const fallbackArgs = [
+              '-ss', seekSeconds.toString(),
+              '-accurate_seek',
+              '-i', inputPath,
+              '-t', duration.toString(),
+              '-map', '0:a:0',
+              '-vn',
+              '-avoid_negative_ts', 'make_zero',
+              '-acodec', 'pcm_s16le',
+              '-ac', '2',
+              '-ar', '44100',
+              '-f', 'wav',
+              tempOutFile
+            ];
+            code = await ff.exec(fallbackArgs);
+          }
+          const durationMs = performance.now() - startTimeMs;
+          logger.ffmpeg(`[FFmpeg Status] Exit code: ${code}, Duration: ${durationMs.toFixed(2)}ms`);
+          if (code !== 0) {
+            throw new Error(`FFmpeg WASM slicing returned exit code ${code}`);
+          }
+
+          const outputData = await ff.readFile(tempOutFile);
+          return outputData as Uint8Array;
+        };
+
+        let outputData = await runSlice(ffmpegSeekTime);
+        if (outputData.byteLength <= 512 && ffmpegSeekTime > 0) {
+          logger.ffmpegWarning(
+            `[DemuxManager] WASM audio slice was empty at seek ${ffmpegSeekTime}s; retrying from 0.`
+          );
+          try {
+            await ff.deleteFile(tempOutFile);
+          } catch {}
+          outputData = await runSlice(0);
+        }
+
+        if (outputData && outputData.byteLength > 44) {
+          logger.buffer(`[DemuxManager] Client WASM demuxed audio slice successfully (${outputData.byteLength} bytes)`);
+          return outputData;
+        }
+      } finally {
         try {
           await ff.deleteFile(tempOutFile);
+          if (isRemoteSource) {
+            await ff.deleteFile(inputPath);
+          }
         } catch {}
-        outputData = await runSlice(0);
       }
-      return outputData;
-    } finally {
-      try {
-        await ff.deleteFile(tempOutFile);
-        if (isRemoteSource) {
-          await ff.deleteFile(inputPath);
-        }
-      } catch {}
+    } catch (err: any) {
+      if (signal?.aborted) throw err;
+      wasmError = err;
+      logger.ffmpegWarning(`[DemuxManager] Client WASM demuxing failed, falling back to backend audio packet API:`, err?.message || err);
     }
+
+    // Fallback: If client WASM demuxing fails on remote source, fetch clean pre-sliced WAV from backend API
+    if (isRemoteSource) {
+      const source = this.videoFileOrSource as ByteSource;
+      const rawUrl = (source as any)?.url;
+      if (typeof rawUrl === 'string' && (rawUrl.startsWith('http://') || rawUrl.startsWith('https://'))) {
+        try {
+          const apiBase = sidecarService.getRemoteApiBase();
+          const creds = getSavedCredentials(rawUrl);
+          const params = new URLSearchParams({
+            url: rawUrl,
+            streamIndex: streamIndex.toString(),
+            startTime: startTime.toFixed(3),
+            duration: duration.toFixed(3)
+          });
+          if (creds?.username) {
+            params.set('user', creds.username);
+            if (creds.password) params.set('pass', creds.password);
+          }
+          const packetUrl = `${apiBase}/api/remote/audio-packet?${params.toString()}`;
+          const response = await fetch(packetUrl, { signal });
+          if (response.ok) {
+            const buf = await response.arrayBuffer();
+            if (buf.byteLength > 44) {
+              logger.buffer(`[DemuxManager] Direct remote audio packet delivered for ${startTime}s (${buf.byteLength} bytes)`);
+              return new Uint8Array(buf);
+            }
+          }
+        } catch (apiErr: any) {
+          if (signal?.aborted) throw apiErr;
+          logger.error(`[DemuxManager] Both client WASM and backend audio API failed:`, apiErr);
+        }
+      }
+    }
+
+    if (wasmError) throw wasmError;
+    throw new Error('Audio slice extraction failed');
   }
 
   async cleanup(ff: FFmpeg): Promise<void> {

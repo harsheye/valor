@@ -1,279 +1,1019 @@
-import React from 'react';
-import { Play, UploadCloud, Film, X, List, Calendar } from 'lucide-react';
-import type { VideoItem } from '../types/media';
-import { CalendarView } from '../components/CalendarView';
-import Calendar02 from '../components/creative-tim/blocks/calendar-02';
+import React, { useState, useMemo, useRef } from 'react';
+import { 
+  Play, 
+  X, 
+  Search, 
+  Check, 
+  Film,
+  AlertTriangle,
+  HardDrive,
+  Server,
+  Globe
+} from 'lucide-react';
+import { getVideoSourceType, type VideoItem } from '../types/media';
 import { classifyVideoTitle } from '../utils/libraryClassifier';
-import { BookingCalendar } from '../components/BookingCalendar';
-import { AppointmentCalendar } from '../components/AppointmentCalendar';
+import { smartTitleCase, getTileColors, getFirstAlphanumeric } from '../utils/libraryViewModel';
+import { formatRuntime, parseDurationToSeconds } from '../utils/timeFormat';
+import { getMediaTimestampRecord } from '../utils/mediaTimestampStorage';
+import './HistoryHeatmap.css';
 
-interface HistoryPageProps {
+export interface HistoryPageProps {
   videos: VideoItem[];
-  historyViewMode: 'list' | 'calendar';
-  setHistoryViewMode: (mode: 'list' | 'calendar') => void;
-  settings: any;
+  historyViewMode?: 'list' | 'calendar' | 'grid';
+  setHistoryViewMode?: (mode: 'list' | 'calendar') => void;
+  settings?: any;
   handlePlayVideo: (video: VideoItem) => void;
   handleRemoveVideo: (id: string, e: React.MouseEvent) => void;
   syncVideoToTraktHistory: (video: VideoItem, e: React.MouseEvent) => void;
-  isInstantlyPlayable: (video: VideoItem) => boolean;
-  parseDurationToSeconds: (duration: string | number | undefined) => number;
-  formatTime: (secs: number) => string;
+  onRateVideo?: (id: string, rating: number) => void;
+  isInstantlyPlayable?: (video: VideoItem) => boolean;
+  parseDurationToSeconds?: (duration: string | number | undefined) => number;
+  formatTime?: (secs: number | string | undefined) => string;
+}
+
+interface DayCell {
+  date: Date;
+  dateKey: string;
+  dayOfMonth: number;
+  dayOfWeek: number; // 0 = Sun, 1 = Mon ... 6 = Sat
+  weekCol: number;
+  count: number;
+  level: 0 | 1 | 2 | 3 | 4;
+  isFuture: boolean;
+}
+
+interface MonthBlock {
+  year: number;
+  monthIndex: number;
+  name: string;
+  numCols: number;
+  cells: DayCell[];
+}
+
+interface HistoryDisplayItem {
+  id: string;
+  title: string;
+  sourceType: 'local' | 'remote' | 'online';
+  seasonEpisode?: string;
+  resumeText: string;
+  playedAtTime: string;
+  watchedText: string;
+  status: 'stopped' | 'finished';
+  hasTraktSync: boolean;
+  isSyncedToTrakt: boolean;
+  stars?: number;
+  progressPercent: number;
+  dateKey: string;
+  dayKeyword: string;
+  dayDateStr: string;
+  dateGroupLabel: string;
+  timestamp: number;
+  letter: string;
+  letterBg: string;
+  videoItem: VideoItem;
+}
+
+const VIBRANT_TILE_PALETTES = [
+  'linear-gradient(135deg, #9a882e 0%, #7b7929 100%)', // olive khaki (The Perfect Lie)
+  'linear-gradient(135deg, #9c342e 0%, #7e2b1e 100%)', // brick terracotta (Paper Kingdom)
+  'linear-gradient(135deg, #8c2d3a 0%, #6e202a 100%)', // muted wine/crimson
+  'linear-gradient(135deg, #2a5f78 0%, #1e4558 100%)', // steel ocean
+  'linear-gradient(135deg, #5b427b 0%, #43315a 100%)', // muted royal purple
+  'linear-gradient(135deg, #2b6b55 0%, #1d4d3c 100%)', // deep forest emerald
+  'linear-gradient(135deg, #9c6c2e 0%, #785220 100%)', // warm amber bronze
+  'linear-gradient(135deg, #78354f 0%, #592539 100%)', // plum rose
+];
+
+function getVibrantTileGradient(title: string): string {
+  let hash = 0;
+  for (let i = 0; i < title.length; i++) hash = (hash << 5) - hash + title.charCodeAt(i);
+  return VIBRANT_TILE_PALETTES[Math.abs(hash) % VIBRANT_TILE_PALETTES.length];
 }
 
 export const HistoryPage: React.FC<HistoryPageProps> = ({
   videos,
-  historyViewMode,
-  setHistoryViewMode,
-  settings,
   handlePlayVideo,
   handleRemoveVideo,
   syncVideoToTraktHistory,
-  isInstantlyPlayable,
-  parseDurationToSeconds,
-  formatTime,
+  onRateVideo,
+  settings,
 }) => {
-  const sortedVideos = React.useMemo(() => {
-    return [...videos].sort((a, b) => {
-      const dateA = a.lastPlayedDate ? new Date(a.lastPlayedDate).getTime() : 0;
-      const dateB = b.lastPlayedDate ? new Date(b.lastPlayedDate).getTime() : 0;
-      return dateB - dateA; // Newest first
-    });
+  const [searchQuery, setSearchQuery] = useState('');
+  const [filterPill, setFilterPill] = useState<'all' | 'local' | 'remote' | 'online' | 'stopped' | 'finished' | 'trakt'>('all');
+  
+  // By default, no single day is selected (shows all days by default)
+  const [selectedDateKey, setSelectedDateKey] = useState<string | null>(null);
+  
+  const [isClearModalOpen, setIsClearModalOpen] = useState(false);
+  const [hoveredCell, setHoveredCell] = useState<{ dateKey: string; count: number; x: number; y: number } | null>(null);
+  const [localRatings, setLocalRatings] = useState<Record<string, number>>({});
+
+  const storedRatings = useMemo(() => {
+    try {
+      return JSON.parse(localStorage.getItem('valor_ratings') || '{}');
+    } catch {
+      return {};
+    }
   }, [videos]);
 
-  const continueWatchingList = sortedVideos.filter(v => {
-    if (!v.currentTime || v.currentTime <= 2) return false;
-    const durSecs = typeof v.duration === 'number' ? v.duration : parseDurationToSeconds(v.duration);
-    return durSecs <= 0 || v.currentTime < durSecs - 5;
-  });
-  const primaryContinue = continueWatchingList.length > 0 ? continueWatchingList[0] : (sortedVideos.length > 0 ? sortedVideos[0] : null);
+  // History display limit (default 10 or user chosen setting; database stores all)
+  const displayLimit = useMemo(() => {
+    const lim = settings?.historyLimit;
+    if (lim === 'Infinite' || lim === 'infinite') return Infinity;
+    if (typeof lim === 'number' && lim > 0) return lim;
+    if (typeof lim === 'string') {
+      const parsed = parseInt(lim, 10);
+      if (!isNaN(parsed) && parsed > 0) return parsed;
+    }
+    return 10;
+  }, [settings?.historyLimit]);
+
+  const [showAllItems, setShowAllItems] = useState(false);
+
+  const searchInputRef = useRef<HTMLInputElement>(null);
+
+  // 1. Aggregate sessions by dateKey (YYYY-MM-DD)
+  const sessionCountsByDate = useMemo(() => {
+    const counts: Record<string, number> = {};
+
+    videos.forEach(v => {
+      if (v.lastPlayedDate) {
+        try {
+          const k = new Date(v.lastPlayedDate).toISOString().split('T')[0];
+          counts[k] = (counts[k] || 0) + 1;
+        } catch {}
+      }
+    });
+
+    return counts;
+  }, [videos]);
+
+  // 2. Generate full last year of activity (12 months total)
+  const months = useMemo(() => {
+    const list: MonthBlock[] = [];
+    const now = new Date();
+
+    // 11 previous months down to 0 (current month) = 12 months total
+    for (let offset = 11; offset >= 0; offset--) {
+      const d = new Date(now.getFullYear(), now.getMonth() - offset, 1);
+      const year = d.getFullYear();
+      const month = d.getMonth();
+      const name = d.toLocaleDateString([], { month: 'short' });
+
+      const firstDay = new Date(year, month, 1);
+      const lastDay = new Date(year, month + 1, 0);
+      const totalDays = lastDay.getDate();
+      const startDayOfWeek = firstDay.getDay(); // 0 = Sun, 1 = Mon ... 6 = Sat
+
+      const cells: DayCell[] = [];
+      for (let day = 1; day <= totalDays; day++) {
+        const cellDate = new Date(year, month, day);
+        const dateKey = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+        const dayOfWeek = cellDate.getDay();
+        const weekCol = Math.floor((day - 1 + startDayOfWeek) / 7);
+        const count = sessionCountsByDate[dateKey] || 0;
+
+        let level: 0 | 1 | 2 | 3 | 4 = 0;
+        if (count >= 4) level = 4;
+        else if (count === 3) level = 3;
+        else if (count === 2) level = 2;
+        else if (count === 1) level = 1;
+
+        cells.push({
+          date: cellDate,
+          dateKey,
+          dayOfMonth: day,
+          dayOfWeek,
+          weekCol,
+          count,
+          level,
+          isFuture: cellDate > now
+        });
+      }
+
+      const numCols = Math.ceil((totalDays + startDayOfWeek) / 7);
+      list.push({
+        year,
+        monthIndex: month,
+        name,
+        numCols,
+        cells
+      });
+    }
+
+    return list;
+  }, [sessionCountsByDate]);
+
+  // Calculate layout coordinates for each separated month block
+  const { monthLayouts, totalSvgWidth } = useMemo(() => {
+    let currentX = 32; // Left margin for day labels (Mon, Wed, Fri)
+    const colWidth = 14; // 11px cell + 3px gap
+    const monthGap = 16; // Separation gap between months
+
+    const layouts = months.map(m => {
+      const startX = currentX;
+      const monthWidth = m.numCols * colWidth;
+      const labelCenterX = startX + monthWidth / 2 - 1.5;
+      currentX += monthWidth + monthGap;
+      return {
+        ...m,
+        startX,
+        monthWidth,
+        labelCenterX
+      };
+    });
+
+    return {
+      monthLayouts: layouts,
+      totalSvgWidth: currentX + 6
+    };
+  }, [months]);
+
+  // Total sessions recorded across the period
+  const totalSessions = useMemo(() => {
+    let sum = 0;
+    months.forEach(m => {
+      m.cells.forEach(c => {
+        sum += c.count;
+      });
+    });
+    return sum;
+  }, [months]);
+
+  // 3. Format videos for display
+  const allHistoryItems = useMemo<HistoryDisplayItem[]>(() => {
+    return videos.map((v, idx) => {
+      const rawTitle = v.title || 'Untitled';
+      const info = classifyVideoTitle(rawTitle);
+      const sTitle = smartTitleCase(info.cleanTitle || rawTitle);
+      const code = (info.season !== undefined && info.episode !== undefined)
+        ? `S${info.season}E${info.episode}`
+        : '';
+      const tileBg = getVibrantTileGradient(rawTitle);
+      const letter = getFirstAlphanumeric(rawTitle);
+
+      const d = v.lastPlayedDate ? new Date(v.lastPlayedDate) : new Date();
+      const dateKey = !isNaN(d.getTime()) ? d.toISOString().split('T')[0] : '';
+      const timeStr = !isNaN(d.getTime()) ? d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : '';
+
+      // Check both video object and persistent site storage for duration and currentTime
+      const savedRecord = getMediaTimestampRecord(v);
+      let rawDur = v.duration || savedRecord?.duration;
+      if (!rawDur) {
+        const alt = videos.find(other => other.duration && (
+          (other.title && other.title === v.title) || 
+          (other.fileName && other.fileName === v.fileName) ||
+          other.id === v.id.replace(/^local-/, '')
+        ));
+        if (alt) rawDur = alt.duration;
+      }
+      const durSec = typeof rawDur === 'number' 
+        ? rawDur 
+        : (rawDur ? parseDurationToSeconds(rawDur) : 0);
+      const curr = v.currentTime || savedRecord?.currentTime || 0;
+
+      // Completed if:
+      // 1. Explicitly marked completed in v or savedRecord
+      // 2. Or remaining time is within 5 minutes (300 seconds) of total duration
+      // 3. Or current time watched is >= 90% of total duration (for media > 5m)
+      // 4. Or watched >= 40 minutes (2400s) when duration was not recorded
+      const remainingSec = durSec > 0 ? durSec - curr : Infinity;
+      const isFinished = Boolean(
+        v.completed || 
+        savedRecord?.completed ||
+        (durSec > 0 && (remainingSec <= 300 || curr >= durSec - 300 || (durSec > 300 && curr >= durSec * 0.90))) ||
+        (durSec <= 0 && curr >= 2400)
+      );
+
+      // Duration string display: show watched runtime AND total duration (e.g. "43m / 48m watched")
+      const durText = durSec > 0 ? formatRuntime(durSec) : '';
+      const watchedText = durText 
+        ? `${formatRuntime(curr)} / ${durText} watched` 
+        : `${formatRuntime(curr)} watched`;
+
+      // Get user rating (1-5 scale) if present
+      const rawRating = localRatings[v.id] ?? 
+                        localRatings[v.id.replace(/^local-/, '')] ?? 
+                        v.rating ?? 
+                        (v as any).userRating ?? 
+                        storedRatings[v.id] ?? 
+                        storedRatings[v.id.replace(/^local-/, '')] ?? 
+                        (v.title ? storedRatings[v.title] : undefined);
+      const normalizedRating = typeof rawRating === 'number' && rawRating > 0
+        ? (rawRating > 5 ? rawRating / 2 : rawRating)
+        : undefined;
+      const stars = normalizedRating !== undefined
+        ? Math.min(5, Math.max(0.5, Math.round(normalizedRating * 2) / 2))
+        : undefined;
+
+      const isToday = !isNaN(d.getTime()) && d.toDateString() === new Date().toDateString();
+      const yesterday = new Date();
+      yesterday.setDate(yesterday.getDate() - 1);
+      const isYesterday = !isNaN(d.getTime()) && d.toDateString() === yesterday.toDateString();
+
+      const dayKeyword = isToday
+        ? 'Today'
+        : isYesterday
+        ? 'Yesterday'
+        : d.toLocaleDateString([], { weekday: 'short' });
+
+      const dayDateStr = d.toLocaleDateString([], { day: 'numeric', month: 'short', year: 'numeric' });
+      const dateGroupLabel = `${dateKey}_${dayKeyword}`;
+      const sourceType = getVideoSourceType(v);
+
+      return {
+        id: v.id || `video-${idx}`,
+        title: sTitle,
+        sourceType,
+        seasonEpisode: code,
+        resumeText: isFinished ? 'completed' : `resume at ${formatRuntime(curr)}`,
+        playedAtTime: timeStr,
+        watchedText,
+        status: (isFinished ? 'finished' : 'stopped') as 'stopped' | 'finished',
+        hasTraktSync: true,
+        isSyncedToTrakt: !!(v as any).traktSynced,
+        stars,
+        progressPercent: durSec > 0 ? Math.min(100, Math.round((curr / durSec) * 100)) : 40,
+        dateKey,
+        dayKeyword,
+        dayDateStr,
+        dateGroupLabel,
+        timestamp: !isNaN(d.getTime()) ? d.getTime() : 0,
+        letter,
+        letterBg: tileBg,
+        videoItem: v
+      };
+    }).sort((a, b) => b.timestamp - a.timestamp);
+  }, [videos]);
+
+  // 4. Filter Watch Log (by search, pill filter, and optional heatmap day selection)
+  const filteredItems = useMemo(() => {
+    return allHistoryItems.filter(item => {
+      // 1. Search Query
+      if (searchQuery.trim()) {
+        const q = searchQuery.toLowerCase().trim();
+        const full = `${item.title} ${item.seasonEpisode || ''}`.toLowerCase();
+        if (!full.includes(q)) return false;
+      }
+
+      // 2. Pill Filter
+      if (filterPill === 'local' && item.sourceType !== 'local') return false;
+      if (filterPill === 'remote' && item.sourceType !== 'remote') return false;
+      if (filterPill === 'online' && item.sourceType !== 'online') return false;
+      if (filterPill === 'stopped' && item.status !== 'stopped') return false;
+      if (filterPill === 'finished' && item.status !== 'finished') return false;
+      if (filterPill === 'trakt' && item.isSyncedToTrakt) return false;
+
+      // 3. Optional Day Selection from Heatmap
+      if (selectedDateKey && item.dateKey !== selectedDateKey) {
+        return false;
+      }
+
+      return true;
+    });
+  }, [allHistoryItems, searchQuery, filterPill, selectedDateKey]);
+
+  // 5. Slice to user display limit (default 10 or configured limit)
+  const displayedHistoryItems = useMemo(() => {
+    if (showAllItems || displayLimit === Infinity) return filteredItems;
+    return filteredItems.slice(0, displayLimit);
+  }, [filteredItems, displayLimit, showAllItems]);
+
+  // Group items by date for display (exact match to screenshot)
+  const groupedWatchLog = useMemo(() => {
+    const map = new Map<string, { dayKeyword: string; dayDateStr: string; dateKey: string; items: HistoryDisplayItem[]; totalWatchSec: number }>();
+
+    displayedHistoryItems.forEach(item => {
+      const key = item.dateKey || 'unknown';
+      let grp = map.get(key);
+      if (!grp) {
+        grp = {
+          dayKeyword: item.dayKeyword,
+          dayDateStr: item.dayDateStr,
+          dateKey: item.dateKey,
+          items: [],
+          totalWatchSec: 0
+        };
+        map.set(key, grp);
+      }
+      grp.items.push(item);
+      grp.totalWatchSec += (item.videoItem.currentTime || 0);
+    });
+
+    return Array.from(map.values());
+  }, [displayedHistoryItems]);
+
+  // Top Continue Watching Cards (2 cards side by side)
+  const topResumeCards = useMemo(() => {
+    return allHistoryItems
+      .filter(i => i.status === 'stopped' && (i.videoItem.currentTime || 0) > 2)
+      .slice(0, 2);
+  }, [allHistoryItems]);
+
+  // Crimson / Coral Palette (exact match to user screenshot)
+  const getCellFill = (level: number, isFuture: boolean) => {
+    if (isFuture) return 'rgba(255, 255, 255, 0.02)';
+    switch (level) {
+      case 1:
+        return '#4c1626'; // subtle dark crimson
+      case 2:
+        return '#8a1c36'; // mid crimson
+      case 3:
+        return '#d9254c'; // vibrant crimson
+      case 4:
+        return '#fb7185'; // bright coral pink
+      case 0:
+      default:
+        return '#1a1d26'; // dark empty square
+    }
+  };
+
+  const handleCellClick = (dateKey: string) => {
+    // Clicking a day filters by that day; clicking it again toggles back to all days
+    setSelectedDateKey(prev => (prev === dateKey ? null : dateKey));
+  };
+
+  const handleClearHistory = () => {
+    setIsClearModalOpen(true);
+  };
+
+  const executeClear = () => {
+    const mockEvent = { stopPropagation: () => {}, preventDefault: () => {} } as unknown as React.MouseEvent;
+    videos.forEach(v => {
+      const vidId = v.id || (v as any).url;
+      if (vidId) {
+        try {
+          handleRemoveVideo(vidId, mockEvent);
+        } catch {}
+      }
+    });
+    setIsClearModalOpen(false);
+  };
 
   return (
-    <>
-      <div className="workspace-panel-wrapper">
-        <div className="glass-panel workspace-panel">
-          {historyViewMode === 'calendar' ? (
-            <div style={{ display: 'flex', flexDirection: 'column', width: '100%' }}>
-              {settings.calendarStyle === 'list' && (
-                <Calendar02 videos={sortedVideos} onPlayVideo={handlePlayVideo} isInstantlyPlayable={isInstantlyPlayable} />
+    <div className="history-heatmap-container" role="main" aria-label="Watch history and activity heatmap">
+      <div className="history-heatmap-wrapper">
+        {/* ================================================================= */}
+        {/* 1. TOP HEADER (History title, Search input, Clear button)          */}
+        {/* ================================================================= */}
+        <header className="history-header">
+          <div className="history-header-top-row">
+            <div className="history-header-left">
+              <h1 className="history-title">History</h1>
+            </div>
+
+            {videos.length > 0 && (
+              <button
+                type="button"
+                className="history-clear-btn"
+                onClick={handleClearHistory}
+              >
+                Clear history
+              </button>
+            )}
+          </div>
+
+          <div className="history-header-right">
+            <div className="history-search-box">
+              <Search size={14} color="var(--text-3)" />
+              <input
+                ref={searchInputRef}
+                type="text"
+                className="history-search-input"
+                placeholder="Search history"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+              />
+              {searchQuery && (
+                <button
+                  type="button"
+                  onClick={() => setSearchQuery('')}
+                  style={{ background: 'transparent', border: 'none', color: 'var(--text-3)', cursor: 'pointer', padding: 0 }}
+                  aria-label="Clear search"
+                >
+                  <X size={13} />
+                </button>
               )}
-              {settings.calendarStyle === 'grid' && (
-                <CalendarView videos={sortedVideos} onPlayVideo={handlePlayVideo} />
+            </div>
+          </div>
+        </header>
+
+        {/* ================================================================= */}
+        {/* 2. TOP RESUME CARDS (2 SIDE BY SIDE - If In-Progress items exist) */}
+        {/* ================================================================= */}
+        {topResumeCards.length > 0 && (
+          <section className="history-resume-grid" aria-label="Continue Watching">
+            {topResumeCards.map((card) => (
+              <div key={card.id} className="history-resume-card">
+                <div className="history-resume-left">
+                  <div
+                    className="history-avatar-tile"
+                    style={{ background: card.letterBg }}
+                  >
+                    {card.letter}
+                  </div>
+                  <div className="history-resume-info">
+                    <h3 className="history-resume-title">{card.title}</h3>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap', marginTop: '2px', marginBottom: '4px' }}>
+                      <span className={`history-source-badge history-source-${card.sourceType}`}>
+                        {card.sourceType === 'online' && <Globe size={10} />}
+                        {card.sourceType === 'remote' && <Server size={10} />}
+                        {card.sourceType === 'local' && <HardDrive size={10} />}
+                        <span>{card.sourceType}</span>
+                      </span>
+                      <p className="history-resume-sub" style={{ margin: 0 }}>
+                        {card.seasonEpisode ? `${card.seasonEpisode} · ` : ''}{card.resumeText}
+                      </p>
+                    </div>
+                    <div className="history-progress-track">
+                      <div
+                        className="history-progress-fill"
+                        style={{ width: `${card.progressPercent}%` }}
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  className="history-resume-btn"
+                  onClick={() => handlePlayVideo(card.videoItem)}
+                >
+                  <Play size={12} fill="currentColor" />
+                  <span>Resume</span>
+                </button>
+              </div>
+            ))}
+          </section>
+        )}
+
+        {/* ================================================================= */}
+        {/* 3. GITHUB HEATMAP CARD (EXACT 1:1 REPLICA - ZERO SCROLLING)       */}
+        {/* ================================================================= */}
+        <section className="history-heatmap-card" aria-label="Contribution and viewing activity heatmap">
+          {/* Top Info & Legend */}
+          <div className="history-heatmap-top">
+            <div className="history-heatmap-title-area">
+              <span className="history-heatmap-sessions-count">
+                {`${totalSessions} session${totalSessions === 1 ? '' : 's'} in the last year`}
+              </span>
+              <span className="history-heatmap-subtitle">
+                Each square is a day. Click one to see what you watched.
+              </span>
+            </div>
+            <div className="history-heatmap-legend">
+              <span>Less</span>
+              <span className="history-legend-square" style={{ background: getCellFill(0, false) }} />
+              <span className="history-legend-square" style={{ background: getCellFill(1, false) }} />
+              <span className="history-legend-square" style={{ background: getCellFill(2, false) }} />
+              <span className="history-legend-square" style={{ background: getCellFill(3, false) }} />
+              <span className="history-legend-square" style={{ background: getCellFill(4, false) }} />
+              <span>More</span>
+            </div>
+          </div>
+
+          {/* Scalable SVG Heatmap: Separated Month Groups & Responsive Fit */}
+          <div className="history-heatmap-svg-wrap">
+            <svg
+              className="history-heatmap-svg"
+              viewBox={`0 0 ${totalSvgWidth} 118`}
+              preserveAspectRatio="xMidYMid meet"
+              aria-hidden="true"
+            >
+              {/* Day Labels on Y-Axis (Mon, Wed, Fri) */}
+              <text x="4" y="41" fontSize="9" fill="var(--text-3)" fontFamily="var(--font-ui)">Mon</text>
+              <text x="4" y="67" fontSize="9" fill="var(--text-3)" fontFamily="var(--font-ui)">Wed</text>
+              <text x="4" y="93" fontSize="9" fill="var(--text-3)" fontFamily="var(--font-ui)">Fri</text>
+
+              {/* Separated Month Groups */}
+              {monthLayouts.map((m) => (
+                <g key={`${m.name}-${m.year}`}>
+                  {/* Centered Month Header */}
+                  <text
+                    x={m.labelCenterX}
+                    y="11"
+                    textAnchor="middle"
+                    fontSize="9.5"
+                    fill="var(--text-3)"
+                    fontFamily="var(--font-ui)"
+                  >
+                    {m.name}
+                  </text>
+
+                  {/* Day Cells inside this month */}
+                  {m.cells.map((cell) => {
+                    const cellX = m.startX + cell.weekCol * 13;
+                    const cellY = 20 + cell.dayOfWeek * 13;
+                    const isSelected = selectedDateKey === cell.dateKey;
+                    const fill = getCellFill(cell.level, cell.isFuture);
+
+                    return (
+                      <g key={cell.dateKey}>
+                        <rect
+                          x={cellX}
+                          y={cellY}
+                          width="10"
+                          height="10"
+                          rx="2"
+                          fill={fill}
+                          className="history-heat-cell"
+                          onClick={() => handleCellClick(cell.dateKey)}
+                          onMouseEnter={(e) => {
+                            const rect = (e.target as SVGRectElement).getBoundingClientRect();
+                            setHoveredCell({
+                              dateKey: cell.dateKey,
+                              count: cell.count,
+                              x: rect.left + rect.width / 2,
+                              y: rect.top - 8
+                            });
+                          }}
+                          onMouseLeave={() => setHoveredCell(null)}
+                        >
+                          <title>{`${cell.count} session${cell.count === 1 ? '' : 's'} on ${cell.dateKey}`}</title>
+                        </rect>
+
+                        {/* Active/Selected Ring */}
+                        {isSelected && (
+                          <rect
+                            x={cellX - 1.5}
+                            y={cellY - 1.5}
+                            width="13"
+                            height="13"
+                            rx="3"
+                            fill="none"
+                            stroke="var(--accent, #ff4d6d)"
+                            strokeWidth="1.5"
+                            pointerEvents="none"
+                          />
+                        )}
+                      </g>
+                    );
+                  })}
+                </g>
+              ))}
+            </svg>
+          </div>
+        </section>
+
+        {/* ================================================================= */}
+        {/* 4. WATCH LOG SECTION (Grouped by Date with Filter Pills)          */}
+        {/* ================================================================= */}
+        <section className="history-watchlog-section" aria-label="Watch log history">
+          <div className="history-watchlog-header">
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+              <h2 className="history-watchlog-title">Watch log</h2>
+              {filteredItems.length > displayLimit && displayLimit !== Infinity && (
+                <span style={{ fontSize: '0.78rem', color: 'var(--text-3)', fontWeight: 500 }}>
+                  ({showAllItems ? `All ${filteredItems.length} items` : `Showing ${displayedHistoryItems.length} of ${filteredItems.length}`})
+                </span>
               )}
-              {settings.calendarStyle === 'booking' && (
-                <BookingCalendar />
+              {selectedDateKey && (
+                <button
+                  type="button"
+                  onClick={() => setSelectedDateKey(null)}
+                  style={{
+                    background: 'var(--surface-2)',
+                    border: '1px solid var(--border)',
+                    color: 'var(--accent)',
+                    padding: '2px 8px',
+                    borderRadius: '4px',
+                    fontSize: '0.72rem',
+                    fontWeight: 600,
+                    cursor: 'pointer',
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '4px'
+                  }}
+                  title="Clear day filter to show all days"
+                >
+                  <span>{selectedDateKey}</span>
+                  <X size={11} />
+                </button>
               )}
-              {settings.calendarStyle === 'appointment' && (
-                <AppointmentCalendar videos={sortedVideos} onPlayVideo={handlePlayVideo} />
+            </div>
+
+            {/* Filter Pills */}
+            <div className="history-filter-pills" role="tablist">
+              <button
+                type="button"
+                className={`history-filter-pill ${filterPill === 'all' ? 'active' : ''}`}
+                onClick={() => setFilterPill('all')}
+              >
+                All
+              </button>
+              <button
+                type="button"
+                className={`history-filter-pill ${filterPill === 'local' ? 'active' : ''}`}
+                onClick={() => setFilterPill('local')}
+              >
+                <HardDrive size={13} />
+                <span>Local</span>
+              </button>
+              <button
+                type="button"
+                className={`history-filter-pill ${filterPill === 'remote' ? 'active' : ''}`}
+                onClick={() => setFilterPill('remote')}
+              >
+                <Server size={13} />
+                <span>Remote</span>
+              </button>
+              <button
+                type="button"
+                className={`history-filter-pill ${filterPill === 'online' ? 'active' : ''}`}
+                onClick={() => setFilterPill('online')}
+              >
+                <Globe size={13} />
+                <span>Online</span>
+              </button>
+              <button
+                type="button"
+                className={`history-filter-pill ${filterPill === 'stopped' ? 'active' : ''}`}
+                onClick={() => setFilterPill('stopped')}
+              >
+                Stopped early
+              </button>
+              <button
+                type="button"
+                className={`history-filter-pill ${filterPill === 'finished' ? 'active' : ''}`}
+                onClick={() => setFilterPill('finished')}
+              >
+                Finished
+              </button>
+              <button
+                type="button"
+                className={`history-filter-pill ${filterPill === 'trakt' ? 'active' : ''}`}
+                onClick={() => setFilterPill('trakt')}
+              >
+                Needs Trakt sync
+              </button>
+            </div>
+          </div>
+
+          {/* Grouped Day Rows */}
+          {groupedWatchLog.length === 0 ? (
+            <div className="history-empty-state">
+              <p style={{ margin: 0, fontWeight: 500, color: 'var(--text-3)' }}>
+                Nothing here.
+              </p>
+              {selectedDateKey && (
+                <button
+                  type="button"
+                  className="history-filter-pill active"
+                  style={{ marginTop: '8px' }}
+                  onClick={() => setSelectedDateKey(null)}
+                >
+                  View all days
+                </button>
               )}
             </div>
           ) : (
-            <>
-              {primaryContinue && (
-                <div 
-                  onClick={() => handlePlayVideo(primaryContinue)}
-                  style={{ 
-                    width: '100%', 
-                    background: 'var(--banner-bg, linear-gradient(135deg, #e50914 0%, #9b040c 100%))', 
-                    borderRadius: '12px', 
-                    padding: '0.85rem 1.1rem', 
-                    marginBottom: '1rem',
-                    display: 'flex',
-                    justifyContent: 'space-between',
-                    alignItems: 'center',
-                    cursor: 'pointer',
-                    boxShadow: 'var(--banner-shadow, 0 8px 24px rgba(229, 9, 20, 0.25))',
-                    border: '1px solid rgba(255, 255, 255, 0.1)',
-                    transition: 'transform 0.2s, box-shadow 0.2s',
-                    boxSizing: 'border-box'
-                  }}
-                  className="premium-red-banner"
-                >
-                  <div style={{ flex: 1, minWidth: '0', paddingRight: '1.5rem' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '0.4rem' }}>
-                      <span style={{ fontSize: '0.7rem', fontWeight: 800, letterSpacing: '1px', background: 'rgba(255,255,255,0.2)', color: '#fff', padding: '2px 8px', borderRadius: '4px', textTransform: 'uppercase' }}>
-                        Continue Watching
-                      </span>
-                      {primaryContinue.duration && (
-                        <span style={{ fontSize: '0.72rem', color: 'rgba(255,255,255,0.7)', fontWeight: 500 }}>
-                          {(() => {
-                            const dur = parseDurationToSeconds(primaryContinue.duration);
-                            return dur > 0 ? `${Math.round(((primaryContinue.currentTime || 0) / dur) * 100)}% Watched` : '';
-                          })()}
-                        </span>
-                      )}
-                    </div>
-                    
-                    <h3 style={{ margin: 0, fontSize: '1.25rem', fontWeight: 700, color: '#fff', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                      {classifyVideoTitle(primaryContinue.title).displayTitle}
-                    </h3>
-                    
-                    <p style={{ margin: '4px 0 0 0', fontSize: '0.85rem', color: 'rgba(255,255,255,0.85)' }}>
-                      Resume playback at <b>{formatTime(primaryContinue.currentTime || 0)}</b>
-                    </p>
-
-                    {/* Progress bar inside banner */}
-                    {(() => {
-                      const dur = parseDurationToSeconds(primaryContinue.duration);
-                      const progress = dur > 0 && primaryContinue.currentTime ? Math.round((primaryContinue.currentTime / dur) * 100) : 0;
-                      return progress > 0 ? (
-                        <div style={{ height: '4px', width: '100%', background: 'rgba(255,255,255,0.2)', borderRadius: '2px', overflow: 'hidden', marginTop: '0.8rem' }}>
-                          <div style={{ height: '100%', width: `${progress}%`, background: '#fff' }} />
-                        </div>
-                      ) : null;
-                    })()}
+            groupedWatchLog.map((group) => (
+              <div key={group.dateKey} className="history-day-group">
+                {/* Day Header Row */}
+                <div className="history-day-header">
+                  <div className="history-day-title">
+                    <span className="history-day-keyword">{group.dayKeyword}</span>
+                    <span className="history-day-date">{group.dayDateStr}</span>
                   </div>
-                  
-                  <button 
-                    className="btn btn-primary" 
-                    style={{ 
-                      background: 'var(--play-btn-bg, #ffffff)', 
-                      color: 'var(--play-btn-text, #e50914)', 
-                      border: 'none',
-                      padding: '0.65rem 1.5rem',
-                      fontSize: '0.88rem',
-                      fontWeight: 700,
-                      borderRadius: 'var(--btn-border-radius, 8px)',
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '8px',
-                      boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
-                      cursor: 'pointer',
-                      flexShrink: 0
-                    }}
-                  >
-                    {isInstantlyPlayable(primaryContinue) ? (
-                      <>
-                        <Play size={14} fill="currentColor" stroke="currentColor" />
-                        <span>Resume Playback</span>
-                      </>
-                    ) : (
-                      <>
-                        <UploadCloud size={14} stroke="currentColor" />
-                        <span>Select Media</span>
-                      </>
-                    )}
-                  </button>
+                  <span className="history-day-meta">
+                    {formatRuntime(group.totalWatchSec) || '0m'} · {group.items.length} session{group.items.length === 1 ? '' : 's'}
+                  </span>
                 </div>
-              )}
 
-              {sortedVideos.length === 0 ? (
-                <div className="empty-catalog-box glass-panel">
-                  <Film size={44} className="text-muted pulsing" />
-                  <p>No playback history yet. Load a stream or select a file to begin.</p>
-                </div>
-              ) : (
-                <div className="history-list">
-                  {sortedVideos.map((video) => (
-                    <div key={video.id} className="history-item glass-panel" onClick={() => handlePlayVideo(video)}>
-                      <div className="history-item-header">
-                        {video.posterPath && (
-                          <img 
-                            src={video.posterPath} 
-                            alt="" 
-                            crossOrigin="anonymous"
-                            onError={(e) => { (e.target as HTMLElement).style.display = 'none'; }}
-                            style={{ width: '45px', height: '65px', borderRadius: '6px', objectFit: 'cover', marginRight: '1rem', flexShrink: 0 }} 
-                          />
-                        )}
-                        <div className="history-info">
-                          <span className="history-title" title={video.title}>{classifyVideoTitle(video.title).displayTitle}</span>
-                          <div className="history-stats">
-                            {video.duration ? (
-                              <span className="stat-badge">Length: {typeof video.duration === 'number' ? formatTime(video.duration) : video.duration}</span>
-                            ) : (
-                              <span className="stat-badge" style={{ opacity: 0.5 }}>Length: Unknown</span>
-                            )}
-                            {(video.currentTime && video.currentTime > 0) ? (
-                              <span className="stat-badge">Watched: {formatTime(video.currentTime)}</span>
-                            ) : ((video as any).totalTimeWatched > 0 ? (
-                              <span className="stat-badge">Watched: {formatTime((video as any).totalTimeWatched)}</span>
-                            ) : (
-                              <span className="stat-badge" style={{ opacity: 0.5 }}>Watched: 0:00</span>
-                            ))}
-                            {(video as any).rating && (
-                              <span className="stat-badge rating-badge">Rating: {'★'.repeat((video as any).rating)}{'☆'.repeat(5 - (video as any).rating)}</span>
-                            )}
-                            {(video as any).timeToFinish && (
-                              <span className="stat-badge finish-badge">Completed in: {formatTime((video as any).timeToFinish)}</span>
-                            )}
-                            {(video.bookmarks && video.bookmarks.length > 0) && (
-                              <span className="stat-badge bookmark-badge">Bookmarks: {video.bookmarks.length}</span>
-                            )}
-                          </div>
+                {/* Day Item Cards */}
+                {group.items.map((item) => (
+                  <div key={item.id} className="history-item-row">
+                    <div className="history-item-left">
+                      <div
+                        className="history-avatar-tile"
+                        style={{ background: item.letterBg }}
+                      >
+                        {item.letter}
+                      </div>
+
+                      <div className="history-item-info">
+                        <h4 className="history-item-title">{item.title}</h4>
+                        <div className="history-item-meta-row">
+                          <span className={`history-source-badge history-source-${item.sourceType}`}>
+                            {item.sourceType === 'online' && <Globe size={10} />}
+                            {item.sourceType === 'remote' && <Server size={10} />}
+                            {item.sourceType === 'local' && <HardDrive size={10} />}
+                            <span>{item.sourceType}</span>
+                          </span>
+                          <span>
+                            {item.seasonEpisode ? `${item.seasonEpisode} · ` : ''}{item.playedAtTime}
+                          </span>
+                          <span>{item.watchedText}</span>
+
+                          {item.status === 'stopped' ? (
+                            <span className="history-badge-stopped">Stopped early</span>
+                          ) : (
+                            <span className="history-badge-finished">✓ Finished</span>
+                          )}
+
+                          {/* Read-only User Rating (shown only if given) */}
+                          {item.stars && item.stars > 0 ? (
+                            <div
+                              className="history-stars-container"
+                              style={{ display: 'inline-flex', alignItems: 'center', gap: 2, marginLeft: 6 }}
+                              title={`User rating: ${item.stars}/5`}
+                            >
+                              {[1, 2, 3, 4, 5].map((star) => {
+                                const isFull = star <= item.stars!;
+                                const isHalf = !isFull && item.stars! >= star - 0.5;
+                                return (
+                                  <span
+                                    key={star}
+                                    style={{
+                                      position: 'relative',
+                                      display: 'inline-block',
+                                      color: isFull ? '#f59e0b' : 'rgba(255, 255, 255, 0.18)',
+                                      fontSize: '13px',
+                                      lineHeight: 1,
+                                      userSelect: 'none',
+                                    }}
+                                  >
+                                    ★
+                                    {isHalf && (
+                                      <span
+                                        style={{
+                                          position: 'absolute',
+                                          left: 0,
+                                          top: 0,
+                                          width: '50%',
+                                          overflow: 'hidden',
+                                          color: '#f59e0b',
+                                        }}
+                                      >
+                                        ★
+                                      </span>
+                                    )}
+                                  </span>
+                                );
+                              })}
+                              <span style={{ fontSize: '0.72rem', color: '#f59e0b', marginLeft: 3, fontWeight: 600 }}>
+                                {item.stars}/5
+                              </span>
+                            </div>
+                          ) : null}
                         </div>
                       </div>
-                      <div className="history-actions-row" style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-                        <button className="btn btn-primary btn-sm play-btn-compact" style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                          {isInstantlyPlayable(video) ? (
-                            <>
-                              <Play size={12} fill="white" />
-                              <span>Play</span>
-                            </>
-                          ) : (
-                            <>
-                              <UploadCloud size={12} />
-                              <span>Select Media</span>
-                            </>
-                          )}
-                        </button>
-                        {(() => {
-                          const durationSec = typeof video.duration === 'number' ? video.duration : parseDurationToSeconds(video.duration);
-                          const isCompleted = !!(video.timeToFinish || (durationSec > 0 && video.currentTime && video.currentTime >= durationSec - 15));
-                          
-                          if (!isCompleted && !video.hasScrobbledTrakt) return null;
-                          
-                          return (
-                            <button 
-                              className={`btn btn-sm ${video.hasScrobbledTrakt ? 'btn-secondary' : 'btn-outline-danger'}`}
-                              onClick={(e) => syncVideoToTraktHistory(video, e)}
-                              style={{ 
-                                display: 'flex', 
-                                alignItems: 'center', 
-                                gap: '4px',
-                                background: video.hasScrobbledTrakt ? 'rgba(255,255,255,0.05)' : 'var(--accent-glow, rgba(229, 9, 20, 0.1))',
-                                color: video.hasScrobbledTrakt ? '#888' : 'var(--accent-color, #e50914)',
-                                border: video.hasScrobbledTrakt ? '1px solid rgba(255,255,255,0.1)' : '1px solid var(--accent-color, #e50914)',
-                                padding: '0.4rem 0.8rem',
-                                borderRadius: '6px',
-                                fontSize: '0.75rem',
-                                fontWeight: 600,
-                                cursor: 'pointer',
-                                transition: 'all 0.2s',
-                                opacity: video.hasScrobbledTrakt ? 0.6 : 1
-                              }}
-                              title={video.hasScrobbledTrakt ? "Already Synced to Trakt.tv" : "Sync watched status to Trakt.tv"}
-                              disabled={video.hasScrobbledTrakt}
-                            >
-                              <Film size={12} fill={video.hasScrobbledTrakt ? "#888" : "none"} />
-                              <span>Trakt</span>
-                            </button>
-                          );
-                        })()}
-                        <button 
-                          className="btn-remove-history" 
-                          onClick={(e) => handleRemoveVideo(video.id, e)} 
-                          title="Remove from history"
-                        >
-                          <X size={14} />
-                        </button>
-                      </div>
                     </div>
-                  ))}
-                </div>
-              )}
-            </>
+
+                    {/* Right Actions */}
+                    <div className="history-item-actions">
+                      {item.status === 'stopped' ? (
+                        <button
+                          type="button"
+                          className="history-btn-resume"
+                          onClick={() => handlePlayVideo(item.videoItem)}
+                        >
+                          <Play size={11} fill="currentColor" />
+                          <span>Resume</span>
+                        </button>
+                      ) : (
+                        <>
+                          <button
+                            type="button"
+                            className="history-btn-play"
+                            onClick={() => handlePlayVideo(item.videoItem)}
+                          >
+                            <Play size={11} fill="white" />
+                            <span>Play again</span>
+                          </button>
+
+                          {item.hasTraktSync && (
+                            item.isSyncedToTrakt ? (
+                              <span className="history-btn-trakt-synced">
+                                <Check size={12} strokeWidth={2.5} />
+                                <span>Trakt</span>
+                              </span>
+                            ) : (
+                              <button
+                                type="button"
+                                className="history-btn-trakt-sync"
+                                onClick={(e) => syncVideoToTraktHistory(item.videoItem, e)}
+                              >
+                                Sync to Trakt
+                              </button>
+                            )
+                          )}
+                        </>
+                      )}
+
+                      <button
+                        type="button"
+                        className="history-btn-remove"
+                        onClick={(e) => handleRemoveVideo(item.videoItem.id || item.id, e)}
+                        title="Remove from history"
+                        aria-label="Remove from history"
+                      >
+                        <X size={15} />
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ))
           )}
-        </div>
+
+          {filteredItems.length > displayLimit && displayLimit !== Infinity && (
+            <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', margin: '20px 0 8px 0' }}>
+              <button
+                type="button"
+                className="history-filter-pill"
+                style={{
+                  padding: '8px 24px',
+                  fontSize: '0.82rem',
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                  borderRadius: '8px',
+                  background: 'var(--surface-2)',
+                  border: '1px solid var(--border)',
+                  color: 'var(--text-1)',
+                  transition: 'all 0.15s ease'
+                }}
+                onClick={() => setShowAllItems(prev => !prev)}
+              >
+                {showAllItems
+                  ? `Show fewer (${displayLimit} items)`
+                  : `Show all (${filteredItems.length} items recorded)`}
+              </button>
+            </div>
+          )}
+        </section>
       </div>
 
-      {/* Floating Calendar Toggle Button */}
-      <button
-        className="dom-calendar-btn"
-        onClick={() => setHistoryViewMode(historyViewMode === 'calendar' ? 'list' : 'calendar')}
-        title={historyViewMode === 'calendar' ? 'Switch to History List' : 'Switch to Calendar View'}
-      >
-        {historyViewMode === 'calendar' ? <List size={20} color="#ffffff" /> : <Calendar size={20} color="#ffffff" />}
-      </button>
-    </>
+      {/* Floating Hover Tooltip for SVG Heatmap Cells */}
+      {hoveredCell && (
+        <div
+          style={{
+            position: 'fixed',
+            left: hoveredCell.x,
+            top: hoveredCell.y,
+            transform: 'translate(-50%, -100%)',
+            background: 'var(--surface-3, #232B36)',
+            color: 'var(--text-1, #E4E8EE)',
+            border: '1px solid var(--control-border, #6C778A)',
+            borderRadius: '6px',
+            padding: '4px 8px',
+            fontSize: '0.72rem',
+            fontWeight: 600,
+            pointerEvents: 'none',
+            zIndex: 9999,
+            whiteSpace: 'nowrap',
+            boxShadow: '0 4px 12px rgba(0,0,0,0.4)'
+          }}
+        >
+          {hoveredCell.count} session{hoveredCell.count === 1 ? '' : 's'} on {hoveredCell.dateKey}
+        </div>
+      )}
+
+      {/* Clear Confirmation Modal */}
+      {isClearModalOpen && (
+        <div className="history-modal-backdrop" onClick={() => setIsClearModalOpen(false)}>
+          <div className="history-modal-box" onClick={(e) => e.stopPropagation()}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+              <div style={{
+                width: '36px',
+                height: '36px',
+                borderRadius: '50%',
+                background: 'rgba(239, 68, 68, 0.12)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                color: '#ef4444'
+              }}>
+                <AlertTriangle size={18} />
+              </div>
+              <h3 style={{ margin: 0, fontSize: '1.05rem', fontWeight: 700, color: 'var(--text-1)' }}>
+                Clear All History?
+              </h3>
+            </div>
+            <p style={{ margin: 0, fontSize: '0.84rem', color: 'var(--text-2)', lineHeight: 1.5 }}>
+              Are you sure you want to delete all recorded playback history? This action cannot be undone.
+            </p>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
+              <button
+                type="button"
+                className="history-filter-pill"
+                onClick={() => setIsClearModalOpen(false)}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="history-clear-btn"
+                onClick={executeClear}
+              >
+                Yes, Clear All
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
   );
 };
+
+export default HistoryPage;

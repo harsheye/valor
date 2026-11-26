@@ -17,7 +17,8 @@ export type EmbedCommand =
   | { type: 'SET_FULLSCREEN'; payload: { fullscreen: boolean } }
   | { type: 'LOAD'; payload: { url: string; media?: string; title?: string; autoPlay?: boolean; currentTime?: number; duration?: number; hlsPlaylist?: any; playbackMode?: string; proxyUrl?: string; headers?: Record<string, string>; } }
   | { type: 'UPDATE_CONFIG'; payload: { controls?: Partial<ControlsConfig>; theme?: Partial<ThemeConfig> } }
-  | { type: 'DESTROY' };
+  | { type: 'DESTROY' }
+  | { type: 'RELOAD' };
 
 // Events sent FROM the Iframe TO the Host Window
 export type EmbedEvent =
@@ -56,6 +57,16 @@ export interface ControlsConfig {
   download: boolean;
   screenshot: boolean;
   chapters: boolean;
+  time?: boolean;
+  bookmarks?: boolean;
+  audio?: boolean;
+  audioOnly?: boolean;
+  subFileOnly?: boolean;
+  allowSubUpload?: boolean;
+  closeButton?: boolean;
+  overlay?: boolean;
+  hideUIOverlays?: boolean;
+  overlayActiveTime?: number;
 }
 
 export const DEFAULT_CONTROLS_CONFIG: ControlsConfig = {
@@ -71,7 +82,16 @@ export const DEFAULT_CONTROLS_CONFIG: ControlsConfig = {
   pip: true,
   download: true,
   screenshot: true,
-  chapters: true
+  chapters: true,
+  time: true,
+  bookmarks: true,
+  audio: true,
+  audioOnly: false,
+  subFileOnly: false,
+  allowSubUpload: true,
+  closeButton: false, // Default to hidden X button in embed player
+  overlay: true,
+  hideUIOverlays: false,
 };
 
 // Theme configuration for custom branding
