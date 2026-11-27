@@ -221,3 +221,16 @@ pub struct MetadataOverride {
     pub episode_number: Option<u32>,
     pub updated_at: DateTime<Utc>,
 }
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct MediaTelemetry {
+    pub fingerprint: String,
+    pub last_played_at: Option<DateTime<Utc>>,
+    pub time_spent_secs: f64,
+    pub skips_used: u64,
+    pub audio_lang: String,
+    pub sub_lang: String,
+    pub tmdb_id: Option<u64>,
+    pub genres: Vec<String>,
+    pub vote_average: f32,
+}

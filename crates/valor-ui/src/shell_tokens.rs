@@ -32,9 +32,9 @@ pub mod dimensions {
 }
 
 pub mod radii {
-    pub const CONTROLS: u8 = 6;
-    pub const PANELS: u8 = 8;
-    pub const PILL: u8 = 16;
+    pub const CONTROLS: u8 = 0;
+    pub const PANELS: u8 = 2;
+    pub const PILL: u8 = 0;
 }
 
 pub mod spacing {
@@ -89,7 +89,12 @@ pub struct ShellTokens {
     pub success: Color32,
     pub avatar_palette: [Color32; 8],
     pub heatmap: [Color32; 5],
+    pub player_bar_bg: Color32,
+    pub scrubber_fill: Color32,
+    pub scrubber_track: Color32,
+    pub scrubber_knob: Color32,
     pub theme: crate::theme::ValorTheme,
+    pub skin: crate::skin::ValorSkin,
 }
 
 impl Default for ShellTokens {
@@ -136,6 +141,11 @@ impl Default for ShellTokens {
                 Color32::from_rgb(236, 72, 127),  // level 3: bright pink
                 Color32::from_rgb(255, 128, 168), // level 4: vivid rose
             ],
+            player_bar_bg: Color32::from_rgba_unmultiplied(16, 16, 18, 220),
+            scrubber_fill: Color32::WHITE,
+            scrubber_track: Color32::from_white_alpha(102),
+            scrubber_knob: Color32::from_rgb(177, 70, 194),
+            skin: crate::skin::ValorSkin::default(),
         }
     }
 }
@@ -143,8 +153,31 @@ impl Default for ShellTokens {
 impl ShellTokens {
     /// Construct a complete color token palette from a persisted `skin_id`.
     pub fn from_skin_id(skin_id: &str) -> Self {
+        Self::from_skin_and_path(skin_id, "")
+    }
+
+    /// Construct a complete token palette + layout skin from `skin_id` and optional `custom_skin_path`.
+    pub fn from_skin_and_path(skin_id: &str, custom_skin_path: &str) -> Self {
         let mut t = Self::default();
         match skin_id {
+            "cloudflare-docs" => {
+                t.window_bg = Color32::from_rgb(13, 17, 23);
+                t.chrome_bg = Color32::from_rgb(17, 22, 30);
+                t.nav_surface = Color32::from_rgb(17, 22, 30);
+                t.content_surface = Color32::from_rgb(13, 17, 23);
+                t.card_fill = Color32::from_rgb(22, 27, 34);
+                t.field_fill = Color32::from_rgb(13, 17, 23);
+                t.field_border = Color32::from_rgb(48, 54, 61);
+                t.divider = Color32::from_rgb(48, 54, 61);
+                t.divider_strong = Color32::from_rgb(68, 76, 86);
+                t.accent = Color32::from_rgb(47, 129, 247);
+                t.accent_hover = Color32::from_rgb(88, 166, 255);
+                t.selected_fill = Color32::from_rgba_unmultiplied(47, 129, 247, 36);
+                t.text_primary = Color32::from_rgb(240, 246, 252);
+                t.text_secondary = Color32::from_rgb(139, 148, 158);
+                t.text_tertiary = Color32::from_rgb(110, 118, 129);
+                t.theme.accent_blue = Color32::from_rgb(47, 129, 247);
+            }
             "oled-black" => {
                 t.window_bg = Color32::BLACK;
                 t.chrome_bg = Color32::BLACK;
@@ -206,7 +239,92 @@ impl ShellTokens {
             }
             _ => {}
         }
+        let skin = crate::skin::ValorSkin::resolve(skin_id, custom_skin_path);
+        t.apply_skin(&skin);
+        t.skin = skin;
         t
+    }
+
+    /// Overrides the active theme accent color from a `#RRGGBB` hex string.
+    pub fn apply_accent_hex(&mut self, hex: &str) {
+        let trimmed = hex.trim().trim_start_matches('#');
+        if trimmed.len() != 6 {
+            return;
+        }
+        let Ok(r) = u8::from_str_radix(&trimmed[0..2], 16) else { return; };
+        let Ok(g) = u8::from_str_radix(&trimmed[2..4], 16) else { return; };
+        let Ok(b) = u8::from_str_radix(&trimmed[4..6], 16) else { return; };
+        let base = Color32::from_rgb(r, g, b);
+        let hover = Color32::from_rgb(
+            r.saturating_add(28),
+            g.saturating_add(28),
+            b.saturating_add(28),
+        );
+        self.accent = base;
+        self.accent_hover = hover;
+        self.selected_fill = Color32::from_rgba_unmultiplied(r, g, b, 38);
+        self.scrubber_fill = base;
+        self.scrubber_knob = hover;
+        self.theme.accent_amber = base;
+        self.theme.accent_amber_light = hover;
+        self.theme.accent_blue = base;
+    }
+
+    pub fn apply_skin(&mut self, skin: &crate::skin::ValorSkin) {
+        use crate::skin::parse_hex_color;
+        let c = &skin.colors;
+        if let Some(col) = c.window_bg.as_deref().and_then(parse_hex_color) {
+            self.window_bg = col;
+        }
+        if let Some(col) = c.chrome_bg.as_deref().and_then(parse_hex_color) {
+            self.chrome_bg = col;
+        }
+        if let Some(col) = c.nav_surface.as_deref().and_then(parse_hex_color) {
+            self.nav_surface = col;
+        }
+        if let Some(col) = c.content_surface.as_deref().and_then(parse_hex_color) {
+            self.content_surface = col;
+        }
+        if let Some(col) = c.card_fill.as_deref().and_then(parse_hex_color) {
+            self.card_fill = col;
+        }
+        if let Some(col) = c.field_fill.as_deref().and_then(parse_hex_color) {
+            self.field_fill = col;
+        }
+        if let Some(col) = c.accent.as_deref().and_then(parse_hex_color) {
+            self.accent = col;
+            self.selected_fill = Color32::from_rgba_unmultiplied(col.r(), col.g(), col.b(), 40);
+            self.theme.accent_blue = col;
+        }
+        if let Some(col) = c.accent_hover.as_deref().and_then(parse_hex_color) {
+            self.accent_hover = col;
+        }
+        if let Some(col) = c.text_primary.as_deref().and_then(parse_hex_color) {
+            self.text_primary = col;
+        }
+        if let Some(col) = c.text_secondary.as_deref().and_then(parse_hex_color) {
+            self.text_secondary = col;
+        }
+        if let Some(col) = c.text_tertiary.as_deref().and_then(parse_hex_color) {
+            self.text_tertiary = col;
+            self.text_muted = col;
+        }
+        if let Some(col) = c.divider.as_deref().and_then(parse_hex_color) {
+            self.divider = col;
+            self.divider_strong = col;
+        }
+        if let Some(col) = c.player_bar_bg.as_deref().and_then(parse_hex_color) {
+            self.player_bar_bg = col;
+        }
+        if let Some(col) = c.scrubber_fill.as_deref().and_then(parse_hex_color) {
+            self.scrubber_fill = col;
+        }
+        if let Some(col) = c.scrubber_track.as_deref().and_then(parse_hex_color) {
+            self.scrubber_track = col;
+        }
+        if let Some(col) = c.scrubber_knob.as_deref().and_then(parse_hex_color) {
+            self.scrubber_knob = col;
+        }
     }
 
     /// Calculate relative luminance for WCAG contrast calculation

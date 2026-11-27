@@ -18,6 +18,7 @@ pub enum PlayerPanel {
     Bookmarks,
     Tracks,
     Speed,
+    Picture,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -139,6 +140,7 @@ pub struct OverlayButton<'a> {
     icon_id: Option<&'a str>,
     custom_icon_size: Option<f32>,
     number_label: Option<&'a str>,
+    curved_skip: Option<bool>,
     tooltip: Option<&'a str>,
     tooltip_placement: TooltipPlacement,
 }
@@ -152,6 +154,7 @@ impl<'a> OverlayButton<'a> {
             icon_id: None,
             custom_icon_size: None,
             number_label: None,
+            curved_skip: None,
             tooltip: None,
             tooltip_placement: TooltipPlacement::Above,
         }
@@ -181,6 +184,11 @@ impl<'a> OverlayButton<'a> {
 
     pub fn number_label(mut self, label: &'a str) -> Self {
         self.number_label = Some(label);
+        self
+    }
+
+    pub fn curved_skip(mut self, forward: bool) -> Self {
+        self.curved_skip = Some(forward);
         self
     }
 
@@ -214,37 +222,51 @@ impl<'a> OverlayButton<'a> {
         } else if hover_t > 0.001 {
             let fill = Color32::from_rgba_unmultiplied(255, 255, 255, (56.0 * hover_t) as u8);
             let border = Color32::from_rgba_unmultiplied(255, 255, 255, (85.0 * hover_t) as u8);
-            ui.painter().rect(self.rect, CornerRadius::same(4), fill, Stroke::new(1.0, border), StrokeKind::Inside);
+            ui.painter().rect(self.rect, CornerRadius::ZERO, fill, Stroke::new(1.0, border), StrokeKind::Inside);
         }
+        let pointer_pos = ui.input(|i| i.pointer.hover_pos());
+        crate::ui_helpers::paint_proximity_border(ui, self.rect, theme.accent_amber, pointer_pos, 96.0);
 
         // 2. Active/pressed icon scaling: scales to 0.95
         let scale = if response.is_pointer_button_down_on() { 0.95 } else { 1.0 };
 
-        // 3. Paint thin-outline Fluent icon (pure white #FFFFFF @ 100%)
-        if let Some(icon_id) = self.icon_id {
-            let base_size = self.custom_icon_size.unwrap_or(match self.style {
-                OverlayButtonStyle::Transport => theme.transport_icon_size,
-                OverlayButtonStyle::BottomBar => theme.bottom_icon_size,
-                OverlayButtonStyle::Edge => theme.edge_icon_size,
-            });
-            let icon_size = base_size * scale;
-            icons.paint_icon(
-                ui,
-                icon_id,
-                Rect::from_center_size(self.rect.center(), Vec2::splat(icon_size)),
-                Color32::WHITE,
-            );
-        }
-
-        // 4. Paint number inside circular arrow (Back 10 / Forward 30)
-        if let Some(num_str) = self.number_label {
-            ui.painter().text(
-                self.rect.center() + Vec2::new(0.0, 0.5),
-                Align2::CENTER_CENTER,
+        // 3. Paint thin-outline Fluent icon or curved skip arrow
+        if let Some(forward) = self.curved_skip {
+            let num_str = self.number_label.unwrap_or("10");
+            crate::shell::paint_curved_skip_arrow(
+                ui.painter(),
+                self.rect.center(),
+                10.5 * scale,
+                forward,
                 num_str,
-                FontId::proportional(theme.transport_number_font_size * scale),
                 Color32::WHITE,
             );
+        } else {
+            if let Some(icon_id) = self.icon_id {
+                let base_size = self.custom_icon_size.unwrap_or(match self.style {
+                    OverlayButtonStyle::Transport => theme.transport_icon_size,
+                    OverlayButtonStyle::BottomBar => theme.bottom_icon_size,
+                    OverlayButtonStyle::Edge => theme.edge_icon_size,
+                });
+                let icon_size = base_size * scale;
+                icons.paint_icon(
+                    ui,
+                    icon_id,
+                    Rect::from_center_size(self.rect.center(), Vec2::splat(icon_size)),
+                    Color32::WHITE,
+                );
+            }
+
+            // 4. Paint number inside circular arrow (Back 10 / Forward 30)
+            if let Some(num_str) = self.number_label {
+                ui.painter().text(
+                    self.rect.center() + Vec2::new(0.0, 0.5),
+                    Align2::CENTER_CENTER,
+                    num_str,
+                    FontId::proportional(theme.transport_number_font_size * scale),
+                    Color32::WHITE,
+                );
+            }
         }
 
         // 5. Tooltip: small dark rounded label above button after 500ms hover delay, hide immediately on mouse leave
@@ -275,7 +297,7 @@ impl EdgeButton {
             Pos2::new(window_rect.left(), window_rect.center().y - theme.edge_button_size.y * 0.5),
             theme.edge_button_size,
         );
-        let resp = ui.allocate_rect(rect, Sense::click());
+        let resp = ui.interact(rect, ui.scope_id().with("edge_prev_btn"), Sense::click());
         let near = pointer_pos.is_some_and(|p| {
             p.x <= window_rect.left() + 80.0
                 && p.y >= rect.top() - 40.0
@@ -296,14 +318,13 @@ impl EdgeButton {
         let alpha = ui.ctx().animate_value_with_time(ui.scope_id().with("chevron_l_alpha"), target_alpha, 0.15);
 
         if direct_hover {
-            ui.painter().rect(
+            ui.painter().rect_filled(
                 rect,
                 CornerRadius::same(4),
-                Color32::from_rgba_unmultiplied(255, 255, 255, 56),
-                Stroke::new(1.0, Color32::from_rgba_unmultiplied(255, 255, 255, 85)),
-                StrokeKind::Inside,
+                Color32::from_rgba_unmultiplied(255, 255, 255, 42),
             );
         }
+        crate::ui_helpers::paint_proximity_border(ui, rect, theme.accent_amber, pointer_pos, 96.0);
         if alpha > 0.01 {
             let tint = Color32::from_white_alpha((255.0 * alpha) as u8);
             icons.paint_icon(
@@ -328,7 +349,7 @@ impl EdgeButton {
             Pos2::new(window_rect.right() - theme.edge_button_size.x, window_rect.center().y - theme.edge_button_size.y * 0.5),
             theme.edge_button_size,
         );
-        let resp = ui.allocate_rect(rect, Sense::click());
+        let resp = ui.interact(rect, ui.scope_id().with("edge_next_btn"), Sense::click());
         let near = pointer_pos.is_some_and(|p| {
             p.x >= window_rect.right() - 80.0
                 && p.y >= rect.top() - 40.0
@@ -349,14 +370,13 @@ impl EdgeButton {
         let alpha = ui.ctx().animate_value_with_time(ui.scope_id().with("chevron_r_alpha"), target_alpha, 0.15);
 
         if direct_hover {
-            ui.painter().rect(
+            ui.painter().rect_filled(
                 rect,
                 CornerRadius::same(4),
-                Color32::from_rgba_unmultiplied(255, 255, 255, 56),
-                Stroke::new(1.0, Color32::from_rgba_unmultiplied(255, 255, 255, 85)),
-                StrokeKind::Inside,
+                Color32::from_rgba_unmultiplied(255, 255, 255, 42),
             );
         }
+        crate::ui_helpers::paint_proximity_border(ui, rect, theme.accent_amber, pointer_pos, 96.0);
         if alpha > 0.01 {
             let tint = Color32::from_white_alpha((255.0 * alpha) as u8);
             icons.paint_icon(
@@ -391,6 +411,28 @@ pub struct PlayerUiState {
     pub scrub_hover_time: Option<f64>,
     pub skip_secs: f64,
     pub locked_mode: bool,
+    pub auto_next: bool,
+    pub auto_skip_intro: bool,
+    pub auto_skip_outro: bool,
+    pub bookmark_category_filter: String,
+    pub new_bookmark_category: String,
+    pub skipped_segment_ids: std::collections::HashSet<String>,
+    pub skip_toast: Option<(String, Instant)>,
+    pub active_tmdb_rating: Option<f32>,
+    pub active_tidb_synced: bool,
+    pub media_banner_start: Instant,
+    pub picture_enabled: bool,
+    pub picture_lighting: i32,
+    pub picture_shadows: i32,
+    pub picture_contrast: i32,
+    pub picture_sharpness: i32,
+    pub picture_vibrance: i32,
+    pub picture_hdr_boost: i32,
+    pub active_picture_drag: Option<(&'static str, i32, i32, i32)>,
+    pub last_picture_send: Instant,
+    pub picture_dirty: bool,
+    pub trakt_connected: bool,
+    pub trakt_synced_done: bool,
     active_path: Option<PathBuf>,
     last_activity: Instant,
 }
@@ -417,6 +459,28 @@ impl Default for PlayerUiState {
             scrub_hover_time: None,
             skip_secs: 10.0,
             locked_mode: false,
+            auto_next: true,
+            auto_skip_intro: true,
+            auto_skip_outro: true,
+            bookmark_category_filter: "all".to_string(),
+            new_bookmark_category: "custom".to_string(),
+            skipped_segment_ids: std::collections::HashSet::new(),
+            skip_toast: None,
+            active_tmdb_rating: None,
+            active_tidb_synced: false,
+            media_banner_start: Instant::now(),
+            picture_enabled: true,
+            picture_lighting: 0,
+            picture_shadows: 0,
+            picture_contrast: 0,
+            picture_sharpness: 0,
+            picture_vibrance: 0,
+            picture_hdr_boost: 0,
+            active_picture_drag: None,
+            last_picture_send: Instant::now(),
+            picture_dirty: false,
+            trakt_connected: false,
+            trakt_synced_done: false,
             active_path: None,
             last_activity: Instant::now(),
         }
@@ -434,6 +498,10 @@ pub struct PlayerUiAction {
     pub bookmarks_added: Vec<Bookmark>,
     pub bookmarks_deleted: Vec<String>,
     pub choose_subtitle: bool,
+    pub add_to_queue: bool,
+    pub toggle_auto_next: bool,
+    pub skips_delta: u32,
+    pub sync_to_trakt: bool,
 }
 
 fn fmt_time(value: f64) -> Option<String> {
@@ -524,8 +592,140 @@ pub fn show(
     if snapshot.path != state.active_path {
         state.active_path = snapshot.path.clone();
         state.last_activity = Instant::now();
+        state.media_banner_start = Instant::now();
         state.overlays_visible = true;
         state.position_preview = None;
+        state.skipped_segment_ids.clear();
+        state.skip_toast = None;
+    }
+
+    // Show media name banner for the first 10 seconds when switching / starting media
+    if snapshot.state != PlaybackState::Idle {
+        let elapsed = state.media_banner_start.elapsed().as_secs_f32();
+        if elapsed < 10.0 {
+            let fade = if elapsed > 8.5 {
+                ((10.0 - elapsed) / 1.5).clamp(0.0, 1.0)
+            } else {
+                1.0
+            };
+            let title_text = snapshot
+                .title
+                .clone()
+                .filter(|t| !t.trim().is_empty())
+                .or_else(|| {
+                    snapshot
+                        .path
+                        .as_ref()
+                        .and_then(|p| p.file_stem())
+                        .map(|s| s.to_string_lossy().to_string())
+                });
+            if let Some(title) = title_text {
+                let a = (225.0 * fade) as u8;
+                egui::Area::new(ui.scope_id().with("player_media_banner_10s"))
+                    .order(egui::Order::Foreground)
+                    .anchor(Align2::CENTER_TOP, Vec2::new(0.0, 18.0))
+                    .interactable(false)
+                    .show(ui.ctx(), |ui| {
+                        egui::Frame::new()
+                            .fill(Color32::from_rgba_unmultiplied(12, 14, 18, (195.0 * fade) as u8))
+                            .stroke(Stroke::new(1.0, Color32::from_rgba_unmultiplied(255, 255, 255, (42.0 * fade) as u8)))
+                            .corner_radius(CornerRadius::same(16))
+                            .inner_margin(egui::Margin::symmetric(16, 7))
+                            .show(ui, |ui| {
+                                ui.label(
+                                    RichText::new(title)
+                                        .size(13.0)
+                                        .strong()
+                                        .color(Color32::from_rgba_unmultiplied(255, 255, 255, a)),
+                                );
+                            });
+                    });
+            }
+        }
+    }
+
+    // Auto-skip Intro & Outro segments (from TheIntroDB / web database / manual bookmarks)
+    if snapshot.state == PlaybackState::Playing && snapshot.duration_secs > 1.0 && !state.is_seeking {
+        let cur_pos = snapshot.position_secs;
+        let bookmark_soon = state
+            .bookmarks
+            .iter()
+            .any(|b| b.start_secs > cur_pos && (b.start_secs - cur_pos) <= 2.0);
+        let mut active_segment: Option<(String, String, f64, bool)> = None;
+        for bm in &state.bookmarks {
+            let cat = bm.category.to_ascii_lowercase();
+            let is_intro = cat == "intro" || bm.title.to_ascii_lowercase().contains("intro");
+            let is_outro = cat == "credits" || cat == "outro" || bm.title.to_ascii_lowercase().contains("outro") || bm.title.to_ascii_lowercase().contains("credits");
+            if !is_intro && !is_outro {
+                continue;
+            }
+            if let Some(end) = bm.end_secs {
+                if end > bm.start_secs + 2.0 && cur_pos >= bm.start_secs && cur_pos < end - 2.0 && !bookmark_soon {
+                    let should_auto = (is_intro && state.auto_skip_intro) || (is_outro && state.auto_skip_outro);
+                    let label = if is_intro { "Intro".to_string() } else { "Outro".to_string() };
+                    active_segment = Some((bm.id.clone(), label, end, should_auto));
+                    break;
+                }
+            }
+        }
+        if let Some((seg_id, label, end_secs, should_auto)) = active_segment {
+            if should_auto && !state.skipped_segment_ids.contains(&seg_id) {
+                state.skipped_segment_ids.insert(seg_id);
+                let target = end_secs.min((snapshot.duration_secs - 0.5).max(0.0));
+                command_sender(PlayerCommand::Seek {
+                    token: snapshot.token,
+                    seconds: target,
+                    exact: true,
+                });
+                state.skip_toast = Some((format!("Auto-skipped {label}"), Instant::now()));
+            } else if !state.locked_mode {
+                egui::Area::new(ui.scope_id().with("skip_segment_pill"))
+                    .order(egui::Order::Foreground)
+                    .fixed_pos(Pos2::new(rect.right() - 168.0, rect.bottom() - 156.0))
+                    .show(ui.ctx(), |ui| {
+                        let btn = egui::Button::new(
+                            RichText::new(format!("Skip {label} >>"))
+                                .size(13.0)
+                                .strong()
+                                .color(Color32::WHITE),
+                        )
+                        .fill(Color32::from_rgba_unmultiplied(18, 20, 26, 225))
+                        .stroke(Stroke::new(1.2, tokens.accent))
+                        .corner_radius(CornerRadius::same(8))
+                        .min_size(Vec2::new(144.0, 36.0));
+                        if ui.add(btn).clicked() {
+                            state.skipped_segment_ids.insert(seg_id.clone());
+                            let target = end_secs.min((snapshot.duration_secs - 0.5).max(0.0));
+                            command_sender(PlayerCommand::Seek {
+                                token: snapshot.token,
+                                seconds: target,
+                                exact: true,
+                            });
+                        }
+                    });
+            }
+        }
+    }
+
+    if let Some((ref msg, ts)) = state.skip_toast {
+        if ts.elapsed().as_secs_f32() < 2.6 {
+            egui::Area::new(ui.scope_id().with("skip_toast_pill"))
+                .order(egui::Order::Foreground)
+                .anchor(Align2::CENTER_TOP, Vec2::new(0.0, 56.0))
+                .interactable(false)
+                .show(ui.ctx(), |ui| {
+                    egui::Frame::new()
+                        .fill(Color32::from_rgba_unmultiplied(16, 18, 24, 230))
+                        .stroke(Stroke::new(1.0, tokens.accent))
+                        .corner_radius(CornerRadius::same(16))
+                        .inner_margin(egui::Margin::symmetric(14, 6))
+                        .show(ui, |ui| {
+                            ui.label(RichText::new(msg).size(12.5).strong().color(Color32::WHITE));
+                        });
+                });
+        } else {
+            state.skip_toast = None;
+        }
     }
     ui.painter()
         .rect_filled(rect, CornerRadius::ZERO, Color32::BLACK);
@@ -564,7 +764,6 @@ pub fn show(
     if state.locked_mode {
         state.overlays_visible = false;
         state.scrub_hover_time = None;
-        ui.ctx().set_cursor_icon(egui::CursorIcon::None);
         egui::Area::new(ui.scope_id().with("player_locked_badge"))
             .order(egui::Order::Foreground)
             .anchor(Align2::RIGHT_TOP, Vec2::new(-18.0, 18.0))
@@ -630,12 +829,14 @@ pub fn show(
             token: snapshot.token,
             seconds: -skip_step,
         });
+        action.skips_delta += 1;
     }
     if ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowRight)) {
         command_sender(PlayerCommand::SeekRel {
             token: snapshot.token,
             seconds: skip_step,
         });
+        action.skips_delta += 1;
     }
     if ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowUp)) {
         let volume = (snapshot.volume + 5.0).clamp(0.0, 100.0);
@@ -824,25 +1025,45 @@ pub fn show(
             action.leave = true;
         }
 
-        // Bottom gradient scrim (transparent to rgba(0,0,0,0.65), ~160px tall)
-        let hud_fade_rect = Rect::from_min_max(
-            Pos2::new(rect.left(), rect.bottom() - 160.0),
-            Pos2::new(rect.right(), rect.bottom()),
-        );
-        let mut fade_mesh = egui::Mesh::default();
-        fade_mesh.colored_vertex(hud_fade_rect.left_top(), Color32::TRANSPARENT);
-        fade_mesh.colored_vertex(hud_fade_rect.right_top(), Color32::TRANSPARENT);
-        fade_mesh.colored_vertex(
-            hud_fade_rect.right_bottom(),
-            Color32::from_rgba_unmultiplied(0, 0, 0, (166.0 * overlay_alpha) as u8),
-        );
-        fade_mesh.colored_vertex(
-            hud_fade_rect.left_bottom(),
-            Color32::from_rgba_unmultiplied(0, 0, 0, (166.0 * overlay_alpha) as u8),
-        );
-        fade_mesh.add_triangle(0, 1, 2);
-        fade_mesh.add_triangle(0, 2, 3);
-        ui.painter().add(egui::Shape::mesh(fade_mesh));
+        let player_layout = &tokens.skin.player_layout;
+        // Bottom gradient scrim or solid VLC bar
+        if player_layout.style == "vlc" {
+            let vlc_bar = Rect::from_min_max(
+                Pos2::new(rect.left() + player_layout.bar_margin_x, rect.bottom() - player_layout.bar_height - player_layout.bar_margin_bottom),
+                Pos2::new(rect.right() - player_layout.bar_margin_x, rect.bottom() - player_layout.bar_margin_bottom),
+            );
+            let bg = Color32::from_rgba_unmultiplied(
+                tokens.player_bar_bg.r(),
+                tokens.player_bar_bg.g(),
+                tokens.player_bar_bg.b(),
+                ((tokens.player_bar_bg.a() as f32) * overlay_alpha) as u8,
+            );
+            ui.painter().rect_filled(vlc_bar, CornerRadius::same(player_layout.bar_corner_radius), bg);
+            ui.painter().hline(
+                vlc_bar.x_range(),
+                vlc_bar.top(),
+                Stroke::new(1.0, Color32::from_white_alpha((40.0 * overlay_alpha) as u8)),
+            );
+        } else {
+            let hud_fade_rect = Rect::from_min_max(
+                Pos2::new(rect.left(), rect.bottom() - 160.0),
+                Pos2::new(rect.right(), rect.bottom()),
+            );
+            let mut fade_mesh = egui::Mesh::default();
+            fade_mesh.colored_vertex(hud_fade_rect.left_top(), Color32::TRANSPARENT);
+            fade_mesh.colored_vertex(hud_fade_rect.right_top(), Color32::TRANSPARENT);
+            fade_mesh.colored_vertex(
+                hud_fade_rect.right_bottom(),
+                Color32::from_rgba_unmultiplied(0, 0, 0, (166.0 * overlay_alpha) as u8),
+            );
+            fade_mesh.colored_vertex(
+                hud_fade_rect.left_bottom(),
+                Color32::from_rgba_unmultiplied(0, 0, 0, (166.0 * overlay_alpha) as u8),
+            );
+            fade_mesh.add_triangle(0, 1, 2);
+            fade_mesh.add_triangle(0, 2, 3);
+            ui.painter().add(egui::Shape::mesh(fade_mesh));
+        }
 
         // Full width seek line, time labels, and independent left/center/right control groups.
         let has_duration = snapshot.duration_secs.is_finite() && snapshot.duration_secs > 0.0;
@@ -856,10 +1077,23 @@ pub fn show(
             .unwrap_or(snapshot.position_secs)
             .clamp(0.0, max_position);
 
-        // Vertical layout: Seek bar -> Time row -> Button row (no overlap, anchored to bottom)
-        let control_y = rect.bottom() - 24.0;
-        let time_y = rect.bottom() - 58.0;
-        let seek_y = rect.bottom() - 74.0;
+        // Vertical layout: Seek bar -> Time row -> Button row (skin-aware)
+        let is_top_controls = player_layout.controls_position == crate::skin::ControlsPosition::Top;
+        let control_y = if is_top_controls {
+            rect.top() + 36.0
+        } else {
+            rect.bottom() - 24.0
+        };
+        let time_y = if is_top_controls {
+            rect.top() + 62.0
+        } else {
+            rect.bottom() - 58.0
+        };
+        let seek_y = if is_top_controls {
+            rect.top() + 80.0
+        } else {
+            rect.bottom() - 74.0
+        };
         let seek_rect = Rect::from_min_max(
             Pos2::new(rect.left() + 16.0, seek_y - 8.0),
             Pos2::new(rect.right() - 16.0, seek_y + 8.0),
@@ -901,7 +1135,7 @@ pub fn show(
             || state.is_seeking;
         let seek_grow_t = ui.ctx().animate_bool_with_time(ui.scope_id().with("seek_proximity"), seek_near, 0.15);
         let track_h = 2.0 + 3.0 * seek_grow_t;
-        let thumb_radius = 7.0 + 2.0 * seek_grow_t;
+        let thumb_radius = 4.5 + 1.5 * seek_grow_t;
 
         let seek_response = ui.allocate_rect(
             seek_rect.expand2(Vec2::new(0.0, 10.0)),
@@ -928,6 +1162,7 @@ pub fn show(
                     seconds: pos,
                     exact: true,
                 });
+                action.skips_delta += 1;
                 state.position_preview = None;
             }
         }
@@ -946,6 +1181,7 @@ pub fn show(
                     seconds: pos,
                     exact: true,
                 });
+                action.skips_delta += 1;
                 state.position_preview = None;
                 state.is_seeking = false;
             }
@@ -986,7 +1222,17 @@ pub fn show(
             }
         }
 
-        // 3. Played portion: solid white
+        // 3. Played portion: skin scrubber_fill (or solid white for default)
+        let scrub_fill_col = if player_layout.style == "default" {
+            Color32::from_white_alpha((255.0 * overlay_alpha) as u8)
+        } else {
+            Color32::from_rgba_unmultiplied(
+                tokens.scrubber_fill.r(),
+                tokens.scrubber_fill.g(),
+                tokens.scrubber_fill.b(),
+                (255.0 * overlay_alpha) as u8,
+            )
+        };
         if fraction > 0.0 {
             ui.painter().rect_filled(
                 Rect::from_min_size(
@@ -994,34 +1240,114 @@ pub fn show(
                     Vec2::new(track.width() * fraction, track.height()),
                 ),
                 CornerRadius::ZERO,
-                Color32::from_white_alpha((255.0 * overlay_alpha) as u8),
+                scrub_fill_col,
             );
         }
 
-        // 4. Thumb: 14px to 18px circle with purple outline (#B146C2, 2px) and dark center
+        // 3b. Bookmark / Intro / Outro segments & markers on timeline
+        if has_duration {
+            for bm in &state.bookmarks {
+                let start_f = (bm.start_secs / snapshot.duration_secs).clamp(0.0, 1.0) as f32;
+                let cat = bm.category.to_ascii_lowercase();
+                let marker_col = match cat.as_str() {
+                    "intro" => Color32::from_rgba_unmultiplied(6, 182, 212, (235.0 * overlay_alpha) as u8),
+                    "credits" | "outro" => Color32::from_rgba_unmultiplied(168, 85, 247, (235.0 * overlay_alpha) as u8),
+                    "recap" => Color32::from_rgba_unmultiplied(245, 158, 11, (235.0 * overlay_alpha) as u8),
+                    _ => Color32::from_rgba_unmultiplied(tokens.accent.r(), tokens.accent.g(), tokens.accent.b(), (240.0 * overlay_alpha) as u8),
+                };
+                if let Some(end_secs) = bm.end_secs {
+                    if end_secs > bm.start_secs {
+                        let end_f = (end_secs / snapshot.duration_secs).clamp(0.0, 1.0) as f32;
+                        let seg_x0 = track.left() + track.width() * start_f;
+                        let seg_x1 = track.left() + track.width() * end_f;
+                        if seg_x1 > seg_x0 {
+                            ui.painter().rect_filled(
+                                Rect::from_min_max(Pos2::new(seg_x0, track.top() - 1.0), Pos2::new(seg_x1, track.bottom() + 1.0)),
+                                CornerRadius::ZERO,
+                                marker_col,
+                            );
+                        }
+                    }
+                } else {
+                    let mx = track.left() + track.width() * start_f;
+                    ui.painter().rect_filled(
+                        Rect::from_center_size(Pos2::new(mx, track.center().y), Vec2::new(3.0, track_h + 6.0)),
+                        CornerRadius::same(1),
+                        marker_col,
+                    );
+                }
+            }
+
+            // 3c. Chapter divider notches on timeline
+            for ch in &snapshot.chapters {
+                if ch.start_secs > 0.5 && ch.start_secs < snapshot.duration_secs {
+                    let ch_f = (ch.start_secs / snapshot.duration_secs).clamp(0.0, 1.0) as f32;
+                    let cx = track.left() + track.width() * ch_f;
+                    ui.painter().line_segment(
+                        [Pos2::new(cx, track.top() - 2.0), Pos2::new(cx, track.bottom() + 2.0)],
+                        Stroke::new(1.5, Color32::from_rgba_unmultiplied(15, 17, 22, (230.0 * overlay_alpha) as u8)),
+                    );
+                }
+            }
+        }
+
+        // 4. Thumb: smaller blue circle with clean ring
+        let knob_ring_col = if player_layout.style == "default" {
+            Color32::from_rgba_unmultiplied(56, 152, 255, (255.0 * overlay_alpha) as u8)
+        } else {
+            Color32::from_rgba_unmultiplied(
+                tokens.scrubber_knob.r(),
+                tokens.scrubber_knob.g(),
+                tokens.scrubber_knob.b(),
+                (255.0 * overlay_alpha) as u8,
+            )
+        };
         let knob = Pos2::new(track.left() + track.width() * fraction, track.center().y);
         ui.painter().circle_filled(
             knob,
             thumb_radius,
-            Color32::from_rgba_unmultiplied(20, 20, 20, (255.0 * overlay_alpha) as u8),
-        );
-        ui.painter().circle_stroke(
-            knob,
-            thumb_radius,
-            Stroke::new(2.0, Color32::from_rgba_unmultiplied(177, 70, 194, (255.0 * overlay_alpha) as u8)),
+            knob_ring_col,
         );
 
-        // 5. Seek bar hover timestamp pill only (no preview box)
+        // 5. Seek bar skimming tooltip: timestamp + active Chapter + Bookmark + preview thumbnail
         state.scrub_hover_time = None;
-        if seek_near {
+        if seek_near || state.is_seeking {
             if let Some(pos_pt) = pointer_position {
                 let hover_frac = ((pos_pt.x - seek_rect.left()) / seek_rect.width()).clamp(0.0, 1.0);
                 let hover_time = hover_frac as f64 * max_position;
+                state.scrub_hover_time = Some(hover_time);
                 let hover_has_hours = snapshot.duration_secs >= 3600.0;
                 let hover_str = fmt_time_hms(hover_time, hover_has_hours);
 
-                let pill_w = 64.0;
-                let pill_h = 24.0;
+                let active_chapter = snapshot
+                    .chapters
+                    .iter()
+                    .rev()
+                    .find(|ch| ch.start_secs <= hover_time)
+                    .map(|ch| ch.title.clone());
+
+                let snap_tol = (max_position * 0.015).max(3.0);
+                let hovered_bookmark = state.bookmarks.iter().find(|bm| {
+                    if let Some(end_secs) = bm.end_secs {
+                        hover_time >= bm.start_secs && hover_time <= end_secs
+                    } else {
+                        (hover_time - bm.start_secs).abs() <= snap_tol
+                    }
+                });
+
+                let mut sub_lines: Vec<(String, Color32)> = Vec::new();
+                if let Some(ch_title) = active_chapter {
+                    if !ch_title.trim().is_empty() {
+                        sub_lines.push((ch_title, Color32::from_rgb(210, 218, 232)));
+                    }
+                }
+                if let Some(bm) = hovered_bookmark {
+                    let tag = format!("[{}] {}", bm.category.to_uppercase(), bm.title);
+                    sub_lines.push((tag, tokens.accent));
+                }
+
+                let pill_w = if !sub_lines.is_empty() { 168.0 } else { 72.0 };
+                let pill_h = 26.0 + (sub_lines.len() as f32 * 16.0);
                 let pill_x = (pos_pt.x - pill_w * 0.5).clamp(rect.left() + 12.0, (rect.right() - pill_w - 12.0).max(rect.left() + 12.0));
                 let pill_pos = Pos2::new(pill_x, seek_y - pill_h - 14.0);
 
@@ -1031,18 +1357,38 @@ pub fn show(
                     .fixed_pos(pill_pos)
                     .show(ui.ctx(), |ui| {
                         let (pill_rect, _) = ui.allocate_exact_size(Vec2::new(pill_w, pill_h), Sense::hover());
-                        ui.painter().rect_filled(pill_rect, CornerRadius::same(4), Color32::from_rgb(20, 20, 24));
-                        ui.painter().rect_stroke(
-                            pill_rect,
-                            CornerRadius::same(4),
-                            Stroke::new(1.0, Color32::from_white_alpha(36)),
-                            StrokeKind::Inside,
-                        );
+                        let mut y_cursor = pill_rect.top() + 4.0;
+                        for (line, col) in &sub_lines {
+                            let mut job = egui::text::LayoutJob::single_section(
+                                line.clone(),
+                                egui::TextFormat {
+                                    font_id: FontId::proportional(11.0),
+                                    color: *col,
+                                    ..Default::default()
+                                },
+                            );
+                            job.wrap.max_width = pill_w - 12.0;
+                            job.wrap.max_rows = 1;
+                            let galley = ui.painter().layout_job(job);
+                            ui.painter().galley(
+                                Pos2::new(pill_rect.center().x - galley.size().x * 0.5, y_cursor),
+                                galley,
+                                *col,
+                            );
+                            y_cursor += 16.0;
+                        }
                         ui.painter().text(
-                            pill_rect.center(),
+                            Pos2::new(pill_rect.center().x + 1.0, y_cursor + 10.0),
                             Align2::CENTER_CENTER,
                             &hover_str,
-                            FontId::proportional(12.0),
+                            FontId::proportional(12.5),
+                            Color32::from_black_alpha(180),
+                        );
+                        ui.painter().text(
+                            Pos2::new(pill_rect.center().x, y_cursor + 9.0),
+                            Align2::CENTER_CENTER,
+                            &hover_str,
+                            FontId::proportional(12.5),
                             Color32::WHITE,
                         );
                     });
@@ -1079,8 +1425,8 @@ pub fn show(
         } else {
             "transport.volume"
         };
-        let vol_btn_rect = Rect::from_center_size(Pos2::new(rect.left() + 36.0, control_y), Vec2::splat(40.0));
-        let subs_btn_rect = Rect::from_center_size(Pos2::new(rect.left() + 84.0, control_y), Vec2::splat(40.0));
+        let vol_btn_rect = Rect::from_center_size(Pos2::new(rect.left() + 32.0, control_y), Vec2::splat(40.0));
+        let subs_btn_rect = Rect::from_center_size(Pos2::new(rect.left() + 74.0, control_y), Vec2::splat(40.0));
 
         let vol_resp = OverlayButton::bottom_bar(ui.scope_id().with("btn_vol"), vol_btn_rect)
             .icon(volume_icon)
@@ -1248,15 +1594,21 @@ pub fn show(
                 });
         }
 
-        // --- Subtitles & Audio Popover with Slide-up Animation (Image 1) ---
+        // --- Subtitles & Audio Popover with Slide-up Animation (Netflix Dual-Column or Fluent) ---
         let subs_slide_t = ui.ctx().animate_bool_with_time(ui.scope_id().with("subs_slide_anim"), state.subtitles_popup_open, 0.15);
         if subs_slide_t > 0.001 {
-            let subs_pop_w = 260.0;
-            let subs_pop_h = 360.0;
+            let is_netflix_dual = player_layout.popup_style == crate::skin::PopupStyle::NetflixDualTracks;
+            let subs_pop_w = if is_netflix_dual { 400.0 } else { 260.0 };
+            let subs_pop_h = if is_netflix_dual { 280.0 } else { 360.0 };
             let slide_offset = (1.0 - subs_slide_t) * 20.0;
+            let subs_pop_x = if is_netflix_dual {
+                (rect.right() - subs_pop_w - 20.0).max(rect.left() + 12.0)
+            } else {
+                rect.left() + 20.0
+            };
             let subs_pop_rect = Rect::from_min_max(
-                Pos2::new(rect.left() + 20.0, control_y - subs_pop_h - 14.0 + slide_offset),
-                Pos2::new(rect.left() + 20.0 + subs_pop_w, control_y - 14.0 + slide_offset),
+                Pos2::new(subs_pop_x, control_y - subs_pop_h - 14.0 + slide_offset),
+                Pos2::new(subs_pop_x + subs_pop_w, control_y - 14.0 + slide_offset),
             );
             if state.subtitles_popup_open && ui.input(|i| i.pointer.any_click()) {
                 if let Some(pos_pt) = pointer_position {
@@ -1278,6 +1630,44 @@ pub fn show(
                         .show(ui, |ui| {
                             ui.set_width(subs_pop_w - 24.0);
                             ui.set_max_height(subs_pop_h - 24.0);
+                            if is_netflix_dual {
+                                ui.columns(2, |cols| {
+                                    cols[0].label(RichText::new("Audio").size(14.0).strong().color(Color32::WHITE));
+                                    cols[0].add_space(6.0);
+                                    let audio_tracks: Vec<_> = snapshot.tracks.iter().filter(|t| t.kind == "audio").collect();
+                                    egui::ScrollArea::vertical().id_salt("nf_audio_scroll").max_height(210.0).show(&mut cols[0], |ui| {
+                                        for (idx, track) in audio_tracks.iter().enumerate() {
+                                            let fallback = format!("Audio {}", idx + 1);
+                                            let name = track_title(track.title.as_deref(), track.language.as_deref(), &fallback);
+                                            let label = if track.selected { format!("✓  {name}") } else { format!("    {name}") };
+                                            if ui.selectable_label(track.selected, RichText::new(label).size(12.5).color(Color32::WHITE)).clicked() {
+                                                command_sender(PlayerCommand::SelectTrack { token: snapshot.token, id: track.id });
+                                            }
+                                        }
+                                    });
+                                    cols[1].label(RichText::new("Subtitles").size(14.0).strong().color(Color32::WHITE));
+                                    cols[1].add_space(6.0);
+                                    let sub_tracks: Vec<_> = snapshot.tracks.iter().filter(|t| t.kind == "sub").collect();
+                                    egui::ScrollArea::vertical().id_salt("nf_sub_scroll").max_height(210.0).show(&mut cols[1], |ui| {
+                                        let none_selected = !sub_tracks.iter().any(|t| t.selected);
+                                        if ui.selectable_label(none_selected, RichText::new(if none_selected { "✓  Off" } else { "    Off" }).size(12.5).color(Color32::WHITE)).clicked() {
+                                            command_sender(PlayerCommand::DisableSubtitles { token: snapshot.token });
+                                        }
+                                        for (idx, track) in sub_tracks.iter().enumerate() {
+                                            let fallback = format!("Subtitle {}", idx + 1);
+                                            let name = track_title(track.title.as_deref(), track.language.as_deref(), &fallback);
+                                            let label = if track.selected { format!("✓  {name}") } else { format!("    {name}") };
+                                            if ui.selectable_label(track.selected, RichText::new(label).size(12.5).color(Color32::WHITE)).clicked() {
+                                                command_sender(PlayerCommand::SelectTrack { token: snapshot.token, id: track.id });
+                                            }
+                                        }
+                                        if ui.button("Choose file...").clicked() {
+                                            action.choose_subtitle = true;
+                                            state.subtitles_popup_open = false;
+                                        }
+                                    });
+                                });
+                            } else {
                             egui::ScrollArea::vertical().show(ui, |ui| {
                                 ui.label(RichText::new("Subtitles").size(14.0).strong().color(Color32::WHITE));
                                 ui.add_space(6.0);
@@ -1302,12 +1692,21 @@ pub fn show(
                                     } else {
                                         Color32::TRANSPARENT
                                     };
-                                    ui.painter().rect_filled(row_rect, CornerRadius::same(2), bg);
-                                    ui.painter().text(
-                                        Pos2::new(row_rect.left() + 10.0, row_rect.center().y),
-                                        Align2::LEFT_CENTER,
+                                    ui.painter().rect_filled(row_rect, CornerRadius::ZERO, bg);
+                                    let mut job = egui::text::LayoutJob::single_section(
                                         label,
-                                        FontId::proportional(12.5),
+                                        egui::TextFormat {
+                                            font_id: FontId::proportional(12.5),
+                                            color: Color32::WHITE,
+                                            ..Default::default()
+                                        },
+                                    );
+                                    job.wrap.max_width = (row_rect.width() - 22.0).max(40.0);
+                                    job.wrap.max_rows = 1;
+                                    let galley = ui.painter().layout_job(job);
+                                    ui.painter().galley(
+                                        Pos2::new(row_rect.left() + 10.0, row_rect.center().y - galley.size().y * 0.5),
+                                        galley,
                                         Color32::WHITE,
                                     );
                                     if row_resp.clicked() {
@@ -1393,32 +1792,35 @@ pub fn show(
                                     }
                                 }
                             });
+                            }
                         });
                 });
         }
 
-        // --- Center Group: Truly Centered 3 buttons (Skip back 10s, Play/Pause, Skip forward 30s) ---
-        // Bare icons, NO boxes, NO borders, NO dividers
-        let center_x = rect.center().x;
+        // --- Transport Group (Centered by default/Netflix, or Left-aligned for VLC) ---
+        let transport_center_x = match player_layout.transport_align {
+            crate::skin::TransportAlign::Left => rect.left() + 198.0,
+            crate::skin::TransportAlign::Center => rect.center().x,
+        };
         {
             let btn_size = Vec2::splat(40.0);
             let left_btn_rect = Rect::from_center_size(
-                Pos2::new(center_x - 48.0, control_y),
+                Pos2::new(transport_center_x - 42.0, control_y),
                 btn_size,
             );
             let play_btn_rect = Rect::from_center_size(
-                Pos2::new(center_x, control_y),
+                Pos2::new(transport_center_x, control_y),
                 btn_size,
             );
             let right_btn_rect = Rect::from_center_size(
-                Pos2::new(center_x + 48.0, control_y),
+                Pos2::new(transport_center_x + 42.0, control_y),
                 btn_size,
             );
 
             // 1. Skip back button
             let skip_lbl = (skip_step as u32).to_string();
             let left_resp = OverlayButton::transport(ui.scope_id().with("transport_rewind"), left_btn_rect)
-                .icon("transport.rewind_10")
+                .curved_skip(false)
                 .number_label(&skip_lbl)
                 .tooltip(&format!("Skip backward {} seconds", skip_step as u32))
                 .show(ui, theme, icons);
@@ -1429,7 +1831,22 @@ pub fn show(
                 });
             }
 
-            // 2. Play / Pause button
+            // 2. Play / Pause button (skin-aware styling)
+            match player_layout.play_button_style {
+                crate::skin::PlayButtonStyle::CircleAccent => {
+                    ui.painter().circle_filled(play_btn_rect.center(), 20.0, tokens.accent);
+                }
+                crate::skin::PlayButtonStyle::SquareClassic => {
+                    ui.painter().rect(
+                        play_btn_rect.shrink(2.0),
+                        CornerRadius::same(4),
+                        Color32::from_white_alpha(26),
+                        Stroke::new(1.0, Color32::from_white_alpha(60)),
+                        StrokeKind::Inside,
+                    );
+                }
+                crate::skin::PlayButtonStyle::Icon => {}
+            }
             let playing = snapshot.state == PlaybackState::Playing;
             let play_resp = OverlayButton::transport(ui.scope_id().with("transport_play"), play_btn_rect)
                 .icon(if playing { "transport.pause" } else { "transport.play" })
@@ -1443,7 +1860,7 @@ pub fn show(
 
             // 3. Skip forward button
             let right_resp = OverlayButton::transport(ui.scope_id().with("transport_forward"), right_btn_rect)
-                .icon("transport.forward_30")
+                .curved_skip(true)
                 .number_label(&skip_lbl)
                 .tooltip(&format!("Skip forward {} seconds", skip_step as u32))
                 .show(ui, theme, icons);
@@ -1466,8 +1883,92 @@ pub fn show(
                 .show(ui, theme, icons)
         };
 
-        // 4. Lock mode button (L)
-        if hud_btn(ui, "hud_lock", rect.right() - 192.0, "dock.lock", "Lock controls (L)").clicked() {
+        // 4. Lock mode button (L) + skin-specific quick pills (Auto-Next, HDR Boost, Speed)
+        if player_layout.style == "youtube" || player_layout.style == "netflix" {
+            let speed_btn_rect = Rect::from_center_size(Pos2::new(rect.right() - 240.0, control_y), Vec2::splat(40.0));
+            if OverlayButton::bottom_bar(ui.scope_id().with("hud_speed_quick"), speed_btn_rect)
+                .icon("transport.speed")
+                .icon_size(18.0)
+                .tooltip(&format!("Playback speed ({:.2}x)", snapshot.speed))
+                .show(ui, theme, icons)
+                .clicked()
+            {
+                state.panel = if state.panel == Some(PlayerPanel::Speed) {
+                    None
+                } else {
+                    panel_just_opened = true;
+                    Some(PlayerPanel::Speed)
+                };
+            }
+            // Auto-Next pill
+            let auto_rect = Rect::from_center_size(Pos2::new(rect.right() - 306.0, control_y), Vec2::new(72.0, 24.0));
+            let auto_resp = ui.allocate_rect(auto_rect, Sense::click());
+            if auto_resp.hovered() {
+                ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+            }
+            ui.painter().rect(
+                auto_rect,
+                CornerRadius::same(12),
+                if state.auto_next { tokens.accent } else { Color32::from_white_alpha(28) },
+                Stroke::new(1.0, Color32::from_white_alpha(55)),
+                StrokeKind::Inside,
+            );
+            ui.painter().text(
+                auto_rect.center(),
+                Align2::CENTER_CENTER,
+                if state.auto_next { "Auto-Next" } else { "Auto Off" },
+                FontId::proportional(11.0),
+                Color32::WHITE,
+            );
+            if auto_resp.clicked() {
+                state.auto_next = !state.auto_next;
+                action.toggle_auto_next = true;
+            }
+            // HDR Boost availability pill
+            let hdr_rect = Rect::from_center_size(Pos2::new(rect.right() - 384.0, control_y), Vec2::new(70.0, 24.0));
+            let hdr_resp = ui.allocate_rect(hdr_rect, Sense::click()).on_hover_text(if snapshot.is_hdr {
+                "HDR stream detected — click to toggle HDR Boost"
+            } else {
+                "SDR stream — click to boost peak brightness/tone mapping"
+            });
+            if hdr_resp.hovered() {
+                ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+            }
+            let hdr_fill = if snapshot.hdr_boost {
+                Color32::from_rgb(56, 152, 255)
+            } else if snapshot.is_hdr {
+                Color32::from_rgba_unmultiplied(246, 130, 31, 180)
+            } else {
+                Color32::from_white_alpha(24)
+            };
+            ui.painter().rect(
+                hdr_rect,
+                CornerRadius::same(12),
+                hdr_fill,
+                Stroke::new(1.0, Color32::from_white_alpha(55)),
+                StrokeKind::Inside,
+            );
+            ui.painter().text(
+                hdr_rect.center(),
+                Align2::CENTER_CENTER,
+                if snapshot.hdr_boost {
+                    "HDR+"
+                } else if snapshot.is_hdr {
+                    "HDR"
+                } else {
+                    "SDR"
+                },
+                FontId::proportional(11.0),
+                Color32::WHITE,
+            );
+            if hdr_resp.clicked() {
+                command_sender(PlayerCommand::SetHdrBoost {
+                    token: snapshot.token,
+                    enabled: !snapshot.hdr_boost,
+                });
+            }
+        }
+        if hud_btn(ui, "hud_lock", rect.right() - 158.0, "dock.lock", "Lock controls (L)").clicked() {
             state.locked_mode = true;
             state.overlays_visible = false;
             state.volume_popup_open = false;
@@ -1477,7 +1978,7 @@ pub fn show(
         }
 
         // 3. Picture-in-Picture (PiP / Mini view)
-        if hud_btn(ui, "hud_pip", rect.right() - 140.0, "transport.pip", "Mini view").clicked() {
+        if hud_btn(ui, "hud_pip", rect.right() - 116.0, "transport.pip", "Mini view").clicked() {
             action.toggle_pip = true;
         }
 
@@ -1485,13 +1986,13 @@ pub fn show(
         let is_fs = ui.input(|i| i.viewport().fullscreen.unwrap_or(state.is_fullscreen));
         let fs_icon = if is_fs { "transport.exit_fullscreen" } else { "transport.fullscreen" };
         let fs_tooltip = if is_fs { "Exit fullscreen" } else { "Fullscreen (F)" };
-        if hud_btn(ui, "hud_fs", rect.right() - 88.0, fs_icon, fs_tooltip).clicked() {
+        if hud_btn(ui, "hud_fs", rect.right() - 74.0, fs_icon, fs_tooltip).clicked() {
             state.is_fullscreen = !is_fs;
             action.toggle_fullscreen = Some(state.is_fullscreen);
         }
 
         // 1. More options (...) button
-        let more_btn_rect = Rect::from_center_size(Pos2::new(rect.right() - 36.0, control_y), Vec2::splat(40.0));
+        let more_btn_rect = Rect::from_center_size(Pos2::new(rect.right() - 32.0, control_y), Vec2::splat(40.0));
         let more_resp = OverlayButton::bottom_bar(ui.scope_id().with("hud_more"), more_btn_rect)
             .icon("action.dots_horizontal")
             .icon_size(20.0)
@@ -1505,8 +2006,9 @@ pub fn show(
 
         // More options popup (containing Zoom to fill, Audio only, Bookmarks, Queue)
         if state.more_options_open {
-            let more_pop_w = 175.0;
-            let more_pop_h = 136.0;
+            let is_yt_settings = player_layout.popup_style == crate::skin::PopupStyle::YoutubeSettings;
+            let more_pop_w = if is_yt_settings { 235.0 } else { 195.0 };
+            let more_pop_h = if is_yt_settings { 268.0 } else { 196.0 };
             let more_pop_rect = Rect::from_min_max(
                 Pos2::new(rect.right() - more_pop_w - 12.0, control_y - more_pop_h - 18.0),
                 Pos2::new(rect.right() - 12.0, control_y - 18.0),
@@ -1564,6 +2066,36 @@ pub fn show(
                                 });
                                 state.more_options_open = false;
                             }
+                            let auto_label = if state.auto_next { "✓ Auto-Next" } else { "Auto-Next" };
+                            if item_btn(ui, auto_label).clicked() {
+                                state.auto_next = !state.auto_next;
+                                action.toggle_auto_next = true;
+                                state.more_options_open = false;
+                            }
+                            let hdr_label = if snapshot.hdr_boost {
+                                "✓ HDR Boost (On)"
+                            } else if snapshot.is_hdr {
+                                "HDR Boost (HDR Ready)"
+                            } else {
+                                "HDR Boost (SDR)"
+                            };
+                            if item_btn(ui, hdr_label).clicked() {
+                                command_sender(PlayerCommand::SetHdrBoost {
+                                    token: snapshot.token,
+                                    enabled: !snapshot.hdr_boost,
+                                });
+                                state.more_options_open = false;
+                            }
+                            if item_btn(ui, "Picture / Color Grading").clicked() {
+                                state.panel = Some(PlayerPanel::Picture);
+                                state.more_options_open = false;
+                                panel_just_opened = true;
+                            }
+                            if item_btn(ui, &format!("Playback speed ({:.2}x)", snapshot.speed)).clicked() {
+                                state.panel = Some(PlayerPanel::Speed);
+                                state.more_options_open = false;
+                                panel_just_opened = true;
+                            }
                             if item_btn(ui, "Bookmarks").clicked() {
                                 state.panel = Some(PlayerPanel::Bookmarks);
                                 state.more_options_open = false;
@@ -1579,41 +2111,52 @@ pub fn show(
         }
     }
 
-    // --- Side Chevrons (visible whenever overlay is active: 55% resting, 80% proximity, 100% hover) ---
-    if EdgeButton::show_prev(ui, theme, icons, rect, pointer_position, overlay_alpha).clicked() {
-        command_sender(PlayerCommand::Prev {
-            token: snapshot.token,
-        });
-    }
-    if EdgeButton::show_next(ui, theme, icons, rect, pointer_position, overlay_alpha).clicked() {
-        command_sender(PlayerCommand::Next {
-            token: snapshot.token,
-        });
+    // --- Side Chevrons (visible only when there is a previous/next item in queue) ---
+    if tokens.skin.player_layout.show_edge_arrows {
+        let has_prev = snapshot.queue.len() > 1
+            && (snapshot.queue_index > 0
+                || snapshot.repeat == valor_player::queue::RepeatMode::All);
+        let has_next = snapshot.queue.len() > 1
+            && (snapshot.queue_index + 1 < snapshot.queue.len()
+                || snapshot.repeat == valor_player::queue::RepeatMode::All);
+        if has_prev
+            && EdgeButton::show_prev(ui, theme, icons, rect, pointer_position, overlay_alpha)
+                .clicked()
+        {
+            command_sender(PlayerCommand::Prev {
+                token: snapshot.token,
+            });
+        }
+        if has_next
+            && EdgeButton::show_next(ui, theme, icons, rect, pointer_position, overlay_alpha)
+                .clicked()
+        {
+            command_sender(PlayerCommand::Next {
+                token: snapshot.token,
+            });
+        }
     }
 
     if snapshot.state == PlaybackState::Loading || snapshot.state == PlaybackState::Buffering {
-        egui::Area::new(ui.scope_id().with("player_loading"))
-            .order(egui::Order::Foreground)
-            .anchor(Align2::CENTER_CENTER, Vec2::ZERO)
-            .show(ui.ctx(), |ui| {
-                egui::Frame::new()
-                    .fill(Color32::from_rgba_unmultiplied(16, 16, 18, 220))
-                    .stroke(Stroke::new(1.0, Color32::from_white_alpha(28)))
-                    .corner_radius(CornerRadius::same(10))
-                    .inner_margin(egui::Margin::symmetric(20, 14))
-                    .show(ui, |ui| {
-                        ui.horizontal(|ui| {
-                            ui.add(egui::Spinner::new().size(20.0).color(Color32::from_rgb(246, 130, 31)));
-                            ui.add_space(10.0);
-                            let label = if snapshot.state == PlaybackState::Buffering {
-                                "Buffering..."
-                            } else {
-                                "Loading media..."
-                            };
-                            ui.label(RichText::new(label).size(13.5).color(Color32::WHITE));
-                        });
-                    });
-            });
+        if tokens.skin.player_layout.loading_spinner == crate::skin::LoadingSpinnerStyle::RedArc {
+            egui::Area::new(ui.scope_id().with("player_loading_nf"))
+                .order(egui::Order::Foreground)
+                .anchor(Align2::CENTER_CENTER, Vec2::ZERO)
+                .interactable(false)
+                .show(ui.ctx(), |ui| {
+                    let (spin_rect, _) = ui.allocate_exact_size(Vec2::splat(64.0), Sense::hover());
+                    let t = ui.input(|i| i.time);
+                    crate::spinner::render_red_arc_spinner(ui, spin_rect.center(), 24.0, t);
+                });
+        } else {
+            egui::Area::new(ui.scope_id().with("player_loading"))
+                .order(egui::Order::Foreground)
+                .anchor(Align2::CENTER_CENTER, Vec2::ZERO)
+                .interactable(false)
+                .show(ui.ctx(), |ui| {
+                    ui.add(egui::Spinner::new().size(36.0).color(tokens.accent));
+                });
+        }
     }
 
     if let Some(message) = error {
@@ -1643,15 +2186,46 @@ pub fn show(
                     });
             });
     }
+    if state.picture_enabled && state.active_picture_drag.is_some() {
+        let l = state.picture_lighting;
+        if l > 0 {
+            let a = ((l as f32 / 100.0) * 110.0).clamp(0.0, 110.0) as u8;
+            ui.painter()
+                .rect_filled(rect, CornerRadius::ZERO, Color32::from_white_alpha(a));
+        } else if l < 0 {
+            let a = ((-l as f32 / 100.0) * 170.0).clamp(0.0, 170.0) as u8;
+            ui.painter()
+                .rect_filled(rect, CornerRadius::ZERO, Color32::from_black_alpha(a));
+        }
+    }
+
+    if !ui.input(|i| i.pointer.primary_down()) {
+        if state.active_picture_drag.take().is_some() && state.picture_dirty {
+            state.picture_dirty = false;
+            state.last_picture_send = Instant::now();
+            command_sender(PlayerCommand::SetPictureControls {
+                token: snapshot.token,
+                enabled: state.picture_enabled,
+                lighting: state.picture_lighting,
+                shadows: state.picture_shadows,
+                contrast: state.picture_contrast,
+                sharpness: state.picture_sharpness,
+                vibrance: state.picture_vibrance,
+                hdr_boost: state.picture_hdr_boost,
+            });
+        }
+    }
     if let Some(panel) = state.panel {
         let panel_width: f32 = match panel {
             PlayerPanel::Queue => 460.0_f32,
+            PlayerPanel::Picture => 480.0_f32,
             PlayerPanel::Speed | PlayerPanel::Tracks => 360.0_f32,
             PlayerPanel::Bookmarks => 400.0_f32,
         }
         .min((rect.width() - 32.0_f32).max(280.0_f32));
         let panel_height: f32 = match panel {
             PlayerPanel::Queue => (rect.height() - 120.0_f32).max(320.0_f32),
+            PlayerPanel::Picture => 320.0_f32,
             PlayerPanel::Speed => 196.0_f32,
             PlayerPanel::Tracks => 386.0_f32,
             PlayerPanel::Bookmarks => 420.0_f32,
@@ -1674,19 +2248,199 @@ pub fn show(
                 }
             }
         }
+        let dragging_picture =
+            panel == PlayerPanel::Picture && state.active_picture_drag.is_some();
         egui::Area::new(egui::Id::unique("player_panel"))
             .order(egui::Order::Foreground)
             .fixed_pos(panel_rect.min)
             .show(ui.ctx(), |ui| {
                 egui::Frame::new()
-                    .fill(Color32::from_rgb(32, 34, 42))
-                    .stroke(Stroke::new(1.0, Color32::from_white_alpha(55)))
-                    .corner_radius(CornerRadius::same(10))
+                    .fill(if dragging_picture {
+                        Color32::TRANSPARENT
+                    } else {
+                        Color32::from_rgb(20, 24, 31)
+                    })
+                    .stroke(if dragging_picture {
+                        Stroke::NONE
+                    } else {
+                        Stroke::new(1.0, Color32::from_white_alpha(55))
+                    })
+                    .corner_radius(CornerRadius::ZERO)
                     .inner_margin(16.0)
                     .show(ui, |ui| {
                         ui.set_width(panel_width - 34.0);
                         ui.set_max_height(panel_height - 32.0);
                         match panel {
+                            PlayerPanel::Picture => {
+                                let mut changed = false;
+                                let active_drag_label = state.active_picture_drag.map(|(l, _, _, _)| l);
+                                ui.scope(|ui| {
+                                    if dragging_picture {
+                                        ui.set_opacity(0.0);
+                                    }
+                                    ui.horizontal(|ui| {
+                                        ui.label(
+                                            RichText::new("◧  Picture")
+                                                .size(15.0)
+                                                .strong()
+                                                .color(Color32::WHITE),
+                                        );
+                                        ui.add_space(10.0);
+                                        let toggle_txt = if state.picture_enabled { "✓ On" } else { "Off" };
+                                        if ui
+                                            .add(
+                                                egui::Button::new(
+                                                    RichText::new(toggle_txt)
+                                                        .size(11.5)
+                                                        .color(Color32::WHITE),
+                                                )
+                                                .fill(if state.picture_enabled {
+                                                    tokens.accent
+                                                } else {
+                                                    Color32::from_rgb(45, 50, 60)
+                                                })
+                                                .corner_radius(CornerRadius::ZERO),
+                                            )
+                                            .clicked()
+                                        {
+                                            state.picture_enabled = !state.picture_enabled;
+                                            changed = true;
+                                        }
+                                        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                            if ui
+                                                .add(
+                                                    egui::Button::new(
+                                                        RichText::new("↺ Reset")
+                                                            .size(11.5)
+                                                            .color(Color32::from_rgb(200, 210, 225)),
+                                                    )
+                                                    .fill(Color32::from_rgb(35, 40, 48))
+                                                    .corner_radius(CornerRadius::ZERO),
+                                                )
+                                                .clicked()
+                                            {
+                                                state.picture_lighting = 0;
+                                                state.picture_shadows = 0;
+                                                state.picture_contrast = 0;
+                                                state.picture_sharpness = 0;
+                                                state.picture_vibrance = 0;
+                                                state.picture_hdr_boost = 0;
+                                                changed = true;
+                                            }
+                                        });
+                                    });
+                                });
+                                ui.add_space(10.0);
+
+                                let mut draw_pic_row = |ui: &mut Ui,
+                                                        icon: &str,
+                                                        label: &'static str,
+                                                        val: &mut i32,
+                                                        min: i32,
+                                                        max: i32| {
+                                    let is_active_row = active_drag_label == Some(label);
+                                    let frame = if dragging_picture && is_active_row {
+                                        egui::Frame::NONE
+                                            .fill(Color32::from_rgba_unmultiplied(14, 17, 23, 232))
+                                            .stroke(Stroke::new(1.0, Color32::from_white_alpha(65)))
+                                            .corner_radius(CornerRadius::ZERO)
+                                            .inner_margin(egui::Margin::symmetric(8, 4))
+                                    } else {
+                                        egui::Frame::NONE
+                                            .inner_margin(egui::Margin::symmetric(8, 4))
+                                    };
+                                    frame.show(ui, |ui| {
+                                        if dragging_picture && !is_active_row {
+                                            ui.set_opacity(0.0);
+                                        }
+                                        ui.horizontal(|ui| {
+                                            ui.allocate_ui_with_layout(
+                                                Vec2::new(112.0, 22.0),
+                                                Layout::left_to_right(Align::Center),
+                                                |ui| {
+                                                    ui.label(
+                                                        RichText::new(format!("{icon}  {label}"))
+                                                            .size(12.5)
+                                                            .color(Color32::from_rgb(225, 232, 240)),
+                                                    );
+                                                },
+                                            );
+                                            let slider_w = (ui.available_width() - 44.0).max(120.0);
+                                            ui.spacing_mut().slider_width = slider_w;
+                                            let resp = ui.add(
+                                                egui::Slider::new(val, min..=max)
+                                                    .show_value(false),
+                                            );
+                                            if resp.changed() {
+                                                changed = true;
+                                            }
+                                            if resp.dragged() || resp.changed() {
+                                                state.active_picture_drag = Some((label, *val, min, max));
+                                            }
+                                            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                                ui.label(
+                                                    RichText::new(format!("{}", *val))
+                                                        .size(12.5)
+                                                        .strong()
+                                                        .color(Color32::WHITE),
+                                                );
+                                            });
+                                        });
+                                    });
+                                };
+
+                                draw_pic_row(ui, "☀", "Lighting", &mut state.picture_lighting, -100, 100);
+                                draw_pic_row(ui, "◐", "Shadows", &mut state.picture_shadows, -100, 100);
+                                draw_pic_row(ui, "◑", "Contrast", &mut state.picture_contrast, -100, 100);
+
+                                ui.add_space(6.0);
+                                ui.scope(|ui| {
+                                    if dragging_picture {
+                                        ui.set_opacity(0.0);
+                                    }
+                                    ui.horizontal(|ui| {
+                                        ui.label(
+                                            RichText::new("REMASTER")
+                                                .size(10.5)
+                                                .strong()
+                                                .color(Color32::from_rgb(150, 162, 180)),
+                                        );
+                                        ui.add_space(8.0);
+                                        let (line_r, _) = ui.allocate_exact_size(
+                                            Vec2::new(ui.available_width(), 1.0),
+                                            Sense::hover(),
+                                        );
+                                        ui.painter().line_segment(
+                                            [line_r.left_center(), line_r.right_center()],
+                                            Stroke::new(1.0, Color32::from_white_alpha(30)),
+                                        );
+                                    });
+                                });
+                                ui.add_space(6.0);
+
+                                draw_pic_row(ui, "◈", "Sharpness", &mut state.picture_sharpness, 0, 100);
+                                draw_pic_row(ui, "🎨", "Vibrance", &mut state.picture_vibrance, -100, 100);
+                                draw_pic_row(ui, "✦", "HDR Boost", &mut state.picture_hdr_boost, 0, 100);
+
+                                if changed {
+                                    state.picture_dirty = true;
+                                    // Never block mpv/UI while dragging; apply to mpv once on release or button click.
+                                    if state.active_picture_drag.is_none() {
+                                        state.picture_dirty = false;
+                                        state.last_picture_send = Instant::now();
+                                        command_sender(PlayerCommand::SetPictureControls {
+                                            token: snapshot.token,
+                                            enabled: state.picture_enabled,
+                                            lighting: state.picture_lighting,
+                                            shadows: state.picture_shadows,
+                                            contrast: state.picture_contrast,
+                                            sharpness: state.picture_sharpness,
+                                            vibrance: state.picture_vibrance,
+                                            hdr_boost: state.picture_hdr_boost,
+                                        });
+                                    }
+                                }
+                            }
                             PlayerPanel::Speed => {
                                 ui.horizontal(|ui| {
                                     ui.label(RichText::new("Playback Speed").size(15.0).strong().color(Color32::WHITE));
@@ -1794,6 +2548,19 @@ pub fn show(
                                         }
                                         if ui.selectable_label(snapshot.shuffle, "Shuffle").clicked() {
                                             command_sender(PlayerCommand::SetShuffle { token: snapshot.token, enabled: !snapshot.shuffle });
+                                        }
+                                        ui.add_space(6.0);
+                                        let clear_btn = egui::Button::new(RichText::new("Clear").size(11.5).color(Color32::from_gray(215)))
+                                            .fill(Color32::from_white_alpha(14))
+                                            .corner_radius(CornerRadius::same(4));
+                                        if ui.add(clear_btn).clicked() {
+                                            command_sender(PlayerCommand::ClearQueue { token: snapshot.token });
+                                        }
+                                        let add_q_btn = egui::Button::new(RichText::new("+ Add").size(11.5).strong().color(Color32::WHITE))
+                                            .fill(tokens.accent)
+                                            .corner_radius(CornerRadius::same(4));
+                                        if ui.add(add_q_btn).clicked() {
+                                            action.add_to_queue = true;
                                         }
                                     });
                                 });
@@ -1933,7 +2700,25 @@ pub fn show(
                             }
                             PlayerPanel::Bookmarks => {
                                 ui.horizontal(|ui| {
-                                    ui.label(RichText::new("Bookmarks").size(15.0).strong().color(Color32::WHITE));
+                                    ui.label(RichText::new("Bookmark Showcase").size(15.0).strong().color(Color32::WHITE));
+                                    if state.active_tidb_synced {
+                                        ui.label(
+                                            RichText::new("TIDB")
+                                                .size(10.5)
+                                                .strong()
+                                                .color(Color32::from_rgb(6, 182, 212)),
+                                        );
+                                    }
+                                    if let Some(rating) = state.active_tmdb_rating {
+                                        if rating > 0.0 {
+                                            ui.label(
+                                                RichText::new(format!("★ {:.1}", rating))
+                                                    .size(11.5)
+                                                    .strong()
+                                                    .color(Color32::from_rgb(250, 204, 21)),
+                                            );
+                                        }
+                                    }
                                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                                         let (close_rect, close_resp) = ui.allocate_exact_size(Vec2::splat(24.0), Sense::click());
                                         if close_resp.hovered() {
@@ -1950,12 +2735,12 @@ pub fn show(
                                         if close_resp.clicked() {
                                             state.panel = None;
                                         }
-                                        ui.add_space(8.0);
+                                        ui.add_space(6.0);
 
-                                        let add_btn = egui::Button::new(RichText::new("+ Add bookmark").strong().color(Color32::WHITE))
+                                        let add_btn = egui::Button::new(RichText::new("+ Add").strong().color(Color32::WHITE))
                                             .fill(tokens.accent)
                                             .corner_radius(CornerRadius::same(5))
-                                            .min_size(Vec2::new(124.0, 28.0));
+                                            .min_size(Vec2::new(72.0, 28.0));
                                         if ui.add(add_btn).clicked() {
                                             if let Some(path) = snapshot.path.as_ref() {
                                                 let fingerprint = state.bookmark_fingerprint.clone().unwrap_or_else(|| {
@@ -1964,13 +2749,20 @@ pub fn show(
                                                 let stamp = fmt_time(snapshot.position_secs).unwrap_or_else(|| "00:00".into());
                                                 let now = chrono::Utc::now();
                                                 let id = format!("{}-{}", now.timestamp_millis(), (snapshot.position_secs.max(0.0) * 1000.0) as u64);
+                                                let cat = state.new_bookmark_category.clone();
+                                                let cat_label = match cat.as_str() {
+                                                    "intro" => "Intro",
+                                                    "credits" => "Outro",
+                                                    "scene" => "Scene",
+                                                    _ => "Bookmark",
+                                                };
                                                 let bookmark = Bookmark {
                                                     id,
                                                     fingerprint,
-                                                    title: format!("{} · {stamp}", path.file_stem().unwrap_or_default().to_string_lossy()),
+                                                    title: format!("{cat_label} · {stamp}"),
                                                     start_secs: snapshot.position_secs.max(0.0),
                                                     end_secs: None,
-                                                    category: "custom".into(),
+                                                    category: cat,
                                                     created_at: now,
                                                 };
                                                 if !state.bookmarks.iter().any(|saved| (saved.start_secs - bookmark.start_secs).abs() < 1.0) {
@@ -1982,10 +2774,45 @@ pub fn show(
                                         }
                                     });
                                 });
-                                ui.add_space(4.0);
-                                ui.label(RichText::new("Save moments for quick one-click jump.").size(12.0).color(tokens.text_secondary));
-                                ui.add_space(10.0);
-                                if state.bookmarks.is_empty() {
+                                ui.add_space(6.0);
+                                // Category filter pills & add-category selector
+                                ui.horizontal_wrapped(|ui| {
+                                    ui.spacing_mut().item_spacing = Vec2::new(6.0, 4.0);
+                                    for (cat_id, label) in [
+                                        ("all", "All"),
+                                        ("intro", "Intro"),
+                                        ("credits", "Outro"),
+                                        ("scene", "Scene"),
+                                        ("custom", "Custom"),
+                                    ] {
+                                        let active = state.bookmark_category_filter == cat_id;
+                                        let pill = egui::Button::new(
+                                            RichText::new(label)
+                                                .size(11.0)
+                                                .color(if active { Color32::WHITE } else { Color32::from_gray(185) }),
+                                        )
+                                        .fill(if active { tokens.accent } else { Color32::from_white_alpha(14) })
+                                        .corner_radius(CornerRadius::same(10));
+                                        if ui.add(pill).clicked() {
+                                            state.bookmark_category_filter = cat_id.to_string();
+                                            if cat_id != "all" {
+                                                state.new_bookmark_category = cat_id.to_string();
+                                            }
+                                        }
+                                    }
+                                });
+                                ui.add_space(8.0);
+                                let filtered_bookmarks: Vec<Bookmark> = state
+                                    .bookmarks
+                                    .iter()
+                                    .filter(|b| {
+                                        state.bookmark_category_filter == "all"
+                                            || b.category.eq_ignore_ascii_case(&state.bookmark_category_filter)
+                                            || (state.bookmark_category_filter == "credits" && b.category.eq_ignore_ascii_case("outro"))
+                                    })
+                                    .cloned()
+                                    .collect();
+                                if filtered_bookmarks.is_empty() {
                                     egui::Frame::new()
                                         .fill(Color32::from_white_alpha(10))
                                         .stroke(Stroke::new(1.0, Color32::from_white_alpha(25)))
@@ -1993,44 +2820,66 @@ pub fn show(
                                         .inner_margin(14.0)
                                         .show(ui, |ui| {
                                             ui.set_width(ui.available_width());
-                                            ui.label(RichText::new("No bookmarks saved for this video yet.").size(12.5).color(Color32::from_gray(200)));
+                                            ui.label(RichText::new("No bookmarks in this category yet.").size(12.5).color(Color32::from_gray(200)));
                                             ui.add_space(2.0);
-                                            ui.label(RichText::new("Click \"+ Add bookmark\" or press T to mark this timestamp.").size(11.5).color(tokens.text_muted));
+                                            ui.label(RichText::new("Click \"+ Add\" or press T to save to Web DB & local library.").size(11.5).color(tokens.text_muted));
                                         });
                                 } else {
-                                let bookmark_height = (panel_height - 112.0).max(160.0);
+                                let bookmark_height = (panel_height - 134.0).max(160.0);
                                 egui::ScrollArea::vertical()
                                     .max_height(bookmark_height)
                                     .show(ui, |ui| {
                                     let mut remove = Vec::new();
-                                    for bookmark in &state.bookmarks {
+                                    for bookmark in &filtered_bookmarks {
                                         let row_w = ui.available_width();
-                                        let (row_rect, _) = ui.allocate_exact_size(Vec2::new(row_w, 42.0), Sense::hover());
+                                        let (row_rect, _) = ui.allocate_exact_size(Vec2::new(row_w, 46.0), Sense::hover());
+                                        let cat_lower = bookmark.category.to_ascii_lowercase();
+                                        let cat_col = match cat_lower.as_str() {
+                                            "intro" => Color32::from_rgb(6, 182, 212),
+                                            "credits" | "outro" => Color32::from_rgb(168, 85, 247),
+                                            "scene" => Color32::from_rgb(245, 158, 11),
+                                            _ => tokens.accent,
+                                        };
                                         ui.painter().rect(
                                             row_rect,
                                             CornerRadius::same(6),
                                             Color32::from_white_alpha(12),
-                                            Stroke::new(1.0, Color32::from_white_alpha(35)),
+                                            Stroke::new(1.0, Color32::from_white_alpha(30)),
                                             egui::StrokeKind::Inside,
+                                        );
+                                        // Left accent stripe
+                                        ui.painter().rect_filled(
+                                            Rect::from_min_size(row_rect.min, Vec2::new(3.0, row_rect.height())),
+                                            CornerRadius::same(2),
+                                            cat_col,
                                         );
 
                                         // Left: Timestamp Jump Pill button
-                                        let stamp_str = fmt_time(bookmark.start_secs).unwrap_or_else(|| "00:00".into());
-                                        let stamp_rect = Rect::from_center_size(Pos2::new(row_rect.min.x + 40.0, row_rect.center().y), Vec2::new(56.0, 26.0));
+                                        let stamp_str = if let Some(end_s) = bookmark.end_secs {
+                                            format!(
+                                                "{}-{}",
+                                                fmt_time(bookmark.start_secs).unwrap_or_else(|| "0:00".into()),
+                                                fmt_time(end_s).unwrap_or_else(|| "0:00".into())
+                                            )
+                                        } else {
+                                            fmt_time(bookmark.start_secs).unwrap_or_else(|| "00:00".into())
+                                        };
+                                        let stamp_w = if bookmark.end_secs.is_some() { 84.0 } else { 56.0 };
+                                        let stamp_rect = Rect::from_center_size(Pos2::new(row_rect.min.x + 12.0 + stamp_w * 0.5, row_rect.center().y), Vec2::new(stamp_w, 26.0));
                                         let stamp_resp = ui.interact(stamp_rect, ui.scope_id().with(("bm_jump", &bookmark.id)), Sense::click());
                                         let stamp_hovered = stamp_resp.hovered();
                                         ui.painter().rect(
                                             stamp_rect,
                                             CornerRadius::same(5),
-                                            if stamp_hovered { tokens.accent } else { Color32::from_rgb(38, 48, 66) },
-                                            Stroke::new(1.0, if stamp_hovered { Color32::WHITE } else { Color32::from_rgb(70, 90, 130) }),
+                                            if stamp_hovered { cat_col } else { Color32::from_rgb(32, 38, 52) },
+                                            Stroke::new(1.0, if stamp_hovered { Color32::WHITE } else { cat_col }),
                                             egui::StrokeKind::Inside,
                                         );
                                         ui.painter().text(
                                             stamp_rect.center(),
                                             Align2::CENTER_CENTER,
                                             &stamp_str,
-                                            FontId::proportional(12.0),
+                                            FontId::proportional(11.0),
                                             Color32::WHITE,
                                         );
                                         if stamp_resp.clicked() {
@@ -2146,11 +2995,39 @@ pub fn show(
         egui::Area::new(egui::Id::unique("player_finished"))
             .anchor(Align2::CENTER_CENTER, Vec2::ZERO)
             .show(ui.ctx(), |ui| {
-                if ui.button("Replay").clicked() {
-                    command_sender(PlayerCommand::Play {
-                        token: snapshot.token,
-                    });
-                }
+                ui.horizontal(|ui| {
+                    if ui.button("Replay").clicked() {
+                        state.trakt_synced_done = false;
+                        command_sender(PlayerCommand::Play {
+                            token: snapshot.token,
+                        });
+                    }
+                    if state.trakt_connected {
+                        let lbl = if state.trakt_synced_done {
+                            "✓ Synced to Trakt"
+                        } else {
+                            "Sync to Trakt"
+                        };
+                        if ui
+                            .add_enabled(
+                                !state.trakt_synced_done,
+                                egui::Button::new(
+                                    RichText::new(lbl).color(Color32::WHITE),
+                                )
+                                .fill(if state.trakt_synced_done {
+                                    Color32::from_rgb(34, 90, 56)
+                                } else {
+                                    tokens.accent
+                                })
+                                .corner_radius(CornerRadius::ZERO),
+                            )
+                            .clicked()
+                        {
+                            action.sync_to_trakt = true;
+                            state.trakt_synced_done = true;
+                        }
+                    }
+                });
             });
     }
     if state.audio_only {
@@ -2173,7 +3050,7 @@ pub fn show(
             });
     }
 
-    if overlay_alpha <= 0.05 || state.locked_mode {
+    if overlay_alpha <= 0.05 && !state.locked_mode {
         ui.ctx().set_cursor_icon(egui::CursorIcon::None);
         ui.ctx().output_mut(|o| o.cursor_icon = egui::CursorIcon::None);
     }

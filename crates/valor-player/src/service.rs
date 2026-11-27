@@ -40,6 +40,7 @@ struct PlayerCore {
     pending_seek_secs: f64,
     last_snapshot: Instant,
     last_tracks: Instant,
+    last_picture: (i32, i32, i32, i32, i32, i32),
 }
 
 // The only cross-thread visibility is through the Glow callback wrapper. egui_glow
@@ -94,6 +95,7 @@ impl PlayerService {
             pending_seek_secs: 0.0,
             last_snapshot: Instant::now(),
             last_tracks: Instant::now(),
+            last_picture: (0, 0, 0, 0, 0, 0),
         };
         Self {
             core: Arc::new(Mutex::new(core)),
@@ -395,6 +397,75 @@ impl PlayerCore {
                 let _ = self.mpv()?.set_property("panscan", panscan);
                 self.snapshot.write().zoom_to_fill = enabled;
             }
+            PlayerCommand::SetHdrBoost { token, enabled } if token == active_token => {
+                if let Ok(mpv) = self.mpv() {
+                    if enabled {
+                        let _ = mpv.set_property("tone-mapping", "bt.2446a");
+                        let _ = mpv.set_property("hdr-compute-peak", "yes");
+                        let _ = mpv.set_property("target-peak", 400.0_f64);
+                    } else {
+                        let _ = mpv.set_property("tone-mapping", "auto");
+                        let _ = mpv.set_property("hdr-compute-peak", "auto");
+                        let _ = mpv.set_property("target-peak", "auto");
+                    }
+                }
+                self.snapshot.write().hdr_boost = enabled;
+            }
+            PlayerCommand::SetPictureControls {
+                token,
+                enabled,
+                lighting,
+                shadows,
+                contrast,
+                sharpness,
+                vibrance,
+                hdr_boost,
+            } if token == active_token => {
+                let next = if enabled {
+                    (lighting, shadows, contrast, sharpness, vibrance, hdr_boost)
+                } else {
+                    (0, 0, 0, 0, 0, 0)
+                };
+                let prev = self.last_picture;
+                if let Ok(mpv) = self.mpv() {
+                    if next.0 != prev.0 {
+                        let _ = mpv.set_property("brightness", next.0 as i64);
+                    }
+                    if next.1 != prev.1 {
+                        let _ = mpv.set_property("gamma", next.1 as i64);
+                    }
+                    if next.2 != prev.2 {
+                        let _ = mpv.set_property("contrast", next.2 as i64);
+                    }
+                    if next.3 != prev.3 {
+                        let _ = mpv.set_property("sharpen", (next.3 as f64) / 25.0);
+                    }
+                    if next.4 != prev.4 {
+                        let _ = mpv.set_property("saturation", next.4 as i64);
+                    }
+                    if (next.5 > 0) != (prev.5 > 0) {
+                        if next.5 > 0 {
+                            let _ = mpv.set_property("tone-mapping", "bt.2446a");
+                            let _ = mpv.set_property("hdr-compute-peak", "yes");
+                            let _ = mpv.set_property(
+                                "target-peak",
+                                200.0_f64 + (next.5 as f64) * 3.0,
+                            );
+                        } else {
+                            let _ = mpv.set_property("tone-mapping", "auto");
+                            let _ = mpv.set_property("hdr-compute-peak", "auto");
+                            let _ = mpv.set_property("target-peak", "auto");
+                        }
+                    } else if next.5 > 0 && next.5 != prev.5 {
+                        let _ = mpv.set_property(
+                            "target-peak",
+                            200.0_f64 + (next.5 as f64) * 3.0,
+                        );
+                    }
+                }
+                self.last_picture = next;
+                self.snapshot.write().hdr_boost = next.5 > 0;
+            }
             PlayerCommand::SetBoostTier { token, tier } if token == active_token => {
                 let chain = crate::audio_graph::boost_chain(tier)
                     .map(|(_, chain)| chain)
@@ -442,6 +513,29 @@ impl PlayerCore {
             PlayerCommand::MoveQueueItem { token, from, to } if token == active_token => {
                 self.queue.move_to(from, to);
             }
+            PlayerCommand::Enqueue { token, paths } if token == active_token => {
+                for path in paths {
+                    let next_idx = self.queue.items.len();
+                    let title = path
+                        .file_name()
+                        .map(|name| name.to_string_lossy().into_owned())
+                        .unwrap_or_default();
+                    let ts = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| d.as_micros())
+                        .unwrap_or(0);
+                    self.queue.enqueue(QueueItem {
+                        id: format!("{token}:q:{next_idx}:{ts}"),
+                        fingerprint: String::new(),
+                        path,
+                        title,
+                        duration_secs: None,
+                    });
+                }
+            }
+            PlayerCommand::ClearQueue { token } if token == active_token => {
+                self.queue.clear_upcoming();
+            }
             PlayerCommand::SetShuffle { token, enabled } if token == active_token => {
                 self.queue.set_shuffle(enabled)
             }
@@ -468,11 +562,15 @@ impl PlayerCore {
             | PlayerCommand::Prev { .. }
             | PlayerCommand::JumpTo { .. }
             | PlayerCommand::JumpToQueue { .. }
+            | PlayerCommand::Enqueue { .. }
+            | PlayerCommand::ClearQueue { .. }
             | PlayerCommand::RemoveQueueItem { .. }
             | PlayerCommand::MoveQueueItem { .. }
             | PlayerCommand::SetShuffle { .. }
             | PlayerCommand::SetRepeat { .. }
-            | PlayerCommand::SetZoomToFill { .. } => {}
+            | PlayerCommand::SetZoomToFill { .. }
+            | PlayerCommand::SetHdrBoost { .. }
+            | PlayerCommand::SetPictureControls { .. } => {}
             PlayerCommand::Shutdown => {}
         }
         self.publish_queue();
@@ -567,9 +665,15 @@ impl PlayerCore {
                             )));
                         }
                     }
+                    let chapters = self
+                        .mpv
+                        .as_ref()
+                        .map(read_chapters)
+                        .unwrap_or_default();
                     let mut snapshot = self.snapshot.write();
                     snapshot.state = PlaybackState::Playing;
                     snapshot.token = self.token;
+                    snapshot.chapters = chapters;
                     let _ = self.event_tx.send(PlayerEvent::StateChanged {
                         token: self.token,
                         state: PlaybackState::Playing,
@@ -608,6 +712,10 @@ impl PlayerCore {
                 }
                 if let Ok(value) = mpv.get_property::<f64>("duration") {
                     self.snapshot.write().duration_secs = value;
+                }
+                if let Ok(gamma) = mpv.get_property::<String>("video-params/gamma") {
+                    let is_hdr = matches!(gamma.as_str(), "pq" | "hlg" | "st2084" | "arib-std-b67");
+                    self.snapshot.write().is_hdr = is_hdr;
                 }
                 if let Ok(value) = mpv.get_property::<f64>("volume") {
                     self.snapshot.write().volume = value;
@@ -860,6 +968,84 @@ fn read_tracks(mpv: &Mpv) -> Vec<crate::PlayerTrack> {
         mpv_sys::mpv_free_node_contents(&mut node);
     }
     tracks
+}
+
+fn read_chapters(mpv: &Mpv) -> Vec<crate::PlayerChapter> {
+    let Ok(name) = CString::new("chapter-list") else {
+        return Vec::new();
+    };
+    let mut node: mpv_sys::mpv_node = unsafe { std::mem::zeroed() };
+    let result = unsafe {
+        mpv_sys::mpv_get_property(
+            mpv.ctx.as_ptr(),
+            name.as_ptr(),
+            mpv_sys::mpv_format_MPV_FORMAT_NODE,
+            &mut node as *mut _ as *mut c_void,
+        )
+    };
+    if result < 0 {
+        return Vec::new();
+    }
+    let chapters = if node.format == mpv_sys::mpv_format_MPV_FORMAT_NODE_ARRAY {
+        unsafe {
+            let list = node.u.list;
+            if list.is_null() || (*list).num <= 0 || (*list).num > 1024 {
+                Vec::new()
+            } else {
+                (0..(*list).num as usize)
+                    .filter_map(|index| {
+                        let item = &*(*list).values.add(index);
+                        if item.format != mpv_sys::mpv_format_MPV_FORMAT_NODE_MAP {
+                            return None;
+                        }
+                        let fields = (*item.u.list).num;
+                        if fields <= 0 || fields > 64 {
+                            return None;
+                        }
+                        let mut title = String::new();
+                        let mut start_secs = None;
+                        for field in 0..fields as usize {
+                            let key = *(*item.u.list).keys.add(field);
+                            if key.is_null() {
+                                continue;
+                            }
+                            let key = std::ffi::CStr::from_ptr(key).to_string_lossy();
+                            let value = &*(*item.u.list).values.add(field);
+                            match key.as_ref() {
+                                "title" => {
+                                    if let Some(t) = node_string(value) {
+                                        title = t;
+                                    }
+                                }
+                                "time" => {
+                                    if value.format == mpv_sys::mpv_format_MPV_FORMAT_DOUBLE {
+                                        start_secs = Some(value.u.double_);
+                                    } else if value.format == mpv_sys::mpv_format_MPV_FORMAT_INT64 {
+                                        start_secs = Some(value.u.int64 as f64);
+                                    }
+                                }
+                                _ => {}
+                            }
+                        }
+                        let start = start_secs?;
+                        if title.trim().is_empty() {
+                            title = format!("Chapter {}", index + 1);
+                        }
+                        Some(crate::PlayerChapter {
+                            title,
+                            start_secs: start,
+                        })
+                    })
+                    .collect()
+            }
+        }
+    } else {
+        Vec::new()
+    };
+    unsafe {
+        mpv_sys::mpv_free_node_contents(&mut node);
+    }
+    chapters
 }
 
 unsafe fn node_string(node: &mpv_sys::mpv_node) -> Option<String> {

@@ -540,6 +540,125 @@ impl Database {
             rebuild_folder_counts_in_conn(&mut conn)?;
         }
 
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS media_telemetry (
+                fingerprint TEXT PRIMARY KEY,
+                last_played_at TEXT,
+                time_spent_secs REAL NOT NULL DEFAULT 0.0,
+                skips_used INTEGER NOT NULL DEFAULT 0,
+                audio_lang TEXT NOT NULL DEFAULT '',
+                sub_lang TEXT NOT NULL DEFAULT '',
+                tmdb_id INTEGER,
+                genres_json TEXT NOT NULL DEFAULT '[]',
+                vote_average REAL NOT NULL DEFAULT 0.0
+            );",
+        )?;
+
+        Ok(())
+    }
+
+    pub fn get_all_media_telemetry(&self) -> Result<HashMap<String, MediaTelemetry>, DbError> {
+        let conn = self.conn.lock();
+        let mut stmt = conn.prepare(
+            "SELECT fingerprint, last_played_at, time_spent_secs, skips_used, audio_lang, sub_lang, tmdb_id, genres_json, vote_average FROM media_telemetry",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            let last_str: Option<String> = row.get(1)?;
+            let last_played_at = last_str
+                .as_deref()
+                .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+                .map(|dt| dt.with_timezone(&Utc));
+            let genres_json: String = row.get(7)?;
+            let genres: Vec<String> = serde_json::from_str(&genres_json).unwrap_or_default();
+            let tmdb_raw: Option<i64> = row.get(6)?;
+            Ok(MediaTelemetry {
+                fingerprint: row.get(0)?,
+                last_played_at,
+                time_spent_secs: row.get(2)?,
+                skips_used: row.get::<_, i64>(3)?.max(0) as u64,
+                audio_lang: row.get(4)?,
+                sub_lang: row.get(5)?,
+                tmdb_id: tmdb_raw.and_then(|v| (v > 0).then_some(v as u64)),
+                genres,
+                vote_average: row.get::<_, f64>(8)? as f32,
+            })
+        })?;
+        let mut map = HashMap::new();
+        for r in rows {
+            let item = r?;
+            map.insert(item.fingerprint.clone(), item);
+        }
+        Ok(map)
+    }
+
+    pub fn record_media_play(&self, fingerprint: &str) -> Result<(), DbError> {
+        let conn = self.conn.lock();
+        let now = Utc::now().to_rfc3339();
+        conn.execute(
+            "INSERT INTO media_telemetry (fingerprint, last_played_at)
+             VALUES (?1, ?2)
+             ON CONFLICT(fingerprint) DO UPDATE SET last_played_at = excluded.last_played_at;",
+            params![fingerprint, now],
+        )?;
+        Ok(())
+    }
+
+    pub fn add_media_time_and_skips(
+        &self,
+        fingerprint: &str,
+        delta_secs: f64,
+        delta_skips: u64,
+    ) -> Result<(), DbError> {
+        let conn = self.conn.lock();
+        let now = Utc::now().to_rfc3339();
+        conn.execute(
+            "INSERT INTO media_telemetry (fingerprint, last_played_at, time_spent_secs, skips_used)
+             VALUES (?1, ?2, ?3, ?4)
+             ON CONFLICT(fingerprint) DO UPDATE SET
+                last_played_at = excluded.last_played_at,
+                time_spent_secs = media_telemetry.time_spent_secs + excluded.time_spent_secs,
+                skips_used = media_telemetry.skips_used + excluded.skips_used;",
+            params![fingerprint, now, delta_secs.max(0.0), delta_skips as i64],
+        )?;
+        Ok(())
+    }
+
+    pub fn update_media_langs(
+        &self,
+        fingerprint: &str,
+        audio_lang: &str,
+        sub_lang: &str,
+    ) -> Result<(), DbError> {
+        let conn = self.conn.lock();
+        conn.execute(
+            "INSERT INTO media_telemetry (fingerprint, audio_lang, sub_lang)
+             VALUES (?1, ?2, ?3)
+             ON CONFLICT(fingerprint) DO UPDATE SET
+                audio_lang = CASE WHEN excluded.audio_lang != '' THEN excluded.audio_lang ELSE media_telemetry.audio_lang END,
+                sub_lang = excluded.sub_lang;",
+            params![fingerprint, audio_lang, sub_lang],
+        )?;
+        Ok(())
+    }
+
+    pub fn update_media_tmdb(
+        &self,
+        fingerprint: &str,
+        tmdb_id: u64,
+        genres: &[String],
+        vote_average: f32,
+    ) -> Result<(), DbError> {
+        let conn = self.conn.lock();
+        let genres_json = serde_json::to_string(genres).unwrap_or_else(|_| "[]".to_string());
+        conn.execute(
+            "INSERT INTO media_telemetry (fingerprint, tmdb_id, genres_json, vote_average)
+             VALUES (?1, ?2, ?3, ?4)
+             ON CONFLICT(fingerprint) DO UPDATE SET
+                tmdb_id = excluded.tmdb_id,
+                genres_json = excluded.genres_json,
+                vote_average = excluded.vote_average;",
+            params![fingerprint, tmdb_id as i64, genres_json, vote_average as f64],
+        )?;
         Ok(())
     }
 

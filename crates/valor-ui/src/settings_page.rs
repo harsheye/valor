@@ -302,7 +302,7 @@ pub fn render(
                                     )
                                     .fill(if is_active { tokens.selected_fill } else { tokens.field_fill })
                                     .stroke(Stroke::new(1.0, if is_active { tokens.accent } else { tokens.field_border }))
-                                    .corner_radius(CornerRadius::same(14));
+                                    .corner_radius(CornerRadius::same(3));
                                     ui.add(btn);
                                 }
                             });
@@ -310,9 +310,13 @@ pub fn render(
                         ui.add_space(16.0);
 
                         // Card: Appearance & UI Themes
-                        setting_card(ui, tokens, "Appearance & UI theme", "Choose a visual theme for the entire Valor interface.", |ui| {
+                        setting_card(ui, tokens, "Appearance & UI theme", "Choose a visual theme or full UI skin (changes layout & player controls).", |ui| {
                             let themes = [
+                                ("cloudflare-docs", "Cloudflare Docs", Color32::from_rgb(13, 17, 23), Color32::from_rgb(47, 129, 247)),
                                 ("oled-black", "OLED Super Black", Color32::BLACK, Color32::from_rgb(246, 130, 31)),
+                                ("vlc", "VLC Classic", Color32::from_rgb(37, 37, 38), Color32::from_rgb(255, 136, 0)),
+                                ("netflix", "Netflix", Color32::from_rgb(20, 20, 20), Color32::from_rgb(229, 9, 20)),
+                                ("youtube", "YouTube Player", Color32::from_rgb(15, 15, 15), Color32::from_rgb(62, 166, 255)),
                                 ("valor-purple", "Obsidian Violet", Color32::from_rgb(16, 16, 16), Color32::from_rgb(168, 85, 247)),
                                 ("github-midnight", "GitHub Midnight", Color32::from_rgb(13, 17, 23), Color32::from_rgb(31, 111, 235)),
                                 ("cyber-crimson", "Cyber Crimson", Color32::from_rgb(12, 10, 15), Color32::from_rgb(244, 63, 94)),
@@ -322,14 +326,14 @@ pub fn render(
                                 ui.spacing_mut().item_spacing = Vec2::new(12.0, 10.0);
                                 for (id, label, bg_col, accent_col) in themes {
                                     let active = state.settings.skin_id == id
-                                        || (id == "valor-purple" && !["oled-black", "github-midnight", "cyber-crimson", "emerald-studio"].contains(&state.settings.skin_id.as_str()));
+                                        || (id == "valor-purple" && !["cloudflare-docs", "oled-black", "vlc", "netflix", "youtube", "github-midnight", "cyber-crimson", "emerald-studio"].contains(&state.settings.skin_id.as_str()) && !state.settings.skin_id.starts_with("custom:"));
                                     let (card_rect, resp) = ui.allocate_exact_size(Vec2::new(156.0, 64.0), Sense::click());
                                     if resp.hovered() {
                                         ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
                                     }
                                     ui.painter().rect(
                                         card_rect,
-                                        CornerRadius::same(8),
+                                        CornerRadius::ZERO,
                                         bg_col,
                                         Stroke::new(
                                             if active { 2.0 } else { 1.0 },
@@ -348,30 +352,127 @@ pub fn render(
                                     );
                                     if resp.clicked() {
                                         state.settings.skin_id = id.to_string();
+                                        state.settings.custom_skin_path.clear();
+                                        state.skin_load_error = None;
                                     }
                                 }
                             });
+                            ui.add_space(12.0);
+                            sub_divider(ui, tokens);
+                            ui.add_space(10.0);
+                            setting_row(ui, tokens, "Theme accent color", "Apply a custom accent color across buttons, active cards, and the player timeline.", |ui| {
+                                let palette = [
+                                    ("", "Default", tokens.accent),
+                                    ("#E50914", "Valor Red", Color32::from_rgb(229, 9, 20)),
+                                    ("#F59E0B", "Amber", Color32::from_rgb(245, 158, 11)),
+                                    ("#3B82F6", "Electric Blue", Color32::from_rgb(59, 130, 246)),
+                                    ("#10B981", "Emerald", Color32::from_rgb(16, 185, 129)),
+                                    ("#A855F7", "Violet", Color32::from_rgb(168, 85, 247)),
+                                    ("#F43F5E", "Rose", Color32::from_rgb(244, 63, 94)),
+                                    ("#06B6D4", "Cyan", Color32::from_rgb(6, 182, 212)),
+                                    ("#EAB308", "Gold", Color32::from_rgb(234, 179, 8)),
+                                ];
+                                ui.horizontal_wrapped(|ui| {
+                                    ui.spacing_mut().item_spacing = Vec2::new(8.0, 8.0);
+                                    for (hex, label, swatch_col) in palette {
+                                        let active = state.settings.accent_color.eq_ignore_ascii_case(hex);
+                                        let (rect, resp) = ui.allocate_exact_size(Vec2::new(28.0, 28.0), Sense::click());
+                                        if resp.hovered() {
+                                            ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+                                        }
+                                        let fill = if hex.is_empty() { Color32::from_gray(72) } else { swatch_col };
+                                        ui.painter().circle_filled(rect.center(), if active { 11.5 } else { 10.0 }, fill);
+                                        if active {
+                                            ui.painter().circle_stroke(rect.center(), 13.0, Stroke::new(2.0, Color32::WHITE));
+                                        } else if resp.hovered() {
+                                            ui.painter().circle_stroke(rect.center(), 12.0, Stroke::new(1.5, Color32::from_white_alpha(150)));
+                                        }
+                                        if resp.clicked() {
+                                            state.settings.accent_color = hex.to_string();
+                                        }
+                                        resp.on_hover_text(label);
+                                    }
+                                });
+                            });
+                            ui.add_space(10.0);
+                            sub_divider(ui, tokens);
+                            ui.add_space(10.0);
+                            setting_row(ui, tokens, "Load external skin bundle (.json / .zip)", "Import a JSON skin or .zip bundle (skin.json + icons/) to customize the entire UI.", |ui| {
+                                ui.horizontal(|ui| {
+                                    if ui.button("Load Skin Bundle...").clicked() {
+                                        action = ShellAction::LoadSkinPicker;
+                                    }
+                                    if !state.settings.custom_skin_path.is_empty() || ["vlc", "netflix", "youtube"].contains(&state.settings.skin_id.as_str()) {
+                                        if ui.button("Reset Default").clicked() {
+                                            action = ShellAction::ResetSkin;
+                                        }
+                                    }
+                                });
+                            });
+                            ui.add_space(6.0);
+                            ui.label(
+                                RichText::new(format!(
+                                    "Active skin: {} ({}) • Player: {} • Shell: {:?}",
+                                    tokens.skin.name,
+                                    tokens.skin.id,
+                                    tokens.skin.player_layout.style,
+                                    tokens.skin.shell_layout.nav_position
+                                ))
+                                .size(11.5)
+                                .color(tokens.text_tertiary),
+                            );
+                            if !state.settings.custom_skin_path.is_empty() {
+                                ui.label(
+                                    RichText::new(format!("Loaded file: {}", state.settings.custom_skin_path))
+                                        .size(11.0)
+                                        .color(tokens.text_secondary),
+                                );
+                            }
+                            if let Some(err) = &state.skin_load_error {
+                                ui.label(
+                                    RichText::new(err)
+                                        .size(11.5)
+                                        .color(Color32::from_rgb(239, 68, 68)),
+                                );
+                            }
                         });
                         ui.add_space(16.0);
 
                         // Card: Comfort
                         setting_card(ui, tokens, "Comfort", "Make long viewing sessions easier on your eyes.", |ui| {
                             setting_row(ui, tokens, "Interface brightness", "Dims the interface. Chrome only.", |ui| {
-                                let mut dummy = 3;
-                                segmented_pills(ui, &["85%", "90%", "95%", "100%"], dummy, tokens);
+                                let vals = [85u8, 90, 95, 100];
+                                let idx = vals.iter().position(|&v| v == state.settings.interface_brightness).unwrap_or(3);
+                                if let Some(new_idx) = segmented_pills(ui, &["85%", "90%", "95%", "100%"], idx, tokens) {
+                                    state.settings.interface_brightness = vals[new_idx];
+                                }
                             });
                             setting_row(ui, tokens, "Text size", "Scales text across the app.", |ui| {
-                                let mut dummy = 1;
+                                let vals = [90u8, 100, 110, 120];
+                                let idx = vals.iter().position(|&v| v == state.settings.text_scale_pct).unwrap_or(1);
                                 ui.horizontal(|ui| {
                                     ui.label(RichText::new("Aa").size(13.0).color(tokens.text_tertiary));
                                     ui.add_space(6.0);
-                                    segmented_pills(ui, &["90%", "100%", "110%", "120%"], dummy, tokens);
+                                    if let Some(new_idx) = segmented_pills(ui, &["90%", "100%", "110%", "120%"], idx, tokens) {
+                                        state.settings.text_scale_pct = vals[new_idx];
+                                    }
                                 });
                             });
                             setting_row(ui, tokens, "Reduce motion", "Turns off most animations. \"System\" follows your device.", |ui| {
-                                let mut idx = if state.settings.prefers_reduced_motion { 1 } else { 0 };
+                                let idx = match state.settings.reduce_motion_mode.as_str() {
+                                    "on" => 1,
+                                    "off" => 2,
+                                    _ => 0,
+                                };
                                 if let Some(new_idx) = segmented_pills(ui, &["System", "On", "Off"], idx, tokens) {
+                                    let mode = match new_idx {
+                                        1 => "on",
+                                        2 => "off",
+                                        _ => "system",
+                                    };
+                                    state.settings.reduce_motion_mode = mode.to_string();
                                     state.settings.prefers_reduced_motion = new_idx == 1;
+                                    state.settings.animation_speed = if new_idx == 1 { 0.0 } else { 1.0 };
                                 }
                             });
                         });
@@ -411,29 +512,62 @@ pub fn render(
 
                         // Card: History (Image 2 & 3)
                         setting_card(ui, tokens, "History", "Playback tracking, save intervals, and message durations.", |ui| {
+                            let hist_limit_id = ui.scope_id().with("history_limit_val");
+                            let mut hist_limit: usize = ui.data(|d| d.get_temp(hist_limit_id)).unwrap_or(0);
+                            let hist_label = match hist_limit {
+                                0 => "Infinite (default)",
+                                10 => "10 items",
+                                25 => "25 items",
+                                50 => "50 items",
+                                _ => "Infinite (default)",
+                            };
                             setting_row(ui, tokens, "History limit", "How many titles to display in History. All data is securely stored in database.", |ui| {
                                 egui::ComboBox::from_id_salt("history_limit")
-                                    .selected_text("10 items (default)")
+                                    .selected_text(hist_label)
                                     .show_ui(ui, |ui| {
-                                        let mut dummy = 10;
-                                        ui.selectable_value(&mut dummy, 10, "10 items (default)");
-                                        ui.selectable_value(&mut dummy, 25, "25 items");
-                                        ui.selectable_value(&mut dummy, 50, "50 items");
+                                        ui.selectable_value(&mut hist_limit, 0, "Infinite (default)");
+                                        ui.selectable_value(&mut hist_limit, 10, "10 items");
+                                        ui.selectable_value(&mut hist_limit, 25, "25 items");
+                                        ui.selectable_value(&mut hist_limit, 50, "50 items");
                                     });
                             });
-                            setting_row(ui, tokens, "Watch history backup", "Bring back the history stored on the server.", |ui| {
-                                ui.button("↺ Restore from server");
-                            });
+                            ui.data_mut(|d| d.insert_temp(hist_limit_id, hist_limit));
+                            let msg_dur_id = ui.scope_id().with("msg_duration_val");
+                            let mut msg_dur: u32 = ui.data(|d| d.get_temp(msg_dur_id)).unwrap_or(40);
+                            let msg_label = match msg_dur {
+                                20 => "2.0 seconds",
+                                40 => "4.0 seconds (default)",
+                                60 => "6.0 seconds",
+                                _ => "4.0 seconds (default)",
+                            };
                             setting_row(ui, tokens, "Message duration", "How long pop-up messages stay on screen.", |ui| {
                                 egui::ComboBox::from_id_salt("msg_duration")
-                                    .selected_text("4.0 seconds (default)")
-                                    .show_ui(ui, |_| {});
+                                    .selected_text(msg_label)
+                                    .show_ui(ui, |ui| {
+                                        ui.selectable_value(&mut msg_dur, 20, "2.0 seconds");
+                                        ui.selectable_value(&mut msg_dur, 40, "4.0 seconds (default)");
+                                        ui.selectable_value(&mut msg_dur, 60, "6.0 seconds");
+                                    });
                             });
+                            ui.data_mut(|d| d.insert_temp(msg_dur_id, msg_dur));
+                            let overlay_dur_id = ui.scope_id().with("overlay_duration_val");
+                            let mut overlay_dur: u32 = ui.data(|d| d.get_temp(overlay_dur_id)).unwrap_or(15);
+                            let overlay_label = match overlay_dur {
+                                15 => "1.5 seconds (default)",
+                                30 => "3.0 seconds",
+                                50 => "5.0 seconds",
+                                _ => "1.5 seconds (default)",
+                            };
                             setting_row(ui, tokens, "Hide overlays after", "How long overlays stay once you stop moving the mouse.", |ui| {
                                 egui::ComboBox::from_id_salt("overlay_duration")
-                                    .selected_text("1.5 seconds (default)")
-                                    .show_ui(ui, |_| {});
+                                    .selected_text(overlay_label)
+                                    .show_ui(ui, |ui| {
+                                        ui.selectable_value(&mut overlay_dur, 15, "1.5 seconds (default)");
+                                        ui.selectable_value(&mut overlay_dur, 30, "3.0 seconds");
+                                        ui.selectable_value(&mut overlay_dur, 50, "5.0 seconds");
+                                    });
                             });
+                            ui.data_mut(|d| d.insert_temp(overlay_dur_id, overlay_dur));
                         });
                         ui.add_space(16.0);
 
@@ -1129,31 +1263,69 @@ pub fn render(
                         let mut osub_hash: bool = ui.data(|d| d.get_temp(osub_hash_id)).unwrap_or(true);
                         let mut discord_rpc: bool = ui.data(|d| d.get_temp(discord_id)).unwrap_or(false);
 
-                        setting_card(ui, tokens, "Trakt.tv", "Sync playback progress, scrobble watched items, and manage ratings across devices.", |ui| {
+                        let trakt_connected = !state.settings.trakt_access_token.trim().is_empty();
+                        setting_card(ui, tokens, "Trakt.tv", "Sync playback progress, scrobble watched items, and manage ratings via the web backend.", |ui| {
                             setting_row(ui, tokens, "Trakt username / handle", "Account used for scrobbling and history sync.", |ui| {
                                 ui.add_sized(
                                     [200.0, 30.0],
-                                    egui::TextEdit::singleline(&mut trakt_user).hint_text("@username"),
+                                    egui::TextEdit::singleline(&mut state.settings.trakt_username).hint_text("@username"),
                                 );
                             });
                             sub_divider(ui, tokens);
-                            setting_row(ui, tokens, "Account connection", if trakt_connected { "Connected and syncing playback events." } else { "Link your Trakt VIP or community account." }, |ui| {
-                                let btn_text = if trakt_connected { "✓ Connected (Disconnect)" } else { "Connect Trakt" };
-                                let btn = egui::Button::new(RichText::new(btn_text).size(12.5).strong().color(Color32::WHITE))
-                                    .fill(if trakt_connected { Color32::from_rgb(22, 101, 52) } else { tokens.accent })
-                                    .min_size(Vec2::new(150.0, 32.0))
-                                    .corner_radius(CornerRadius::same(6));
-                                if ui.add(btn).clicked() {
-                                    trakt_connected = !trakt_connected;
-                                }
-                            });
+                            setting_row(
+                                ui,
+                                tokens,
+                                "Account connection",
+                                if trakt_connected {
+                                    "Connected via Trakt Device OAuth."
+                                } else {
+                                    "Link your Trakt account via trakt.tv/activate."
+                                },
+                                |ui| {
+                                    ui.horizontal(|ui| {
+                                        if trakt_connected {
+                                            let btn = egui::Button::new(RichText::new("✓ Connected (Disconnect)").size(12.5).strong().color(Color32::WHITE))
+                                                .fill(Color32::from_rgb(22, 101, 52))
+                                                .min_size(Vec2::new(165.0, 32.0))
+                                                .corner_radius(CornerRadius::same(6));
+                                            if ui.add(btn).clicked() {
+                                                action = ShellAction::DisconnectTrakt;
+                                            }
+                                        } else {
+                                            let btn = egui::Button::new(RichText::new("Connect Trakt").size(12.5).strong().color(Color32::WHITE))
+                                                .fill(tokens.accent)
+                                                .min_size(Vec2::new(135.0, 32.0))
+                                                .corner_radius(CornerRadius::same(6));
+                                            if ui.add(btn).clicked() {
+                                                action = ShellAction::StartTraktDeviceAuth;
+                                            }
+                                        }
+                                    });
+                                },
+                            );
+                            if let Some((ref user_code, _, ref verify_url)) = state.trakt_device_code {
+                                sub_divider(ui, tokens);
+                                ui.horizontal_wrapped(|ui| {
+                                    ui.label(RichText::new(format!("Enter code {user_code} at {verify_url}:")).size(12.5).color(tokens.text_primary));
+                                    let poll_btn = egui::Button::new(RichText::new("Verify Activation").size(12.0).strong().color(Color32::WHITE))
+                                        .fill(tokens.accent)
+                                        .corner_radius(CornerRadius::same(6));
+                                    if ui.add(poll_btn).clicked() {
+                                        action = ShellAction::PollTraktDeviceToken;
+                                    }
+                                });
+                            }
+                            if let Some(ref msg) = state.trakt_status_msg {
+                                ui.add_space(4.0);
+                                ui.label(RichText::new(msg).size(12.0).color(tokens.text_secondary));
+                            }
                             sub_divider(ui, tokens);
                             setting_row(ui, tokens, "Automatic scrobble", "Send play, pause, and finish signals to Trakt automatically.", |ui| {
-                                toggle_switch(ui, &mut trakt_scrobble, tokens);
+                                toggle_switch(ui, &mut state.settings.trakt_scrobble, tokens);
                             });
                             sub_divider(ui, tokens);
                             setting_row(ui, tokens, "Sync ratings & history", "Pull and push watched status and ratings across devices.", |ui| {
-                                toggle_switch(ui, &mut trakt_sync_ratings, tokens);
+                                toggle_switch(ui, &mut state.settings.trakt_sync_ratings, tokens);
                             });
                         });
                         ui.add_space(16.0);
@@ -1209,6 +1381,21 @@ pub fn render(
                                 ui.add_sized(
                                     [220.0, 30.0],
                                     egui::TextEdit::singleline(&mut state.settings.tmdb_api_key).password(true).hint_text("Enter TMDB key..."),
+                                );
+                            });
+                            sub_divider(ui, tokens);
+                            setting_row(ui, tokens, "Auto-skip Intro (TheIntroDB)", "Automatically jump past intro segments fetched from TheIntroDB & web database.", |ui| {
+                                toggle_switch(ui, &mut state.settings.auto_skip_intro, tokens);
+                            });
+                            sub_divider(ui, tokens);
+                            setting_row(ui, tokens, "Auto-skip Outro / Credits", "Automatically skip ending credits segments when detected.", |ui| {
+                                toggle_switch(ui, &mut state.settings.auto_skip_outro, tokens);
+                            });
+                            sub_divider(ui, tokens);
+                            setting_row(ui, tokens, "TheIntroDB API Key", "Optional key for higher rate limits on api.theintrodb.org.", |ui| {
+                                ui.add_sized(
+                                    [220.0, 30.0],
+                                    egui::TextEdit::singleline(&mut state.settings.theintrodb_api_key).password(true).hint_text("Optional TheIntroDB key..."),
                                 );
                             });
                         });

@@ -41,7 +41,17 @@ pub struct PlayerSnapshot {
     pub shuffle: bool,
     pub repeat: queue::RepeatMode,
     pub tracks: Vec<PlayerTrack>,
+    pub chapters: Vec<PlayerChapter>,
     pub zoom_to_fill: bool,
+    pub is_hdr: bool,
+    pub hdr_boost: bool,
+}
+
+/// One chapter marker reported by mpv.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct PlayerChapter {
+    pub title: String,
+    pub start_secs: f64,
 }
 
 /// One audio or subtitle stream reported by mpv.
@@ -152,6 +162,13 @@ pub enum PlayerCommand {
         token: u64,
         index: usize,
     },
+    Enqueue {
+        token: u64,
+        paths: Vec<PathBuf>,
+    },
+    ClearQueue {
+        token: u64,
+    },
     RemoveQueueItem {
         token: u64,
         index: usize,
@@ -172,6 +189,20 @@ pub enum PlayerCommand {
     SetZoomToFill {
         token: u64,
         enabled: bool,
+    },
+    SetHdrBoost {
+        token: u64,
+        enabled: bool,
+    },
+    SetPictureControls {
+        token: u64,
+        enabled: bool,
+        lighting: i32,
+        shadows: i32,
+        contrast: i32,
+        sharpness: i32,
+        vibrance: i32,
+        hdr_boost: i32,
     },
     Shutdown,
 }

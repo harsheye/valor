@@ -20,6 +20,18 @@ fn default_skip_secs() -> u32 {
     10
 }
 
+fn default_interface_brightness() -> u8 {
+    100
+}
+
+fn default_text_scale_pct() -> u8 {
+    100
+}
+
+fn default_reduce_motion_mode() -> String {
+    "system".to_string()
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
@@ -32,6 +44,8 @@ pub struct Settings {
     pub default_sub_lang: String,
     pub auto_next: bool,
     pub auto_next_countdown_secs: u32,
+    pub auto_skip_intro: bool,
+    pub auto_skip_outro: bool,
     #[serde(default = "default_skip_secs")]
     pub skip_secs: u32,
     pub end_of_collection_action: String, // "home", "stay", "replay"
@@ -51,13 +65,35 @@ pub struct Settings {
 
     // Skin & Appearance
     pub skin_id: String,
+    #[serde(default)]
+    pub custom_skin_path: String,
+    #[serde(default)]
+    pub accent_color: String,
     pub icon_pack_id: String,
     pub animation_speed: f64, // 1.0 = normal, 0.5 = slow, 0.0 = reduced motion
     pub prefers_reduced_motion: bool,
+    #[serde(default = "default_interface_brightness")]
+    pub interface_brightness: u8, // 85, 90, 95, 100
+    #[serde(default = "default_text_scale_pct")]
+    pub text_scale_pct: u8, // 90, 100, 110, 120
+    #[serde(default = "default_reduce_motion_mode")]
+    pub reduce_motion_mode: String, // "system", "on", "off"
 
     // Online Metadata
     pub tmdb_enabled: bool,
     pub tmdb_api_key: String,
+    #[serde(default)]
+    pub theintrodb_api_key: String,
+    #[serde(default)]
+    pub trakt_access_token: String,
+    #[serde(default)]
+    pub trakt_refresh_token: String,
+    #[serde(default)]
+    pub trakt_username: String,
+    #[serde(default)]
+    pub trakt_scrobble: bool,
+    #[serde(default)]
+    pub trakt_sync_ratings: bool,
 
     // UI Settings Dock Toggles
     pub dock_tiles: [bool; 16],
@@ -78,6 +114,8 @@ impl Default for Settings {
             default_sub_lang: "eng".to_string(),
             auto_next: true,
             auto_next_countdown_secs: 5,
+            auto_skip_intro: true,
+            auto_skip_outro: true,
             skip_secs: 10,
             end_of_collection_action: "home".to_string(),
             confirm_quit_while_playing: true,
@@ -92,11 +130,22 @@ impl Default for Settings {
             lock_controls: false,
             tone_mapping_mode: "auto".to_string(),
             skin_id: "amber-dark".to_string(),
+            custom_skin_path: String::new(),
+            accent_color: String::new(),
             icon_pack_id: "lucide-default".to_string(),
             animation_speed: 1.0,
             prefers_reduced_motion: false,
+            interface_brightness: 100,
+            text_scale_pct: 100,
+            reduce_motion_mode: "system".to_string(),
             tmdb_enabled: false,
             tmdb_api_key: String::new(),
+            theintrodb_api_key: String::new(),
+            trakt_access_token: String::new(),
+            trakt_refresh_token: String::new(),
+            trakt_username: String::new(),
+            trakt_scrobble: true,
+            trakt_sync_ratings: true,
             dock_tiles: [
                 true, true, true, true, true, true, false, true, true, false, false, true, false,
                 true, false, false,

@@ -211,9 +211,24 @@ fn contains_video(path: &Path, depth: u8) -> bool {
 }
 
 #[derive(Debug, Clone, Default)]
+pub struct TmdbRecommendation {
+    pub tmdb_id: u64,
+    pub title: String,
+    pub media_type: String,
+    pub vote_average: f32,
+    pub release_year: String,
+    pub reason: String,
+}
+
+#[derive(Debug, Clone, Default)]
 pub struct TmdbSeriesInfo {
     pub tmdb_id: u64,
     pub name: String,
+    pub media_type: String,
+    pub release_year: String,
+    pub vote_average: f32,
+    pub overview: String,
+    pub genres: Vec<String>,
     pub total_seasons: u32,
     pub total_episodes: u32,
     pub season_episode_counts: std::collections::HashMap<u32, u32>,
@@ -223,6 +238,7 @@ pub struct TmdbSeriesInfo {
 pub struct ShellState {
     pub settings: valor_core::settings::Settings,
     pub selected_media_info: Option<String>,
+    pub skin_load_error: Option<String>,
     pub settings_section: usize,
     pub settings_search: String,
     pub settings_scroll_speed: u16,
@@ -264,8 +280,10 @@ pub struct ShellState {
     pub tmdb_series_cache: std::collections::HashMap<String, TmdbSeriesInfo>,
     pub tmdb_pending: std::collections::HashSet<String>,
     pub sort_choice: SortChoice,
-    pub movie_list_col_widths: [f32; 6],
+    pub movie_list_col_widths: [f32; 9],
     pub series_list_col_widths: [f32; 5],
+    pub media_telemetry: std::collections::HashMap<String, valor_core::models::MediaTelemetry>,
+    pub tmdb_recommendations: Vec<TmdbRecommendation>,
     pub gallery_layout: GalleryLayout,
     pub tile_size: TileSize,
     pub group_by_date: bool,
@@ -274,6 +292,16 @@ pub struct ShellState {
     pub history_count: usize,
     pub fake_hover_settings: bool,
     pub fake_hover_close: bool,
+    pub trakt_device_code: Option<(String, String, String)>,
+    pub trakt_status_msg: Option<String>,
+    pub list_sort_col: usize,
+    pub list_sort_asc: bool,
+    pub playlists: Vec<valor_core::models::Collection>,
+    pub selected_playlist_id: Option<String>,
+    pub new_playlist_name: String,
+    pub add_to_playlist_target: Option<String>,
+    pub playlist_picker_open: bool,
+    pub playlist_picker_query: String,
 
     // Async worker channels for lazy folder child loading
     worker_tx: Sender<PathBuf>,
@@ -317,6 +345,7 @@ impl ShellState {
         Self {
             settings: valor_core::settings::Settings::load().unwrap_or_default(),
             selected_media_info: None,
+            skin_load_error: None,
             settings_section: 0,
             settings_search: String::new(),
             settings_scroll_speed: 100,
@@ -357,8 +386,10 @@ impl ShellState {
             selected_series: None,
             tmdb_series_cache: std::collections::HashMap::new(),
             tmdb_pending: std::collections::HashSet::new(),
-            movie_list_col_widths: [280.0, 140.0, 75.0, 80.0, 75.0, 70.0],
+            movie_list_col_widths: [250.0, 130.0, 70.0, 72.0, 72.0, 62.0, 124.0, 88.0, 56.0],
             series_list_col_widths: [280.0, 80.0, 80.0, 100.0, 70.0],
+            media_telemetry: std::collections::HashMap::new(),
+            tmdb_recommendations: Vec::new(),
             sort_choice: SortChoice::default(),
             gallery_layout: GalleryLayout::River,
             tile_size: TileSize::Medium,
@@ -368,6 +399,16 @@ impl ShellState {
             history_count: 0,
             fake_hover_settings: false,
             fake_hover_close: false,
+            trakt_device_code: None,
+            trakt_status_msg: None,
+            list_sort_col: 0,
+            list_sort_asc: true,
+            playlists: Vec::new(),
+            selected_playlist_id: None,
+            new_playlist_name: String::new(),
+            add_to_playlist_target: None,
+            playlist_picker_open: false,
+            playlist_picker_query: String::new(),
             worker_tx,
             worker_rx,
         }

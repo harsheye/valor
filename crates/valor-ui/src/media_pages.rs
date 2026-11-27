@@ -41,9 +41,9 @@ fn thumbnail_path(fingerprint: &str) -> Option<std::path::PathBuf> {
 
 fn padded_choice(ui: &mut Ui, label: &str, selected: bool, tokens: &ShellTokens) -> egui::Response {
     let fill = if selected {
-        tokens.accent.gamma_multiply(0.24)
+        tokens.selected_fill
     } else {
-        tokens.card_fill
+        tokens.field_fill
     };
     let stroke = Stroke::new(
         1.0,
@@ -54,11 +54,15 @@ fn padded_choice(ui: &mut Ui, label: &str, selected: bool, tokens: &ShellTokens)
         },
     );
     ui.add_sized(
-        [ui.available_width().clamp(68.0, 160.0), 36.0],
-        egui::Button::new(RichText::new(label).size(13.5))
-            .fill(fill)
-            .stroke(stroke)
-            .corner_radius(CornerRadius::same(8)),
+        [ui.available_width().clamp(64.0, 148.0), 30.0],
+        egui::Button::new(
+            RichText::new(label)
+                .size(12.5)
+                .color(if selected { Color32::WHITE } else { tokens.text_secondary }),
+        )
+        .fill(fill)
+        .stroke(stroke)
+        .corner_radius(CornerRadius::ZERO),
     )
 }
 
@@ -66,7 +70,7 @@ fn card_frame(tokens: &ShellTokens) -> Frame {
     Frame::new()
         .fill(tokens.card_fill)
         .stroke(Stroke::new(1.0, tokens.divider))
-        .corner_radius(CornerRadius::same(8))
+        .corner_radius(CornerRadius::ZERO)
         .inner_margin(12.0)
 }
 
@@ -274,7 +278,7 @@ fn render_named_poster_card(
     tokens: &ShellTokens,
 ) {
     let base_color = title_color(title, tokens);
-    ui.painter().rect_filled(rect, CornerRadius::same(10), base_color);
+    ui.painter().rect_filled(rect, CornerRadius::ZERO, base_color);
 
     // Subtle dark gradient bottom for readability
     let dark_overlay = Rect::from_min_max(
@@ -283,7 +287,7 @@ fn render_named_poster_card(
     );
     ui.painter().rect_filled(
         dark_overlay,
-        CornerRadius { nw: 0, ne: 0, sw: 10, se: 10 },
+        CornerRadius::ZERO,
         Color32::from_rgba_unmultiplied(12, 16, 26, 200),
     );
 
@@ -322,7 +326,7 @@ fn render_named_poster_card(
     if is_hovered {
         ui.painter().rect_stroke(
             rect,
-            CornerRadius::same(10),
+            CornerRadius::ZERO,
             Stroke::new(2.0, tokens.accent),
             egui::StrokeKind::Inside,
         );
@@ -338,7 +342,7 @@ fn render_named_poster_card(
     } else {
         ui.painter().rect_stroke(
             rect,
-            CornerRadius::same(10),
+            CornerRadius::ZERO,
             Stroke::new(1.0, tokens.field_border),
             egui::StrokeKind::Inside,
         );
@@ -356,6 +360,14 @@ pub(crate) fn attach_media_context_menu(
         ui.set_min_width(170.0);
         if ui.button("▶  Play in Valor").clicked() {
             *action = ShellAction::PlayMedia(std::path::PathBuf::from(file_path));
+            ui.close();
+        }
+        if ui.button("➕  Add to Queue").clicked() {
+            *action = ShellAction::EnqueueMedia(vec![std::path::PathBuf::from(file_path)]);
+            ui.close();
+        }
+        if ui.button("📋  Add to Playlist...").clicked() {
+            *action = ShellAction::OpenAddToPlaylistModal(file_path.to_string());
             ui.close();
         }
         if ui.button("↗  Open with...").clicked() {
@@ -387,22 +399,55 @@ fn render_movie_grid(
         let total_table_w: f32 = state.movie_list_col_widths.iter().sum::<f32>().max(avail_w);
 
         // Windows Explorer-like Table Header with interactive draggable dividers
-        let header_titles = ["Name", "Date", "Type", "Size", "Length", "Quality"];
+        let header_titles = ["Name", "Date", "Type", "Size", "Length", "Quality", "Last Played", "Time Spent", "Skips"];
         let (header_rect, _) = ui.allocate_exact_size(Vec2::new(total_table_w, 28.0), Sense::hover());
-        ui.painter().rect_filled(header_rect, CornerRadius::same(4), tokens.field_fill);
+        ui.painter().rect_filled(header_rect, CornerRadius::ZERO, tokens.field_fill);
 
         let mut col_x = header_rect.left();
-        for i in 0..6 {
+        for i in 0..9 {
             let col_w = state.movie_list_col_widths[i];
             let header_text = header_titles[i];
-
-            ui.painter().text(
-                Pos2::new(col_x + 10.0, header_rect.center().y),
-                Align2::LEFT_CENTER,
-                header_text,
-                FontId::proportional(11.5),
-                tokens.text_tertiary,
+            let cell_rect = Rect::from_min_size(
+                Pos2::new(col_x, header_rect.top()),
+                Vec2::new((col_w - 6.0).max(20.0), header_rect.height()),
             );
+            let cell_resp = ui.interact(cell_rect, ui.scope_id().with(("movie_col_sort", i)), Sense::click());
+            let is_active = state.list_sort_col == i;
+            if cell_resp.hovered() {
+                ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+                ui.painter().rect_filled(cell_rect, CornerRadius::ZERO, tokens.hover_fill);
+            } else if is_active {
+                ui.painter().rect_filled(cell_rect, CornerRadius::ZERO, tokens.selected_fill);
+            }
+
+            let galley = ui.painter().layout_no_wrap(
+                header_text.to_string(),
+                FontId::proportional(11.5),
+                if is_active { Color32::WHITE } else { tokens.text_tertiary },
+            );
+            let t_pos = Pos2::new(col_x + 10.0, header_rect.center().y - galley.size().y * 0.5);
+            let icon_x = t_pos.x + galley.size().x + 8.0;
+            ui.painter().galley(t_pos, galley, tokens.text_tertiary);
+            if is_active {
+                let cy = header_rect.center().y;
+                let dir = if state.list_sort_asc { -1.0 } else { 1.0 };
+                ui.painter().line_segment(
+                    [Pos2::new(icon_x - 3.5, cy - 1.5 * dir), Pos2::new(icon_x, cy + 2.0 * dir)],
+                    Stroke::new(1.5, tokens.accent),
+                );
+                ui.painter().line_segment(
+                    [Pos2::new(icon_x, cy + 2.0 * dir), Pos2::new(icon_x + 3.5, cy - 1.5 * dir)],
+                    Stroke::new(1.5, tokens.accent),
+                );
+            }
+            if cell_resp.clicked() {
+                if state.list_sort_col == i {
+                    state.list_sort_asc = !state.list_sort_asc;
+                } else {
+                    state.list_sort_col = i;
+                    state.list_sort_asc = true;
+                }
+            }
 
             let right_x = col_x + col_w;
             ui.painter().vline(right_x, header_rect.y_range(), Stroke::new(1.0, tokens.divider));
@@ -424,12 +469,45 @@ fn render_movie_grid(
 
         ui.add_space(2.0);
 
+        let mut sorted_movies: Vec<&MovieCardViewModel> = movies.iter().collect();
+        sorted_movies.sort_by(|a, b| {
+            let ord = match state.list_sort_col {
+                0 => a.display_title.to_lowercase().cmp(&b.display_title.to_lowercase()),
+                1 => a.created_at.cmp(&b.created_at),
+                2 => {
+                    let ea = std::path::Path::new(&a.primary_file_path).extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase();
+                    let eb = std::path::Path::new(&b.primary_file_path).extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase();
+                    ea.cmp(&eb)
+                }
+                3 => a.versions.first().map(|v| v.size_bytes).unwrap_or(0).cmp(&b.versions.first().map(|v| v.size_bytes).unwrap_or(0)),
+                4 => a.duration_secs.total_cmp(&b.duration_secs),
+                5 => a.height.unwrap_or(0).cmp(&b.height.unwrap_or(0)),
+                6 => {
+                    let ta = state.media_telemetry.get(&a.primary_fingerprint).and_then(|t| t.last_played_at);
+                    let tb = state.media_telemetry.get(&b.primary_fingerprint).and_then(|t| t.last_played_at);
+                    ta.cmp(&tb)
+                }
+                7 => {
+                    let sa = state.media_telemetry.get(&a.primary_fingerprint).map(|t| t.time_spent_secs).unwrap_or(0.0);
+                    let sb = state.media_telemetry.get(&b.primary_fingerprint).map(|t| t.time_spent_secs).unwrap_or(0.0);
+                    sa.total_cmp(&sb)
+                }
+                8 => {
+                    let ka = state.media_telemetry.get(&a.primary_fingerprint).map(|t| t.skips_used).unwrap_or(0);
+                    let kb = state.media_telemetry.get(&b.primary_fingerprint).map(|t| t.skips_used).unwrap_or(0);
+                    ka.cmp(&kb)
+                }
+                _ => std::cmp::Ordering::Equal,
+            };
+            if state.list_sort_asc { ord } else { ord.reverse() }
+        });
+
         // Table Rows (Windows Explorer style: clickable rows, play button removed)
         egui::ScrollArea::both()
             .id_salt("library_movie_list_table")
             .auto_shrink([false; 2])
             .show(ui, |ui| {
-                for movie in movies {
+                for movie in sorted_movies {
                     let (row_rect, row_resp) = ui.allocate_exact_size(Vec2::new(total_table_w, 32.0), Sense::click());
                     let hover = row_resp.hovered();
                     if hover {
@@ -511,6 +589,37 @@ fn render_movie_grid(
                     let res_str = movie.height.map(|h| format!("{h}p")).unwrap_or_else(|| "HD".into());
                     let disp_res = truncate_text(ui, &res_str, FontId::proportional(12.0), (col5_w - 16.0).max(10.0));
                     ui.painter().text(Pos2::new(rx + 10.0, row_rect.center().y), Align2::LEFT_CENTER, disp_res, FontId::proportional(12.0), tokens.text_secondary);
+                    rx += col5_w;
+                    ui.painter().vline(rx, row_rect.y_range(), Stroke::new(1.0, tokens.divider.gamma_multiply(0.4)));
+
+                    let tele = state.media_telemetry.get(&movie.primary_fingerprint);
+                    // Column 6: Last Played
+                    let col6_w = state.movie_list_col_widths[6];
+                    let last_txt = tele
+                        .and_then(|t| t.last_played_at)
+                        .map(|dt| dt.with_timezone(&chrono::Local).format("%m/%d %I:%M %p").to_string())
+                        .unwrap_or_else(|| "--".to_string());
+                    ui.painter().text(Pos2::new(rx + 10.0, row_rect.center().y), Align2::LEFT_CENTER, &last_txt, FontId::proportional(11.5), tokens.text_secondary);
+                    rx += col6_w;
+                    ui.painter().vline(rx, row_rect.y_range(), Stroke::new(1.0, tokens.divider.gamma_multiply(0.4)));
+
+                    // Column 7: Time Spent
+                    let col7_w = state.movie_list_col_widths[7];
+                    let spent_secs = tele.map(|t| t.time_spent_secs).unwrap_or(0.0);
+                    let spent_txt = if spent_secs >= 60.0 {
+                        format!("{}m {:02}s", (spent_secs / 60.0) as u64, (spent_secs as u64) % 60)
+                    } else if spent_secs >= 1.0 {
+                        format!("{}s", spent_secs as u64)
+                    } else {
+                        "--".to_string()
+                    };
+                    ui.painter().text(Pos2::new(rx + 10.0, row_rect.center().y), Align2::LEFT_CENTER, &spent_txt, FontId::proportional(11.5), tokens.text_secondary);
+                    rx += col7_w;
+                    ui.painter().vline(rx, row_rect.y_range(), Stroke::new(1.0, tokens.divider.gamma_multiply(0.4)));
+
+                    // Column 8: Skips
+                    let skips_txt = tele.map(|t| t.skips_used.to_string()).unwrap_or_else(|| "0".to_string());
+                    ui.painter().text(Pos2::new(rx + 10.0, row_rect.center().y), Align2::LEFT_CENTER, &skips_txt, FontId::proportional(11.5), tokens.text_secondary);
 
                     // Clicking row plays media; right-click opens context menu
                     if row_resp.hovered() {
@@ -579,7 +688,7 @@ fn render_movie_grid(
                                 &movie.primary_fingerprint,
                                 thumb.as_ref(),
                             ) {
-                                ui.painter().rect_filled(rect, CornerRadius::same(10), Color32::BLACK);
+                                ui.painter().rect_filled(rect, CornerRadius::ZERO, Color32::BLACK);
                                 let uv = egui::Rect::from_min_max(
                                     egui::pos2(0.0, 0.0),
                                     egui::pos2(1.0, 1.0),
@@ -587,21 +696,78 @@ fn render_movie_grid(
                                 ui.painter().image(tex.id(), rect, uv, Color32::WHITE);
                                 ui.painter().rect_stroke(
                                     rect,
-                                    CornerRadius::same(10),
+                                    CornerRadius::ZERO,
                                     Stroke::new(1.0, if response.hovered() { tokens.accent } else { tokens.field_border }),
                                     egui::StrokeKind::Inside,
                                 );
                                 if response.hovered() {
-                                    ui.painter().rect_filled(rect, CornerRadius::same(10), Color32::from_black_alpha(100));
-                                    let play_center = rect.center();
-                                    ui.painter().circle_filled(play_center, 26.0, tokens.accent);
-                                    ui.painter().text(
-                                        egui::pos2(play_center.x + 2.0, play_center.y),
-                                        Align2::CENTER_CENTER,
-                                        "▶",
-                                        FontId::proportional(18.0),
-                                        Color32::WHITE,
-                                    );
+                                    if tokens.skin.shell_layout.hover_card_style == crate::skin::HoverCardStyle::NetflixPreview {
+                                        let preview_w = (card_w * 1.24).min(380.0);
+                                        let preview_img_h = (preview_w / 16.0 * 9.0).round();
+                                        let preview_h = preview_img_h + 96.0;
+                                        let preview_pos = egui::pos2(
+                                            (rect.center().x - preview_w * 0.5).max(8.0),
+                                            (rect.center().y - preview_h * 0.5).max(8.0),
+                                        );
+                                        egui::Area::new(ui.scope_id().with(("nf_preview", &movie.primary_fingerprint)))
+                                            .order(egui::Order::Foreground)
+                                            .interactable(false)
+                                            .fixed_pos(preview_pos)
+                                            .show(ui.ctx(), |ui| {
+                                                egui::Frame::new()
+                                                    .fill(Color32::from_rgb(24, 24, 24))
+                                                    .stroke(Stroke::new(1.0, Color32::from_white_alpha(38)))
+                                                    .corner_radius(CornerRadius::same(8))
+                                                    .shadow(egui::Shadow {
+                                                        offset: [0, 8],
+                                                        blur: 20,
+                                                        spread: 2,
+                                                        color: Color32::from_black_alpha(180),
+                                                    })
+                                                    .show(ui, |ui| {
+                                                        ui.set_width(preview_w);
+                                                        let (img_rect, _) = ui.allocate_exact_size(Vec2::new(preview_w, preview_img_h), Sense::hover());
+                                                        ui.painter().image(tex.id(), img_rect, uv, Color32::WHITE);
+                                                        ui.add_space(10.0);
+                                                        ui.horizontal(|ui| {
+                                                            ui.add_space(12.0);
+                                                            let (p_rect, _) = ui.allocate_exact_size(Vec2::splat(30.0), Sense::hover());
+                                                            ui.painter().circle_filled(p_rect.center(), 15.0, Color32::WHITE);
+                                                            ui.painter().text(egui::pos2(p_rect.center().x + 1.5, p_rect.center().y), Align2::CENTER_CENTER, "▶", FontId::proportional(13.0), Color32::BLACK);
+                                                            ui.add_space(6.0);
+                                                            for sym in ["+", "ℹ"] {
+                                                                let (b_rect, _) = ui.allocate_exact_size(Vec2::splat(28.0), Sense::hover());
+                                                                ui.painter().circle_stroke(b_rect.center(), 13.0, Stroke::new(1.2, Color32::from_white_alpha(160)));
+                                                                ui.painter().text(b_rect.center(), Align2::CENTER_CENTER, sym, FontId::proportional(13.0), Color32::WHITE);
+                                                                ui.add_space(4.0);
+                                                            }
+                                                        });
+                                                        ui.add_space(6.0);
+                                                        ui.horizontal(|ui| {
+                                                            ui.add_space(12.0);
+                                                            ui.label(RichText::new(&movie.display_title).size(13.0).strong().color(Color32::WHITE));
+                                                        });
+                                                        ui.add_space(4.0);
+                                                        ui.horizontal(|ui| {
+                                                            ui.add_space(12.0);
+                                                            let dur_txt = if movie.duration_secs > 0.0 { format_hms(movie.duration_secs) } else { "HD".into() };
+                                                            ui.label(RichText::new(dur_txt).size(11.0).color(tokens.text_secondary));
+                                                        });
+                                                        ui.add_space(8.0);
+                                                    });
+                                            });
+                                    } else {
+                                        ui.painter().rect_filled(rect, CornerRadius::ZERO, Color32::from_black_alpha(100));
+                                        let play_center = rect.center();
+                                        ui.painter().circle_filled(play_center, 26.0, tokens.accent);
+                                        ui.painter().text(
+                                            egui::pos2(play_center.x + 2.0, play_center.y),
+                                            Align2::CENTER_CENTER,
+                                            "▶",
+                                            FontId::proportional(18.0),
+                                            Color32::WHITE,
+                                        );
+                                    }
                                 }
                                 drew_image = true;
                             }
@@ -1117,18 +1283,36 @@ pub fn render_library(
     let mut action = ShellAction::None;
     ui.heading(
         RichText::new("Library")
-            .size(typography::PAGE_TITLE)
+            .size(24.0)
             .strong()
             .color(tokens.text_primary),
     );
-    ui.add_space(spacing::PAD_16);
+    ui.add_space(4.0);
+    ui.label(
+        RichText::new(format!(
+            "{} movies · {} series · {} videos",
+            movies.len(),
+            series.len(),
+            other_videos.len()
+        ))
+        .size(13.5)
+        .color(tokens.text_secondary),
+    );
+    ui.add_space(14.0);
     ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing = Vec2::new(8.0, 6.0);
+        let playlist_count = state
+            .playlists
+            .iter()
+            .filter(|c| c.collection_type == "playlist")
+            .count();
         for (tab, label, count) in [
             (LibraryTab::Movies, "Movies", movies.len()),
             (LibraryTab::Series, "Series", series.len()),
+            (LibraryTab::Playlists, "Playlists", playlist_count),
             (LibraryTab::Videos, "Videos", other_videos.len()),
         ] {
-            let text = format!("{label}  {count}");
+            let text = format!("{label} ({count})");
             let response = padded_choice(ui, &text, state.library_tab == tab, tokens);
             if response.clicked() {
                 state.library_tab = tab;
@@ -1160,11 +1344,13 @@ pub fn render_library(
             let sort_btn = ui.add(
                 egui::Button::new(
                     RichText::new(format!("Sort: {}", sort_label(state.library_sort)))
-                        .size(13.5)
+                        .size(12.5)
                         .color(tokens.text_secondary),
                 )
-                .min_size(Vec2::new(140.0, 36.0))
-                .corner_radius(CornerRadius::same(8)),
+                .fill(tokens.field_fill)
+                .stroke(Stroke::new(1.0, tokens.divider))
+                .min_size(Vec2::new(136.0, 30.0))
+                .corner_radius(CornerRadius::same(3)),
             );
             if sort_btn.clicked() {
                 state.library_sort = match state.library_sort {
@@ -1191,7 +1377,32 @@ pub fn render_library(
                 ui.horizontal(|ui| {
                     avatar(ui, &item.title, 96.0, tokens);
                     ui.vertical(|ui| {
-                        ui.heading(&item.title);
+                        ui.horizontal_wrapped(|ui| {
+                            ui.heading(&item.title);
+                            if let Some(ref info) = tmdb_info {
+                                if info.vote_average > 0.0 {
+                                    egui::Frame::new()
+                                        .fill(Color32::from_rgba_unmultiplied(250, 204, 21, 28))
+                                        .stroke(Stroke::new(1.0, Color32::from_rgba_unmultiplied(250, 204, 21, 110)))
+                                        .corner_radius(CornerRadius::same(6))
+                                        .inner_margin(egui::Margin::symmetric(8, 2))
+                                        .show(ui, |ui| {
+                                            ui.label(
+                                                RichText::new(format!("★ {:.1} TMDB", info.vote_average))
+                                                    .size(12.0)
+                                                    .strong()
+                                                    .color(Color32::from_rgb(250, 204, 21)),
+                                            );
+                                        });
+                                }
+                                if !info.release_year.is_empty() {
+                                    ui.label(RichText::new(&info.release_year).size(12.5).color(tokens.text_muted));
+                                }
+                                if !info.genres.is_empty() {
+                                    ui.label(RichText::new(info.genres.join(" · ")).size(12.0).color(tokens.text_secondary));
+                                }
+                            }
+                        });
                         let unwatched = item.episode_count.saturating_sub(item.watched_count);
                         if let Some(ref info) = tmdb_info {
                             let missing = (info.total_episodes as usize).saturating_sub(item.episode_count);
@@ -1205,6 +1416,14 @@ pub fn render_library(
                                 item.watched_count,
                                 unwatched
                             ));
+                            if !info.overview.is_empty() {
+                                ui.add_space(4.0);
+                                ui.label(
+                                    RichText::new(&info.overview)
+                                        .size(12.0)
+                                        .color(tokens.text_secondary),
+                                );
+                            }
                         } else {
                             ui.label(format!(
                                 "{} season{} · {} of {} watched · {} unwatched",
@@ -1232,6 +1451,20 @@ pub fn render_library(
                                 .min_size(Vec2::new(130.0, 36.0));
                             if ui.add(btn).clicked() {
                                 action = ShellAction::PlayMedia(std::path::PathBuf::from(&ep.file_path));
+                            }
+                        }
+                        if !item.episodes.is_empty() {
+                            let q_btn = egui::Button::new(RichText::new("+ Queue All").size(12.5).color(tokens.text_primary))
+                                .fill(tokens.field_fill)
+                                .stroke(Stroke::new(1.0, tokens.divider))
+                                .corner_radius(CornerRadius::same(6))
+                                .min_size(Vec2::new(100.0, 36.0));
+                            if ui.add(q_btn).clicked() {
+                                let mut eps = item.episodes.clone();
+                                eps.sort_by_key(|e| (e.season_number.unwrap_or(0), e.episode_number.unwrap_or(0)));
+                                action = ShellAction::EnqueueMedia(
+                                    eps.into_iter().map(|e| std::path::PathBuf::from(e.file_path)).collect(),
+                                );
                             }
                         }
                     });
@@ -1604,7 +1837,15 @@ pub fn render_library(
                 }
                 render_movie_grid(&mut content_ui, &filtered, state, tokens, textures, &mut action);
             }
-            LibraryTab::Playlists => {}
+            LibraryTab::Playlists => {
+                crate::playlists_tab::render_playlists_view(
+                    &mut content_ui,
+                    state,
+                    items,
+                    tokens,
+                    &mut action,
+                );
+            }
         }
 
         years.sort_by(|a, b| b.cmp(a));
@@ -1613,52 +1854,75 @@ pub fn render_library(
             render_timeline_scrubber(ui, timeline_rect, &years, tokens, state);
         }
     }
-    if let Some(fingerprint) = state.selected_media_info.clone() {
-        if let Some(item) = items.iter().find(|item| item.fingerprint == fingerprint) {
-            let mut open = true;
-            egui::Window::new("Media information")
-                .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
-                .open(&mut open)
-                .collapsible(false)
-                .resizable(false)
-                .show(outer_ui.ctx(), |ui| {
-                    ui.heading(&item.title);
-                    ui.add_space(8.0);
-                    ui.label(format!("File: {}", item.file_path));
-                    ui.label(format!("Size: {}", format_bytes(item.size_bytes)));
-                    ui.label(if item.duration > 0.0 {
-                        format!(
-                            "Duration: {}",
-                            format_time(item.duration).unwrap_or_default()
-                        )
-                    } else {
-                        "Duration: not analyzed".to_owned()
-                    });
-                    ui.label(match (item.width, item.height) {
-                        (Some(w), Some(h)) => format!("Resolution: {w} × {h}"),
-                        _ => "Resolution: not analyzed".to_owned(),
-                    });
-                    ui.label(format!(
-                        "Video codec: {}",
-                        item.video_codec.as_deref().unwrap_or("unknown")
-                    ));
-                    ui.label(format!(
-                        "Audio codec: {}",
-                        item.audio_codec.as_deref().unwrap_or("unknown")
-                    ));
-                    if let (Some(season), Some(episode)) = (item.season_number, item.episode_number)
-                    {
-                        ui.label(format!("Season {season}, episode {episode}"));
-                    }
+    action
+}
+
+pub(crate) fn render_media_info_modal(
+    ctx: &egui::Context,
+    state: &mut ShellState,
+    items: &[MediaItem],
+) {
+    let Some(fingerprint) = state.selected_media_info.clone() else {
+        return;
+    };
+    let found = items
+        .iter()
+        .find(|item| item.fingerprint == fingerprint || item.file_path == fingerprint);
+    let mut open = true;
+    egui::Window::new("Media information")
+        .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+        .open(&mut open)
+        .collapsible(false)
+        .resizable(false)
+        .show(ctx, |ui| {
+            ui.set_min_width(360.0);
+            if let Some(item) = found {
+                ui.heading(&item.title);
+                ui.add_space(8.0);
+                ui.label(format!("File: {}", item.file_path));
+                ui.label(format!("Size: {}", format_bytes(item.size_bytes)));
+                ui.label(if item.duration > 0.0 {
+                    format!(
+                        "Duration: {}",
+                        format_time(item.duration).unwrap_or_default()
+                    )
+                } else {
+                    "Duration: not analyzed".to_owned()
                 });
-            if !open {
+                ui.label(match (item.width, item.height) {
+                    (Some(w), Some(h)) => format!("Resolution: {w} × {h}"),
+                    _ => "Resolution: not analyzed".to_owned(),
+                });
+                ui.label(format!(
+                    "Video codec: {}",
+                    item.video_codec.as_deref().unwrap_or("unknown")
+                ));
+                ui.label(format!(
+                    "Audio codec: {}",
+                    item.audio_codec.as_deref().unwrap_or("unknown")
+                ));
+                if item.is_hdr {
+                    ui.label("Dynamic range: HDR");
+                }
+                if let (Some(season), Some(episode)) = (item.season_number, item.episode_number) {
+                    ui.label(format!("Season {season}, episode {episode}"));
+                }
+            } else {
+                ui.heading("File information");
+                ui.add_space(8.0);
+                ui.label(format!("Identifier: {fingerprint}"));
+                if let Ok(meta) = std::fs::metadata(&fingerprint) {
+                    ui.label(format!("Size: {}", format_bytes(meta.len())));
+                }
+            }
+            ui.add_space(12.0);
+            if ui.button("Close").clicked() {
                 state.selected_media_info = None;
             }
-        } else {
-            state.selected_media_info = None;
-        }
+        });
+    if !open {
+        state.selected_media_info = None;
     }
-    action
 }
 
 fn format_bytes(bytes: u64) -> String {
@@ -1823,7 +2087,7 @@ pub fn render_history(
                 )
                 .fill(cf_orange)
                 .stroke(Stroke::NONE)
-                .corner_radius(CornerRadius::same(16))
+                .corner_radius(CornerRadius::ZERO)
                 .min_size(Vec2::new(104.0, 32.0));
                 let date_resp = ui.add(date_btn);
                 date_btn_rect = date_resp.rect;
@@ -1846,7 +2110,7 @@ pub fn render_history(
                 )
                 .fill(cf_surface_alt)
                 .stroke(Stroke::new(1.0, cf_border))
-                .corner_radius(CornerRadius::same(16))
+                .corner_radius(CornerRadius::ZERO)
                 .min_size(Vec2::new(102.0, 32.0));
                 if ui.add(clear_btn).clicked() {
                     state.confirm_clear_history = true;
@@ -2743,13 +3007,13 @@ pub fn render_history(
                                     Pos2::new(row_rect.left(), top_center_y - 9.0),
                                     Vec2::new(title_w, 18.0),
                                 );
-                                let full_filename = media_item
-                                    .and_then(|m| std::path::Path::new(&m.file_path).file_name())
-                                    .map(|n| n.to_string_lossy().to_string())
+                                let parent_loc = media_item
+                                    .and_then(|m| std::path::Path::new(&m.file_path).parent())
+                                    .map(|p| p.to_string_lossy().to_string())
                                     .unwrap_or_else(|| session.item_title.clone());
                                 let link_resp = ui
                                     .interact(link_rect, ui.scope_id().with(("gh_link", session.id.as_str())), Sense::click())
-                                    .on_hover_text(&full_filename);
+                                    .on_hover_text(&parent_loc);
                                 if link_resp.hovered() {
                                     ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
                                     ui.painter().line_segment(
@@ -2764,10 +3028,10 @@ pub fn render_history(
                                     gh_text_muted,
                                 );
 
-                                // Small tab-indented filename below the title row
+                                // Small tab-indented parent location below the title row
                                 let disp_file = truncate_text(
                                     ui,
-                                    &full_filename,
+                                    &parent_loc,
                                     FontId::proportional(10.5),
                                     (bar_left - row_rect.left() - 32.0).max(60.0),
                                 );

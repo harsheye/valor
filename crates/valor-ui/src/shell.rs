@@ -18,6 +18,7 @@ pub enum ShellAction {
     None,
     CloseWindow,
     PlayMedia(PathBuf),
+    EnqueueMedia(Vec<PathBuf>),
     PlayMediaFromMiniBar {
         path: PathBuf,
         start_secs: f64,
@@ -53,6 +54,17 @@ pub enum ShellAction {
     ConvertSaveDialog,
     StreamDialog,
     ToggleQuitAtEndOfPlaylist,
+    LoadSkinPicker,
+    ResetSkin,
+    StartTraktDeviceAuth,
+    PollTraktDeviceToken,
+    DisconnectTrakt,
+    CreatePlaylist(String),
+    DeletePlaylist(String),
+    AddToPlaylist { playlist_id: String, item_path: String },
+    RemoveFromPlaylist { playlist_id: String, item_id: String },
+    PlayPlaylist(String),
+    OpenAddToPlaylistModal(String),
 }
 
 /// The App Shell renderer
@@ -104,7 +116,7 @@ fn format_gallery_duration(seconds: f64) -> String {
     }
 }
 
-fn paint_curved_skip_arrow(
+pub(crate) fn paint_curved_skip_arrow(
     painter: &egui::Painter,
     center: Pos2,
     radius: f32,
@@ -168,6 +180,39 @@ fn format_resolution(width: Option<u32>, height: Option<u32>) -> &'static str {
         Some(h) if h >= 480 => "480p",
         _ => "HD",
     }
+}
+
+fn extract_year_from_path(path: &str) -> Option<String> {
+    let fname = std::path::Path::new(path)
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or(path);
+    for token in fname.split(|c: char| !c.is_ascii_digit()) {
+        if token.len() == 4 {
+            if let Ok(y) = token.parse::<u32>() {
+                if (1920..=2035).contains(&y) {
+                    return Some(token.to_string());
+                }
+            }
+        }
+    }
+    None
+}
+
+fn format_home_title(item: &MediaItem) -> String {
+    let mut title = item.title.trim().to_string();
+    if let (Some(s), Some(e)) = (item.season_number, item.episode_number) {
+        let tag = format!("S{s:02}E{e:02}");
+        if !title.to_uppercase().contains(&tag) {
+            title.push(' ');
+            title.push_str(&tag);
+        }
+    } else if let Some(y_str) = extract_year_from_path(&item.file_path) {
+        if !title.contains(&y_str) {
+            title.push_str(&format!(" ({y_str})"));
+        }
+    }
+    title
 }
 
 impl<'a> ShellRenderer<'a> {
@@ -792,7 +837,7 @@ impl<'a> ShellRenderer<'a> {
             state.toggle_nav_collapsed();
         }
         let menu_left = left + 40.0;
-        for (idx, label) in ["File", "Edit", "View", "Help"].into_iter().enumerate() {
+        for (idx, label) in ["File"].into_iter().enumerate() {
             let btn_rect = Rect::from_min_size(
                 Pos2::new(menu_left + idx as f32 * 48.0 - 6.0, rect.min.y + 4.0),
                 vec2(42.0, rect.height() - 8.0),
@@ -2439,6 +2484,49 @@ impl<'a> ShellRenderer<'a> {
             }
             tb_right -= view_w + spacing::TOOLBAR_GAP;
 
+            // Direct Grid / List square toggle buttons
+            for (is_list, lbl) in [(true, "List"), (false, "Grid")] {
+                let active = (state.library_view == crate::view_models::ViewMode::List) == is_list;
+                let bw = 44.0;
+                let b_rect = Rect::from_min_size(
+                    Pos2::new(tb_right - bw, header_top),
+                    vec2(bw, toolbar_h),
+                );
+                let b_resp = ui.allocate_rect(b_rect, Sense::click());
+                if b_resp.hovered() {
+                    ui.ctx().set_cursor_icon(CursorIcon::PointingHand);
+                }
+                ui.painter().rect(
+                    b_rect,
+                    CornerRadius::ZERO,
+                    if active {
+                        self.tokens.accent
+                    } else if b_resp.hovered() {
+                        self.tokens.hover_fill
+                    } else {
+                        self.tokens.field_fill
+                    },
+                    Stroke::new(1.0, if active { self.tokens.accent } else { self.tokens.divider }),
+                    StrokeKind::Inside,
+                );
+                ui.painter().text(
+                    b_rect.center(),
+                    Align2::CENTER_CENTER,
+                    lbl,
+                    FontId::proportional(11.5),
+                    if active { Color32::WHITE } else { self.tokens.text_secondary },
+                );
+                if b_resp.clicked() {
+                    state.library_view = if is_list {
+                        crate::view_models::ViewMode::List
+                    } else {
+                        crate::view_models::ViewMode::Grid
+                    };
+                }
+                tb_right -= bw + 4.0;
+            }
+            tb_right -= spacing::TOOLBAR_GAP;
+
             // Filter Button [Filter v] with accent dot when active
             let filter_w = view_w;
             let filter_rect = Rect::from_min_size(
@@ -2757,6 +2845,23 @@ impl<'a> ShellRenderer<'a> {
                     &mut action,
                 );
             }
+        } else if state.selected_nav == NavItem::Playlists && state.selected_folder.is_none() {
+            let content_rect = Rect::from_min_max(
+                Pos2::new(header_left, body_y),
+                Pos2::new(rect.max.x - content_pad_x, rect.max.y - 16.0),
+            );
+            let mut sub_ui = ui.new_child(egui::UiBuilder::new().max_rect(content_rect));
+            egui::ScrollArea::vertical()
+                .id_salt("playlists_nav_scroll")
+                .show(&mut sub_ui, |ui| {
+                    crate::playlists_tab::render_playlists_view(
+                        ui,
+                        state,
+                        items,
+                        &self.tokens,
+                        &mut action,
+                    );
+                });
         } else if state.selected_nav == NavItem::Home
             || state.selected_nav == NavItem::Library
             || state.selected_folder.is_some()
@@ -2793,6 +2898,29 @@ impl<'a> ShellRenderer<'a> {
                 })
                 .cloned()
                 .collect();
+            // Deduplicate by fingerprint and normalized file_path (prefer entry with duration > 0)
+            {
+                let mut dedup: std::collections::HashMap<String, MediaItem> =
+                    std::collections::HashMap::new();
+                let mut seen_paths: std::collections::HashSet<String> =
+                    std::collections::HashSet::new();
+                for item in gallery_items {
+                    let norm_path = item.file_path.replace('/', "\\").to_lowercase();
+                    let fp_key = if item.fingerprint.is_empty() {
+                        norm_path.clone()
+                    } else {
+                        item.fingerprint.clone()
+                    };
+                    if let Some(existing) = dedup.get_mut(&fp_key) {
+                        if existing.duration <= 0.0 && item.duration > 0.0 {
+                            *existing = item;
+                        }
+                    } else if seen_paths.insert(norm_path) {
+                        dedup.insert(fp_key, item);
+                    }
+                }
+                gallery_items = dedup.into_values().collect();
+            }
             if state.filter_choice.progress != ProgressFilter::All {
                 gallery_items.retain(|item| {
                     let progress = history
@@ -2810,7 +2938,9 @@ impl<'a> ShellRenderer<'a> {
                 });
             }
             match state.sort_choice.field {
-                SortField::Name => gallery_items.sort_by_key(|item| item.title.to_lowercase()),
+                SortField::Name => gallery_items.sort_by(|a, b| {
+                    valor_core::path_utils::natural_cmp(&a.title, &b.title)
+                }),
                 SortField::DateModified => gallery_items.sort_by_key(|item| item.updated_at),
                 SortField::DateCreated | SortField::DateTaken => {
                     gallery_items.sort_by_key(|item| item.created_at)
@@ -2896,20 +3026,349 @@ impl<'a> ShellRenderer<'a> {
                     state.selected_media =
                         gallery_items.iter().map(|item| item.id.clone()).collect();
                 }
-                self.render_gallery_tiles(
-                    ui,
-                    header_left,
-                    body_y,
-                    rect.max.x - content_pad_x,
-                    &gallery_items,
-                    state,
-                    &mut action,
-                    textures,
-                );
+                if state.library_view == crate::view_models::ViewMode::List {
+                    self.render_gallery_list(
+                        ui,
+                        header_left,
+                        body_y,
+                        rect.max.x - content_pad_x,
+                        &gallery_items,
+                        state,
+                        &mut action,
+                    );
+                } else {
+                    self.render_gallery_tiles(
+                        ui,
+                        header_left,
+                        body_y,
+                        rect.max.x - content_pad_x,
+                        &gallery_items,
+                        state,
+                        &mut action,
+                        textures,
+                    );
+                }
             }
         }
 
+        crate::playlists_tab::render_add_to_playlist_modal(
+            ui.ctx(),
+            state,
+            &self.tokens,
+            &mut action,
+        );
+
         action
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn render_gallery_list(
+        &self,
+        ui: &mut Ui,
+        left: f32,
+        top: f32,
+        right: f32,
+        items: &[MediaItem],
+        state: &mut ShellState,
+        action: &mut ShellAction,
+    ) {
+        let content_rect = Rect::from_min_max(
+            Pos2::new(left, top),
+            Pos2::new(right, ui.max_rect().max.y - 16.0),
+        );
+        let mut list_ui = ui.new_child(egui::UiBuilder::new().max_rect(content_rect));
+        let avail_w = list_ui.available_width();
+        let total_table_w = state.movie_list_col_widths.iter().sum::<f32>().max(avail_w);
+        let header_titles = [
+            "Name",
+            "Date",
+            "Type",
+            "Size",
+            "Length",
+            "Quality",
+            "Last Played",
+            "Time Spent",
+            "Skips",
+        ];
+
+        let mut sorted: Vec<&MediaItem> = items.iter().collect();
+        sorted.sort_by(|a, b| {
+            let ord = match state.list_sort_col {
+                0 => valor_core::path_utils::natural_cmp(&a.title, &b.title),
+                1 => a.created_at.cmp(&b.created_at),
+                2 => a
+                    .file_path
+                    .rsplit('.')
+                    .next()
+                    .unwrap_or("")
+                    .cmp(b.file_path.rsplit('.').next().unwrap_or("")),
+                3 => a.size_bytes.cmp(&b.size_bytes),
+                4 => a.duration.total_cmp(&b.duration),
+                5 => a.height.cmp(&b.height),
+                6 => {
+                    let ta = state.media_telemetry.get(&a.fingerprint).and_then(|t| t.last_played_at);
+                    let tb = state.media_telemetry.get(&b.fingerprint).and_then(|t| t.last_played_at);
+                    ta.cmp(&tb)
+                }
+                7 => {
+                    let ta = state.media_telemetry.get(&a.fingerprint).map(|t| t.time_spent_secs).unwrap_or(0.0);
+                    let tb = state.media_telemetry.get(&b.fingerprint).map(|t| t.time_spent_secs).unwrap_or(0.0);
+                    ta.total_cmp(&tb)
+                }
+                8 => {
+                    let ta = state.media_telemetry.get(&a.fingerprint).map(|t| t.skips_used).unwrap_or(0);
+                    let tb = state.media_telemetry.get(&b.fingerprint).map(|t| t.skips_used).unwrap_or(0);
+                    ta.cmp(&tb)
+                }
+                _ => std::cmp::Ordering::Equal,
+            };
+            if state.list_sort_asc { ord } else { ord.reverse() }
+        });
+
+        egui::ScrollArea::horizontal()
+            .id_salt("home_list_hscroll")
+            .show(&mut list_ui, |ui| {
+                ui.set_min_width(total_table_w);
+                let (header_rect, _) =
+                    ui.allocate_exact_size(vec2(total_table_w, 28.0), Sense::hover());
+                ui.painter()
+                    .rect_filled(header_rect, CornerRadius::ZERO, self.tokens.field_fill);
+
+                let mut col_x = header_rect.left();
+                for i in 0..9 {
+                    let col_w = state.movie_list_col_widths[i];
+                    let cell_rect = Rect::from_min_size(
+                        Pos2::new(col_x, header_rect.top()),
+                        vec2((col_w - 6.0).max(20.0), header_rect.height()),
+                    );
+                    let cell_resp = ui.interact(
+                        cell_rect,
+                        ui.scope_id().with(("home_col_sort", i)),
+                        Sense::click(),
+                    );
+                    let is_active = state.list_sort_col == i;
+                    if cell_resp.hovered() {
+                        ui.ctx().set_cursor_icon(CursorIcon::PointingHand);
+                        ui.painter()
+                            .rect_filled(cell_rect, CornerRadius::ZERO, self.tokens.hover_fill);
+                    } else if is_active {
+                        ui.painter().rect_filled(
+                            cell_rect,
+                            CornerRadius::ZERO,
+                            self.tokens.selected_fill,
+                        );
+                    }
+                    let galley = ui.painter().layout_no_wrap(
+                        header_titles[i].to_string(),
+                        FontId::proportional(11.5),
+                        if is_active {
+                            Color32::WHITE
+                        } else {
+                            self.tokens.text_tertiary
+                        },
+                    );
+                    let t_pos =
+                        Pos2::new(col_x + 10.0, header_rect.center().y - galley.size().y * 0.5);
+                    let icon_x = t_pos.x + galley.size().x + 8.0;
+                    ui.painter()
+                        .galley(t_pos, galley, self.tokens.text_tertiary);
+                    if is_active {
+                        let cy = header_rect.center().y;
+                        let dir = if state.list_sort_asc { -1.0 } else { 1.0 };
+                        ui.painter().line_segment(
+                            [Pos2::new(icon_x, cy - 2.0 * dir), Pos2::new(icon_x + 3.5, cy + 2.0 * dir)],
+                            Stroke::new(1.4, self.tokens.accent),
+                        );
+                        ui.painter().line_segment(
+                            [Pos2::new(icon_x + 3.5, cy + 2.0 * dir), Pos2::new(icon_x + 7.0, cy - 2.0 * dir)],
+                            Stroke::new(1.4, self.tokens.accent),
+                        );
+                    }
+                    if cell_resp.clicked() {
+                        if state.list_sort_col == i {
+                            state.list_sort_asc = !state.list_sort_asc;
+                        } else {
+                            state.list_sort_col = i;
+                            state.list_sort_asc = true;
+                        }
+                    }
+
+                    let div_rect = Rect::from_min_size(
+                        Pos2::new(col_x + col_w - 4.0, header_rect.top()),
+                        vec2(8.0, header_rect.height()),
+                    );
+                    let div_resp = ui.interact(
+                        div_rect,
+                        ui.scope_id().with(("home_col_div", i)),
+                        Sense::drag(),
+                    );
+                    if div_resp.hovered() || div_resp.dragged() {
+                        ui.ctx().set_cursor_icon(CursorIcon::ResizeHorizontal);
+                    }
+                    if div_resp.dragged() {
+                        state.movie_list_col_widths[i] =
+                            (state.movie_list_col_widths[i] + div_resp.drag_delta().x).max(40.0);
+                    }
+                    ui.painter().line_segment(
+                        [
+                            Pos2::new(col_x + col_w, header_rect.top() + 4.0),
+                            Pos2::new(col_x + col_w, header_rect.bottom() - 4.0),
+                        ],
+                        Stroke::new(1.0, self.tokens.divider),
+                    );
+                    col_x += col_w;
+                }
+
+                egui::ScrollArea::vertical()
+                    .id_salt("home_list_vscroll")
+                    .auto_shrink([false, false])
+                    .show_rows(ui, 30.0, sorted.len(), |ui, row_range| {
+                        for idx in row_range {
+                            let item = sorted[idx];
+                            let (row_rect, row_resp) = ui.allocate_exact_size(
+                                vec2(total_table_w, 30.0),
+                                Sense::click(),
+                            );
+                            if row_resp.hovered() {
+                                ui.ctx().set_cursor_icon(CursorIcon::PointingHand);
+                                ui.painter().rect_filled(
+                                    row_rect,
+                                    CornerRadius::ZERO,
+                                    self.tokens.hover_fill,
+                                );
+                            } else if idx % 2 == 1 {
+                                ui.painter().rect_filled(
+                                    row_rect,
+                                    CornerRadius::ZERO,
+                                    Color32::from_white_alpha(4),
+                                );
+                            }
+                            let mut cx = row_rect.left();
+                            let w = &state.movie_list_col_widths;
+                            let display_name = format_home_title(item);
+                            let ext = item
+                                .file_path
+                                .rsplit('.')
+                                .next()
+                                .unwrap_or("")
+                                .to_ascii_uppercase();
+                            let size_gb = (item.size_bytes as f64) / (1024.0 * 1024.0 * 1024.0);
+                            let size_str = if size_gb >= 1.0 {
+                                format!("{size_gb:.1} GB")
+                            } else {
+                                format!("{} MB", item.size_bytes / (1024 * 1024))
+                            };
+                            let dur = item.duration.max(0.0) as u64;
+                            let dur_str = if dur > 0 {
+                                format!("{}:{:02}:{:02}", dur / 3600, (dur % 3600) / 60, dur % 60)
+                            } else {
+                                "-".to_string()
+                            };
+                            let h = item.height.unwrap_or(0);
+                            let (qual, qual_col) = if h >= 2160 {
+                                ("4K", Color32::from_rgb(251, 191, 36))
+                            } else if h >= 1080 {
+                                ("1080p", Color32::from_rgb(96, 165, 250))
+                            } else if h >= 720 {
+                                ("720p", Color32::from_rgb(45, 212, 191))
+                            } else {
+                                ("SD", self.tokens.text_secondary)
+                            };
+                            let type_col = match ext.as_str() {
+                                "MKV" => Color32::from_rgb(96, 165, 250),
+                                "MP4" => Color32::from_rgb(74, 222, 128),
+                                "AVI" | "WMV" | "MOV" => Color32::from_rgb(251, 191, 36),
+                                _ => self.tokens.text_secondary,
+                            };
+                            let tele = state.media_telemetry.get(&item.fingerprint);
+                            let last_played = tele
+                                .and_then(|t| t.last_played_at)
+                                .map(|dt| dt.format("%Y-%m-%d").to_string())
+                                .unwrap_or_else(|| "-".to_string());
+                            let time_secs = tele.map(|t| t.time_spent_secs as u64).unwrap_or(0);
+                            let time_spent = if time_secs >= 60 {
+                                format!("{}m", time_secs / 60)
+                            } else if time_secs > 0 {
+                                format!("{time_secs}s")
+                            } else {
+                                "-".to_string()
+                            };
+                            let skips_cnt = tele.map(|t| t.skips_used).unwrap_or(0);
+                            let skips = skips_cnt.to_string();
+                            let date_str = item.created_at.format("%Y-%m-%d").to_string();
+                            let cols: [(&str, Color32); 9] = [
+                                (&display_name, self.tokens.text_primary),
+                                (&date_str, self.tokens.text_secondary),
+                                (&ext, type_col),
+                                (&size_str, self.tokens.text_secondary),
+                                (&dur_str, self.tokens.text_secondary),
+                                (qual, qual_col),
+                                (&last_played, self.tokens.text_secondary),
+                                (
+                                    &time_spent,
+                                    if time_secs > 0 {
+                                        Color32::from_rgb(74, 222, 128)
+                                    } else {
+                                        self.tokens.text_tertiary
+                                    },
+                                ),
+                                (
+                                    &skips,
+                                    if skips_cnt > 0 {
+                                        Color32::from_rgb(251, 191, 36)
+                                    } else {
+                                        self.tokens.text_tertiary
+                                    },
+                                ),
+                            ];
+                            for (ci, (text, col)) in cols.iter().enumerate() {
+                                let mut text_left = cx + 10.0;
+                                if ci == 0 {
+                                    let icon_name = if item.season_number.is_some()
+                                        || item.episode_number.is_some()
+                                    {
+                                        "tv"
+                                    } else {
+                                        "film"
+                                    };
+                                    let icon_col = if item.season_number.is_some() {
+                                        Color32::from_rgb(167, 139, 250)
+                                    } else {
+                                        Color32::from_rgb(96, 165, 250)
+                                    };
+                                    let icon_r = Rect::from_center_size(
+                                        Pos2::new(cx + 16.0, row_rect.center().y),
+                                        vec2(14.0, 14.0),
+                                    );
+                                    self.icons.paint_icon(ui, icon_name, icon_r, icon_col);
+                                    text_left = cx + 30.0;
+                                }
+                                let cell_r = Rect::from_min_size(
+                                    Pos2::new(text_left, row_rect.top()),
+                                    vec2((cx + w[ci] - text_left - 6.0).max(16.0), row_rect.height()),
+                                );
+                                ui.painter().with_clip_rect(cell_r).text(
+                                    Pos2::new(cell_r.left(), row_rect.center().y),
+                                    Align2::LEFT_CENTER,
+                                    *text,
+                                    FontId::proportional(12.0),
+                                    *col,
+                                );
+                                cx += w[ci];
+                            }
+                            if row_resp.clicked() {
+                                *action = ShellAction::PlayMedia(PathBuf::from(&item.file_path));
+                            }
+                            crate::media_pages::attach_media_context_menu(
+                                &row_resp,
+                                &item.file_path,
+                                &item.fingerprint,
+                                &mut state.selected_media_info,
+                                action,
+                            );
+                        }
+                    });
+            });
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -2995,7 +3454,7 @@ impl<'a> ShellRenderer<'a> {
                         // Thumbnail container background
                         row_ui.painter().rect_filled(
                             thumb_rect,
-                            CornerRadius::same(8),
+                            CornerRadius::ZERO,
                             Color32::from_rgb(16, 22, 32),
                         );
 
@@ -3146,7 +3605,7 @@ impl<'a> ShellRenderer<'a> {
                         if response.hovered() {
                             row_ui.painter().rect_stroke(
                                 thumb_rect,
-                                CornerRadius::same(8),
+                                CornerRadius::ZERO,
                                 Stroke::new(1.5, self.tokens.accent),
                                 StrokeKind::Inside,
                             );
@@ -3154,21 +3613,7 @@ impl<'a> ShellRenderer<'a> {
 
                         // File name and Title display
                         let title_y = thumb_rect.max.y + 6.0;
-                        let full_filename = std::path::Path::new(&item.file_path)
-                            .file_name()
-                            .and_then(|s| s.to_str())
-                            .unwrap_or(&item.title);
-
-                        let title_base = if let (Some(s), Some(e)) = (item.season_number, item.episode_number) {
-                            let ep_tag = format!("S{:02}", s);
-                            if !item.title.contains(&ep_tag) {
-                                format!("{} S{:02}E{:02}", item.title, s, e)
-                            } else {
-                                item.title.clone()
-                            }
-                        } else {
-                            full_filename.to_string()
-                        };
+                        let title_base = format_home_title(item);
 
                         let max_w = (card_rect.width() - 4.0).max(10.0);
                         let title_col = if response.hovered() { self.tokens.accent } else { self.tokens.text_primary };

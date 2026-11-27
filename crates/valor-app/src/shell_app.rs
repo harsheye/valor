@@ -76,9 +76,23 @@ pub struct ValorShellApp {
     tmdb_tx: Sender<(String, valor_ui::shell_state::TmdbSeriesInfo)>,
     tmdb_rx: Receiver<(String, valor_ui::shell_state::TmdbSeriesInfo)>,
     tmdb_token: String,
+    bookmark_sync_tx: Sender<BookmarkSyncResult>,
+    bookmark_sync_rx: Receiver<BookmarkSyncResult>,
+    telemetry_tx: Sender<(String, u64, Vec<String>, f32)>,
+    telemetry_rx: Receiver<(String, u64, Vec<String>, f32)>,
+    recs_tx: Sender<Vec<valor_ui::shell_state::TmdbRecommendation>>,
+    recs_rx: Receiver<Vec<valor_ui::shell_state::TmdbRecommendation>>,
+    last_telemetry_tick: std::time::Instant,
     restored_tracks_token: u64,
     last_saved_tracks: Option<(String, Option<i64>, Option<i64>)>,
     scrub_extracting: HashSet<String>,
+}
+
+struct BookmarkSyncResult {
+    fingerprint: String,
+    bookmarks: Vec<valor_core::models::Bookmark>,
+    tmdb_rating: Option<f32>,
+    tidb_synced: bool,
 }
 
 impl ValorShellApp {
@@ -108,11 +122,15 @@ impl ValorShellApp {
             .collect();
         let (scan_tx, scan_rx) = mpsc::channel();
         let (tmdb_tx, tmdb_rx) = mpsc::channel();
+        let (bookmark_sync_tx, bookmark_sync_rx) = mpsc::channel();
+        let (telemetry_tx, telemetry_rx) = mpsc::channel();
+        let (recs_tx, recs_rx) = mpsc::channel();
         let mut state = ShellState::new();
         let tmdb_token = load_tmdb_token(&state.settings.tmdb_api_key);
         state.root_folders = folders.iter().cloned().map(FolderTreeNode::new).collect();
         state.excluded_paths = excluded_paths;
         state.folder_counts = db.folder_media_counts().unwrap_or_default();
+        state.media_telemetry = db.get_all_media_telemetry().unwrap_or_default();
         let mut app = Self {
             db,
             state,
@@ -145,6 +163,13 @@ impl ValorShellApp {
             tmdb_tx,
             tmdb_rx,
             tmdb_token,
+            bookmark_sync_tx,
+            bookmark_sync_rx,
+            telemetry_tx,
+            telemetry_rx,
+            recs_tx,
+            recs_rx,
+            last_telemetry_tick: std::time::Instant::now(),
             restored_tracks_token: 0,
             last_saved_tracks: None,
             scrub_extracting: HashSet::new(),
@@ -153,6 +178,16 @@ impl ValorShellApp {
         spawn_background_thumbnailer(&app.items, &app.state.excluded_paths);
         for folder in app.folders.clone() {
             app.start_scan(folder);
+        }
+        {
+            let items_snapshot = app.items.clone();
+            let tele_snapshot = app.state.media_telemetry.clone();
+            let token = app.tmdb_token.clone();
+            let tx = app.telemetry_tx.clone();
+            let r_tx = app.recs_tx.clone();
+            std::thread::spawn(move || {
+                resolve_library_tmdb_and_recommendations(&items_snapshot, &tele_snapshot, &token, &tx, &r_tx);
+            });
         }
         app
     }
@@ -295,10 +330,10 @@ impl ValorShellApp {
                 })
                 .map(|item| PathBuf::from(&item.file_path))
                 .collect();
-            folder_items.sort_by_key(|path| {
-                path.file_name()
-                    .map(|name| name.to_string_lossy().to_lowercase())
-                    .unwrap_or_default()
+            folder_items.sort_by(|a, b| {
+                let an = a.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+                let bn = b.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+                valor_core::path_utils::natural_cmp(&an, &bn)
             });
             if folder_items.is_empty() {
                 vec![selected_path.clone()]
@@ -321,10 +356,10 @@ impl ValorShellApp {
             if series_items.is_empty() {
                 vec![selected_path.clone()]
             } else {
-                series_items.sort_by_key(|path| {
-                    path.file_name()
-                        .map(|name| name.to_string_lossy().to_lowercase())
-                        .unwrap_or_default()
+                series_items.sort_by(|a, b| {
+                    let an = a.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+                    let bn = b.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+                    valor_core::path_utils::natural_cmp(&an, &bn)
                 });
                 series_items
             }
@@ -410,7 +445,7 @@ impl ValorShellApp {
         duration_secs: f64,
     ) {
         self.ensure_media_item_registered(path);
-        let Some(item) = self
+        let Some(mut item) = self
             .items
             .iter()
             .find(|item| std::path::Path::new(&item.file_path) == path)
@@ -418,6 +453,15 @@ impl ValorShellApp {
         else {
             return;
         };
+        if duration_secs > 0.0 && (item.duration <= 0.0 || (item.duration - duration_secs).abs() > 1.0) {
+            item.duration = duration_secs;
+            item.updated_at = chrono::Utc::now();
+            if let Some(existing) = self.items.iter_mut().find(|i| i.fingerprint == item.fingerprint) {
+                existing.duration = duration_secs;
+                existing.updated_at = item.updated_at;
+            }
+            let _ = self.db.upsert_item(&item);
+        }
         let now = chrono::Utc::now();
         let position = PlaybackPosition {
             fingerprint: item.fingerprint.clone(),
@@ -522,6 +566,7 @@ impl ValorShellApp {
         self.history = self.db.get_history(50).unwrap_or_default();
         self.sessions = self.db.get_watch_sessions(50).unwrap_or_default();
         self.positions = self.db.get_all_playback_positions().unwrap_or_default();
+        self.state.playlists = self.db.get_all_collections().unwrap_or_default();
     }
 
     fn refresh_scanned_items(&mut self) {
@@ -620,6 +665,57 @@ impl eframe::App for ValorShellApp {
         while let Ok((key, info)) = self.tmdb_rx.try_recv() {
             self.state.tmdb_pending.remove(&key);
             self.state.tmdb_series_cache.insert(key, info);
+        }
+        while let Ok((fp, tmdb_id, genres, vote)) = self.telemetry_rx.try_recv() {
+            let _ = self.db.update_media_tmdb(&fp, tmdb_id, &genres, vote);
+            let entry = self.state.media_telemetry.entry(fp.clone()).or_insert_with(|| valor_core::models::MediaTelemetry {
+                fingerprint: fp,
+                ..Default::default()
+            });
+            entry.tmdb_id = Some(tmdb_id);
+            entry.genres = genres;
+            entry.vote_average = vote;
+        }
+        while let Ok(recs) = self.recs_rx.try_recv() {
+            let total_time_secs: f64 = self
+                .state
+                .media_telemetry
+                .values()
+                .map(|t| t.time_spent_secs)
+                .sum();
+            if total_time_secs >= 30.0 * 3600.0 {
+                self.state.tmdb_recommendations = recs;
+            } else {
+                self.state.tmdb_recommendations.clear();
+            }
+        }
+        while let Ok(res) = self.bookmark_sync_rx.try_recv() {
+            if self.player_ui.bookmark_fingerprint.as_deref() == Some(res.fingerprint.as_str()) {
+                if res.tmdb_rating.is_some() {
+                    self.player_ui.active_tmdb_rating = res.tmdb_rating;
+                }
+                if res.tidb_synced {
+                    self.player_ui.active_tidb_synced = true;
+                }
+                let mut changed = false;
+                for bm in res.bookmarks {
+                    let dup = self.player_ui.bookmarks.iter().any(|existing| {
+                        existing.id == bm.id
+                            || (existing.category.eq_ignore_ascii_case(&bm.category)
+                                && (existing.start_secs - bm.start_secs).abs() < 2.0)
+                    });
+                    if !dup {
+                        let _ = self.db.save_bookmark(&bm);
+                        self.player_ui.bookmarks.push(bm);
+                        changed = true;
+                    }
+                }
+                if changed {
+                    self.player_ui
+                        .bookmarks
+                        .sort_by(|a, b| a.start_secs.total_cmp(&b.start_secs));
+                }
+            }
         }
 
         if self.state.selected_nav == NavItem::Library
@@ -729,29 +825,90 @@ impl eframe::App for ValorShellApp {
 
         let snapshot = self.player.snapshot().read().clone();
         self.player_ui.skip_secs = self.state.settings.skip_secs.max(1) as f64;
+        self.player_ui.auto_skip_intro = self.state.settings.auto_skip_intro;
+        self.player_ui.auto_skip_outro = self.state.settings.auto_skip_outro;
+        self.player_ui.trakt_connected = !self.state.settings.trakt_access_token.trim().is_empty();
         if snapshot.state != PlaybackState::Idle {
             self.opening_media = None;
             if let Some(render_error) = self.player_render_error.lock().clone() {
                 self.player_error = Some(render_error);
             }
-            let fingerprint = snapshot.path.as_ref().map(|path| {
+            let matched_item = snapshot.path.as_ref().and_then(|path| {
                 self.items
                     .iter()
                     .find(|item| {
                         let p = std::path::Path::new(&item.file_path);
                         p == path.as_path() || item.file_path.eq_ignore_ascii_case(&path.to_string_lossy())
                     })
+                    .cloned()
+            });
+            let fingerprint = snapshot.path.as_ref().map(|path| {
+                matched_item
+                    .as_ref()
                     .map(|item| item.fingerprint.clone())
                     .unwrap_or_else(|| path.to_string_lossy().to_string())
             });
             if fingerprint != self.player_ui.bookmark_fingerprint {
+                if let Some(ref fp) = fingerprint {
+                    let _ = self.db.record_media_play(fp);
+                    let entry = self.state.media_telemetry.entry(fp.clone()).or_insert_with(|| valor_core::models::MediaTelemetry {
+                        fingerprint: fp.clone(),
+                        ..Default::default()
+                    });
+                    entry.last_played_at = Some(chrono::Utc::now());
+                }
                 self.player_ui.bookmark_fingerprint = fingerprint.clone();
+                self.player_ui.active_tmdb_rating = None;
+                self.player_ui.active_tidb_synced = false;
+                self.player_ui.skipped_segment_ids.clear();
+                self.player_ui.skip_toast = None;
                 self.player_ui.bookmarks = fingerprint
                     .as_deref()
                     .and_then(|value| self.db.get_bookmarks(value).ok())
                     .unwrap_or_default();
+
+                if let Some(fp) = fingerprint.clone() {
+                    let tx = self.bookmark_sync_tx.clone();
+                    let tmdb_token = load_tmdb_token(&self.state.settings.tmdb_api_key);
+                    let introdb_key = self.state.settings.theintrodb_api_key.clone();
+                    let title = matched_item
+                        .as_ref()
+                        .map(|i| i.title.clone())
+                        .or_else(|| {
+                            snapshot.path.as_ref().and_then(|p| {
+                                p.file_stem().map(|s| s.to_string_lossy().to_string())
+                            })
+                        })
+                        .unwrap_or_default();
+                    let season = matched_item.as_ref().and_then(|i| i.season_number);
+                    let episode = matched_item.as_ref().and_then(|i| i.episode_number);
+                    let duration_secs = snapshot.duration_secs;
+                    std::thread::spawn(move || {
+                        let res = fetch_web_db_and_tidb_bookmarks(
+                            &fp,
+                            &title,
+                            season,
+                            episode,
+                            duration_secs,
+                            &tmdb_token,
+                            &introdb_key,
+                        );
+                        let _ = tx.send(res);
+                    });
+                }
             }
             if let Some(fp) = fingerprint.as_deref() {
+                if snapshot.state == PlaybackState::Playing && self.last_telemetry_tick.elapsed().as_secs_f64() >= 5.0 {
+                    let delta = self.last_telemetry_tick.elapsed().as_secs_f64();
+                    self.last_telemetry_tick = std::time::Instant::now();
+                    let _ = self.db.add_media_time_and_skips(fp, delta, 0);
+                    let entry = self.state.media_telemetry.entry(fp.to_string()).or_insert_with(|| valor_core::models::MediaTelemetry {
+                        fingerprint: fp.to_string(),
+                        ..Default::default()
+                    });
+                    entry.time_spent_secs += delta;
+                    entry.last_played_at = Some(chrono::Utc::now());
+                }
                 if !snapshot.tracks.is_empty() {
                     if self.restored_tracks_token != snapshot.token {
                         self.restored_tracks_token = snapshot.token;
@@ -778,11 +935,24 @@ impl eframe::App for ValorShellApp {
                             }
                         }
                     } else {
-                        let cur_audio = snapshot.tracks.iter().find(|t| t.kind == "audio" && t.selected).map(|t| t.id as i64);
-                        let cur_sub = snapshot.tracks.iter().find(|t| t.kind == "sub" && t.selected).map(|t| t.id as i64).or(Some(-1));
+                        let cur_audio_track = snapshot.tracks.iter().find(|t| t.kind == "audio" && t.selected);
+                        let cur_sub_track = snapshot.tracks.iter().find(|t| t.kind == "sub" && t.selected);
+                        let cur_audio = cur_audio_track.map(|t| t.id as i64);
+                        let cur_sub = cur_sub_track.map(|t| t.id as i64).or(Some(-1));
                         let key = (fp.to_string(), cur_audio, cur_sub);
                         if self.last_saved_tracks.as_ref() != Some(&key) {
                             let _ = self.db.save_track_prefs(fp, cur_audio, cur_sub);
+                            let a_lang = cur_audio_track.and_then(|t| t.language.clone()).unwrap_or_default();
+                            let s_lang = cur_sub_track.and_then(|t| t.language.clone()).unwrap_or_else(|| "off".to_string());
+                            let _ = self.db.update_media_langs(fp, &a_lang, &s_lang);
+                            let entry = self.state.media_telemetry.entry(fp.to_string()).or_insert_with(|| valor_core::models::MediaTelemetry {
+                                fingerprint: fp.to_string(),
+                                ..Default::default()
+                            });
+                            if !a_lang.is_empty() {
+                                entry.audio_lang = a_lang;
+                            }
+                            entry.sub_lang = s_lang;
                             self.last_saved_tracks = Some(key);
                         }
                     }
@@ -862,61 +1032,14 @@ impl eframe::App for ValorShellApp {
             let player = &self.player;
             let player_error_display = self.player_error.clone();
             let player_error = &mut self.player_error;
-            self.player_ui.scrub_preview_texture = snapshot.path.as_deref().and_then(|p| {
-                let fp = fingerprint.as_deref().unwrap_or("active");
-                let thumb_dir = directories::ProjectDirs::from("com", "valor", "Valor")
-                    .map(|dirs| dirs.cache_dir().join("thumbnails"))?;
-                if let Some(hover_secs) = self.player_ui.scrub_hover_time {
-                    let bucket = ((hover_secs.max(0.0) as u64) / 5) * 5;
-                    let scrub_key = format!("scrub_{fp}_{bucket}");
-                    let scrub_path = thumb_dir.join(format!("{scrub_key}.jpg"));
-                    if scrub_path.is_file() {
-                        return self.textures.get_or_request(&ctx, &scrub_key, Some(&scrub_path)).map(|t| t.id());
-                    }
-                    if self.scrub_extracting.insert(scrub_key.clone()) {
-                        let src_path = p.to_path_buf();
-                        let out_path = scrub_path.clone();
-                        std::thread::spawn(move || {
-                            let _ = std::fs::create_dir_all(out_path.parent().unwrap_or(&out_path));
-                            let _ = std::process::Command::new("ffmpeg")
-                                .args([
-                                    "-ss",
-                                    &bucket.to_string(),
-                                    "-i",
-                                    &src_path.to_string_lossy(),
-                                    "-frames:v",
-                                    "1",
-                                    "-vf",
-                                    "scale=168:94:force_original_aspect_ratio=decrease",
-                                    "-q:v",
-                                    "5",
-                                    "-y",
-                                ])
-                                .arg(&out_path)
-                                .output();
-                        });
-                    }
-                }
-                let thumb = thumb_dir.join(format!("{fp}.jpg"));
-                if !thumb.is_file() {
-                    let main_key = format!("main_{fp}");
-                    if self.scrub_extracting.insert(main_key) {
-                        let src_path = p.to_path_buf();
-                        let out_path = thumb.clone();
-                        std::thread::spawn(move || {
-                            let _ = crate::thumbnail_extractor::extract_thumbnail_to_file(&src_path, &out_path, 320, 180);
-                        });
-                    }
-                    return None;
-                }
-                self.textures.get_or_request(&ctx, fp, Some(&thumb)).map(|t| t.id())
-            });
+            self.player_ui.scrub_preview_texture = None;
             let mut send = |command: PlayerCommand| {
                 if let Err(error) = player.send(command) {
                     tracing::error!("Player command failed: {error}");
                     *player_error = Some(error);
                 }
             };
+            self.player_ui.auto_next = self.state.settings.auto_next;
             let action = valor_ui::player_ui::show(
                 &mut player_ui,
                 &snapshot,
@@ -927,6 +1050,10 @@ impl eframe::App for ValorShellApp {
                 player_error_display.as_deref(),
                 &mut send,
             );
+            if action.toggle_auto_next {
+                self.state.settings.auto_next = self.player_ui.auto_next;
+                let _ = self.state.settings.save();
+            }
             if action.close_window {
                 if let Some(path) = snapshot.path.as_deref() {
                     self.save_playback_session(
@@ -976,14 +1103,77 @@ impl eframe::App for ValorShellApp {
                     self.exit_pip(&ctx);
                 }
             }
+            if action.skips_delta > 0 {
+                if let Some(fp) = self.player_ui.bookmark_fingerprint.as_deref() {
+                    let _ = self.db.add_media_time_and_skips(fp, 0.0, action.skips_delta as u64);
+                    let entry = self.state.media_telemetry.entry(fp.to_string()).or_insert_with(|| valor_core::models::MediaTelemetry {
+                        fingerprint: fp.to_string(),
+                        ..Default::default()
+                    });
+                    entry.skips_used += action.skips_delta as u64;
+                }
+            }
+            if action.sync_to_trakt {
+                let token = self.state.settings.trakt_access_token.trim().to_string();
+                let title = self
+                    .player
+                    .snapshot()
+                    .read()
+                    .title
+                    .clone()
+                    .or_else(|| self.opening_media.clone())
+                    .unwrap_or_default();
+                if !token.is_empty() && !title.is_empty() {
+                    std::thread::spawn(move || {
+                        let cid = trakt_client_id();
+                        let auth = format!("Bearer {token}");
+                        let body = serde_json::json!({
+                            "movie": { "title": title },
+                            "progress": 100.0
+                        });
+                        let _ = http_post_json_resp(
+                            "https://api.trakt.tv/scrobble/stop",
+                            &body,
+                            &[
+                                ("Authorization", &auth),
+                                ("trakt-api-version", "2"),
+                                ("trakt-api-key", &cid),
+                                ("User-Agent", "Valor/1.0.0"),
+                            ],
+                        );
+                    });
+                }
+            }
             for bookmark in &action.bookmarks_added {
                 if let Err(error) = self.db.save_bookmark(bookmark) {
                     tracing::warn!(%error, "Could not save player bookmark");
                 }
             }
+            if !action.bookmarks_added.is_empty() {
+                let to_push = action.bookmarks_added.clone();
+                std::thread::spawn(move || {
+                    push_bookmarks_to_web_db(&to_push);
+                });
+            }
             for id in &action.bookmarks_deleted {
                 if let Err(error) = self.db.delete_bookmark(id) {
                     tracing::warn!(%error, "Could not delete player bookmark");
+                }
+            }
+            if action.add_to_queue {
+                if let Some(paths) = rfd::FileDialog::new()
+                    .add_filter(
+                        "Media",
+                        &["mp4", "mkv", "webm", "mov", "avi", "m4v", "ts", "mp3", "flac", "wav"],
+                    )
+                    .pick_files()
+                {
+                    if !paths.is_empty() {
+                        let _ = self.player.send(PlayerCommand::Enqueue {
+                            token: snapshot.token,
+                            paths,
+                        });
+                    }
                 }
             }
             if action.choose_subtitle {
@@ -1043,11 +1233,17 @@ impl eframe::App for ValorShellApp {
                                 .inner_margin(egui::Margin::symmetric(24, 16))
                                 .show(ui, |ui| {
                                     ui.horizontal(|ui| {
-                                        ui.add(
-                                            egui::Spinner::new()
-                                                .size(22.0)
-                                                .color(egui::Color32::from_rgb(246, 130, 31)),
-                                        );
+                                        if self.tokens.skin.shell_layout.loading_spinner == valor_ui::skin::LoadingSpinnerStyle::RedArc {
+                                            let (spin_rect, _) = ui.allocate_exact_size(egui::vec2(34.0, 34.0), egui::Sense::hover());
+                                            let t = ui.input(|i| i.time);
+                                            valor_ui::spinner::render_red_arc_spinner(ui, spin_rect.center(), 13.0, t);
+                                        } else {
+                                            ui.add(
+                                                egui::Spinner::new()
+                                                    .size(24.0)
+                                                    .color(egui::Color32::from_rgb(56, 152, 255)),
+                                            );
+                                        }
                                         ui.add_space(12.0);
                                         ui.vertical(|ui| {
                                             ui.label(
@@ -1108,7 +1304,27 @@ impl eframe::App for ValorShellApp {
                 ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(false));
             }
         }
-        self.tokens = ShellTokens::from_skin_id(&self.state.settings.skin_id);
+        self.tokens = ShellTokens::from_skin_and_path(
+            &self.state.settings.skin_id,
+            &self.state.settings.custom_skin_path,
+        );
+        if !self.state.settings.accent_color.trim().is_empty() {
+            self.tokens.apply_accent_hex(&self.state.settings.accent_color);
+        }
+        let text_scale = (self.state.settings.text_scale_pct.clamp(80, 150) as f32) / 100.0;
+        if (ctx.zoom_factor() - text_scale).abs() > 0.001 {
+            ctx.set_zoom_factor(text_scale);
+        }
+        let reduce_motion = self.state.settings.reduce_motion_mode == "on"
+            || self.state.settings.prefers_reduced_motion;
+        ctx.style_mut_of(egui::Theme::Dark, |s| {
+            s.visuals.widgets.inactive.corner_radius = egui::CornerRadius::ZERO;
+            s.visuals.widgets.hovered.corner_radius = egui::CornerRadius::ZERO;
+            s.visuals.widgets.active.corner_radius = egui::CornerRadius::ZERO;
+            s.visuals.widgets.noninteractive.corner_radius = egui::CornerRadius::ZERO;
+            s.visuals.widgets.open.corner_radius = egui::CornerRadius::ZERO;
+            s.animation_time = if reduce_motion { 0.0 } else { 1.0 / 12.0 };
+        });
         let renderer = ShellRenderer::new(&self.tokens, &self.icons);
         let action = egui::CentralPanel::default()
             .frame(egui::Frame::NONE)
@@ -1126,6 +1342,16 @@ impl eframe::App for ValorShellApp {
                 )
             })
             .inner;
+        let brightness = self.state.settings.interface_brightness.clamp(50, 100);
+        if brightness < 100 {
+            let dim_alpha = ((100 - brightness) as f32 / 100.0 * 255.0).round() as u8;
+            let screen_rect = ctx.input(|i| i.viewport_rect());
+            ctx.layer_painter(egui::LayerId::new(
+                egui::Order::Foreground,
+                egui::Id::unique("comfort_brightness_dim"),
+            ))
+            .rect_filled(screen_rect, 0.0, egui::Color32::from_black_alpha(dim_alpha));
+        }
         if let Some(path) = self.pending_remove.clone() {
             let name = path
                 .file_name()
@@ -1154,7 +1380,62 @@ impl eframe::App for ValorShellApp {
         }
         match action {
             ShellAction::CloseWindow => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
+            ShellAction::StartTraktDeviceAuth => {
+                if let Some((user_code, device_code, verify_url)) = request_trakt_device_code() {
+                    let _ = open_url_in_browser(&verify_url);
+                    self.state.trakt_status_msg = Some(format!(
+                        "Opened {verify_url}. Enter code {user_code}, then click Verify Activation."
+                    ));
+                    self.state.trakt_device_code = Some((user_code, device_code, verify_url));
+                } else {
+                    self.state.trakt_status_msg = Some("Failed to request Trakt device code from backend.".to_string());
+                }
+            }
+            ShellAction::PollTraktDeviceToken => {
+                if let Some((_, ref device_code, _)) = self.state.trakt_device_code.clone() {
+                    match poll_trakt_device_token(device_code) {
+                        Ok((access_token, refresh_token, username)) => {
+                            self.state.settings.trakt_access_token = access_token;
+                            self.state.settings.trakt_refresh_token = refresh_token;
+                            if !username.is_empty() {
+                                self.state.settings.trakt_username = username;
+                            }
+                            self.state.trakt_device_code = None;
+                            self.state.trakt_status_msg = Some("Connected to Trakt.tv!".to_string());
+                            let _ = self.state.settings.save();
+                        }
+                        Err(msg) => {
+                            self.state.trakt_status_msg = Some(msg);
+                        }
+                    }
+                }
+            }
+            ShellAction::DisconnectTrakt => {
+                self.state.settings.trakt_access_token.clear();
+                self.state.settings.trakt_refresh_token.clear();
+                self.state.trakt_device_code = None;
+                self.state.trakt_status_msg = Some("Disconnected from Trakt.tv.".to_string());
+                let _ = self.state.settings.save();
+            }
             ShellAction::PlayMedia(path) => self.start_playback(path),
+            ShellAction::EnqueueMedia(paths) => {
+                if !paths.is_empty() {
+                    let snap = self.player.snapshot().read().clone();
+                    if snap.state == PlaybackState::Idle {
+                        self.start_playback(paths[0].clone());
+                        if paths.len() > 1 {
+                            let rest = paths[1..].to_vec();
+                            let token = self.player.snapshot().read().token;
+                            let _ = self.player.send(PlayerCommand::Enqueue { token, paths: rest });
+                        }
+                    } else {
+                        let _ = self.player.send(PlayerCommand::Enqueue {
+                            token: snap.token,
+                            paths,
+                        });
+                    }
+                }
+            }
             ShellAction::PlayMediaFromMiniBar {
                 path,
                 start_secs,
@@ -1181,6 +1462,30 @@ impl eframe::App for ValorShellApp {
                 }
             }
             ShellAction::AddFolderPicker => self.choose_folder(),
+            ShellAction::LoadSkinPicker => {
+                if let Some(path) = rfd::FileDialog::new()
+                    .add_filter("Valor Skin Bundle", &["json", "zip", "valorskin"])
+                    .pick_file()
+                {
+                    match valor_ui::skin::ValorSkin::from_file(&path) {
+                        Ok(skin) => {
+                            self.state.skin_load_error = None;
+                            self.state.settings.custom_skin_path = path.to_string_lossy().to_string();
+                            self.state.settings.skin_id = format!("custom:{}", skin.id);
+                            let _ = self.state.settings.save();
+                        }
+                        Err(err) => {
+                            self.state.skin_load_error = Some(err);
+                        }
+                    }
+                }
+            }
+            ShellAction::ResetSkin => {
+                self.state.skin_load_error = None;
+                self.state.settings.skin_id = "valor-purple".to_string();
+                self.state.settings.custom_skin_path.clear();
+                let _ = self.state.settings.save();
+            }
             ShellAction::ExcludeSubfolderPicker => {
                 if let Some(path) = rfd::FileDialog::new().pick_folder() {
                     self.exclude_subfolder(path);
@@ -1276,9 +1581,13 @@ impl eframe::App for ValorShellApp {
             ShellAction::OpenWithApp(path) => {
                 #[cfg(windows)]
                 {
-                    let _ = std::process::Command::new("rundll32.exe")
-                        .args(["shell32.dll,OpenAs_RunDLL", &path.to_string_lossy()])
-                        .spawn();
+                    use std::os::windows::process::CommandExt;
+                    std::thread::spawn(move || {
+                        let _ = std::process::Command::new("rundll32.exe")
+                            .args(["shell32.dll,OpenAs_RunDLL", &path.to_string_lossy()])
+                            .creation_flags(0x0800_0000)
+                            .spawn();
+                    });
                 }
             }
             ShellAction::OpenInExplorer(path) => {
@@ -1287,6 +1596,112 @@ impl eframe::App for ValorShellApp {
                     let _ = std::process::Command::new("explorer.exe")
                         .arg(format!("/select,{}", path.to_string_lossy()))
                         .spawn();
+                }
+            }
+            ShellAction::OpenAddToPlaylistModal(path) => {
+                self.state.add_to_playlist_target = Some(path);
+            }
+            ShellAction::CreatePlaylist(name) => {
+                let id = format!(
+                    "pl_{}",
+                    std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| d.as_millis())
+                        .unwrap_or(0)
+                );
+                let mut item_ids = Vec::new();
+                if let Some(target_path) = self.state.add_to_playlist_target.take() {
+                    let key = self
+                        .items
+                        .iter()
+                        .find(|i| i.file_path.eq_ignore_ascii_case(&target_path))
+                        .map(|i| i.id.clone())
+                        .unwrap_or(target_path);
+                    item_ids.push(key);
+                }
+                let coll = valor_core::models::Collection {
+                    id: id.clone(),
+                    name,
+                    collection_type: "playlist".to_string(),
+                    item_ids,
+                    current_index: 0,
+                    last_played_at: None,
+                    is_pinned: false,
+                };
+                if let Err(err) = self.db.save_collection(&coll) {
+                    tracing::error!("Failed to save playlist: {err}");
+                } else {
+                    self.state.playlists = self.db.get_all_collections().unwrap_or_default();
+                    self.state.selected_playlist_id = Some(id);
+                }
+            }
+            ShellAction::DeletePlaylist(id) => {
+                let _ = self.db.delete_collection(&id);
+                if self.state.selected_playlist_id.as_deref() == Some(id.as_str()) {
+                    self.state.selected_playlist_id = None;
+                }
+                self.state.playlists = self.db.get_all_collections().unwrap_or_default();
+            }
+            ShellAction::AddToPlaylist {
+                playlist_id,
+                item_path,
+            } => {
+                if let Ok(Some(mut coll)) = self.db.get_collection_by_id(&playlist_id) {
+                    let key = self
+                        .items
+                        .iter()
+                        .find(|i| i.file_path.eq_ignore_ascii_case(&item_path))
+                        .map(|i| i.id.clone())
+                        .unwrap_or(item_path);
+                    if !coll.item_ids.contains(&key) {
+                        coll.item_ids.push(key);
+                        let _ = self.db.save_collection(&coll);
+                        self.state.playlists = self.db.get_all_collections().unwrap_or_default();
+                    }
+                }
+            }
+            ShellAction::RemoveFromPlaylist {
+                playlist_id,
+                item_id,
+            } => {
+                if let Ok(Some(mut coll)) = self.db.get_collection_by_id(&playlist_id) {
+                    coll.item_ids.retain(|id| id != &item_id);
+                    let _ = self.db.save_collection(&coll);
+                    self.state.playlists = self.db.get_all_collections().unwrap_or_default();
+                }
+            }
+            ShellAction::PlayPlaylist(playlist_id) => {
+                if let Ok(Some(mut coll)) = self.db.get_collection_by_id(&playlist_id) {
+                    let paths: Vec<PathBuf> = coll
+                        .item_ids
+                        .iter()
+                        .filter_map(|key| {
+                            self.items
+                                .iter()
+                                .find(|i| {
+                                    i.id == *key
+                                        || i.fingerprint == *key
+                                        || i.file_path.eq_ignore_ascii_case(key)
+                                })
+                                .map(|i| PathBuf::from(&i.file_path))
+                                .or_else(|| {
+                                    let p = PathBuf::from(key);
+                                    p.exists().then_some(p)
+                                })
+                        })
+                        .collect();
+                    if let Some((first, rest)) = paths.split_first() {
+                        coll.last_played_at = Some(chrono::Utc::now());
+                        let _ = self.db.save_collection(&coll);
+                        self.start_playback(first.clone());
+                        if !rest.is_empty() {
+                            let token = self.player.snapshot().read().token;
+                            let _ = self.player.send(PlayerCommand::Enqueue {
+                                token,
+                                paths: rest.to_vec(),
+                            });
+                        }
+                    }
                 }
             }
             ShellAction::LocateFolder(_) | ShellAction::None => {}
@@ -1366,44 +1781,122 @@ fn uuid_like_id(seed: &str) -> String {
     format!("item-{hash:016x}")
 }
 
-fn load_tmdb_token(settings_key: &str) -> String {
-    if !settings_key.trim().is_empty() {
-        return settings_key.trim().to_string();
-    }
-    if let Ok(v) = std::env::var("VITE_TMDB_BEARER_TOKEN") {
-        if !v.trim().is_empty() {
-            return v.trim().to_string();
+fn load_env_key(keys: &[&str]) -> String {
+    for &key in keys {
+        if let Ok(v) = std::env::var(key) {
+            if !v.trim().is_empty() {
+                return v.trim().to_string();
+            }
         }
     }
-    if let Ok(env_text) = std::fs::read_to_string(".env") {
-        for line in env_text.lines() {
-            let trimmed = line.trim();
-            if let Some(rest) = trimmed.strip_prefix("VITE_TMDB_BEARER_TOKEN=") {
-                return rest.trim().trim_matches('"').to_string();
+    let env_files = [
+        ".env",
+        ".env.local",
+        ".env.valor-stack",
+        "../valor-embed/.env",
+        "../valor-embed/.env.local",
+        "../valor-embed/.env.valor-stack",
+    ];
+    for file in env_files {
+        if let Ok(env_text) = std::fs::read_to_string(file) {
+            for line in env_text.lines() {
+                let trimmed = line.trim();
+                for &key in keys {
+                    if let Some(rest) = trimmed.strip_prefix(&format!("{key}=")) {
+                        let val = rest.trim().trim_matches('"').trim_matches('\'').to_string();
+                        if !val.is_empty() {
+                            return val;
+                        }
+                    }
+                }
             }
         }
     }
     String::new()
 }
 
+fn load_tmdb_token(settings_key: &str) -> String {
+    if !settings_key.trim().is_empty() {
+        return settings_key.trim().to_string();
+    }
+    load_env_key(&["VITE_TMDB_BEARER_TOKEN", "VITE_TMDB_API_KEY"])
+}
+
+fn silent_curl() -> std::process::Command {
+    let mut cmd = std::process::Command::new("curl");
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x08000000);
+    }
+    cmd
+}
+
 fn tmdb_get_json(token: &str, url: &str) -> Option<serde_json::Value> {
-    let output = std::process::Command::new("curl")
-        .args([
-            "-sS",
-            "--max-time",
-            "8",
-            "-H",
-            "Accept: application/json",
-            "-H",
-            &format!("Authorization: Bearer {token}"),
-            url,
-        ])
-        .output()
-        .ok()?;
+    if token.trim().is_empty() {
+        // Fallback to web folder backend TMDB proxy if running
+        if let Some(endpoint) = url.strip_prefix("https://api.themoviedb.org/3") {
+            let proxy_url = format!(
+                "https://player.streamiteasy.xyz/api/tmdb-proxy?endpoint={}",
+                url_encode_query(endpoint)
+            );
+            return http_get_json(&proxy_url, "");
+        }
+        return None;
+    }
+    let mut cmd = silent_curl();
+    let final_url = if !token.contains('.') {
+        let sep = if url.contains('?') { '&' } else { '?' };
+        format!("{url}{sep}api_key={token}")
+    } else {
+        url.to_string()
+    };
+    cmd.args(["-sS", "--max-time", "8", "-H", "Accept: application/json"]);
+    if token.contains('.') {
+        cmd.args(["-H", &format!("Authorization: Bearer {token}")]);
+    }
+    cmd.arg(&final_url);
+    let output = cmd.output().ok()?;
     if !output.status.success() {
         return None;
     }
     serde_json::from_slice(&output.stdout).ok()
+}
+
+fn http_get_json(url: &str, bearer: &str) -> Option<serde_json::Value> {
+    let mut cmd = silent_curl();
+    cmd.args(["-sS", "--max-time", "5", "-H", "Accept: application/json"]);
+    if !bearer.trim().is_empty() {
+        cmd.args(["-H", &format!("Authorization: Bearer {}", bearer.trim())]);
+    }
+    cmd.arg(url);
+    let output = cmd.output().ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    serde_json::from_slice(&output.stdout).ok()
+}
+
+fn http_post_json(url: &str, body: &serde_json::Value) {
+    let payload = match serde_json::to_string(body) {
+        Ok(s) => s,
+        Err(_) => return,
+    };
+    let mut cmd = silent_curl();
+    let _ = cmd
+        .args([
+            "-sS",
+            "--max-time",
+            "5",
+            "-X",
+            "POST",
+            "-H",
+            "Content-Type: application/json",
+            "-d",
+            &payload,
+            url,
+        ])
+        .output();
 }
 
 fn url_encode_query(q: &str) -> String {
@@ -1442,6 +1935,32 @@ fn fetch_tmdb_series_info(
             .and_then(|v| v.as_str())
             .unwrap_or(title)
             .to_string(),
+        media_type: "tv".to_string(),
+        release_year: detail_json
+            .get("first_air_date")
+            .and_then(|v| v.as_str())
+            .and_then(|d| d.get(..4))
+            .unwrap_or_default()
+            .to_string(),
+        vote_average: detail_json
+            .get("vote_average")
+            .and_then(|v| v.as_f64())
+            .unwrap_or(0.0) as f32,
+        overview: detail_json
+            .get("overview")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default()
+            .to_string(),
+        genres: detail_json
+            .get("genres")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|g| g.get("name").and_then(|n| n.as_str()).map(String::from))
+                    .take(4)
+                    .collect()
+            })
+            .unwrap_or_default(),
         total_seasons: detail_json
             .get("number_of_seasons")
             .and_then(|v| v.as_u64())
@@ -1490,6 +2009,430 @@ fn fetch_tmdb_series_info(
     }
 
     Some(info)
+}
+
+fn parse_web_db_bookmarks(fingerprint: &str, json: &serde_json::Value) -> Vec<valor_core::models::Bookmark> {
+    let mut out = Vec::new();
+    let Some(arr) = json.get("bookmarks").and_then(|v| v.as_array()) else {
+        return out;
+    };
+    for (idx, b) in arr.iter().enumerate() {
+        let start_secs = b
+            .get("startTime")
+            .or_else(|| b.get("time"))
+            .or_else(|| b.get("start_secs"))
+            .and_then(|v| v.as_f64())
+            .unwrap_or(-1.0);
+        if start_secs < 0.0 {
+            continue;
+        }
+        let end_secs = b
+            .get("endTime")
+            .or_else(|| b.get("end_secs"))
+            .and_then(|v| v.as_f64())
+            .filter(|e| *e > start_secs);
+        let raw_cat = b
+            .get("category")
+            .and_then(|v| v.as_str())
+            .unwrap_or("custom");
+        let is_intro = b.get("isIntro").and_then(|v| v.as_bool()).unwrap_or(false)
+            || raw_cat.eq_ignore_ascii_case("intro");
+        let is_outro = b.get("isOutro").and_then(|v| v.as_bool()).unwrap_or(false)
+            || raw_cat.eq_ignore_ascii_case("outro")
+            || raw_cat.eq_ignore_ascii_case("credits");
+        let category = if is_intro {
+            "intro".to_string()
+        } else if is_outro {
+            "credits".to_string()
+        } else if raw_cat.eq_ignore_ascii_case("recap") {
+            "recap".to_string()
+        } else if raw_cat.eq_ignore_ascii_case("scene") {
+            "scene".to_string()
+        } else {
+            "custom".to_string()
+        };
+        let title = b
+            .get("title")
+            .or_else(|| b.get("label"))
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or(if is_intro { "Intro" } else if is_outro { "Outro" } else { "Bookmark" })
+            .to_string();
+        let id = b
+            .get("id")
+            .and_then(|v| v.as_str())
+            .map(String::from)
+            .unwrap_or_else(|| format!("web-{fingerprint}-{idx}-{}", (start_secs * 1000.0) as u64));
+        out.push(valor_core::models::Bookmark {
+            id,
+            fingerprint: fingerprint.to_string(),
+            title,
+            start_secs,
+            end_secs,
+            category,
+            created_at: chrono::Utc::now(),
+        });
+    }
+    out
+}
+
+fn parse_tidb_segments(fingerprint: &str, json: &serde_json::Value) -> Vec<valor_core::models::Bookmark> {
+    let mut out = Vec::new();
+    for (field, category, label) in [
+        ("intro", "intro", "Intro"),
+        ("recap", "recap", "Recap"),
+        ("credits", "credits", "Outro / Credits"),
+        ("outro", "credits", "Outro"),
+    ] {
+        if let Some(arr) = json.get(field).and_then(|v| v.as_array()) {
+            for (idx, seg) in arr.iter().enumerate() {
+                let start_secs = seg
+                    .get("start_ms")
+                    .and_then(|v| v.as_f64())
+                    .map(|ms| ms / 1000.0)
+                    .or_else(|| seg.get("start_sec").and_then(|v| v.as_f64()))
+                    .unwrap_or(-1.0);
+                let end_secs = seg
+                    .get("end_ms")
+                    .and_then(|v| v.as_f64())
+                    .map(|ms| ms / 1000.0)
+                    .or_else(|| seg.get("end_sec").and_then(|v| v.as_f64()));
+                if start_secs >= 0.0 {
+                    out.push(valor_core::models::Bookmark {
+                        id: format!("tidb-{fingerprint}-{category}-{idx}"),
+                        fingerprint: fingerprint.to_string(),
+                        title: label.to_string(),
+                        start_secs,
+                        end_secs: end_secs.filter(|e| *e > start_secs),
+                        category: category.to_string(),
+                        created_at: chrono::Utc::now(),
+                    });
+                }
+            }
+        }
+    }
+    out
+}
+
+fn fetch_web_db_and_tidb_bookmarks(
+    fingerprint: &str,
+    title: &str,
+    season: Option<u32>,
+    episode: Option<u32>,
+    duration_secs: f64,
+    tmdb_token: &str,
+    introdb_key: &str,
+) -> BookmarkSyncResult {
+    let mut tmdb_id: Option<u64> = None;
+    let mut tmdb_rating: Option<f32> = None;
+
+    if !tmdb_token.is_empty() && !title.trim().is_empty() {
+        let is_tv = season.is_some() || episode.is_some();
+        let endpoint = if is_tv { "tv" } else { "movie" };
+        let search_url = format!(
+            "https://api.themoviedb.org/3/search/{endpoint}?query={}",
+            url_encode_query(title)
+        );
+        if let Some(s_json) = tmdb_get_json(tmdb_token, &search_url) {
+            if let Some(first) = s_json.get("results").and_then(|v| v.as_array()).and_then(|a| a.first()) {
+                tmdb_id = first.get("id").and_then(|v| v.as_u64());
+                tmdb_rating = first
+                    .get("vote_average")
+                    .and_then(|v| v.as_f64())
+                    .map(|r| r as f32)
+                    .filter(|r| *r > 0.0);
+            }
+        }
+    }
+
+    let mut web_url = format!(
+        "https://player.streamiteasy.xyz/api/timestamps?videoId={}&autoSync=true",
+        url_encode_query(fingerprint)
+    );
+    if let Some(id) = tmdb_id {
+        web_url.push_str(&format!("&tmdbId={id}"));
+    }
+    if let (Some(s), Some(e)) = (season, episode) {
+        web_url.push_str(&format!("&season={s}&episode={e}"));
+    }
+    if duration_secs > 1.0 {
+        web_url.push_str(&format!("&duration={:.0}", duration_secs));
+    }
+
+    let mut bookmarks = Vec::new();
+    let mut tidb_synced = false;
+
+    if let Some(web_json) = http_get_json(&web_url, "") {
+        tidb_synced = web_json
+            .get("inIntroDb")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        bookmarks.extend(parse_web_db_bookmarks(fingerprint, &web_json));
+    }
+
+    // Direct TheIntroDB v4 fallback if web player DB is offline or has no intro/outro yet
+    let has_intro_or_outro = bookmarks
+        .iter()
+        .any(|b| b.category == "intro" || b.category == "credits");
+    if !has_intro_or_outro {
+        if let Some(id) = tmdb_id {
+            let mut tidb_url = format!("https://api.theintrodb.org/v4/media?tmdb_id={id}");
+            if let (Some(s), Some(e)) = (season, episode) {
+                if s > 0 {
+                    tidb_url.push_str(&format!("&season={s}&episode={e}"));
+                }
+            }
+            if let Some(tidb_json) = http_get_json(&tidb_url, introdb_key) {
+                let tidb_bms = parse_tidb_segments(fingerprint, &tidb_json);
+                if !tidb_bms.is_empty() {
+                    tidb_synced = true;
+                    bookmarks.extend(tidb_bms);
+                }
+            }
+        }
+    }
+
+    BookmarkSyncResult {
+        fingerprint: fingerprint.to_string(),
+        bookmarks,
+        tmdb_rating,
+        tidb_synced,
+    }
+}
+
+fn push_bookmarks_to_web_db(bookmarks: &[valor_core::models::Bookmark]) {
+    if bookmarks.is_empty() {
+        return;
+    }
+    let video_id = bookmarks[0].fingerprint.clone();
+    let arr: Vec<serde_json::Value> = bookmarks
+        .iter()
+        .map(|bm| {
+            let is_intro = bm.category.eq_ignore_ascii_case("intro");
+            let is_outro = bm.category.eq_ignore_ascii_case("credits")
+                || bm.category.eq_ignore_ascii_case("outro");
+            serde_json::json!({
+                "id": bm.id,
+                "videoId": bm.fingerprint,
+                "title": bm.title,
+                "label": bm.title,
+                "startTime": bm.start_secs,
+                "time": bm.start_secs,
+                "endTime": bm.end_secs,
+                "category": if is_intro { "Intro" } else if is_outro { "Outro" } else { &bm.category },
+                "isIntro": is_intro,
+                "isOutro": is_outro,
+                "createdBy": "manual"
+            })
+        })
+        .collect();
+    let body = serde_json::json!({
+        "userId": "admin",
+        "videoId": video_id,
+        "bookmarks": arr,
+    });
+    http_post_json("https://player.streamiteasy.xyz/api/timestamps", &body);
+}
+
+const WEB_TRAKT_CLIENT_ID: &str = "V4WfZovVxhKMc-KNyfTHgL_KtI84gJLnBHMss-qwu88";
+
+fn trakt_client_id() -> String {
+    let from_env = load_env_key(&["VITE_TRAKT_CLIENT_ID"]);
+    if from_env.is_empty() {
+        WEB_TRAKT_CLIENT_ID.to_string()
+    } else {
+        from_env
+    }
+}
+
+fn http_post_json_resp(url: &str, body: &serde_json::Value, extra_headers: &[(&str, &str)]) -> Option<serde_json::Value> {
+    let payload = serde_json::to_string(body).ok()?;
+    let mut cmd = silent_curl();
+    cmd.args(["-sS", "--max-time", "8", "-X", "POST", "-H", "Content-Type: application/json"]);
+    for (k, v) in extra_headers {
+        cmd.args(["-H", &format!("{k}: {v}")]);
+    }
+    cmd.args(["-d", &payload, url]);
+    let output = cmd.output().ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    serde_json::from_slice(&output.stdout).ok()
+}
+
+fn request_trakt_device_code() -> Option<(String, String, String)> {
+    let res = http_post_json_resp(
+        "https://player.streamiteasy.xyz/api/trakt/device/code",
+        &serde_json::json!({}),
+        &[],
+    )
+    .or_else(|| {
+        let cid = trakt_client_id();
+        http_post_json_resp(
+            "https://api.trakt.tv/oauth/device/code",
+            &serde_json::json!({ "client_id": cid }),
+            &[("trakt-api-version", "2"), ("trakt-api-key", &cid), ("User-Agent", "Valor/1.0.0")],
+        )
+    })?;
+    let user_code = res.get("user_code")?.as_str()?.to_string();
+    let device_code = res.get("device_code")?.as_str()?.to_string();
+    let verify_url = res
+        .get("verification_url")
+        .and_then(|v| v.as_str())
+        .unwrap_or("https://trakt.tv/activate")
+        .to_string();
+    Some((user_code, device_code, verify_url))
+}
+
+fn poll_trakt_device_token(device_code: &str) -> Result<(String, String, String), String> {
+    let res = http_post_json_resp(
+        "https://player.streamiteasy.xyz/api/trakt/device/token",
+        &serde_json::json!({ "code": device_code }),
+        &[],
+    )
+    .or_else(|| {
+        let cid = trakt_client_id();
+        http_post_json_resp(
+            "https://api.trakt.tv/oauth/device/token",
+            &serde_json::json!({ "code": device_code, "client_id": cid }),
+            &[("trakt-api-version", "2"), ("trakt-api-key", &cid), ("User-Agent", "Valor/1.0.0")],
+        )
+    })
+    .ok_or_else(|| "Unable to reach Trakt backend.".to_string())?;
+
+    let Some(access_token) = res.get("access_token").and_then(|v| v.as_str()) else {
+        return Err("Authorization still pending — finish entering the code on trakt.tv/activate and try again.".to_string());
+    };
+    let refresh_token = res
+        .get("refresh_token")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+
+    let mut username = String::new();
+    if let Some(user_json) = http_post_json_resp(
+        "https://player.streamiteasy.xyz/api/trakt/user",
+        &serde_json::json!({ "access_token": access_token }),
+        &[],
+    ) {
+        username = user_json
+            .get("user")
+            .and_then(|u| u.get("username"))
+            .or_else(|| user_json.get("username"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+    }
+    Ok((access_token.to_string(), refresh_token, username))
+}
+
+fn open_url_in_browser(url: &str) -> std::io::Result<()> {
+    #[cfg(target_os = "windows")]
+    {
+        std::process::Command::new("explorer").arg(url).spawn()?;
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = std::process::Command::new("xdg-open").arg(url).spawn();
+    }
+    Ok(())
+}
+
+fn resolve_library_tmdb_and_recommendations(
+    items: &[valor_core::models::MediaItem],
+    tele: &std::collections::HashMap<String, valor_core::models::MediaTelemetry>,
+    token: &str,
+    tx: &Sender<(String, u64, Vec<String>, f32)>,
+    recs_tx: &Sender<Vec<valor_ui::shell_state::TmdbRecommendation>>,
+) {
+    let mut resolved_ids: Vec<(String, u64, String, f64)> = Vec::new();
+    let mut fetched = 0usize;
+    for item in items {
+        if item.is_missing {
+            continue;
+        }
+        if let Some(existing) = tele.get(&item.fingerprint) {
+            if let Some(tid) = existing.tmdb_id {
+                let kind = if item.season_number.is_some() { "tv" } else { "movie" };
+                let skip_pen = 1.0 / (1.0 + (existing.skips_used as f64) * 0.25);
+                let score = existing.time_spent_secs.max(1.0) * skip_pen;
+                resolved_ids.push((item.fingerprint.clone(), tid, kind.to_string(), score));
+                continue;
+            }
+        }
+        if fetched >= 25 || item.title.trim().is_empty() {
+            continue;
+        }
+        fetched += 1;
+        let is_tv = item.season_number.is_some() || item.episode_number.is_some();
+        let endpoint = if is_tv { "tv" } else { "movie" };
+        let url = format!(
+            "https://api.themoviedb.org/3/search/{endpoint}?query={}",
+            url_encode_query(&item.title)
+        );
+        if let Some(json) = tmdb_get_json(token, &url) {
+            if let Some(first) = json.get("results").and_then(|v| v.as_array()).and_then(|a| a.first()) {
+                if let Some(tmdb_id) = first.get("id").and_then(|v| v.as_u64()) {
+                    let vote = first.get("vote_average").and_then(|v| v.as_f64()).unwrap_or(0.0) as f32;
+                    let detail_url = format!("https://api.themoviedb.org/3/{endpoint}/{tmdb_id}");
+                    let genres = tmdb_get_json(token, &detail_url)
+                        .and_then(|d| {
+                            d.get("genres").and_then(|v| v.as_array()).map(|arr| {
+                                arr.iter()
+                                    .filter_map(|g| g.get("name").and_then(|n| n.as_str()).map(String::from))
+                                    .take(4)
+                                    .collect::<Vec<_>>()
+                            })
+                        })
+                        .unwrap_or_default();
+                    let _ = tx.send((item.fingerprint.clone(), tmdb_id, genres, vote));
+                    let skip_pen = tele
+                        .get(&item.fingerprint)
+                        .map(|t| 1.0 / (1.0 + (t.skips_used as f64) * 0.25))
+                        .unwrap_or(1.0);
+                    let spent = tele.get(&item.fingerprint).map(|t| t.time_spent_secs).unwrap_or(0.0);
+                    resolved_ids.push((item.fingerprint.clone(), tmdb_id, endpoint.to_string(), spent * skip_pen));
+                }
+            }
+        }
+    }
+
+    // Pick top-judged watched TMDB ID to fetch recommendations
+    resolved_ids.sort_by(|a, b| b.3.total_cmp(&a.3));
+    if let Some((_, top_id, top_kind, _)) = resolved_ids.first() {
+        let rec_url = format!("https://api.themoviedb.org/3/{top_kind}/{top_id}/recommendations");
+        if let Some(rec_json) = tmdb_get_json(token, &rec_url) {
+            if let Some(arr) = rec_json.get("results").and_then(|v| v.as_array()) {
+                let mut recs = Vec::new();
+                for r in arr.iter().take(6) {
+                    let Some(id) = r.get("id").and_then(|v| v.as_u64()) else { continue; };
+                    let title = r
+                        .get("title")
+                        .or_else(|| r.get("name"))
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("Recommended")
+                        .to_string();
+                    let vote = r.get("vote_average").and_then(|v| v.as_f64()).unwrap_or(0.0) as f32;
+                    let year = r
+                        .get("release_date")
+                        .or_else(|| r.get("first_air_date"))
+                        .and_then(|v| v.as_str())
+                        .and_then(|d| d.get(..4))
+                        .unwrap_or("")
+                        .to_string();
+                    recs.push(valor_ui::shell_state::TmdbRecommendation {
+                        tmdb_id: id,
+                        title,
+                        media_type: top_kind.clone(),
+                        vote_average: vote,
+                        release_year: year,
+                        reason: "Based on your watched media & low skips".to_string(),
+                    });
+                }
+                let _ = recs_tx.send(recs);
+            }
+        }
+    }
 }
 
 fn disable_dwm_border_for_active_window() {

@@ -57,3 +57,54 @@ pub fn path_is_within(path: &Path, root: &Path) -> bool {
             || (cfg!(windows) && (root.ends_with('\\') || rest.starts_with('\\')))
     })
 }
+
+/// Case-insensitive natural (numeric-aware) string comparison so "Episode 2" < "Episode 10".
+pub fn natural_cmp(a: &str, b: &str) -> std::cmp::Ordering {
+    let mut ai = a.chars().peekable();
+    let mut bi = b.chars().peekable();
+    loop {
+        match (ai.peek().copied(), bi.peek().copied()) {
+            (None, None) => return std::cmp::Ordering::Equal,
+            (None, Some(_)) => return std::cmp::Ordering::Less,
+            (Some(_), None) => return std::cmp::Ordering::Greater,
+            (Some(ac), Some(bc)) if ac.is_ascii_digit() && bc.is_ascii_digit() => {
+                let mut an = String::new();
+                while let Some(&c) = ai.peek() {
+                    if c.is_ascii_digit() {
+                        an.push(c);
+                        ai.next();
+                    } else {
+                        break;
+                    }
+                }
+                let mut bn = String::new();
+                while let Some(&c) = bi.peek() {
+                    if c.is_ascii_digit() {
+                        bn.push(c);
+                        bi.next();
+                    } else {
+                        break;
+                    }
+                }
+                let a_val = an.trim_start_matches('0');
+                let b_val = bn.trim_start_matches('0');
+                let ord = a_val
+                    .len()
+                    .cmp(&b_val.len())
+                    .then_with(|| a_val.cmp(b_val))
+                    .then_with(|| an.len().cmp(&bn.len()));
+                if ord != std::cmp::Ordering::Equal {
+                    return ord;
+                }
+            }
+            (Some(ac), Some(bc)) => {
+                ai.next();
+                bi.next();
+                let ord = ac.to_ascii_lowercase().cmp(&bc.to_ascii_lowercase());
+                if ord != std::cmp::Ordering::Equal {
+                    return ord;
+                }
+            }
+        }
+    }
+}

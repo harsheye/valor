@@ -9,6 +9,7 @@ pub mod settings_page;
 pub mod shell;
 pub mod shell_state;
 pub mod shell_tokens;
+pub mod skin;
 pub mod spinner;
 pub mod texture_cache;
 pub mod theme;

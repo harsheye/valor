@@ -1,7 +1,55 @@
 //! Shared UI helper functions.
 
-use egui::{Align, Color32, CornerRadius, Frame, Layout, Rect, RichText, Stroke, Ui, Vec2};
+use egui::{Align, Color32, CornerRadius, Frame, Layout, Pos2, Rect, RichText, Stroke, Ui, Vec2};
 use crate::{layout, shell_tokens::{typography, ShellTokens}};
+
+/// Paints a divided per-edge radial proximity border glow on all 4 sides of `rect`.
+/// Each side is subdivided into segments so the end closest to `pointer` shines brighter
+/// while the far end fades smoothly.
+pub fn paint_proximity_border(
+    ui: &Ui,
+    rect: Rect,
+    accent: Color32,
+    pointer: Option<Pos2>,
+    range: f32,
+) {
+    let Some(p) = pointer else { return; };
+    if range <= 0.0 || !rect.expand(range).contains(p) {
+        return;
+    }
+    let inside = rect.contains(p);
+    let edges = [
+        (rect.left_top(), rect.right_top()),
+        (rect.left_bottom(), rect.right_bottom()),
+        (rect.left_top(), rect.left_bottom()),
+        (rect.right_top(), rect.right_bottom()),
+    ];
+    const SUBDIVS: usize = 10;
+    for (start, end) in edges {
+        for i in 0..SUBDIVS {
+            let f0 = i as f32 / SUBDIVS as f32;
+            let f1 = (i + 1) as f32 / SUBDIVS as f32;
+            let a = start.lerp(end, f0);
+            let b = start.lerp(end, f1);
+            let mid = a.lerp(b, 0.5);
+            let d = mid.distance(p);
+            let raw = (1.0 - (d / range).clamp(0.0, 1.0)).powi(2);
+            let t = if inside { raw.max(0.28) } else { raw };
+            if t <= 0.01 {
+                continue;
+            }
+            let mix = 0.40 * t;
+            let r = ((accent.r() as f32) * (1.0 - mix) + 255.0 * mix) as u8;
+            let g = ((accent.g() as f32) * (1.0 - mix) + 255.0 * mix) as u8;
+            let bl = ((accent.b() as f32) * (1.0 - mix) + 255.0 * mix) as u8;
+            let alpha = (235.0 * t).clamp(0.0, 255.0) as u8;
+            ui.painter().line_segment(
+                [a, b],
+                Stroke::new(1.0 + 0.8 * t, Color32::from_rgba_unmultiplied(r, g, bl, alpha)),
+            );
+        }
+    }
+}
 
 /// Draw a standard separator with consistent vertical spacing and design token styling.
 pub fn section_separator(ui: &mut Ui, tokens: &ShellTokens) {
@@ -53,21 +101,21 @@ pub fn toggle_switch(ui: &mut Ui, on: &mut bool, tokens: &ShellTokens) -> egui::
         } else {
             Color32::from_rgb(42, 46, 56)
         };
-        ui.painter().rect_filled(rect, CornerRadius::same(12), bg_color);
+        ui.painter().rect_filled(rect, CornerRadius::ZERO, bg_color);
         if !*on {
             ui.painter().rect_stroke(
                 rect,
-                CornerRadius::same(12),
+                CornerRadius::ZERO,
                 Stroke::new(1.0, Color32::from_rgb(64, 70, 84)),
                 egui::StrokeKind::Inside,
             );
         }
 
-        let knob_radius = 8.5;
-        let circle_x = egui::lerp((rect.left() + knob_radius + 2.5)..=(rect.right() - knob_radius - 2.5), how_on);
-        let center = egui::pos2(circle_x, rect.center().y);
+        let knob_size = 16.0;
+        let knob_x = egui::lerp((rect.left() + knob_size * 0.5 + 3.0)..=(rect.right() - knob_size * 0.5 - 3.0), how_on);
+        let knob_rect = Rect::from_center_size(egui::pos2(knob_x, rect.center().y), Vec2::splat(knob_size));
         let knob_color = if *on { Color32::WHITE } else { Color32::from_rgb(180, 185, 195) };
-        ui.painter().circle_filled(center, knob_radius, knob_color);
+        ui.painter().rect_filled(knob_rect, CornerRadius::ZERO, knob_color);
     }
     response
 }

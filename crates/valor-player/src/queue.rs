@@ -149,6 +149,32 @@ impl PlaybackQueue {
         }
     }
 
+    /// Appends an item to the end of the queue without interrupting playback.
+    pub fn enqueue(&mut self, item: QueueItem) {
+        let new_index = self.items.len();
+        let was_empty = self.items.is_empty();
+        self.items.push(item);
+        self.shuffle_order.push(new_index);
+        if was_empty {
+            self.cursor = 0;
+            self.set_current_from_cursor();
+        }
+    }
+
+    /// Removes all items except the currently playing one.
+    pub fn clear_upcoming(&mut self) {
+        if let Some(current) = self.current().cloned() {
+            self.items = vec![current];
+            self.shuffle_order = vec![0];
+            self.cursor = 0;
+        } else {
+            self.items.clear();
+            self.shuffle_order.clear();
+            self.cursor = 0;
+            self.current_id = None;
+        }
+    }
+
     /// Inserts an item immediately after the active queue item.
     pub fn queue_next(&mut self, item: QueueItem) {
         let index = self
@@ -179,7 +205,11 @@ impl PlaybackQueue {
         self.cursor = self
             .current_id
             .as_ref()
-            .and_then(|current| self.items.iter().position(|item| &item.id == current))
+            .and_then(|current| {
+                self.shuffle_order
+                    .iter()
+                    .position(|entry| self.items.get(*entry).is_some_and(|i| &i.id == current))
+            })
             .unwrap_or(0);
         None
     }

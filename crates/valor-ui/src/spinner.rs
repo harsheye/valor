@@ -45,3 +45,26 @@ pub fn render_ember_spinner(ui: &mut Ui, center: Pos2, base_radius: f32, time_se
         painter.circle_filled(Pos2::new(px, py), particle_size, color);
     }
 }
+
+/// Renders a sleek Netflix-style tapered red circular arc spinner.
+pub fn render_red_arc_spinner(ui: &mut Ui, center: Pos2, radius: f32, time_secs: f64) {
+    let painter = ui.painter();
+    let start_angle = (time_secs as f32 * 4.2) % (2.0 * PI);
+    let arc_len = PI * 1.15;
+    let segments = 28;
+    for i in 0..segments {
+        let t0 = i as f32 / segments as f32;
+        let t1 = (i + 1) as f32 / segments as f32;
+        let a0 = start_angle + t0 * arc_len;
+        let a1 = start_angle + t1 * arc_len;
+        let p0 = Pos2::new(center.x + radius * a0.cos(), center.y + radius * a0.sin());
+        let p1 = Pos2::new(center.x + radius * a1.cos(), center.y + radius * a1.sin());
+        let alpha = (t1.powf(1.4) * 255.0) as u8;
+        let stroke_w = 2.0 + 2.8 * t1;
+        painter.line_segment(
+            [p0, p1],
+            egui::Stroke::new(stroke_w, Color32::from_rgba_unmultiplied(229, 9, 20, alpha)),
+        );
+    }
+    ui.ctx().request_repaint();
+}

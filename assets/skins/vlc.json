@@ -1,0 +1,48 @@
+{
+  "id": "vlc",
+  "name": "VLC Classic",
+  "author": "Valor Team",
+  "version": "1.0.0",
+  "description": "Classic desktop media player layout inspired by VLC: top menu bar, sharp corners, compact playlist/library view, and left-aligned inline transport controls.",
+  "colors": {
+    "window_bg": "#1E1E1E",
+    "chrome_bg": "#252526",
+    "nav_surface": "#2D2D30",
+    "content_surface": "#1A1A1A",
+    "card_fill": "#28282B",
+    "field_fill": "#333337",
+    "accent": "#FF8800",
+    "accent_hover": "#FFA333",
+    "text_primary": "#F0F0F0",
+    "text_secondary": "#B8B8B8",
+    "text_tertiary": "#808080",
+    "divider": "#3E3E42",
+    "player_bar_bg": "#232326EB",
+    "scrubber_fill": "#FF8800",
+    "scrubber_track": "#4A4A4F",
+    "scrubber_knob": "#FFFFFF"
+  },
+  "shell_layout": {
+    "nav_position": "classic_menubar",
+    "nav_width": 220.0,
+    "content_corner_radius": 0,
+    "card_corner_radius": 2,
+    "show_hero_banner": false,
+    "mini_bar_position": "bottom",
+    "titlebar_style": "classic"
+  },
+  "player_layout": {
+    "style": "vlc",
+    "controls_position": "bottom",
+    "scrubber_position": "above_controls",
+    "transport_align": "left",
+    "show_title_top": true,
+    "show_edge_arrows": false,
+    "bar_height": 78.0,
+    "bar_corner_radius": 0,
+    "bar_margin_x": 0.0,
+    "bar_margin_bottom": 0.0,
+    "scrubber_height": 6.0,
+    "play_button_style": "square_classic"
+  }
+}

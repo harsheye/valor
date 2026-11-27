@@ -1,143 +1,59 @@
 # Valor
 
-Valor is a cutting-edge, high-performance local and remote media player and streaming server designed to deliver a modern viewing experience directly in your browser.
+Valor is a multi-platform media playback ecosystem consisting of:
+- **Valor Desktop (`rust` branch)**: Native Rust (`eframe`/`egui` + `libmpv`) media player & library manager.
+- **Valor Browser Extension (`extension` branch)**: Manifest V3 browser extension (`valor-extension/`) that upgrades web `<video>` players with Valor's controls, color grading, and sync.
+- **Valor Web & Embed (`production` branch)**: React 19 + TypeScript + Vite streaming app, `<valor-player>` SDK (`packages/sdk`), and Node.js backend (`player.streamiteasy.xyz`).
 
 ---
 
-## 🚀 Features
+## 🦀 Valor Desktop App (`rust` branch)
 
-### 🎬 Advanced Playback Engine
-* **Local Media Support**: Stream and play local video files (`.mp4`, `.mkv`, `.avi`, `.webm`, `.mov`, `.ts`) with full HTTP Range request support.
-* **Actively Downloading Files**: Uniquely supports playback of files that are actively downloading (like `.fdmdownload` or `.part` files) by dynamically probing and buffering available byte ranges.
-* **WASM-Powered Audio Demuxing**: Uses `@ffmpeg/wasm` in the browser to extract, decode, and schedule audio chunks natively through the Web Audio API, ensuring low-latency A/V sync without requiring heavy server transcoding.
-* **Remote Streaming & HLS**: Integrated proxy pipelines for external feeds, HLS live streams, and cross-origin video feeds.
-* **External Subtitles & Audio**: Easily load and sync external subtitle (`.srt`, `.vtt`, `.ass`) and audio tracks directly onto your media.
+### Features
+- **Native `libmpv` Playback**: Hardware-accelerated playback (`d3d11va` / `nvdec` / `auto-safe`) for `.mp4`, `.mkv`, `.avi`, `.webm`, `.mov`, `.ts`, and actively downloading files.
+- **Cloudflare Docs UI & Themes**: Crisp `#0D1117` / `#161B22` surfaces, `#30363D` 1px borders, square controls (`CornerRadius::ZERO`), `#2F81F7` Cloudflare Docs Blue accent, plus `OLED Super Black`, `GitHub Midnight`, `VLC Classic`, `Netflix`, `YouTube Player`, `Obsidian Violet`, `Cyber Crimson`, and `Emerald Studio`.
+- **Home & Library Views**:
+  - **Grid & List Views**: Explorer-style 9-column sortable & resizable table (`Name`, `Date`, `Type`, `Size`, `Length`, `Quality`, `Last Played`, `Time Spent`, `Skips`) with natural episode sorting (`S01E02` < `S01E10`).
+  - **Deduplicated Media**: Automatic deduplication across folders/fingerprints, with `(YYYY)` and `SxxExx` display formatting.
+  - **Playlists**: Create, delete, and manage playlists persisted in SQLite (`collections` / `collection_items`), add media via the library picker or right-click **Add to Playlist...**, and play/queue playlists.
+- **In-Player Controls & Picture / Color Grading**:
+  - **Picture Panel** (in **More → Picture / Color Grading**): Toggleable **Lighting**, **Shadows**, **Contrast**, **Sharpness**, **Vibrance**, and **HDR Boost** with zero-lag live dragging and `mpv` application on release.
+  - **TheIntroDB & Bookmarks**: Auto-skip / floating `Skip Intro >>` and `Skip Outro >>` pills, custom bookmarks, and chapter scrub markers.
+  - **Comfort Settings**: Live **Interface brightness** (chrome dimmer), **Text size** (`90%`–`120%` UI zoom), and **Reduce motion** (`System` / `On` / `Off`).
+  - **Trakt.tv & TMDB**: Device-code Trakt pairing, **Sync to Trakt** button on media completion, TMDB metadata & ratings, and personalized recommendations unlocked after 30+ hours watched.
 
-### 🎨 Themes & Design Tokens
-* **True-Black OLED Theme ("Black Ops")**: Engineered specifically for OLED displays where background surfaces are `#000000` to completely power off pixels.
-* **Themes**: Includes `Midnight Slate`, `Soft Paper`, and `Black Ops` with WCAG AA compliance across all views.
-* **Responsive Layouts**: Desktop, tablet, and mobile optimized with custom controls, shortcuts, and PiP support.
-
-### 💾 Smart History, Bookmarks & Sync
-* **Progress Tracking**: Automatically remembers your playback position for every video.
-* **Trakt.tv Integration**: OAuth PKCE flow & device pairing for automatic scrobbling and history synchronization.
-* **TheMovieDatabase (TMDB)**: Automatic poster, backdrop, overview, and cast metadata retrieval.
-* **Local SQLite Store**: High-performance SQLite engine (`node:sqlite`) for profiles, settings, and media history.
-
----
-
-## 🛠️ Tech Stack
-* **Frontend**: React 19, TypeScript, Vite, Design Tokens
-* **Backend**: Node.js, `node:sqlite`, HTTP Range Streaming
-* **Media Processing**: `@ffmpeg/core`, `@ffmpeg/ffmpeg` (WASM), `hls.js`
-
----
-
-## 📦 Getting Started
-
-### Prerequisites
-* **Node.js**: Version 20.x or higher
-* **npm**: Version 9.x or higher
-
-### 1. Installation
+### Build & Run (Rust)
 ```bash
-git clone git@github.com:harsheye/valor.git
-cd valor
+cargo build --release -p valor-app
+# Binary output: target/release/valor-app.exe
+```
+
+---
+
+## 🧩 Valor Browser Extension (`extension` branch)
+
+Located in `valor-extension/` (Manifest V3):
+- **Automatic Video Detection (`content.js`, `background.js`)**: Detects HTML5 `<video>` elements on web pages and attaches Valor's custom overlay player UI.
+- **Smooth Color Grading**: Real-time GPU/CSS filter adjustments (`Lighting`, `Shadows`, `Contrast`, `Sharpness`, `Vibrance`, `HDR Boost`) applied directly to active web videos.
+- **Enhanced Controls**: Custom scrub bar, volume/subtitle/audio popovers, playback speed selector, keyboard shortcuts, and lock mode.
+- **Extension Popup (`popup.html`, `popup.js`, `popup.css`)**: Quick toggle, status, and Valor companion integration (`valor-extension/app/`).
+
+### Load Unpacked in Chrome / Edge
+1. Switch to the `extension` branch (or open `valor-extension/`).
+2. Open `chrome://extensions` and enable **Developer mode**.
+3. Click **Load unpacked** and select the `valor-extension` directory.
+
+---
+
+## 🌐 Valor Web & Embed (`production` branch)
+
+- **Frontend**: React 19, TypeScript, Vite, `@valor/sdk` (`<valor-player>` custom element), HLS quality selector (`hls.js`), chapter scrub bars, and `@valor/proxy-server`.
+- **Backend**: Node.js (`start-app.js`), `node:sqlite`, HTTP Range streaming, `@ffmpeg/wasm` audio demuxing, Trakt.tv OAuth, and TMDB integration.
+
+### Setup & Production
+```bash
 npm install
-```
-
-### 2. Environment Configuration
-Copy `.env.example` to `.env` and configure your API keys and ports:
-```bash
 cp .env.example .env
-```
-Key configuration parameters:
-* `HOST`: Binding address (`127.0.0.1` by default for local security).
-* `PORT_SERVICE`: HTTP Service server port (`80` by default; use `3000` if non-root on Linux).
-* `PORT_BACKEND`: Local Engine API port (`50001` by default).
-* `VITE_TMDB_BEARER_TOKEN` or `VITE_TMDB_API_KEY`: TMDB metadata access token.
-* `VITE_TRAKT_CLIENT_ID`: Trakt.tv OAuth application client ID.
-* `VALOR_LOG_MODE`: Logging verbosity (`release` for quiet production, `developer` for verbose).
-
----
-
-## 🚢 Running in Production
-
-### Build the Application
-```bash
 npm run build
-```
-This runs TypeScript checks (`tsc -b`), bundles assets via Vite with vendor chunk splitting (`vendor-react`, `vendor-hls`, `vendor-icons`, `vendor-radix`), strips debug statements, and generates minified assets in `dist/`.
-
-### Build with Service Control
-You can disable specific services directly when invoking the build command:
-```bash
-# Pass flags directly to npm run build:
-npm run build -- --disable-online     # Build with Online Stream disabled
-npm run build -- --disable-engine     # Build with Local Companion Engine disabled
-npm run build -- --disable-app        # Build with Entire Application in Maintenance mode
-npm run build -- --disable=online,engine # Disable multiple services simultaneously
-
-# Or use dedicated shortcut npm scripts:
-npm run build:no-online   # Disables Online Stream in the compiled bundle
-npm run build:no-engine   # Disables Local Engine in the compiled bundle
-npm run build:no-app      # Compiles entire app into Maintenance mode
-npm run build:offline     # Offline mode (Local files only, Online Stream disabled)
-
-# Or via environment variables:
-DISABLE_ONLINE=true npm run build
-DISABLE_ENGINE=true npm run build
-DISABLE_APP=true npm run build
-```
-When a service is disabled during build, the compiled distribution in `dist/` is permanently locked to render clean Under Construction views for those modules.
-
-### Start the Production Server
-```bash
-npm start
-```
-Or explicitly with production flag:
-```bash
 node start-app.js --prod
 ```
-The server will automatically detect the compiled `dist/` directory, serve static assets with optimal caching headers (`max-age=31536000, immutable`), and bind the backend API on the configured host.
-
-### Development Mode
-```bash
-npm run dev
-```
-
----
-
-## 🛡️ Security & Hardening
-* **Localhost Binding**: Binds to `127.0.0.1` by default instead of `0.0.0.0` to prevent unauthorized local network exposure.
-* **Origin Restriction**: CORS restricted to matching local app origins.
-* **Path Traversal Protection**: File requests validate paths against allowed media extensions (`.mp4`, `.mkv`, `.webm`, `.avi`, `.mov`, `.ts`, etc.) and reject traversal (`..`).
-* **SSRF Mitigation**: Remote proxies block cloud metadata endpoints (e.g. AWS/GCP `169.254.169.254`) and internal loopback addresses.
-* **Rate Limiting**: Remote fetch and logging endpoints enforce per-IP rate limiting.
-* **Log Sanitization**: All runtime loggers redact JWTs, Bearer tokens, authentication queries, and user profile directory paths.
-
----
-
-## 🎛️ Feature Flags
-
-Valor includes commands to disable or re-enable features on-the-fly:
-```bash
-# Check current feature status
-npm run features:status
-
-# Disable specific modules (displays branded Under Construction views)
-npm run disable:online    # Disables Online Stream tab
-npm run disable:engine    # Disables Local Engine backend features
-npm run disable:app       # Puts entire application under maintenance
-
-# Re-enable modules
-npm run enable:online
-npm run enable:engine
-npm run enable:app
-npm run enable:all
-```
-
----
-
-## 📜 License
-Valor is a private project. All rights reserved.
