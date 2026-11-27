@@ -601,51 +601,6 @@ pub fn show(
         state.skip_toast = None;
     }
 
-    // Show media name banner for the first 10 seconds when switching / starting media
-    if snapshot.state != PlaybackState::Idle {
-        let elapsed = state.media_banner_start.elapsed().as_secs_f32();
-        if elapsed < 10.0 {
-            let fade = if elapsed > 8.5 {
-                ((10.0 - elapsed) / 1.5).clamp(0.0, 1.0)
-            } else {
-                1.0
-            };
-            let title_text = snapshot
-                .title
-                .clone()
-                .filter(|t| !t.trim().is_empty())
-                .or_else(|| {
-                    snapshot
-                        .path
-                        .as_ref()
-                        .and_then(|p| p.file_stem())
-                        .map(|s| s.to_string_lossy().to_string())
-                });
-            if let Some(title) = title_text {
-                let a = (225.0 * fade) as u8;
-                egui::Area::new(ui.scope_id().with("player_media_banner_10s"))
-                    .order(egui::Order::Foreground)
-                    .anchor(Align2::CENTER_TOP, Vec2::new(0.0, 18.0))
-                    .interactable(false)
-                    .show(ui.ctx(), |ui| {
-                        egui::Frame::new()
-                            .fill(Color32::from_rgba_unmultiplied(12, 14, 18, (195.0 * fade) as u8))
-                            .stroke(Stroke::new(1.0, Color32::from_rgba_unmultiplied(255, 255, 255, (42.0 * fade) as u8)))
-                            .corner_radius(CornerRadius::same(16))
-                            .inner_margin(egui::Margin::symmetric(16, 7))
-                            .show(ui, |ui| {
-                                ui.label(
-                                    RichText::new(title)
-                                        .size(13.0)
-                                        .strong()
-                                        .color(Color32::from_rgba_unmultiplied(255, 255, 255, a)),
-                                );
-                            });
-                    });
-            }
-        }
-    }
-
     // Auto-skip Intro & Outro segments (from TheIntroDB / web database / manual bookmarks)
     if snapshot.state == PlaybackState::Playing && snapshot.duration_secs > 1.0 && !state.is_seeking {
         let cur_pos = snapshot.position_secs;
@@ -799,7 +754,8 @@ pub fn show(
         || state.subtitles_popup_open
         || state.more_options_open
         || state.is_seeking
-        || snapshot.state != PlaybackState::Playing;
+        || snapshot.state != PlaybackState::Playing
+        || state.media_banner_start.elapsed() < Duration::from_secs(6);
 
     if !pinned
         && !mouse_over_controls

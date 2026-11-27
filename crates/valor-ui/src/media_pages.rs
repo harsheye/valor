@@ -1321,31 +1321,63 @@ pub fn render_library(
         }
     });
     ui.add_space(6.0);
-    ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing = Vec2::new(8.0, 6.0);
-        render_filter_pills(ui, state, tokens);
-        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            if padded_choice(
-                ui,
-                "List",
-                state.library_view == crate::view_models::ViewMode::List,
-                tokens,
-            )
-            .clicked()
-            {
-                state.library_view = crate::view_models::ViewMode::List;
-            }
-            if padded_choice(
-                ui,
-                "Grid",
-                state.library_view == crate::view_models::ViewMode::Grid,
-                tokens,
-            )
-            .clicked()
-            {
-                state.library_view = crate::view_models::ViewMode::Grid;
-            }
-            ui.add_space(spacing::PAD_8);
+    let wide_row = ui.available_width() >= 760.0;
+    if wide_row {
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing = Vec2::new(8.0, 6.0);
+            render_filter_pills(ui, state, tokens);
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                if padded_choice(
+                    ui,
+                    "List",
+                    state.library_view == crate::view_models::ViewMode::List,
+                    tokens,
+                )
+                .clicked()
+                {
+                    state.library_view = crate::view_models::ViewMode::List;
+                }
+                if padded_choice(
+                    ui,
+                    "Grid",
+                    state.library_view == crate::view_models::ViewMode::Grid,
+                    tokens,
+                )
+                .clicked()
+                {
+                    state.library_view = crate::view_models::ViewMode::Grid;
+                }
+                ui.add_space(spacing::PAD_8);
+                let sort_btn = ui.add(
+                    egui::Button::new(
+                        RichText::new(format!("Sort: {}", sort_label(state.library_sort)))
+                            .size(12.5)
+                            .color(tokens.text_secondary),
+                    )
+                    .fill(tokens.field_fill)
+                    .stroke(Stroke::new(1.0, tokens.divider))
+                    .min_size(Vec2::new(136.0, 30.0))
+                    .corner_radius(CornerRadius::ZERO),
+                );
+                if sort_btn.clicked() {
+                    state.library_sort = match state.library_sort {
+                        crate::view_models::SortOption::DateAddedDesc => crate::view_models::SortOption::TitleAsc,
+                        crate::view_models::SortOption::TitleAsc => crate::view_models::SortOption::TitleDesc,
+                        crate::view_models::SortOption::TitleDesc => crate::view_models::SortOption::YearDesc,
+                        crate::view_models::SortOption::YearDesc => crate::view_models::SortOption::DateAddedDesc,
+                        _ => crate::view_models::SortOption::DateAddedDesc,
+                    };
+                }
+            });
+        });
+    } else {
+        ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing = Vec2::new(8.0, 6.0);
+            render_filter_pills(ui, state, tokens);
+        });
+        ui.add_space(6.0);
+        ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing = Vec2::new(8.0, 6.0);
             let sort_btn = ui.add(
                 egui::Button::new(
                     RichText::new(format!("Sort: {}", sort_label(state.library_sort)))
@@ -1366,8 +1398,28 @@ pub fn render_library(
                     _ => crate::view_models::SortOption::DateAddedDesc,
                 };
             }
+            if padded_choice(
+                ui,
+                "Grid",
+                state.library_view == crate::view_models::ViewMode::Grid,
+                tokens,
+            )
+            .clicked()
+            {
+                state.library_view = crate::view_models::ViewMode::Grid;
+            }
+            if padded_choice(
+                ui,
+                "List",
+                state.library_view == crate::view_models::ViewMode::List,
+                tokens,
+            )
+            .clicked()
+            {
+                state.library_view = crate::view_models::ViewMode::List;
+            }
         });
-    });
+    }
     ui.add_space(spacing::PAD_8);
     ui.separator();
     if let Some(series_key) = state.selected_series.clone() {
