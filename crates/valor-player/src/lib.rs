@@ -45,6 +45,9 @@ pub struct PlayerSnapshot {
     pub zoom_to_fill: bool,
     pub is_hdr: bool,
     pub hdr_boost: bool,
+    pub is_10bit: bool,
+    pub pixel_format: Option<String>,
+    pub hwdec_current: Option<String>,
 }
 
 /// One chapter marker reported by mpv.
@@ -202,6 +205,8 @@ pub enum PlayerCommand {
         contrast: i32,
         sharpness: i32,
         vibrance: i32,
+        hue: i32,
+        deband: bool,
         hdr_boost: i32,
     },
     Shutdown,

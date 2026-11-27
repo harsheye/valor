@@ -40,7 +40,7 @@ struct PlayerCore {
     pending_seek_secs: f64,
     last_snapshot: Instant,
     last_tracks: Instant,
-    last_picture: (i32, i32, i32, i32, i32, i32),
+    last_picture: (i32, i32, i32, i32, i32, i32, bool, i32),
 }
 
 // The only cross-thread visibility is through the Glow callback wrapper. egui_glow
@@ -57,11 +57,37 @@ impl PlayerService {
             init.set_option("terminal", false)?;
             init.set_option("keep-open", "yes")?;
             let _ = init.set_option("hwdec", "auto-safe");
+            let _ = init.set_option("hwdec-codecs", "all");
+            let _ = init.set_option("vd-lavc-film-grain", "yes");
+            let _ = init.set_option("vd-lavc-dr", "yes");
+            let _ = init.set_option("fbo-format", "rgba16f");
             let _ = init.set_option("demuxer-max-bytes", "300MiB");
             let _ = init.set_option("demuxer-max-back-bytes", "100MiB");
-            let _ = init.set_option("vd-lavc-dr", "no");
-            let _ = init.set_option("tone-mapping", "auto");
+            // CnX-style scaling, anti-ringing, debanding & dithering
+            let _ = init.set_option("scale", "spline36");
+            let _ = init.set_option("dscale", "mitchell");
+            let _ = init.set_option("scale-antiring", 0.7_f64);
+            let _ = init.set_option("cscale-antiring", 0.7_f64);
+            let _ = init.set_option("deband", "yes");
+            let _ = init.set_option("dither-depth", "auto");
+            let _ = init.set_option("dither", "fruit");
+            // CnX-style HDR tone-mapping & colorspace pipeline
+            let _ = init.set_option("tone-mapping", "bt.2446a");
+            let _ = init.set_option("hdr-compute-peak", "yes");
+            let _ = init.set_option("hdr-contrast-recovery", 0.3_f64);
+            let _ = init.set_option("hdr-peak-percentile", 99.995_f64);
+            let _ = init.set_option("hdr-reference-white", 203.0_f64);
+            let _ = init.set_option("target-colorspace-hint", "yes");
             let _ = init.set_option("target-prim", "auto");
+            if let Ok(local_app) = std::env::var("LOCALAPPDATA") {
+                let cache_root = std::path::PathBuf::from(local_app).join("valor").join("Valor").join("cache");
+                let shader_dir = cache_root.join("mpv-shaders");
+                let icc_dir = cache_root.join("icc-cache");
+                let _ = std::fs::create_dir_all(&shader_dir);
+                let _ = std::fs::create_dir_all(&icc_dir);
+                let _ = init.set_option("gpu-shader-cache-dir", shader_dir.to_string_lossy().as_ref());
+                let _ = init.set_option("icc-cache-dir", icc_dir.to_string_lossy().as_ref());
+            }
             let _ = init.set_option("slang", "en,eng,English,ko,kor");
             let _ = init.set_option("sub-auto", "fuzzy");
             let _ = init.set_option("subs-fallback", "yes");
@@ -95,7 +121,7 @@ impl PlayerService {
             pending_seek_secs: 0.0,
             last_snapshot: Instant::now(),
             last_tracks: Instant::now(),
-            last_picture: (0, 0, 0, 0, 0, 0),
+            last_picture: (0, 0, 0, 0, 0, 0, true, 0),
         };
         Self {
             core: Arc::new(Mutex::new(core)),
@@ -419,12 +445,14 @@ impl PlayerCore {
                 contrast,
                 sharpness,
                 vibrance,
+                hue,
+                deband,
                 hdr_boost,
             } if token == active_token => {
                 let next = if enabled {
-                    (lighting, shadows, contrast, sharpness, vibrance, hdr_boost)
+                    (lighting, shadows, contrast, sharpness, vibrance, hue, deband, hdr_boost)
                 } else {
-                    (0, 0, 0, 0, 0, 0)
+                    (0, 0, 0, 0, 0, 0, false, 0)
                 };
                 let prev = self.last_picture;
                 if let Ok(mpv) = self.mpv() {
@@ -443,28 +471,45 @@ impl PlayerCore {
                     if next.4 != prev.4 {
                         let _ = mpv.set_property("saturation", next.4 as i64);
                     }
-                    if (next.5 > 0) != (prev.5 > 0) {
-                        if next.5 > 0 {
+                    if next.5 != prev.5 {
+                        let _ = mpv.set_property("hue", next.5 as i64);
+                    }
+                    if next.6 != prev.6 {
+                        let _ = mpv.set_property("deband", if next.6 { "yes" } else { "no" });
+                    }
+                    if (next.7 > 0) != (prev.7 > 0) {
+                        if next.7 > 0 {
                             let _ = mpv.set_property("tone-mapping", "bt.2446a");
                             let _ = mpv.set_property("hdr-compute-peak", "yes");
+                            let _ = mpv.set_property("inverse-tone-mapping", "yes");
+                            let _ = mpv.set_property(
+                                "hdr-contrast-recovery",
+                                0.3_f64 + (next.7 as f64 / 100.0) * 0.5,
+                            );
                             let _ = mpv.set_property(
                                 "target-peak",
-                                200.0_f64 + (next.5 as f64) * 3.0,
+                                200.0_f64 + (next.7 as f64) * 3.0,
                             );
                         } else {
-                            let _ = mpv.set_property("tone-mapping", "auto");
-                            let _ = mpv.set_property("hdr-compute-peak", "auto");
+                            let _ = mpv.set_property("inverse-tone-mapping", "no");
+                            let _ = mpv.set_property("tone-mapping", "bt.2446a");
+                            let _ = mpv.set_property("hdr-compute-peak", "yes");
+                            let _ = mpv.set_property("hdr-contrast-recovery", 0.3_f64);
                             let _ = mpv.set_property("target-peak", "auto");
                         }
-                    } else if next.5 > 0 && next.5 != prev.5 {
+                    } else if next.7 > 0 && next.7 != prev.7 {
+                        let _ = mpv.set_property(
+                            "hdr-contrast-recovery",
+                            0.3_f64 + (next.7 as f64 / 100.0) * 0.5,
+                        );
                         let _ = mpv.set_property(
                             "target-peak",
-                            200.0_f64 + (next.5 as f64) * 3.0,
+                            200.0_f64 + (next.7 as f64) * 3.0,
                         );
                     }
                 }
                 self.last_picture = next;
-                self.snapshot.write().hdr_boost = next.5 > 0;
+                self.snapshot.write().hdr_boost = next.7 > 0;
             }
             PlayerCommand::SetBoostTier { token, tier } if token == active_token => {
                 let chain = crate::audio_graph::boost_chain(tier)
@@ -714,8 +759,17 @@ impl PlayerCore {
                     self.snapshot.write().duration_secs = value;
                 }
                 if let Ok(gamma) = mpv.get_property::<String>("video-params/gamma") {
-                    let is_hdr = matches!(gamma.as_str(), "pq" | "hlg" | "st2084" | "arib-std-b67");
+                    let is_hdr = matches!(gamma.as_str(), "pq" | "hlg" | "st2084" | "smpte2084" | "arib-std-b67");
                     self.snapshot.write().is_hdr = is_hdr;
+                }
+                if let Ok(pix) = mpv.get_property::<String>("video-params/pixelformat") {
+                    let is_10bit = pix.contains("p010") || pix.contains("p10") || pix.contains("10le") || pix.contains("10be");
+                    let mut snap = self.snapshot.write();
+                    snap.is_10bit = is_10bit;
+                    snap.pixel_format = Some(pix);
+                }
+                if let Ok(hw) = mpv.get_property::<String>("hwdec-current") {
+                    self.snapshot.write().hwdec_current = if hw.is_empty() || hw == "no" { None } else { Some(hw) };
                 }
                 if let Ok(value) = mpv.get_property::<f64>("volume") {
                     self.snapshot.write().volume = value;

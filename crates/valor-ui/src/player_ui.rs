@@ -427,6 +427,8 @@ pub struct PlayerUiState {
     pub picture_contrast: i32,
     pub picture_sharpness: i32,
     pub picture_vibrance: i32,
+    pub picture_hue: i32,
+    pub picture_deband: bool,
     pub picture_hdr_boost: i32,
     pub active_picture_drag: Option<(&'static str, i32, i32, i32)>,
     pub last_picture_send: Instant,
@@ -476,6 +478,8 @@ impl Default for PlayerUiState {
             picture_contrast: 0,
             picture_sharpness: 0,
             picture_vibrance: 0,
+            picture_hue: 0,
+            picture_deband: true,
             picture_hdr_boost: 0,
             active_picture_drag: None,
             last_picture_send: Instant::now(),
@@ -2157,6 +2161,8 @@ pub fn show(
                     contrast: state.picture_contrast,
                     sharpness: state.picture_sharpness,
                     vibrance: state.picture_vibrance,
+                    hue: state.picture_hue,
+                    deband: state.picture_deband,
                     hdr_boost: state.picture_hdr_boost,
                 });
             }
@@ -2177,7 +2183,7 @@ pub fn show(
         .min((rect.width() - 32.0_f32).max(280.0_f32));
         let panel_height: f32 = match panel {
             PlayerPanel::Queue => (rect.height() - 120.0_f32).max(320.0_f32),
-            PlayerPanel::Picture => 320.0_f32,
+            PlayerPanel::Picture => 364.0_f32,
             PlayerPanel::Speed => 196.0_f32,
             PlayerPanel::Tracks => 386.0_f32,
             PlayerPanel::Bookmarks => 420.0_f32,
@@ -2258,6 +2264,39 @@ pub fn show(
                                             state.picture_enabled = !state.picture_enabled;
                                             changed = true;
                                         }
+                                        if ui
+                                            .add(
+                                                egui::Button::new(
+                                                    RichText::new(if state.picture_deband { "Deband ✓" } else { "Deband" })
+                                                        .size(11.5)
+                                                        .color(Color32::WHITE),
+                                                )
+                                                .fill(if state.picture_deband {
+                                                    tokens.accent
+                                                } else {
+                                                    Color32::from_rgb(45, 50, 60)
+                                                })
+                                                .corner_radius(CornerRadius::ZERO),
+                                            )
+                                            .clicked()
+                                        {
+                                            state.picture_deband = !state.picture_deband;
+                                            changed = true;
+                                        }
+                                        if snapshot.is_10bit || snapshot.is_hdr {
+                                            let badge = match (snapshot.is_10bit, snapshot.is_hdr) {
+                                                (true, true) => "10-bit HDR",
+                                                (true, false) => "10-bit",
+                                                (false, true) => "HDR",
+                                                _ => "",
+                                            };
+                                            ui.label(
+                                                RichText::new(badge)
+                                                    .size(10.5)
+                                                    .strong()
+                                                    .color(Color32::from_rgb(96, 165, 250)),
+                                            );
+                                        }
                                         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                                             if ui
                                                 .add(
@@ -2276,6 +2315,8 @@ pub fn show(
                                                 state.picture_contrast = 0;
                                                 state.picture_sharpness = 0;
                                                 state.picture_vibrance = 0;
+                                                state.picture_hue = 0;
+                                                state.picture_deband = true;
                                                 state.picture_hdr_boost = 0;
                                                 changed = true;
                                             }
@@ -2380,6 +2421,7 @@ pub fn show(
 
                                 draw_pic_row(ui, "◈", "Sharpness", &mut state.picture_sharpness, 0, 100);
                                 draw_pic_row(ui, "🎨", "Vibrance", &mut state.picture_vibrance, -100, 100);
+                                draw_pic_row(ui, "◑", "Hue", &mut state.picture_hue, -100, 100);
                                 draw_pic_row(ui, "✦", "HDR Boost", &mut state.picture_hdr_boost, 0, 100);
 
                                 if changed {
@@ -2402,6 +2444,8 @@ pub fn show(
                                             contrast: state.picture_contrast,
                                             sharpness: state.picture_sharpness,
                                             vibrance: state.picture_vibrance,
+                                            hue: state.picture_hue,
+                                            deband: state.picture_deband,
                                             hdr_boost: state.picture_hdr_boost,
                                         });
                                     }
