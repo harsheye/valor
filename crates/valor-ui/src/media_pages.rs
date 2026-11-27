@@ -1319,6 +1319,11 @@ pub fn render_library(
                 state.selected_series = None;
             }
         }
+    });
+    ui.add_space(6.0);
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing = Vec2::new(8.0, 6.0);
+        render_filter_pills(ui, state, tokens);
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             if padded_choice(
                 ui,
@@ -1350,7 +1355,7 @@ pub fn render_library(
                 .fill(tokens.field_fill)
                 .stroke(Stroke::new(1.0, tokens.divider))
                 .min_size(Vec2::new(136.0, 30.0))
-                .corner_radius(CornerRadius::same(3)),
+                .corner_radius(CornerRadius::ZERO),
             );
             if sort_btn.clicked() {
                 state.library_sort = match state.library_sort {
@@ -1364,7 +1369,6 @@ pub fn render_library(
         });
     });
     ui.add_space(spacing::PAD_8);
-    render_filter_pills(ui, state, tokens);
     ui.separator();
     if let Some(series_key) = state.selected_series.clone() {
         if let Some(item) = series.iter().find(|s| s.series_key == series_key) {

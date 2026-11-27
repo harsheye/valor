@@ -2379,12 +2379,14 @@ impl<'a> ShellRenderer<'a> {
             );
         }
 
-        // Right-aligned Toolbar Controls:
-        // [Select] [Play/Slideshow] [Sort v] [Filter v] [View v] [...]
+        // Right-aligned Toolbar Controls (only on Home / folder views):
+        // [Select] [Play/Slideshow] [Sort v] [Filter v] [Grid/List] [View v] [...]
         let toolbar_h = dimensions::TOOLBAR_HEIGHT;
         let mut tb_right = rect.max.x - content_pad_x;
+        let show_gallery_toolbar =
+            state.selected_nav == NavItem::Home || state.selected_folder.is_some();
 
-        if state.select_mode {
+        if show_gallery_toolbar && state.select_mode {
             let selected_count = state.selected_media.len();
             ui.painter().text(
                 Pos2::new(header_left, header_top + 12.0),
@@ -2409,6 +2411,8 @@ impl<'a> ShellRenderer<'a> {
                 state.selected_media.clear();
                 state.select_mode = false;
             }
+        } else if !show_gallery_toolbar {
+            // Non-gallery views (Themes, History, Scans, Playlists) do not render the Home toolbar.
         } else {
             // Overflow More Button [...]
             let more_rect = Rect::from_min_size(
@@ -2861,6 +2865,131 @@ impl<'a> ShellRenderer<'a> {
                         &self.tokens,
                         &mut action,
                     );
+                });
+        } else if state.selected_nav == NavItem::Theme && state.selected_folder.is_none() {
+            let content_rect = Rect::from_min_max(
+                Pos2::new(header_left, body_y),
+                Pos2::new(rect.max.x - content_pad_x, rect.max.y - 16.0),
+            );
+            let mut sub_ui = ui.new_child(egui::UiBuilder::new().max_rect(content_rect));
+            egui::ScrollArea::vertical()
+                .id_salt("themes_nav_scroll")
+                .show(&mut sub_ui, |ui| {
+                    let themes = [
+                        ("cloudflare-docs", "Cloudflare Docs", Color32::from_rgb(13, 17, 23), Color32::from_rgb(47, 129, 247)),
+                        ("oled-black", "OLED Super Black", Color32::BLACK, Color32::from_rgb(246, 130, 31)),
+                        ("github-midnight", "GitHub Midnight", Color32::from_rgb(13, 17, 23), Color32::from_rgb(31, 111, 235)),
+                        ("vlc", "VLC Classic", Color32::from_rgb(37, 37, 38), Color32::from_rgb(255, 136, 0)),
+                        ("netflix", "Netflix", Color32::from_rgb(20, 20, 20), Color32::from_rgb(229, 9, 20)),
+                        ("youtube", "YouTube Player", Color32::from_rgb(15, 15, 15), Color32::from_rgb(62, 166, 255)),
+                        ("valor-purple", "Obsidian Violet", Color32::from_rgb(16, 16, 16), Color32::from_rgb(168, 85, 247)),
+                        ("cyber-crimson", "Cyber Crimson", Color32::from_rgb(12, 10, 15), Color32::from_rgb(244, 63, 94)),
+                        ("emerald-studio", "Emerald Studio", Color32::from_rgb(11, 17, 14), Color32::from_rgb(16, 185, 129)),
+                    ];
+                    ui.label(
+                        egui::RichText::new("COLOR THEMES")
+                            .size(11.5)
+                            .strong()
+                            .color(self.tokens.text_tertiary),
+                    );
+                    ui.add_space(10.0);
+                    ui.horizontal_wrapped(|ui| {
+                        ui.spacing_mut().item_spacing = vec2(12.0, 12.0);
+                        for (id, label, bg_col, accent_col) in themes {
+                            let active = state.settings.skin_id == id;
+                            let (card_rect, resp) = ui.allocate_exact_size(vec2(190.0, 74.0), Sense::click());
+                            if resp.hovered() {
+                                ui.ctx().set_cursor_icon(CursorIcon::PointingHand);
+                            }
+                            ui.painter().rect(
+                                card_rect,
+                                CornerRadius::ZERO,
+                                if active { self.tokens.selected_fill } else { bg_col },
+                                Stroke::new(
+                                    if active { 2.0 } else { 1.0 },
+                                    if active { accent_col } else if resp.hovered() { self.tokens.text_secondary } else { self.tokens.divider },
+                                ),
+                                StrokeKind::Inside,
+                            );
+                            let swatch = Rect::from_min_size(
+                                Pos2::new(card_rect.left() + 12.0, card_rect.center().y - 10.0),
+                                vec2(20.0, 20.0),
+                            );
+                            ui.painter().rect_filled(swatch, CornerRadius::ZERO, accent_col);
+                            ui.painter().text(
+                                Pos2::new(swatch.right() + 10.0, card_rect.center().y - 7.0),
+                                Align2::LEFT_CENTER,
+                                label,
+                                FontId::proportional(13.0),
+                                self.tokens.text_primary,
+                            );
+                            ui.painter().text(
+                                Pos2::new(swatch.right() + 10.0, card_rect.center().y + 9.0),
+                                Align2::LEFT_CENTER,
+                                if active { "Active" } else { "Click to apply" },
+                                FontId::proportional(11.0),
+                                if active { accent_col } else { self.tokens.text_tertiary },
+                            );
+                            if resp.clicked() {
+                                state.settings.skin_id = id.to_string();
+                                state.settings.accent_color.clear();
+                                let _ = state.settings.save();
+                            }
+                        }
+                    });
+                    ui.add_space(20.0);
+                    ui.label(
+                        egui::RichText::new("ACCENT COLOR OVERRIDE")
+                            .size(11.5)
+                            .strong()
+                            .color(self.tokens.text_tertiary),
+                    );
+                    ui.add_space(8.0);
+                    ui.horizontal_wrapped(|ui| {
+                        ui.spacing_mut().item_spacing = vec2(8.0, 8.0);
+                        for (hex, name, col) in [
+                            ("#2F81F7", "Cloudflare Blue", Color32::from_rgb(47, 129, 247)),
+                            ("#1F6FEB", "GitHub Blue", Color32::from_rgb(31, 111, 235)),
+                            ("#10B981", "Emerald", Color32::from_rgb(16, 185, 129)),
+                            ("#A855F7", "Violet", Color32::from_rgb(168, 85, 247)),
+                            ("#F43F5E", "Crimson", Color32::from_rgb(244, 63, 94)),
+                            ("#F6821F", "Amber", Color32::from_rgb(246, 130, 31)),
+                        ] {
+                            let is_cur = state.settings.accent_color.eq_ignore_ascii_case(hex);
+                            if ui
+                                .add(
+                                    egui::Button::new(
+                                        egui::RichText::new(format!("■  {name}"))
+                                            .size(12.0)
+                                            .color(if is_cur { Color32::WHITE } else { self.tokens.text_primary }),
+                                    )
+                                    .fill(if is_cur { col } else { self.tokens.card_fill })
+                                    .stroke(Stroke::new(1.0, if is_cur { col } else { self.tokens.divider }))
+                                    .corner_radius(CornerRadius::ZERO),
+                                )
+                                .clicked()
+                            {
+                                state.settings.accent_color = hex.to_string();
+                                let _ = state.settings.save();
+                            }
+                        }
+                        if ui
+                            .add(
+                                egui::Button::new(
+                                    egui::RichText::new("Reset Accent")
+                                        .size(12.0)
+                                        .color(self.tokens.text_secondary),
+                                )
+                                .fill(self.tokens.field_fill)
+                                .stroke(Stroke::new(1.0, self.tokens.divider))
+                                .corner_radius(CornerRadius::ZERO),
+                            )
+                            .clicked()
+                        {
+                            state.settings.accent_color.clear();
+                            let _ = state.settings.save();
+                        }
+                    });
                 });
         } else if state.selected_nav == NavItem::Home
             || state.selected_nav == NavItem::Library
@@ -3889,26 +4018,26 @@ impl<'a> ShellRenderer<'a> {
                 ui.ctx().set_cursor_icon(CursorIcon::PointingHand);
             }
             if is_primary {
-                ui.painter().circle_filled(
-                    btn_rect.center(),
-                    16.0,
+                ui.painter().rect_filled(
+                    Rect::from_center_size(btn_rect.center(), vec2(32.0, 32.0)),
+                    CornerRadius::ZERO,
                     if resp.hovered() {
-                        Color32::from_rgb(255, 152, 67)
+                        self.tokens.accent_hover
                     } else {
-                        Color32::from_rgb(246, 130, 31)
+                        self.tokens.accent
                     },
                 );
                 self.icons.paint_icon(
                     ui,
                     "transport.play",
                     Rect::from_center_size(btn_rect.center(), vec2(16.0, 16.0)),
-                    Color32::BLACK,
+                    Color32::WHITE,
                 );
             } else {
                 if resp.hovered() {
                     ui.painter().rect_filled(
                         btn_rect,
-                        CornerRadius::same(14),
+                        CornerRadius::ZERO,
                         self.tokens.hover_fill,
                     );
                 }
@@ -3963,15 +4092,15 @@ impl<'a> ShellRenderer<'a> {
             ui.ctx().set_cursor_icon(CursorIcon::PointingHand);
         }
         let track_vis = Rect::from_min_size(Pos2::new(bar_left, bar_y - 2.0), vec2(bar_w, 4.0));
-        ui.painter().rect_filled(track_vis, CornerRadius::same(2), self.tokens.divider);
+        ui.painter().rect_filled(track_vis, CornerRadius::ZERO, self.tokens.divider);
         let fill_vis = Rect::from_min_size(
             Pos2::new(bar_left, bar_y - 2.0),
             vec2(bar_w * prog_frac, 4.0),
         );
         ui.painter().rect_filled(
             fill_vis,
-            CornerRadius::same(2),
-            Color32::from_rgb(246, 130, 31),
+            CornerRadius::ZERO,
+            self.tokens.accent,
         );
         if track_resp.clicked() {
             if let Some(pos) = track_resp.interact_pointer_pos() {
@@ -3997,7 +4126,7 @@ impl<'a> ShellRenderer<'a> {
         }
         ui.painter().rect(
             sound_btn,
-            CornerRadius::same(14),
+            CornerRadius::ZERO,
             if s_resp.hovered() {
                 self.tokens.hover_fill
             } else {
@@ -4010,7 +4139,7 @@ impl<'a> ShellRenderer<'a> {
             ui,
             "transport.volume",
             Rect::from_center_size(Pos2::new(sound_btn.left() + 16.0, sound_btn.center().y), vec2(14.0, 14.0)),
-            Color32::from_rgb(246, 130, 31),
+            self.tokens.accent,
         );
         ui.painter().text(
             Pos2::new(sound_btn.left() + 28.0, sound_btn.center().y),
