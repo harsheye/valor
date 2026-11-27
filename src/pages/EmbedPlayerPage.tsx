@@ -425,8 +425,82 @@ export const EmbedPlayerPage: React.FC = () => {
             }
           }
           break;
+        case 'PLAY' as any:
+          document.querySelector('video')?.play?.().catch(() => {});
+          break;
+        case 'PAUSE' as any:
+          document.querySelector('video')?.pause?.();
+          break;
+        case 'SEEK' as any: {
+          const vid = document.querySelector('video');
+          const t = (cmd as any).payload?.time;
+          if (vid && typeof t === 'number' && Number.isFinite(t)) {
+            vid.currentTime = t;
+          }
+          break;
+        }
+        case 'SET_VOLUME' as any: {
+          const vid = document.querySelector('video');
+          const vol = (cmd as any).payload?.volume;
+          if (vid && typeof vol === 'number' && Number.isFinite(vol)) {
+            vid.volume = Math.max(0, Math.min(1, vol));
+          }
+          break;
+        }
+        case 'SET_MUTED' as any: {
+          const vid = document.querySelector('video');
+          const m = (cmd as any).payload?.muted;
+          if (vid && typeof m === 'boolean') {
+            vid.muted = m;
+          }
+          break;
+        }
+        case 'SET_PLAYBACK_RATE' as any: {
+          const vid = document.querySelector('video');
+          const r = (cmd as any).payload?.rate;
+          if (vid && typeof r === 'number' && Number.isFinite(r) && r > 0) {
+            vid.playbackRate = r;
+          }
+          break;
+        }
       }
     };
+
+    const forwardVideoEvent = (type: string) => (ev: Event) => {
+      const target = ev.target;
+      if (!(target instanceof HTMLVideoElement)) return;
+      try {
+        window.parent.postMessage({
+          source: 'valor-embed-iframe',
+          version: '1.0.0',
+          payload: {
+            type,
+            payload: {
+              currentTime: target.currentTime,
+              duration: target.duration,
+              paused: target.paused,
+              volume: target.volume,
+              muted: target.muted,
+              playbackRate: target.playbackRate
+            }
+          }
+        }, '*');
+      } catch (e) {}
+    };
+
+    const onPlay = forwardVideoEvent('PLAY');
+    const onPause = forwardVideoEvent('PAUSE');
+    const onEnded = forwardVideoEvent('ENDED');
+    const onSeeked = forwardVideoEvent('SEEKED');
+    const onVolume = forwardVideoEvent('VOLUME_CHANGE');
+    const onRate = forwardVideoEvent('RATE_CHANGE');
+
+    document.addEventListener('play', onPlay, true);
+    document.addEventListener('pause', onPause, true);
+    document.addEventListener('ended', onEnded, true);
+    document.addEventListener('seeked', onSeeked, true);
+    document.addEventListener('volumechange', onVolume, true);
+    document.addEventListener('ratechange', onRate, true);
 
     window.addEventListener('message', handleMessage);
     // Tell parent we are ready to receive commands
@@ -434,7 +508,15 @@ export const EmbedPlayerPage: React.FC = () => {
       window.parent.postMessage({ source: 'valor-embed-iframe', version: '1.0.0', payload: { type: 'READY' } }, '*');
     } catch (e) {}
 
-    return () => window.removeEventListener('message', handleMessage);
+    return () => {
+      window.removeEventListener('message', handleMessage);
+      document.removeEventListener('play', onPlay, true);
+      document.removeEventListener('pause', onPause, true);
+      document.removeEventListener('ended', onEnded, true);
+      document.removeEventListener('seeked', onSeeked, true);
+      document.removeEventListener('volumechange', onVolume, true);
+      document.removeEventListener('ratechange', onRate, true);
+    };
   }, []);
 
   // Persist media playback timestamp on browser reload or unload

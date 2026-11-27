@@ -2665,6 +2665,28 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
           }
           probingVideoIdRef.current = video.id;
 
+          // Check cached probe metadata first so page refresh never re-runs FFmpeg-WASM
+          const probeCacheKey = `valor_probe_cache_${video.file.name}_${video.file.size}_${video.file.lastModified}`;
+          try {
+            const cachedRaw = localStorage.getItem(probeCacheKey);
+            if (cachedRaw) {
+              const cached = JSON.parse(cachedRaw);
+              if (cached && Array.isArray(cached.streams)) {
+                if (Array.isArray(cached.chapters) && cached.chapters.length > 0) {
+                  setChapters(cached.chapters);
+                }
+                onUpdateVideoRef.current({
+                  ...video,
+                  duration: cached.duration || video.duration,
+                  format: cached.format || video.format,
+                  streams: cached.streams,
+                  chapters: cached.chapters?.length ? cached.chapters : video.chapters,
+                });
+                return;
+              }
+            }
+          } catch {}
+
           // Verify that the file is actually readable
           try {
             await video.file.slice(0, 1).arrayBuffer();
@@ -2711,6 +2733,14 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
             if (result.chapters && result.chapters.length > 0) {
               setChapters(result.chapters);
             }
+            try {
+              localStorage.setItem(probeCacheKey, JSON.stringify({
+                duration: result.duration,
+                format: result.format,
+                streams: result.streams,
+                chapters: result.chapters || [],
+              }));
+            } catch {}
             onUpdateVideoRef.current(updatedVideo);
 
             const audioStreams = (result.streams || []).filter((s: any) => s.type === 'audio');
@@ -2801,7 +2831,10 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
         }
       }
     };
-    autoProbe();
+    const timer = setTimeout(() => {
+      void autoProbe();
+    }, 350);
+    return () => clearTimeout(timer);
   }, [video.id, video.type, video.file, video.url]);
 
   // Synchronize Audio Volume / Muted State to video element and PlaybackController
@@ -7009,17 +7042,43 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
                     pointerEvents: showPlayBarMode === 'enable' ? 'auto' : 'none'
                   }}
                 >
-                  {chapters.length > 0 && effectiveDuration > 0 ? (
+                  {(chapters.length > 0 || bookmarks.length > 0) && effectiveDuration > 0 ? (
                     <ChapterScrubSegments
                       chapters={chapters}
                       duration={effectiveDuration}
                       currentTime={displayTime}
                       bufferedPercent={bufferedPercent}
                       hoverTime={hoverTimeSeconds}
+                      bookmarks={bookmarks}
                     />
                   ) : (
                     <>
-                      <div className="scrub-track-bg"></div>
+                      <div className="scrub-track-bg">
+                        {effectiveDuration > 0 && bookmarks.map((bm) => {
+                          const isOutro = bm.isOutro || bm.category === 'Outro';
+                          const effectiveEndTime = (isOutro && bm.endTime == null) ? effectiveDuration : bm.endTime;
+                          const hasRange = (effectiveEndTime != null && effectiveEndTime > bm.time) || isOutro;
+                          if (!hasRange) return null;
+                          const leftPct = Math.min(100, Math.max(0, (bm.time / effectiveDuration) * 100));
+                          const endPct = Math.min(100, Math.max(0, ((effectiveEndTime || effectiveDuration) / effectiveDuration) * 100));
+                          const color = bm.category === 'Hot Scene' ? 'rgba(239, 68, 68, 0.9)' : isOutro ? 'rgba(168, 85, 247, 0.9)' : 'rgba(59, 130, 246, 0.9)';
+                          return (
+                            <div
+                              key={`track-bm-${bm.id}`}
+                              style={{
+                                position: 'absolute',
+                                top: 0,
+                                bottom: 0,
+                                left: `${leftPct}%`,
+                                width: `${Math.max(0, endPct - leftPct)}%`,
+                                background: color,
+                                zIndex: 2,
+                                pointerEvents: 'none',
+                              }}
+                            />
+                          );
+                        })}
+                      </div>
                       <div className="scrub-track-buffered" style={{ width: `${effectiveDuration > 0 ? Math.min(100, Math.max(0, bufferedPercent)) : 0}%` }}></div>
                       <div className="scrub-track-progress" style={{ width: `${effectiveDuration > 0 ? Math.min(100, Math.max(0, (displayTime / effectiveDuration) * 100)) : 0}%` }}></div>
                     </>
@@ -7049,8 +7108,8 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
                             left: `${percent}%`,
                             width: `${widthPercent}%`,
                             position: 'absolute',
-                            height: '4px',
-                            background: bm.category === 'Hot Scene' ? 'rgba(239, 68, 68, 0.8)' : isOutro ? 'rgba(168, 85, 247, 0.8)' : 'rgba(59, 130, 246, 0.8)',
+                            height: '12px',
+                            background: 'transparent',
                             borderRadius: '2px',
                             cursor: 'pointer',
                             zIndex: 4
@@ -7257,7 +7316,6 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
                     onMouseEnter={() => setIsVolumeHovered(true)}
                     onMouseLeave={() => setIsVolumeHovered(false)}
                     onWheel={(e) => {
-                      e.preventDefault();
                       setIsMuted(false);
                       setVolume(prev => {
                         const delta = -e.deltaY * 0.00025;

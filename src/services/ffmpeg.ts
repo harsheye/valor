@@ -220,9 +220,18 @@ export class FFmpegService {
       }
     });
 
+    const chromeRuntime = (globalThis as any).chrome?.runtime;
+    const isExt = typeof chromeRuntime?.getURL === 'function' && window.location.protocol === 'chrome-extension:';
+    const baseUrl = new URL(import.meta.env?.BASE_URL || '/', window.location.href).href;
+    const coreURL = isExt
+      ? chromeRuntime.getURL('app/ffmpeg-core.js')
+      : new URL('ffmpeg-core.js', baseUrl).href;
+    const wasmURL = isExt
+      ? chromeRuntime.getURL('app/ffmpeg-core.wasm')
+      : new URL('ffmpeg-core.wasm', baseUrl).href;
     await ff.load({
-      coreURL: `${window.location.origin}/ffmpeg-core.js`,
-      wasmURL: `${window.location.origin}/ffmpeg-core.wasm`,
+      coreURL,
+      wasmURL,
     });
 
     this.ffmpeg = ff;

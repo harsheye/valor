@@ -179,3 +179,4 @@ export {
   type SourceAdapterFactory,
   type SubtitleRenderer,
 } from './element';
+export { upgradeVideoElements, type UpgradeVideoOptions } from './upgrade';

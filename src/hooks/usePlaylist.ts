@@ -427,6 +427,10 @@ export function usePlaylist(): UsePlaylistReturn {
   // Debounced save with first-save storage persistence request
   const scheduleSave = useCallback((state: PlaylistState) => {
     if (persistTimerRef.current) clearTimeout(persistTimerRef.current);
+    // Never persist empty unnamed placeholder playlists
+    if ((!state.items || state.items.length === 0) && state.name === 'New Playlist') {
+      return;
+    }
     persistTimerRef.current = setTimeout(async () => {
       // Call navigator.storage.persist() on first save and log result
       if (!hasPersistedStorageRef.current) {
@@ -452,8 +456,11 @@ export function usePlaylist(): UsePlaylistReturn {
         clearTimeout(persistTimerRef.current);
         persistTimerRef.current = null;
         try {
-          const stored = stateToStored(playlistRef.current);
-          savePlaylistToStore(stored);
+          const cur = playlistRef.current;
+          if ((cur.items && cur.items.length > 0) || cur.name !== 'New Playlist') {
+            const stored = stateToStored(cur);
+            savePlaylistToStore(stored);
+          }
         } catch {}
       }
     };
@@ -493,7 +500,13 @@ export function usePlaylist(): UsePlaylistReturn {
     (async () => {
       try {
         const lastId = await getLastPlaylistId();
-        const all = await getAllPlaylistsFromStore();
+        let all = await getAllPlaylistsFromStore();
+        // Clean up any stale empty "New Playlist" placeholders from IndexedDB
+        const staleEmpty = all.filter(p => (!p.items || p.items.length === 0) && p.name === 'New Playlist');
+        if (staleEmpty.length > 0) {
+          await Promise.all(staleEmpty.map(p => deletePlaylistFromStore(p.id).catch(() => {})));
+          all = all.filter(p => !((!p.items || p.items.length === 0) && p.name === 'New Playlist'));
+        }
         setAllPlaylists(all);
 
         console.log('[Playlist Startup] Records read from IndexedDB:', {

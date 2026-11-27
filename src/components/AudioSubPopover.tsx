@@ -106,7 +106,9 @@ export const AudioSubPopover: React.FC<AudioSubPopoverProps> = ({
   const [showKeyInput, setShowKeyInput] = useState(false);
   const [apiKeyVal, setApiKeyVal] = useState(() => {
     try {
-      const saved = localStorage.getItem('valor_settings');
+      const uid = localStorage.getItem('valor_active_user_id') || 'local';
+      const key = uid === 'local' ? 'valor_settings' : `valor_settings_${uid}`;
+      const saved = localStorage.getItem(key) || localStorage.getItem('valor_settings');
       if (saved) return JSON.parse(saved).openSubtitlesApiKey || '';
     } catch {}
     return '';
@@ -473,8 +475,8 @@ export const AudioSubPopover: React.FC<AudioSubPopoverProps> = ({
         )}
       </div>
 
-      {/* OpenSubtitles Slim Card */}
-      {!subFileOnly && (
+      {/* OpenSubtitles Slim Card (only shown when OpenSubtitles API key is enabled in Settings) */}
+      {!subFileOnly && hasApiKey && (
         <div className="asp-os">
           <div className="asp-os-header">
             <div className="asp-os-title-wrap">

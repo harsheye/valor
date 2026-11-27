@@ -340,7 +340,8 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
 
   // Playlists filtering and sorting
   const filteredPlaylists = useMemo(() => {
-    let list: StoredPlaylist[] = (storedPlaylists && storedPlaylists.length > 0) ? storedPlaylists : (allPlaylists || []);
+    let list: StoredPlaylist[] = ((storedPlaylists && storedPlaylists.length > 0) ? storedPlaylists : (allPlaylists || []))
+      .filter(p => !((!p.items || p.items.length === 0) && p.name === 'New Playlist'));
     if (playlist && playlist.items && playlist.items.length > 0 && !list.some(p => p.id === playlist.id)) {
       list = [{
         id: playlist.id,
@@ -1088,6 +1089,7 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
             ) : viewMode === 'grid' ? (
               /* Movies Grid */
               <div
+                key="grid-movies"
                 ref={gridContainerRef}
                 className="library-grid-container"
                 style={{
@@ -1195,6 +1197,7 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
             ) : viewMode === 'grid' ? (
               /* Series Grid */
               <div
+                key="grid-series"
                 ref={gridContainerRef}
                 className="library-grid-container"
                 style={{
@@ -1363,6 +1366,7 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
               ) : viewMode === 'grid' ? (
                 /* Playlists Grid (matching MediaPosterCard 2:3 aspect ratio style) */
                 <div
+                  key="grid-playlists"
                   className="library-grid-container"
                   style={{
                     display: 'grid',
@@ -1443,6 +1447,34 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
                             <List size={10} />
                             <span>{pl.items.length} {pl.items.length === 1 ? 'track' : 'tracks'}</span>
                           </div>
+
+                          {/* Delete Playlist Button */}
+                          <button
+                            type="button"
+                            title="Delete playlist"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleDeletePlaylist(pl.id, pl.name);
+                            }}
+                            style={{
+                              position: 'absolute',
+                              top: '8px',
+                              right: '8px',
+                              width: '28px',
+                              height: '28px',
+                              borderRadius: '6px',
+                              background: 'rgba(21, 26, 33, 0.85)',
+                              color: '#f87171',
+                              border: '1px solid rgba(248, 113, 113, 0.3)',
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              cursor: 'pointer',
+                              zIndex: 3
+                            }}
+                          >
+                            <Trash2 size={13} />
+                          </button>
 
                           {/* Hover Play Button */}
                           <button

@@ -84,8 +84,6 @@ export const MediaPosterCard: React.FC<MediaPosterCardProps> = ({
         display: 'flex',
         flexDirection: 'column',
         gap: '0.45rem',
-        contentVisibility: 'auto',
-        containIntrinsicSize: '160px 290px'
       }}
     >
       {/* The ONE primary focusable button for the card */}

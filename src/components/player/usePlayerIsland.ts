@@ -49,17 +49,25 @@ class PlayerIslandStore {
 
   notify(notification: PlayerIslandNotification): void {
     this.current = notification;
-    this.listeners.forEach((fn) => fn(this.current));
+    const snapshot = this.current;
+    queueMicrotask(() => {
+      this.listeners.forEach((fn) => fn(snapshot));
+    });
   }
 
   dismiss(): void {
     this.current = null;
-    this.listeners.forEach((fn) => fn(null));
+    queueMicrotask(() => {
+      this.listeners.forEach((fn) => fn(null));
+    });
   }
 
   setTracks(tracks: Partial<PlayerIslandTracksState>): void {
     this.tracks = { ...this.tracks, ...tracks };
-    this.tracksListeners.forEach((fn) => fn(this.tracks));
+    const snapshot = this.tracks;
+    queueMicrotask(() => {
+      this.tracksListeners.forEach((fn) => fn(snapshot));
+    });
   }
 
   subscribe(listener: Listener): () => void {

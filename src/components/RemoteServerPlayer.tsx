@@ -6877,17 +6877,43 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
                     pointerEvents: showPlayBarMode === 'enable' ? 'auto' : 'none'
                   }}
                 >
-                  {chapters.length > 0 && effectiveDuration > 0 ? (
+                  {(chapters.length > 0 || bookmarks.length > 0) && effectiveDuration > 0 ? (
                     <ChapterScrubSegments
                       chapters={chapters}
                       duration={effectiveDuration}
                       currentTime={displayTime}
                       bufferedPercent={bufferedPercent}
                       hoverTime={hoverTimeSeconds}
+                      bookmarks={bookmarks}
                     />
                   ) : (
                     <>
-                      <div className="scrub-track-bg"></div>
+                      <div className="scrub-track-bg">
+                        {effectiveDuration > 0 && bookmarks.map((bm) => {
+                          const isOutro = bm.isOutro || bm.category === 'Outro';
+                          const effectiveEndTime = (isOutro && bm.endTime == null) ? effectiveDuration : bm.endTime;
+                          const hasRange = (effectiveEndTime != null && effectiveEndTime > bm.time) || isOutro;
+                          if (!hasRange) return null;
+                          const leftPct = Math.min(100, Math.max(0, (bm.time / effectiveDuration) * 100));
+                          const endPct = Math.min(100, Math.max(0, ((effectiveEndTime || effectiveDuration) / effectiveDuration) * 100));
+                          const color = bm.category === 'Hot Scene' ? 'rgba(239, 68, 68, 0.9)' : isOutro ? 'rgba(168, 85, 247, 0.9)' : 'rgba(59, 130, 246, 0.9)';
+                          return (
+                            <div
+                              key={`track-bm-${bm.id}`}
+                              style={{
+                                position: 'absolute',
+                                top: 0,
+                                bottom: 0,
+                                left: `${leftPct}%`,
+                                width: `${Math.max(0, endPct - leftPct)}%`,
+                                background: color,
+                                zIndex: 2,
+                                pointerEvents: 'none',
+                              }}
+                            />
+                          );
+                        })}
+                      </div>
                       <div className="scrub-track-buffered" style={{ width: `${effectiveDuration > 0 ? Math.min(100, Math.max(0, bufferedPercent)) : 0}%` }}></div>
                       <div className="scrub-track-progress" style={{ width: `${effectiveDuration > 0 ? Math.min(100, Math.max(0, (displayTime / effectiveDuration) * 100)) : 0}%` }}></div>
                     </>
@@ -6917,8 +6943,8 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
                             left: `${percent}%`,
                             width: `${widthPercent}%`,
                             position: 'absolute',
-                            height: '4px',
-                            background: bm.category === 'Hot Scene' ? 'rgba(239, 68, 68, 0.8)' : isOutro ? 'rgba(168, 85, 247, 0.8)' : 'rgba(59, 130, 246, 0.8)',
+                            height: '12px',
+                            background: 'transparent',
                             borderRadius: '2px',
                             cursor: 'pointer',
                             zIndex: 4
@@ -7134,7 +7160,6 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
                     onMouseEnter={() => setIsVolumeHovered(true)}
                     onMouseLeave={() => setIsVolumeHovered(false)}
                     onWheel={(e) => {
-                      e.preventDefault();
                       setIsMuted(false);
                       setVolume(prev => {
                         const delta = -e.deltaY * 0.00025;

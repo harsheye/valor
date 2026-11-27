@@ -38,6 +38,8 @@ export interface SubtitleRenderer {
 export class ValorPlayerElement extends HTMLElement {
   public player: MediaPlayer | null = null;
   private subtitleRenderer: SubtitleRenderer | null = null;
+  private queueSources: string[] = [];
+  private queueIndex = 0;
 
   static get observedAttributes() {
     return [
@@ -46,6 +48,7 @@ export class ValorPlayerElement extends HTMLElement {
       'fastseek', 'ambientmode', 'poster', 'postertime', 'theme', 'themecolor',
       'objectfit', 'rotate', 'subtitlesize', 'subtitlecolor', 'subtitlebg',
       'subtitleedge', 'subtitledelay', 'buffersize', 'nohotkeys', 'domain',
+      'autoadvance', 'shuffle',
     ];
   }
 
@@ -84,10 +87,22 @@ export class ValorPlayerElement extends HTMLElement {
   private mountPlayer() {
     if (this.player) return;
     const sources = Array.from(this.querySelectorAll('source'));
+    this.queueSources = sources
+      .filter((s) => s.getAttribute('kind') !== 'audio')
+      .map((s) => s.getAttribute('src') || '')
+      .filter(Boolean);
+    if (this.hasAttribute('shuffle') && this.queueSources.length > 1) {
+      for (let i = this.queueSources.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [this.queueSources[i], this.queueSources[j]] = [this.queueSources[j], this.queueSources[i]];
+      }
+    }
+    this.queueIndex = 0;
+
     const defaultSrc =
       this.getAttribute('src') ||
       sources.find((s) => s.hasAttribute('data-default'))?.getAttribute('src') ||
-      sources[0]?.getAttribute('src') ||
+      this.queueSources[0] ||
       '';
 
     const opts: MediaPlayerOptions = {
@@ -111,6 +126,27 @@ export class ValorPlayerElement extends HTMLElement {
       this.dispatchEvent(new CustomEvent('timeupdate', { detail }));
     });
     this.player.on('ended', (detail: unknown) => {
+      if (this.hasAttribute('autoadvance') && this.queueSources.length > 1) {
+        if (this.hasAttribute('shuffle')) {
+          const candidates = this.queueSources
+            .map((_, idx) => idx)
+            .filter((idx) => idx !== this.queueIndex);
+          this.queueIndex = candidates[Math.floor(Math.random() * candidates.length)] ?? 0;
+        } else if (this.queueIndex + 1 < this.queueSources.length) {
+          this.queueIndex += 1;
+        } else if (this.hasAttribute('loop')) {
+          this.queueIndex = 0;
+        } else {
+          this.dispatchEvent(new CustomEvent('ended', { detail }));
+          return;
+        }
+        const nextSrc = this.queueSources[this.queueIndex];
+        if (nextSrc) {
+          this.player?.load(nextSrc);
+          this.player?.play();
+          return;
+        }
+      }
       this.dispatchEvent(new CustomEvent('ended', { detail }));
     });
     this.player.on('error', (detail: unknown) => {

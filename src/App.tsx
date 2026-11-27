@@ -1021,9 +1021,12 @@ function App() {
           const profileData = pData.profile || {};
           const fallbackName = localStorage.getItem('valor_logged_in_username') || '';
           if (profileData && profileData.settings && Object.keys(profileData.settings).length > 0) {
+            let savedTheme: string | undefined;
+            try { savedTheme = localStorage.getItem(`valor_active_theme_${activeUserId}`) || undefined; } catch {}
             loadedSettings = {
               ...defaultSettings,
               ...profileData.settings,
+              theme: savedTheme || profileData.settings.theme || defaultSettings.theme,
               userId: activeUserId,
               profileName: profileData.settings.profileName || fallbackName || 'User',
               storageMode: 'file',
@@ -1099,9 +1102,12 @@ function App() {
               `, { userId: serverActiveUserId });
               const profileData = pData.profile || {};
               if (profileData && profileData.settings) {
+                let savedTheme: string | undefined;
+                try { savedTheme = localStorage.getItem(`valor_active_theme_${serverActiveUserId}`) || undefined; } catch {}
                 loadedSettings = {
                   ...defaultSettings,
                   ...profileData.settings,
+                  theme: savedTheme || profileData.settings.theme || defaultSettings.theme,
                   userId: serverActiveUserId,
                   storageMode: 'file',
                   keybinds: { ...defaultSettings.keybinds, ...(profileData.settings.keybinds || {}) },
@@ -1826,14 +1832,33 @@ function App() {
   }, []);
 
   useEffect(() => {
+    const onThemeChanged = (e: any) => {
+      const nextTheme = e?.detail?.theme;
+      if (typeof nextTheme === 'string' && nextTheme) {
+        setSettings(prev => {
+          const updated = { ...prev, theme: nextTheme };
+          saveSettingsToStorage(updated);
+          return updated;
+        });
+      }
+    };
+    window.addEventListener('valor-theme-changed', onThemeChanged);
+    return () => window.removeEventListener('valor-theme-changed', onThemeChanged);
+  }, []);
+
+  useEffect(() => {
     const urlTheme = new URLSearchParams(window.location.search).get('theme');
-    const theme = urlTheme || settings.theme || 'black-ops';
+    let savedTheme: string | null = null;
+    try {
+      savedTheme = localStorage.getItem(`valor_active_theme_${settings.userId || 'local'}`);
+    } catch {}
+    const theme = urlTheme || settings.theme || savedTheme || 'black-ops';
     document.documentElement.setAttribute('data-theme', theme);
     const metaTheme = document.querySelector('meta[name="theme-color"]');
     if (metaTheme) {
       metaTheme.setAttribute('content', (theme === 'black-ops' || theme === 'oled') ? '#000000' : (theme === 'soft-paper' ? '#ECE7DD' : '#0F1217'));
     }
-  }, [settings.theme]);
+  }, [settings.theme, settings.userId]);
 
   const storageProvider = useMemo(() => {
     if (settings.storageMode === 'file' && settings.userId && settings.userId !== 'local' && !settings.userId.startsWith('local_')) {
@@ -1847,13 +1872,26 @@ function App() {
     const loadFromProvider = async () => {
       try {
         
-        // 1. Load latest settings
+        // 1. Load latest settings (preserve localStorage theme for the active profile if provider has none)
         const loadedSettings = await storageProvider.getSettings(defaultSettings);
         if (active && loadedSettings) {
-          setSettings(prev => ({
-            ...prev,
-            ...loadedSettings
-          }));
+          setSettings(prev => {
+            const key = prev.userId === 'local' ? 'valor_settings' : `valor_settings_${prev.userId}`;
+            let localTheme: string | undefined;
+            try {
+              const raw = localStorage.getItem(key);
+              if (raw) localTheme = JSON.parse(raw)?.theme;
+            } catch {}
+            const merged = {
+              ...prev,
+              ...loadedSettings,
+              theme: localTheme || loadedSettings.theme || prev.theme,
+            };
+            try {
+              localStorage.setItem(key, JSON.stringify(merged));
+            } catch {}
+            return merged;
+          });
         }
 
         // 2. Load latest history
@@ -5678,7 +5716,12 @@ export default function AppWithErrorBoundary() {
     };
   }, []);
 
-  if (currentPath.startsWith('/embed')) {
+  const isEmbedRoute =
+    currentPath.startsWith('/embed') ||
+    window.location.hash.startsWith('#/embed') ||
+    new URLSearchParams(window.location.search).get('embed') === '1';
+
+  if (isEmbedRoute) {
     return (
       <ErrorBoundary>
         <EmbedPlayerPage />

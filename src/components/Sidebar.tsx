@@ -83,10 +83,16 @@ export const Sidebar: React.FC<SidebarProps> = ({
     }
     document.documentElement.setAttribute('data-theme', resolved);
     try {
-      const raw = localStorage.getItem('valor_settings');
-      const parsed = raw ? JSON.parse(raw) : {};
-      parsed.theme = themeId;
-      localStorage.setItem('valor_settings', JSON.stringify(parsed));
+      const activeUserId = localStorage.getItem('valor_active_user_id') || 'local';
+      localStorage.setItem(`valor_active_theme_${activeUserId}`, themeId);
+      const settingsKey = activeUserId === 'local' ? 'valor_settings' : `valor_settings_${activeUserId}`;
+      for (const k of ['valor_settings', settingsKey]) {
+        const raw = localStorage.getItem(k);
+        const parsed = raw ? JSON.parse(raw) : {};
+        parsed.theme = themeId;
+        localStorage.setItem(k, JSON.stringify(parsed));
+      }
+      window.dispatchEvent(new CustomEvent('valor-theme-changed', { detail: { theme: themeId } }));
     } catch {}
     setCurrentTheme(themeId);
     setIsThemeMenuOpen(false);

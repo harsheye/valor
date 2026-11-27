@@ -69,7 +69,7 @@ export const HomePage: React.FC<HomePageProps> = ({
     const durSecs = typeof v.duration === 'number' ? v.duration : parseDurationToSeconds(v.duration);
     return durSecs <= 0 || v.currentTime < durSecs - 5;
   });
-  const primaryContinue = continueWatchingList.length > 0 ? continueWatchingList[0] : (sortedVideos.length > 0 ? sortedVideos[0] : null);
+  const primaryContinue = continueWatchingList.length > 0 ? continueWatchingList[0] : null;
 
   const [isPasteModalOpen, setIsPasteModalOpen] = useState(false);
   const [pastedUrl, setPastedUrl] = useState('');

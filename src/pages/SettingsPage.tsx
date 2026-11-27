@@ -328,9 +328,14 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
   }, []);
 
   const updateSetting = useCallback((field: string, val: any) => {
+    if (field === 'theme' && typeof val === 'string') {
+      try {
+        localStorage.setItem(`valor_active_theme_${settings.userId || 'local'}`, val);
+      } catch {}
+    }
     handleDefaultLangChange(field, val);
     triggerAutosaveToast();
-  }, [handleDefaultLangChange, triggerAutosaveToast]);
+  }, [handleDefaultLangChange, triggerAutosaveToast, settings.userId]);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
