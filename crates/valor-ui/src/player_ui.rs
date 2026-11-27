@@ -235,7 +235,7 @@ impl<'a> OverlayButton<'a> {
             let num_str = self.number_label.unwrap_or("10");
             crate::shell::paint_curved_skip_arrow(
                 ui.painter(),
-                self.rect.center(),
+                Pos2::new(self.rect.center().x, self.rect.center().y + 3.0),
                 10.5 * scale,
                 forward,
                 num_str,
