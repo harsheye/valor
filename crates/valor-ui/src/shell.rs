@@ -464,23 +464,27 @@ impl<'a> ShellRenderer<'a> {
         if ui.input(|input| input.viewport().maximized.unwrap_or(false)) {
             return;
         }
-        let edge = 6.0;
+        let edge = 8.0;
         let zones = [
             (
                 Rect::from_min_size(rect.min, vec2(edge, edge)),
                 egui::ResizeDirection::NorthWest,
+                CursorIcon::ResizeNwSe,
             ),
             (
                 Rect::from_min_size(Pos2::new(rect.max.x - edge, rect.min.y), vec2(edge, edge)),
                 egui::ResizeDirection::NorthEast,
+                CursorIcon::ResizeNeSw,
             ),
             (
                 Rect::from_min_size(Pos2::new(rect.min.x, rect.max.y - edge), vec2(edge, edge)),
                 egui::ResizeDirection::SouthWest,
+                CursorIcon::ResizeNeSw,
             ),
             (
                 Rect::from_min_size(rect.max - vec2(edge, edge), vec2(edge, edge)),
                 egui::ResizeDirection::SouthEast,
+                CursorIcon::ResizeNwSe,
             ),
             (
                 Rect::from_min_max(
@@ -488,6 +492,7 @@ impl<'a> ShellRenderer<'a> {
                     Pos2::new(rect.max.x - edge, rect.min.y + edge),
                 ),
                 egui::ResizeDirection::North,
+                CursorIcon::ResizeVertical,
             ),
             (
                 Rect::from_min_max(
@@ -495,6 +500,7 @@ impl<'a> ShellRenderer<'a> {
                     Pos2::new(rect.max.x - edge, rect.max.y),
                 ),
                 egui::ResizeDirection::South,
+                CursorIcon::ResizeVertical,
             ),
             (
                 Rect::from_min_max(
@@ -502,6 +508,7 @@ impl<'a> ShellRenderer<'a> {
                     Pos2::new(rect.min.x + edge, rect.max.y - edge),
                 ),
                 egui::ResizeDirection::West,
+                CursorIcon::ResizeHorizontal,
             ),
             (
                 Rect::from_min_max(
@@ -509,10 +516,14 @@ impl<'a> ShellRenderer<'a> {
                     Pos2::new(rect.max.x, rect.max.y - edge),
                 ),
                 egui::ResizeDirection::East,
+                CursorIcon::ResizeHorizontal,
             ),
         ];
-        for (zone, direction) in zones {
+        for (zone, direction, cursor) in zones {
             let response = ui.allocate_rect(zone, Sense::click_and_drag());
+            if response.hovered() {
+                ui.ctx().set_cursor_icon(cursor);
+            }
             if response.drag_started() {
                 ui.ctx()
                     .send_viewport_cmd(egui::ViewportCommand::BeginResize(direction));
