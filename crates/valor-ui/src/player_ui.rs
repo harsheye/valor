@@ -1057,9 +1057,9 @@ pub fn show(
             Pos2::new(rect.right() - 16.0, seek_y + 8.0),
         );
 
-        // Filename text: only displayed directly above the seek bar when PAUSED
+        // Filename text: displayed above seek bar when PAUSED or during first 6s of loadup
         let is_paused = snapshot.state != PlaybackState::Playing;
-        if is_paused {
+        if is_paused || state.media_banner_start.elapsed() < Duration::from_secs(6) {
             let display_title = snapshot
                 .path
                 .as_deref()

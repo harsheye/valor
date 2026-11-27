@@ -1321,7 +1321,7 @@ pub fn render_library(
         }
     });
     ui.add_space(6.0);
-    let wide_row = ui.available_width() >= 760.0;
+    let wide_row = ui.available_width() >= 1020.0;
     if wide_row {
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing = Vec2::new(8.0, 6.0);
