@@ -431,6 +431,7 @@ pub struct PlayerUiState {
     pub active_picture_drag: Option<(&'static str, i32, i32, i32)>,
     pub last_picture_send: Instant,
     pub picture_dirty: bool,
+    pub picture_was_playing_before_drag: bool,
     pub trakt_connected: bool,
     pub trakt_synced_done: bool,
     active_path: Option<PathBuf>,
@@ -479,6 +480,7 @@ impl Default for PlayerUiState {
             active_picture_drag: None,
             last_picture_send: Instant::now(),
             picture_dirty: false,
+            picture_was_playing_before_drag: false,
             trakt_connected: false,
             trakt_synced_done: false,
             active_path: None,
@@ -2186,33 +2188,27 @@ pub fn show(
                     });
             });
     }
-    if state.picture_enabled && state.active_picture_drag.is_some() {
-        let l = state.picture_lighting;
-        if l > 0 {
-            let a = ((l as f32 / 100.0) * 110.0).clamp(0.0, 110.0) as u8;
-            ui.painter()
-                .rect_filled(rect, CornerRadius::ZERO, Color32::from_white_alpha(a));
-        } else if l < 0 {
-            let a = ((-l as f32 / 100.0) * 170.0).clamp(0.0, 170.0) as u8;
-            ui.painter()
-                .rect_filled(rect, CornerRadius::ZERO, Color32::from_black_alpha(a));
-        }
-    }
-
     if !ui.input(|i| i.pointer.primary_down()) {
-        if state.active_picture_drag.take().is_some() && state.picture_dirty {
-            state.picture_dirty = false;
-            state.last_picture_send = Instant::now();
-            command_sender(PlayerCommand::SetPictureControls {
-                token: snapshot.token,
-                enabled: state.picture_enabled,
-                lighting: state.picture_lighting,
-                shadows: state.picture_shadows,
-                contrast: state.picture_contrast,
-                sharpness: state.picture_sharpness,
-                vibrance: state.picture_vibrance,
-                hdr_boost: state.picture_hdr_boost,
-            });
+        if state.active_picture_drag.take().is_some() {
+            if state.picture_dirty {
+                state.picture_dirty = false;
+                state.last_picture_send = Instant::now();
+                command_sender(PlayerCommand::SetPictureControls {
+                    token: snapshot.token,
+                    enabled: state.picture_enabled,
+                    lighting: state.picture_lighting,
+                    shadows: state.picture_shadows,
+                    contrast: state.picture_contrast,
+                    sharpness: state.picture_sharpness,
+                    vibrance: state.picture_vibrance,
+                    hdr_boost: state.picture_hdr_boost,
+                });
+            }
+            if std::mem::take(&mut state.picture_was_playing_before_drag) {
+                command_sender(PlayerCommand::Play {
+                    token: snapshot.token,
+                });
+            }
         }
     }
     if let Some(panel) = state.panel {
@@ -2375,6 +2371,14 @@ pub fn show(
                                                 changed = true;
                                             }
                                             if resp.dragged() || resp.changed() {
+                                                if state.active_picture_drag.is_none()
+                                                    && snapshot.state == PlaybackState::Playing
+                                                {
+                                                    state.picture_was_playing_before_drag = true;
+                                                    command_sender(PlayerCommand::Pause {
+                                                        token: snapshot.token,
+                                                    });
+                                                }
                                                 state.active_picture_drag = Some((label, *val, min, max));
                                             }
                                             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
@@ -2424,9 +2428,15 @@ pub fn show(
 
                                 if changed {
                                     state.picture_dirty = true;
-                                    // Never block mpv/UI while dragging; apply to mpv once on release or button click.
-                                    if state.active_picture_drag.is_none() {
-                                        state.picture_dirty = false;
+                                    let is_dragging = state.active_picture_drag.is_some();
+                                    // Live 1-frame update (throttled 50ms while paused on the single frame)
+                                    if !is_dragging
+                                        || state.last_picture_send.elapsed()
+                                            >= std::time::Duration::from_millis(50)
+                                    {
+                                        if !is_dragging {
+                                            state.picture_dirty = false;
+                                        }
                                         state.last_picture_send = Instant::now();
                                         command_sender(PlayerCommand::SetPictureControls {
                                             token: snapshot.token,
