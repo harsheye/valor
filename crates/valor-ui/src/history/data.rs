@@ -235,7 +235,7 @@ pub fn build_history_snapshot(
         .collect();
 
     // Newest first
-    active_sessions.sort_by(|a, b| b.start_time.cmp(&a.start_time));
+    active_sessions.sort_by_key(|s| std::cmp::Reverse(s.start_time));
 
     // Also index media by lowercase title as fallback when fingerprint differs
     let mut item_by_title: HashMap<String, &MediaItem> = HashMap::with_capacity(items.len());
@@ -263,9 +263,10 @@ pub fn build_history_snapshot(
         }
     }
 
-    // Group sessions by (day, fingerprint) so multiple sessions for the same video on the same day collapse into 1 row with ×N
+    // Group sessions by (day, title) so multiple sessions for the same video on the same day collapse into 1 row with ×N.
+    // Using title (not fingerprint) so re-downloads or different file copies of the same video still merge.
     let mut groups_map: HashMap<NaiveDate, Vec<HistoryItem>> = HashMap::new();
-    let mut day_fp_index: HashMap<(NaiveDate, String), usize> = HashMap::new();
+    let mut day_title_index: HashMap<(NaiveDate, String), usize> = HashMap::new();
     let mut total_watch_secs: u32 = 0;
 
     for (idx, s) in active_sessions.iter().enumerate() {
@@ -290,8 +291,8 @@ pub fn build_history_snapshot(
         let progress = (paused as f32 / duration as f32).clamp(0.0, 1.0);
 
         let day_items = groups_map.entry(day).or_default();
-        let key = (day, s.fingerprint.clone());
-        if let Some(&existing_idx) = day_fp_index.get(&key) {
+        let key = (day, title.to_lowercase());
+        if let Some(&existing_idx) = day_title_index.get(&key) {
             let existing = &mut day_items[existing_idx];
             existing.watched_secs = existing.watched_secs.saturating_add(watched);
             existing.plays = existing.plays.saturating_add(1);
@@ -344,7 +345,7 @@ pub fn build_history_snapshot(
             season_number: media.and_then(|m| m.season_number),
             episode_number: media.and_then(|m| m.episode_number),
         };
-        day_fp_index.insert(key, day_items.len());
+        day_title_index.insert(key, day_items.len());
         day_items.push(item);
     }
 

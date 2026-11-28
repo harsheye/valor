@@ -18,7 +18,7 @@ use crate::view_models::{
     FilterPill, LibraryTab, MovieCardViewModel, SeriesCardViewModel,
 };
 
-fn thumbnail_path(fingerprint: &str) -> Option<std::path::PathBuf> {
+pub(crate) fn thumbnail_path(fingerprint: &str) -> Option<std::path::PathBuf> {
     if fingerprint.is_empty() {
         return None;
     }
@@ -554,9 +554,7 @@ pub(crate) fn render_unified_media_card(
     }
 
     let tile_radius = CornerRadius::same(12);
-    let thumb = thumbnail_path(card.fingerprint).filter(|p| {
-        p.metadata().map(|m| m.len() >= 1200 && m.len() != 6479).unwrap_or(false)
-    });
+    let thumb = thumbnail_path(card.fingerprint);
     if let Some(tex) = thumb
         .as_ref()
         .and_then(|p| textures.get_or_request(ui.ctx(), card.fingerprint, Some(p)))
@@ -1102,359 +1100,55 @@ fn render_movie_grid(
                 ui.horizontal(|ui| {
                     ui.spacing_mut().item_spacing.x = gap;
                     for movie in movies.iter().skip(row * columns).take(columns) {
-                        ui.allocate_ui_with_layout(Vec2::new(card_w, row_h), Layout::top_down(Align::Min), |ui| {
-                            let (rect, response) = ui.allocate_exact_size(
-                                Vec2::new(card_w, poster_h),
-                                egui::Sense::click(),
-                            );
-                            if response.hovered() {
-                                ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
-                            }
-                            attach_media_context_menu(
-                                &response,
-                                &movie.primary_file_path,
-                                &movie.primary_fingerprint,
-                                &mut state.selected_media_info,
-                                action,
-                            );
-                            let thumb = thumbnail_path(&movie.primary_fingerprint);
-                            let mut drew_image = false;
-                            if let Some(tex) = textures.get_or_request(
-                                ui.ctx(),
-                                &movie.primary_fingerprint,
-                                thumb.as_ref(),
-                            ) {
-                                let tile_radius = CornerRadius::same(12);
-                                ui.painter().rect_filled(rect, tile_radius, tokens.content_surface);
-                                egui::Image::new(egui::load::SizedTexture::from_handle(tex))
-                                    .corner_radius(12.0)
-                                    .paint_at(ui, rect);
-                                let uv = egui::Rect::from_min_max(
-                                    egui::pos2(0.0, 0.0),
-                                    egui::pos2(1.0, 1.0),
-                                );
-                                if let Some(p) = movie.progress {
-                                    if p > 0.0 {
-                                        let track = Rect::from_min_size(
-                                            egui::pos2(rect.left() + 12.0, rect.bottom() - 10.0),
-                                            Vec2::new((rect.width() - 24.0).max(4.0), 3.0),
-                                        );
-                                        ui.painter().rect_filled(track, CornerRadius::same(2), Color32::from_white_alpha(65));
-                                        let bar = Rect::from_min_size(
-                                            track.min,
-                                            Vec2::new(track.width() * p.clamp(0.0, 1.0), 3.0),
-                                        );
-                                        ui.painter().rect_filled(bar, CornerRadius::same(2), tokens.accent);
-                                    }
-                                }
-                                ui.painter().rect_stroke(
-                                    rect,
-                                    tile_radius,
-                                    Stroke::new(
-                                        if response.hovered() { 1.5 } else { 1.0 },
-                                        if response.hovered() { tokens.accent } else { tokens.divider },
-                                    ),
-                                    egui::StrokeKind::Inside,
-                                );
-                                if response.hovered() {
-                                    if tokens.skin.shell_layout.hover_card_style == crate::skin::HoverCardStyle::NetflixPreview {
-                                        let preview_w = (card_w * 1.24).min(380.0);
-                                        let preview_img_h = (preview_w / 16.0 * 9.0).round();
-                                        let preview_h = preview_img_h + 96.0;
-                                        let preview_pos = egui::pos2(
-                                            (rect.center().x - preview_w * 0.5).max(8.0),
-                                            (rect.center().y - preview_h * 0.5).max(8.0),
-                                        );
-                                        egui::Area::new(ui.scope_id().with(("nf_preview", &movie.primary_fingerprint)))
-                                            .order(egui::Order::Foreground)
-                                            .interactable(false)
-                                            .fixed_pos(preview_pos)
-                                            .show(ui.ctx(), |ui| {
-                                                egui::Frame::new()
-                                                    .fill(Color32::from_rgb(24, 24, 24))
-                                                    .stroke(Stroke::new(1.0, Color32::from_white_alpha(38)))
-                                                    .corner_radius(CornerRadius::same(8))
-                                                    .shadow(egui::Shadow {
-                                                        offset: [0, 8],
-                                                        blur: 20,
-                                                        spread: 2,
-                                                        color: Color32::from_black_alpha(180),
-                                                    })
-                                                    .show(ui, |ui| {
-                                                        ui.set_width(preview_w);
-                                                        let (img_rect, _) = ui.allocate_exact_size(Vec2::new(preview_w, preview_img_h), Sense::hover());
-                                                        ui.painter().image(tex.id(), img_rect, uv, Color32::WHITE);
-                                                        ui.add_space(10.0);
-                                                        ui.horizontal(|ui| {
-                                                            ui.add_space(12.0);
-                                                            let (p_rect, _) = ui.allocate_exact_size(Vec2::splat(30.0), Sense::hover());
-                                                            ui.painter().circle_filled(p_rect.center(), 15.0, Color32::WHITE);
-                                                            ui.painter().text(egui::pos2(p_rect.center().x + 1.5, p_rect.center().y), Align2::CENTER_CENTER, "▶", FontId::proportional(13.0), Color32::BLACK);
-                                                            ui.add_space(6.0);
-                                                            for sym in ["+", "ℹ"] {
-                                                                let (b_rect, _) = ui.allocate_exact_size(Vec2::splat(28.0), Sense::hover());
-                                                                ui.painter().circle_stroke(b_rect.center(), 13.0, Stroke::new(1.2, Color32::from_white_alpha(160)));
-                                                                ui.painter().text(b_rect.center(), Align2::CENTER_CENTER, sym, FontId::proportional(13.0), Color32::WHITE);
-                                                                ui.add_space(4.0);
-                                                            }
-                                                        });
-                                                        ui.add_space(6.0);
-                                                        ui.horizontal(|ui| {
-                                                            ui.add_space(12.0);
-                                                            ui.label(RichText::new(&movie.display_title).size(13.0).strong().color(Color32::WHITE));
-                                                        });
-                                                        ui.add_space(4.0);
-                                                        ui.horizontal(|ui| {
-                                                            ui.add_space(12.0);
-                                                            let dur_txt = if movie.duration_secs > 0.0 { format_hms(movie.duration_secs) } else { "HD".into() };
-                                                            ui.label(RichText::new(dur_txt).size(11.0).color(tokens.text_secondary));
-                                                        });
-                                                        ui.add_space(8.0);
-                                                    });
-                                            });
-                                    } else {
-                                        ui.painter().rect_filled(rect, CornerRadius::same(12), Color32::from_black_alpha(95));
-                                        let play_center = rect.center();
-                                        ui.painter().circle_filled(play_center, 24.0, tokens.accent);
-                                        paint_play_triangle(ui.painter(), play_center, 8.0, Color32::WHITE);
-                                    }
-                                }
-                                drew_image = true;
-                            }
-                            if !drew_image {
-                                let sub = movie.year.map(|y| y.to_string());
-                                render_named_poster_card(
-                                    ui,
-                                    rect,
-                                    &movie.display_title,
-                                    sub.as_deref(),
-                                    movie.progress,
-                                    response.hovered(),
-                                    tokens,
-                                );
-                            }
-
-                            if response.clicked() {
-                                *action = ShellAction::PlayMedia(std::path::PathBuf::from(
-                                    &movie.primary_file_path,
-                                ));
-                            }
-
-                            let ext = std::path::Path::new(&movie.primary_file_path)
-                                .extension()
-                                .and_then(|e| e.to_str())
-                                .unwrap_or("MKV")
-                                .to_uppercase();
-                            let size = if let Some(v) = movie.versions.first() {
-                                crate::shell::format_file_size(v.size_bytes)
-                            } else {
-                                String::new()
-                            };
-                            let res = movie.height.map(|h| format!("{h}p")).unwrap_or_default();
-                            let mut parts = Vec::new();
-                            if let Some(y) = movie.year {
-                                if y > 0 {
-                                    parts.push(y.to_string());
-                                }
-                            }
-                            if !res.is_empty() {
-                                parts.push(res);
-                            }
-                            parts.push(ext);
-                            if !size.is_empty() {
-                                parts.push(size);
-                            }
-                            let meta_line = parts.join(" · ");
-
-                            ui.add_space(6.0);
-                            let mut dots_clicked = false;
-                            let mut dots_rect = Rect::NOTHING;
-                            ui.horizontal(|ui| {
-                                ui.allocate_ui_with_layout(
-                                    Vec2::new((card_w - 30.0).max(60.0), 20.0),
-                                    Layout::left_to_right(Align::Center),
-                                    |ui| {
-                                        ui.add(
-                                            egui::Label::new(
-                                                RichText::new(&movie.display_title)
-                                                    .size(13.5)
-                                                    .strong()
-                                                    .color(if response.hovered() { tokens.accent } else { tokens.text_primary }),
-                                            )
-                                            .truncate(),
-                                        );
-                                    },
-                                );
-                                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                                    let (dr, d_resp) = ui.allocate_exact_size(Vec2::new(26.0, 22.0), Sense::click());
-                                    dots_rect = dr;
-                                    let d_resp = d_resp.on_hover_text("More options");
-                                    if d_resp.hovered() {
-                                        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
-                                        ui.painter().rect_filled(dr, CornerRadius::same(6), tokens.hover_fill);
-                                    }
-                                    for dx in [-4.5_f32, 0.0, 4.5] {
-                                        ui.painter().circle_filled(
-                                            egui::pos2(dr.center().x + dx, dr.center().y),
-                                            1.4,
-                                            if d_resp.hovered() { tokens.text_primary } else { tokens.text_secondary },
-                                        );
-                                    }
-                                    if d_resp.clicked() {
-                                        dots_clicked = true;
-                                    }
-                                });
-                            });
-                            let menu_id = ui.scope_id().with("movie_more_pop_fp");
-                            let anchor_id = ui.scope_id().with("movie_more_pop_pos");
-                            if dots_clicked {
-                                let cur: Option<String> = ui.data(|d| d.get_temp(menu_id)).flatten();
-                                if cur.as_deref() == Some(&movie.primary_fingerprint) {
-                                    ui.data_mut(|d| d.insert_temp::<Option<String>>(menu_id, None));
-                                } else {
-                                    ui.data_mut(|d| {
-                                        d.insert_temp(menu_id, Some(movie.primary_fingerprint.clone()));
-                                        d.insert_temp(anchor_id, dots_rect);
-                                    });
-                                }
-                            }
-                            let open_fp: Option<String> = ui.data(|d| d.get_temp(menu_id)).flatten();
-                            if open_fp.as_deref() == Some(&movie.primary_fingerprint) {
-                                let a_rect: Rect = ui.data(|d| d.get_temp(anchor_id)).unwrap_or(dots_rect);
-                                let pop_w = 276.0;
-                                let screen = ui.ctx().content_rect();
-                                let pop_x = (a_rect.right() - pop_w).clamp(screen.left() + 8.0, (screen.right() - pop_w - 8.0).max(8.0));
-                                let pop_y = (a_rect.bottom() + 6.0).min((screen.bottom() - 290.0).max(8.0));
-                                let pop_pos = egui::pos2(pop_x, pop_y);
-                                let pop_area = egui::Area::new(ui.scope_id().with(("mv_more_area", &movie.primary_fingerprint)))
-                                    .order(egui::Order::Foreground)
-                                    .fixed_pos(pop_pos)
-                                    .show(ui.ctx(), |ui| {
-                                        Frame::new()
-                                            .fill(tokens.window_bg)
-                                            .stroke(Stroke::new(1.0, tokens.divider))
-                                            .corner_radius(CornerRadius::same(14))
-                                            .inner_margin(14.0)
-                                            .show(ui, |ui| {
-                                                ui.set_width(pop_w - 28.0);
-                                                ui.label(RichText::new(&movie.display_title).size(13.0).strong().color(tokens.text_primary));
-                                                ui.label(RichText::new(&meta_line).size(11.0).color(tokens.text_secondary));
-                                                ui.add_space(12.0);
-                                                ui.columns(4, |cols| {
-                                                    let quick = [
-                                                        (0, "Play", true),
-                                                        (1, "Queue", false),
-                                                        (2, "Open with", false),
-                                                        (3, "File info", false),
-                                                    ];
-                                                    for (qi, (kind, lbl, is_accent)) in quick.into_iter().enumerate() {
-                                                        cols[qi].vertical_centered(|ui| {
-                                                            let (cr, c_resp) = ui.allocate_exact_size(Vec2::splat(36.0), Sense::click());
-                                                            if c_resp.hovered() {
-                                                                ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
-                                                            }
-                                                            ui.painter().circle_filled(
-                                                                cr.center(),
-                                                                18.0,
-                                                                if is_accent {
-                                                                    tokens.accent
-                                                                } else if c_resp.hovered() {
-                                                                    tokens.hover_fill
-                                                                } else {
-                                                                    tokens.field_fill
-                                                                },
-                                                            );
-                                                            match kind {
-                                                                0 => paint_play_triangle(ui.painter(), cr.center(), 6.0, crate::ui_kit::contrast_on_accent(tokens.accent)),
-                                                                1 => { ui.painter().text(cr.center(), Align2::CENTER_CENTER, "+", FontId::proportional(16.0), tokens.text_primary); }
-                                                                2 => {
-                                                                    let c = cr.center();
-                                                                    let st = Stroke::new(1.4, tokens.text_primary);
-                                                                    let bx = Rect::from_center_size(c + Vec2::new(-1.0, 1.0), Vec2::splat(9.0));
-                                                                    ui.painter().line_segment([bx.left_top(), bx.left_bottom()], st);
-                                                                    ui.painter().line_segment([bx.left_bottom(), bx.right_bottom()], st);
-                                                                    ui.painter().line_segment([bx.left_top(), egui::pos2(c.x - 1.0, bx.top())], st);
-                                                                    ui.painter().line_segment([egui::pos2(bx.right(), c.y + 1.0), bx.right_bottom()], st);
-                                                                    let tip = egui::pos2(c.x + 5.0, c.y - 5.0);
-                                                                    ui.painter().line_segment([c + Vec2::new(-1.0, 1.0), tip], st);
-                                                                    ui.painter().line_segment([tip, tip + Vec2::new(-4.5, 0.0)], st);
-                                                                    ui.painter().line_segment([tip, tip + Vec2::new(0.0, 4.5)], st);
-                                                                }
-                                                                _ => { ui.painter().text(cr.center(), Align2::CENTER_CENTER, "i", FontId::proportional(14.0), tokens.text_primary); }
-                                                            }
-                                                            ui.add_space(4.0);
-                                                            ui.label(RichText::new(lbl).size(11.0).color(tokens.text_secondary));
-                                                            if c_resp.clicked() {
-                                                                match kind {
-                                                                    0 => *action = ShellAction::PlayMedia(std::path::PathBuf::from(&movie.primary_file_path)),
-                                                                    1 => *action = ShellAction::EnqueueMedia(vec![std::path::PathBuf::from(&movie.primary_file_path)]),
-                                                                    2 => *action = ShellAction::OpenWithApp(std::path::PathBuf::from(&movie.primary_file_path)),
-                                                                    _ => state.selected_media_info = Some(movie.primary_fingerprint.clone()),
-                                                                }
-                                                                ui.data_mut(|d| d.insert_temp::<Option<String>>(menu_id, None));
-                                                            }
-                                                        });
-                                                    }
-                                                });
-                                                ui.add_space(10.0);
-                                                sub_divider(ui, tokens);
-                                                ui.add_space(6.0);
-                                                for (ri, lbl) in ["Play in Valor", "Add to Queue", "Add to Playlist...", "Open with...", "Show in Explorer", "File information"].into_iter().enumerate() {
-                                                    let (rr, r_resp) = ui.allocate_exact_size(Vec2::new(pop_w - 28.0, 28.0), Sense::click());
-                                                    if r_resp.hovered() {
-                                                        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
-                                                        ui.painter().rect_filled(rr, CornerRadius::same(7), tokens.hover_fill);
-                                                    }
-                                                    ui.painter().text(
-                                                        egui::pos2(rr.left() + 8.0, rr.center().y),
-                                                        Align2::LEFT_CENTER,
-                                                        lbl,
-                                                        FontId::proportional(12.5),
-                                                        tokens.text_primary,
-                                                    );
-                                                    if r_resp.clicked() {
-                                                        match ri {
-                                                            0 => *action = ShellAction::PlayMedia(std::path::PathBuf::from(&movie.primary_file_path)),
-                                                            1 => *action = ShellAction::EnqueueMedia(vec![std::path::PathBuf::from(&movie.primary_file_path)]),
-                                                            2 => *action = ShellAction::OpenAddToPlaylistModal(movie.primary_file_path.clone()),
-                                                            3 => *action = ShellAction::OpenWithApp(std::path::PathBuf::from(&movie.primary_file_path)),
-                                                            4 => *action = ShellAction::OpenInExplorer(std::path::PathBuf::from(&movie.primary_file_path)),
-                                                            _ => state.selected_media_info = Some(movie.primary_fingerprint.clone()),
-                                                        }
-                                                        ui.data_mut(|d| d.insert_temp::<Option<String>>(menu_id, None));
-                                                    }
-                                                }
-                                            });
-                                    });
-                                if ui.input(|i| i.pointer.any_pressed()) && !pop_area.response.hovered() && !dots_clicked {
-                                    ui.data_mut(|d| d.insert_temp::<Option<String>>(menu_id, None));
-                                }
-                            }
-                            ui.label(
-                                RichText::new(meta_line)
-                                    .size(typography::SECONDARY)
-                                    .color(tokens.text_muted),
-                            );
-
-                            ui.horizontal(|ui| {
-                                if let Some(position) = movie.resume_pos_secs {
-                                    ui.label(
-                                        RichText::new(format!(
-                                            "Resume at {}",
-                                            format_time(position).unwrap_or_default()
-                                        ))
-                                        .size(11.0)
-                                        .color(tokens.accent),
-                                    );
-                                } else if movie.is_watched {
-                                    ui.label(
-                                        RichText::new("Watched")
-                                            .size(11.0)
-                                            .color(tokens.success),
-                                    );
-                                }
-                            });
-                        });
+                        let (_, card_rect) = ui.allocate_space(Vec2::new(card_w, row_h));
+                        let ext = std::path::Path::new(&movie.primary_file_path)
+                            .extension()
+                            .and_then(|e| e.to_str())
+                            .unwrap_or("MKV")
+                            .to_uppercase();
+                        let size = movie
+                            .versions
+                            .first()
+                            .map(|v| crate::shell::format_file_size(v.size_bytes))
+                            .unwrap_or_default();
+                        let res = movie.height.map(|h| format!("{h}p")).unwrap_or_default();
+                        let mut parts = Vec::new();
+                        if let Some(y) = movie.year.filter(|&y| y > 0) {
+                            parts.push(y.to_string());
+                        }
+                        if !res.is_empty() {
+                            parts.push(res);
+                        }
+                        parts.push(ext);
+                        if !size.is_empty() {
+                            parts.push(size);
+                        }
+                        let meta_line = parts.join(" · ");
+                        let card = UnifiedMediaCard {
+                            id: &movie.primary_fingerprint,
+                            title: &movie.display_title,
+                            file_path: &movie.primary_file_path,
+                            fingerprint: &movie.primary_fingerprint,
+                            meta_line: &meta_line,
+                            duration_secs: movie.duration_secs,
+                            is_hdr: movie.is_hdr,
+                            episode_tag: None,
+                            progress: movie.progress,
+                            resume_pos_secs: movie.resume_pos_secs,
+                            is_watched: movie.is_watched,
+                            tooltip: None,
+                        };
+                        render_unified_media_card(
+                            ui,
+                            card_rect,
+                            poster_h,
+                            &card,
+                            state,
+                            tokens,
+                            textures,
+                            action,
+                            "lib_movie",
+                        );
                     }
                 });
                 ui.add_space(gap);
@@ -2161,7 +1855,7 @@ pub fn render_library(
                         .and_then(|e| e.to_str())
                         .map(|e| e.to_uppercase())
                         .unwrap_or_default();
-                    let size_str = format_bytes(episode.size_bytes);
+                    let size_str = crate::shell::format_file_size(episode.size_bytes);
                     let meta_line = [res_str, &ext_str, &size_str]
                         .into_iter()
                         .filter(|s| !s.is_empty())
@@ -2454,17 +2148,6 @@ pub fn render_library(
     action
 }
 
-fn format_bytes(bytes: u64) -> String {
-    const UNITS: [&str; 4] = ["B", "KB", "MB", "GB"];
-    let mut value = bytes as f64;
-    let mut unit = 0;
-    while value >= 1024.0 && unit < UNITS.len() - 1 {
-        value /= 1024.0;
-        unit += 1;
-    }
-    format!("{value:.1} {}", UNITS[unit])
-}
-
 pub fn compute_history_summary(sessions: &[WatchSession]) -> (String, usize) {
     let display_sessions = if sessions.is_empty() {
         sample_history_sessions()
@@ -2492,7 +2175,7 @@ pub fn render_history(
     sessions: &[WatchSession],
     items: &[MediaItem],
     tokens: &ShellTokens,
-    textures: &mut LruTextureCache,
+    _textures: &mut LruTextureCache,
 ) -> ShellAction {
     let available = outer_ui.max_rect();
     let page_rect = Rect::from_min_max(

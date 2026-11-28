@@ -4,7 +4,7 @@ use crate::cnx_theme::{font_mono, font_outfit_medium, font_outfit_regular, font_
 use crate::history::data::{elide_left, format_duration_short, HistoryItem};
 use crate::history::trakt::{is_trakt_disabled, TraktMarkPayload};
 use crate::ui_kit::{
-    layout_single_line_ellipsis, tokens, IconButton, LinkLabel, ProgressBar, TextButton,
+    layout_single_line_ellipsis, IconButton, LinkLabel, ProgressBar, TextButton,
 };
 use egui::{pos2, vec2, CornerRadius, Rect, Sense, Ui};
 use std::path::PathBuf;

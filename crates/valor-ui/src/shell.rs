@@ -494,9 +494,7 @@ impl<'a> ShellRenderer<'a> {
             let pointer_in_mini = ui.input(|i| {
                 i.pointer.hover_pos().or(i.pointer.interact_pos()).is_some_and(|p| card_rect.contains(p))
             });
-            if pointer_in_mini {
-                action = mini_action;
-            } else if mini_action != ShellAction::None {
+            if pointer_in_mini || mini_action != ShellAction::None {
                 action = mini_action;
             }
         }
@@ -3145,12 +3143,7 @@ impl<'a> ShellRenderer<'a> {
                                     CornerRadius::same(8),
                                     self.tokens.field_fill,
                                 );
-                                let thumb = directories::ProjectDirs::from("com", "valor", "Valor")
-                                    .map(|dirs| {
-                                        dirs.cache_dir()
-                                            .join("thumbnails")
-                                            .join(format!("{}.jpg", item.fingerprint))
-                                    });
+                                let thumb = crate::media_pages::thumbnail_path(&item.fingerprint);
                                 if let Some(tex) = thumb.as_ref().and_then(|path| {
                                     textures.get_or_request(ui.ctx(), &item.fingerprint, Some(path))
                                 }) {
@@ -4424,9 +4417,7 @@ impl<'a> ShellRenderer<'a> {
                 ui.painter().rect_stroke(card_rect, CornerRadius::same(16), Stroke::new(1.0, self.tokens.divider), StrokeKind::Inside);
 
                 let preview_rect = Rect::from_min_size(card_pos, vec2(card_w, 168.0));
-                let thumb_path = directories::ProjectDirs::from("com", "valor", "Valor")
-                    .map(|d| d.cache_dir().join("thumbnails").join(format!("{}.jpg", item.fingerprint)))
-                    .filter(|p| p.is_file());
+                let thumb_path = crate::media_pages::thumbnail_path(&item.fingerprint);
                 if let Some(tex) = textures.get_or_request(ui.ctx(), &item.fingerprint, thumb_path.as_ref()) {
                     ui.painter().rect_filled(preview_rect, CornerRadius { nw: 16, ne: 16, sw: 0, se: 0 }, Color32::BLACK);
                     ui.painter().image(
@@ -4550,9 +4541,7 @@ impl<'a> ShellRenderer<'a> {
             Pos2::new(rect.left() + 14.0, rect.center().y - 22.0),
             vec2(76.0, 44.0),
         );
-        let thumb_path = directories::ProjectDirs::from("com", "valor", "Valor")
-            .map(|d| d.cache_dir().join("thumbnails").join(format!("{}.jpg", item.fingerprint)))
-            .filter(|p| p.is_file());
+        let thumb_path = crate::media_pages::thumbnail_path(&item.fingerprint);
         if let Some(tex) = textures.get_or_request(ui.ctx(), &item.fingerprint, thumb_path.as_ref()) {
             ui.painter().rect_filled(thumb_rect, CornerRadius::same(4), Color32::BLACK);
             ui.painter().image(
