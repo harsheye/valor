@@ -19,6 +19,7 @@ pub enum PlayerPanel {
     Tracks,
     Speed,
     Picture,
+    Viewing,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -436,8 +437,38 @@ pub struct PlayerUiState {
     pub picture_was_playing_before_drag: bool,
     pub trakt_connected: bool,
     pub trakt_synced_done: bool,
-    active_path: Option<PathBuf>,
-    last_activity: Instant,
+    pub pending_canvas_click: Option<Instant>,
+    pub tracks_popover_tab: u8,
+    pub audio_delay_secs: f64,
+    pub audio_boost_preset: String,
+    pub sub_delay_secs: f64,
+    pub sub_scale: f64,
+    pub sub_pos: i64,
+    pub sub_color: String,
+    pub sub_bold: bool,
+    pub sub_box_bg: bool,
+    pub view_aspect: String,
+    pub view_zoom: f64,
+    pub view_panscan: f64,
+    pub view_rotate: i64,
+    pub view_hflip: bool,
+    pub view_vflip: bool,
+    pub view_ab_a: Option<f64>,
+    pub view_ab_b: Option<f64>,
+    pub viewing_tab: u8,
+    pub viewing_preset: String,
+    pub picture_fit_mode: String,
+    pub hdr_tm_enabled: bool,
+    pub hdr_tm_strength: u8,
+    pub eq_preset: String,
+    pub eq_bands: [f32; 10],
+    pub audio_downmix: String,
+    pub licences_dialog_open: bool,
+    pub queue_pinned: bool,
+    pub sub_style_override: bool,
+    pub sub_text_style: u8,
+    pub(crate) active_path: Option<PathBuf>,
+    pub(crate) last_activity: Instant,
 }
 
 impl Default for PlayerUiState {
@@ -487,6 +518,36 @@ impl Default for PlayerUiState {
             picture_was_playing_before_drag: false,
             trakt_connected: false,
             trakt_synced_done: false,
+            pending_canvas_click: None,
+            tracks_popover_tab: 1,
+            audio_delay_secs: 0.0,
+            audio_boost_preset: "off".to_string(),
+            sub_delay_secs: 0.0,
+            sub_scale: 1.0,
+            sub_pos: 100,
+            sub_color: "#FFFFFFFF".to_string(),
+            sub_bold: false,
+            sub_box_bg: false,
+            view_aspect: "auto".to_string(),
+            view_zoom: 0.0,
+            view_panscan: 0.0,
+            view_rotate: 0,
+            view_hflip: false,
+            view_vflip: false,
+            view_ab_a: None,
+            view_ab_b: None,
+            viewing_tab: 0,
+            viewing_preset: "off".to_string(),
+            picture_fit_mode: "fit".to_string(),
+            hdr_tm_enabled: true,
+            hdr_tm_strength: 1,
+            eq_preset: "Disabled".to_string(),
+            eq_bands: [0.0; 10],
+            audio_downmix: "auto".to_string(),
+            licences_dialog_open: false,
+            queue_pinned: false,
+            sub_style_override: true,
+            sub_text_style: 1,
             active_path: None,
             last_activity: Instant::now(),
         }
@@ -525,7 +586,7 @@ fn fmt_time(value: f64) -> Option<String> {
     })
 }
 
-fn fmt_time_hms(value: f64, force_hours: bool) -> String {
+pub(crate) fn fmt_time_hms(value: f64, force_hours: bool) -> String {
     if !value.is_finite() || value < 0.0 {
         return if force_hours { "0:00:00".into() } else { "0:00".into() };
     }
@@ -589,6 +650,17 @@ pub fn show(
     error: Option<&str>,
     command_sender: &mut dyn FnMut(PlayerCommand),
 ) -> PlayerUiAction {
+    return crate::cnx_player::show_cnx_player(
+        ui,
+        snapshot,
+        tokens,
+        video_shape,
+        state,
+        error,
+        command_sender,
+    );
+    #[allow(unreachable_code)]
+    {
     let mut action = PlayerUiAction::default();
     if let Some(fs) = ui.input(|i| i.viewport().fullscreen) {
         state.is_fullscreen = fs;
@@ -840,13 +912,30 @@ pub fn show(
         }
     }
 
-    // Video canvas double-click to toggle fullscreen (single-click resume/pause removed)
+    // CnX ClickGrace: deliberate single-click (Play/Pause after double-click grace window) vs double-click (Fullscreen)
     let canvas_resp = ui.allocate_rect(rect, Sense::click());
     let no_popups = state.panel.is_none() && !state.volume_popup_open && !state.subtitles_popup_open && !state.more_options_open;
     if canvas_resp.double_clicked() && !mouse_over_controls && no_popups {
+        state.pending_canvas_click = None;
         let is_fs = ui.input(|i| i.viewport().fullscreen.unwrap_or(state.is_fullscreen));
         state.is_fullscreen = !is_fs;
         action.toggle_fullscreen = Some(state.is_fullscreen);
+    } else if canvas_resp.clicked() && !mouse_over_controls {
+        if no_popups {
+            state.pending_canvas_click = Some(Instant::now());
+        } else {
+            state.pending_canvas_click = None;
+        }
+    }
+    if let Some(pressed_at) = state.pending_canvas_click {
+        if pressed_at.elapsed() >= Duration::from_millis(220) {
+            state.pending_canvas_click = None;
+            command_sender(PlayerCommand::Toggle {
+                token: snapshot.token,
+            });
+        } else {
+            ui.ctx().request_repaint_after(Duration::from_millis(30));
+        }
     }
 
     // Top-right corner hover detection for window controls (0.5s delay)
@@ -974,17 +1063,91 @@ pub fn show(
 
     let mut panel_just_opened = false;
     if overlay_alpha > 0.001 {
-        // Top-left Back button (← to exit player back to library, matching Movies & TV)
+        // CnX-style Top Gradient Scrim
+        let top_fade_rect = Rect::from_min_max(
+            Pos2::new(rect.left(), rect.top()),
+            Pos2::new(rect.right(), rect.top() + 84.0),
+        );
+        let mut top_mesh = egui::Mesh::default();
+        top_mesh.colored_vertex(top_fade_rect.left_top(), Color32::from_rgba_unmultiplied(0, 0, 0, (185.0 * overlay_alpha) as u8));
+        top_mesh.colored_vertex(top_fade_rect.right_top(), Color32::from_rgba_unmultiplied(0, 0, 0, (185.0 * overlay_alpha) as u8));
+        top_mesh.colored_vertex(top_fade_rect.right_bottom(), Color32::TRANSPARENT);
+        top_mesh.colored_vertex(top_fade_rect.left_bottom(), Color32::TRANSPARENT);
+        top_mesh.add_triangle(0, 1, 2);
+        top_mesh.add_triangle(0, 2, 3);
+        ui.painter().add(egui::Shape::mesh(top_mesh));
+
+        // Top-left Back button + CnX File Title & Stream Subtitle
         let back_btn_rect = Rect::from_center_size(
-            Pos2::new(rect.left() + 32.0, rect.top() + 32.0),
-            Vec2::splat(40.0),
+            Pos2::new(rect.left() + 30.0, rect.top() + 30.0),
+            Vec2::splat(38.0),
         );
         let back_resp = OverlayButton::bottom_bar(ui.scope_id().with("btn_top_back"), back_btn_rect)
             .icon("action.back")
-            .icon_size(22.0)
+            .icon_size(20.0)
             .show(ui, theme, icons);
         if back_resp.clicked() {
             action.leave = true;
+        }
+        let top_title = snapshot
+            .title
+            .clone()
+            .or_else(|| snapshot.path.as_ref().and_then(|p| p.file_name()).map(|n| n.to_string_lossy().to_string()))
+            .unwrap_or_else(|| "Playing".to_string());
+        let top_sub = {
+            let ext = snapshot.path.as_ref().and_then(|p| p.extension()).map(|e| e.to_string_lossy().to_uppercase()).unwrap_or_default();
+            let res = if snapshot.video_width > 0 { format!("{}x{}", snapshot.video_width, snapshot.video_height) } else { String::new() };
+            let badge = if snapshot.is_dolby_vision { "Dolby Vision" } else if snapshot.is_hdr { "10-bit HDR" } else { "" };
+            [ext.as_str(), res.as_str(), badge].into_iter().filter(|s| !s.is_empty()).collect::<Vec<_>>().join("  •  ")
+        };
+        ui.painter().text(
+            Pos2::new(rect.left() + 58.0, rect.top() + 23.0),
+            Align2::LEFT_CENTER,
+            top_title,
+            FontId::proportional(13.5),
+            Color32::from_white_alpha((245.0 * overlay_alpha) as u8),
+        );
+        if !top_sub.is_empty() {
+            ui.painter().text(
+                Pos2::new(rect.left() + 58.0, rect.top() + 40.0),
+                Align2::LEFT_CENTER,
+                top_sub,
+                FontId::proportional(11.0),
+                Color32::from_rgba_unmultiplied(245, 174, 108, (220.0 * overlay_alpha) as u8),
+            );
+        }
+
+        // CnX Top-Right Quick Actions: PiP, Bookmarks, Lock, Queue
+        let top_y = rect.top() + 30.0;
+        let top_btn = |ui: &mut Ui, id: &str, cx: f32, icon_name: &str, tip: &str, active: bool| -> egui::Response {
+            let b_rect = Rect::from_center_size(Pos2::new(cx, top_y), Vec2::splat(34.0));
+            if active {
+                ui.painter().circle_filled(b_rect.center(), 16.0, Color32::from_rgb(235, 140, 52));
+            }
+            OverlayButton::bottom_bar(ui.scope_id().with(id), b_rect)
+                .icon(icon_name)
+                .icon_size(18.0)
+                .show(ui, theme, icons)
+                .on_hover_text(tip)
+        };
+        if top_btn(ui, "top_pip", rect.right() - 146.0, "transport.pip", "Mini view", false).clicked() {
+            action.toggle_pip = true;
+        }
+        if top_btn(ui, "top_bm", rect.right() - 108.0, "dock.bookmarks", "Bookmarks (B)", state.panel == Some(PlayerPanel::Bookmarks)).clicked() {
+            state.panel = if state.panel == Some(PlayerPanel::Bookmarks) { None } else { Some(PlayerPanel::Bookmarks) };
+            panel_just_opened = true;
+        }
+        if top_btn(ui, "top_lock", rect.right() - 70.0, "dock.lock", "Lock controls (L)", false).clicked() {
+            state.locked_mode = true;
+            state.overlays_visible = false;
+            state.volume_popup_open = false;
+            state.subtitles_popup_open = false;
+            state.more_options_open = false;
+            state.panel = None;
+        }
+        if top_btn(ui, "top_queue", rect.right() - 32.0, "dock.queue", "Queue", state.panel == Some(PlayerPanel::Queue)).clicked() {
+            state.panel = if state.panel == Some(PlayerPanel::Queue) { None } else { Some(PlayerPanel::Queue) };
+            panel_just_opened = true;
         }
 
         let player_layout = &tokens.skin.player_layout;
@@ -1184,9 +1347,9 @@ pub fn show(
             }
         }
 
-        // 3. Played portion: skin scrubber_fill (or solid white for default)
+        // 3. Played portion: CnX warm amber/orange
         let scrub_fill_col = if player_layout.style == "default" {
-            Color32::from_white_alpha((255.0 * overlay_alpha) as u8)
+            Color32::from_rgba_unmultiplied(235, 140, 52, (255.0 * overlay_alpha) as u8)
         } else {
             Color32::from_rgba_unmultiplied(
                 tokens.scrubber_fill.r(),
@@ -1556,20 +1719,15 @@ pub fn show(
                 });
         }
 
-        // --- Subtitles & Audio Popover with Slide-up Animation (Netflix Dual-Column or Fluent) ---
+        // --- CnX-style Subtitles & Audio Popover ---
         let subs_slide_t = ui.ctx().animate_bool_with_time(ui.scope_id().with("subs_slide_anim"), state.subtitles_popup_open, 0.15);
         if subs_slide_t > 0.001 {
-            let is_netflix_dual = player_layout.popup_style == crate::skin::PopupStyle::NetflixDualTracks;
-            let subs_pop_w = if is_netflix_dual { 400.0 } else { 260.0 };
-            let subs_pop_h = if is_netflix_dual { 280.0 } else { 360.0 };
-            let slide_offset = (1.0 - subs_slide_t) * 20.0;
-            let subs_pop_x = if is_netflix_dual {
-                (rect.right() - subs_pop_w - 20.0).max(rect.left() + 12.0)
-            } else {
-                rect.left() + 20.0
-            };
+            let subs_pop_w = 580.0_f32.min((rect.width() - 32.0).max(340.0));
+            let subs_pop_h = 480.0_f32.min((rect.height() - 96.0).max(300.0));
+            let slide_offset = (1.0 - subs_slide_t) * 16.0;
+            let subs_pop_x = (rect.left() + 20.0).min((rect.right() - subs_pop_w - 12.0).max(rect.left() + 12.0));
             let subs_pop_rect = Rect::from_min_max(
-                Pos2::new(subs_pop_x, control_y - subs_pop_h - 14.0 + slide_offset),
+                Pos2::new(subs_pop_x, (control_y - subs_pop_h - 14.0 + slide_offset).max(rect.top() + 12.0)),
                 Pos2::new(subs_pop_x + subs_pop_w, control_y - 14.0 + slide_offset),
             );
             if state.subtitles_popup_open && ui.input(|i| i.pointer.any_click()) {
@@ -1580,181 +1738,377 @@ pub fn show(
                 }
             }
 
+            let cnx_bg = Color32::from_rgb(24, 21, 18);
+            let cnx_surface = Color32::from_rgb(38, 33, 28);
+            let cnx_border = Color32::from_rgb(56, 48, 40);
+            let cnx_peach = Color32::from_rgb(245, 174, 108);
+            let cnx_amber = Color32::from_rgb(235, 140, 52);
+            let cnx_dark_txt = Color32::from_rgb(24, 20, 16);
+            let cnx_muted = Color32::from_rgb(172, 162, 150);
+
             egui::Area::new(ui.scope_id().with("player_subtitles_popup"))
                 .order(egui::Order::Foreground)
                 .fixed_pos(subs_pop_rect.min)
                 .show(ui.ctx(), |ui| {
                     egui::Frame::new()
-                        .fill(Color32::from_rgb(32, 32, 32))
-                        .stroke(Stroke::new(1.0, Color32::from_rgb(58, 58, 58)))
-                        .corner_radius(CornerRadius::same(4))
-                        .inner_margin(12.0)
+                        .fill(cnx_bg)
+                        .stroke(Stroke::new(1.0, cnx_border))
+                        .corner_radius(CornerRadius::same(10))
+                        .inner_margin(16.0)
                         .show(ui, |ui| {
-                            ui.set_width(subs_pop_w - 24.0);
-                            ui.set_max_height(subs_pop_h - 24.0);
-                            if is_netflix_dual {
-                                ui.columns(2, |cols| {
-                                    cols[0].label(RichText::new("Audio").size(14.0).strong().color(Color32::WHITE));
-                                    cols[0].add_space(6.0);
-                                    let audio_tracks: Vec<_> = snapshot.tracks.iter().filter(|t| t.kind == "audio").collect();
-                                    egui::ScrollArea::vertical().id_salt("nf_audio_scroll").max_height(210.0).show(&mut cols[0], |ui| {
+                            ui.set_width(subs_pop_w - 32.0);
+                            ui.set_max_height(subs_pop_h - 32.0);
+
+                            // Top Header: Subtitles | Audio tabs + Reset + Close
+                            ui.horizontal(|ui| {
+                                egui::Frame::new()
+                                    .fill(Color32::from_rgb(30, 26, 22))
+                                    .stroke(Stroke::new(1.0, cnx_border))
+                                    .corner_radius(CornerRadius::same(8))
+                                    .inner_margin(4.0)
+                                    .show(ui, |ui| {
+                                        ui.horizontal(|ui| {
+                                            ui.spacing_mut().item_spacing = Vec2::new(4.0, 0.0);
+                                            for (idx, lbl) in [(1u8, "Subtitles"), (0u8, "Audio")] {
+                                                let active = state.tracks_popover_tab == idx;
+                                                if ui.add(
+                                                    egui::Button::new(RichText::new(lbl).size(12.0).strong().color(if active { cnx_dark_txt } else { Color32::from_gray(225) }))
+                                                        .fill(if active { cnx_peach } else { Color32::TRANSPARENT })
+                                                        .corner_radius(CornerRadius::same(6))
+                                                        .min_size(Vec2::new(96.0, 28.0)),
+                                                ).clicked() {
+                                                    state.tracks_popover_tab = idx;
+                                                }
+                                            }
+                                        });
+                                    });
+                                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                    if ui.add(
+                                        egui::Button::new(RichText::new("×").size(14.0).color(Color32::WHITE))
+                                            .fill(cnx_surface)
+                                            .stroke(Stroke::new(1.0, cnx_border))
+                                            .corner_radius(CornerRadius::same(14))
+                                            .min_size(Vec2::new(28.0, 28.0)),
+                                    ).clicked() {
+                                        state.subtitles_popup_open = false;
+                                    }
+                                    if ui.add(
+                                        egui::Button::new(RichText::new("Reset").size(11.5).color(Color32::WHITE))
+                                            .fill(cnx_surface)
+                                            .stroke(Stroke::new(1.0, cnx_border))
+                                            .corner_radius(CornerRadius::same(6))
+                                            .min_size(Vec2::new(54.0, 28.0)),
+                                    ).clicked() {
+                                        if state.tracks_popover_tab == 0 {
+                                            state.audio_delay_secs = 0.0;
+                                            state.audio_boost_preset = "off".to_string();
+                                            state.eq_preset = "Disabled".to_string();
+                                            state.eq_bands = [0.0; 10];
+                                            state.audio_downmix = "auto".to_string();
+                                            command_sender(PlayerCommand::SetAudioDelay { token: snapshot.token, secs: 0.0 });
+                                            command_sender(PlayerCommand::SetAudioBoostPreset { token: snapshot.token, preset: "off".into() });
+                                            command_sender(PlayerCommand::SetEqualizer { token: snapshot.token, bands_db: [0.0; 10] });
+                                            command_sender(PlayerCommand::SetAudioDownmix { token: snapshot.token, mode: "auto".into() });
+                                        } else {
+                                            state.sub_delay_secs = 0.0;
+                                            state.sub_scale = 1.0;
+                                            state.sub_pos = 100;
+                                            state.sub_color = "#FFFFFFFF".to_string();
+                                            state.sub_bold = false;
+                                            state.sub_box_bg = false;
+                                            command_sender(PlayerCommand::SetSubDelay { token: snapshot.token, secs: 0.0 });
+                                            command_sender(PlayerCommand::SetSubtitleAppearance {
+                                                token: snapshot.token,
+                                                scale: 1.0,
+                                                pos: 100,
+                                                color: "#FFFFFFFF".into(),
+                                                bold: false,
+                                                box_bg: false,
+                                            });
+                                        }
+                                    }
+                                });
+                            });
+                            ui.add_space(12.0);
+                            ui.separator();
+                            ui.add_space(10.0);
+
+                            egui::ScrollArea::vertical().max_height(subs_pop_h - 108.0).show(ui, |ui| {
+                                if state.tracks_popover_tab == 0 {
+                                    // 2-Column Audio Layout (CnX Screenshot 3)
+                                    ui.columns(2, |cols| {
+                                        // Left Column: Audio track
+                                        cols[0].label(RichText::new("Audio track").size(12.0).color(cnx_muted));
+                                        cols[0].add_space(8.0);
+                                        let audio_tracks: Vec<_> = snapshot.tracks.iter().filter(|t| t.kind == "audio").collect();
+                                        if audio_tracks.is_empty() {
+                                            cols[0].label(RichText::new("No audio tracks").size(12.0).color(cnx_muted));
+                                        }
                                         for (idx, track) in audio_tracks.iter().enumerate() {
                                             let fallback = format!("Audio {}", idx + 1);
                                             let name = track_title(track.title.as_deref(), track.language.as_deref(), &fallback);
-                                            let label = if track.selected { format!("✓  {name}") } else { format!("    {name}") };
-                                            if ui.selectable_label(track.selected, RichText::new(label).size(12.5).color(Color32::WHITE)).clicked() {
+                                            let label = if track.selected { format!("{name}   ✓") } else { name };
+                                            if cols[0].add(
+                                                egui::Button::new(RichText::new(label).size(12.0).strong().color(if track.selected { cnx_dark_txt } else { Color32::WHITE }))
+                                                    .fill(if track.selected { cnx_peach } else { cnx_surface })
+                                                    .stroke(Stroke::new(1.0, cnx_border))
+                                                    .corner_radius(CornerRadius::same(8))
+                                                    .min_size(Vec2::new(cols[0].available_width() - 8.0, 34.0)),
+                                            ).clicked() {
                                                 command_sender(PlayerCommand::SelectTrack { token: snapshot.token, id: track.id });
                                             }
+                                            cols[0].add_space(6.0);
                                         }
+
+                                        // Right Column: Delay, 10-band Equaliser, Boost, Downmix
+                                        let rui = &mut cols[1];
+                                        rui.horizontal(|ui| {
+                                            ui.label(RichText::new("Audio delay").size(12.0).color(Color32::from_gray(235)));
+                                            ui.add_space(8.0);
+                                            if ui.add(egui::Button::new(RichText::new("−").size(14.0).color(Color32::WHITE)).fill(cnx_surface).stroke(Stroke::new(1.0, cnx_border)).corner_radius(CornerRadius::same(14)).min_size(Vec2::new(26.0, 26.0))).clicked() {
+                                                state.audio_delay_secs = (state.audio_delay_secs - 0.05).clamp(-10.0, 10.0);
+                                                command_sender(PlayerCommand::SetAudioDelay { token: snapshot.token, secs: state.audio_delay_secs });
+                                            }
+                                            ui.label(RichText::new(format!("{:.0} ms", state.audio_delay_secs * 1000.0)).size(11.5).color(cnx_peach));
+                                            if ui.add(egui::Button::new(RichText::new("+").size(14.0).color(Color32::WHITE)).fill(cnx_surface).stroke(Stroke::new(1.0, cnx_border)).corner_radius(CornerRadius::same(14)).min_size(Vec2::new(26.0, 26.0))).clicked() {
+                                                state.audio_delay_secs = (state.audio_delay_secs + 0.05).clamp(-10.0, 10.0);
+                                                command_sender(PlayerCommand::SetAudioDelay { token: snapshot.token, secs: state.audio_delay_secs });
+                                            }
+                                        });
+                                        rui.add_space(10.0);
+
+                                        // Equaliser header + preset chips
+                                        rui.label(RichText::new("Equaliser").size(12.0).color(cnx_muted));
+                                        rui.add_space(4.0);
+                                        rui.horizontal_wrapped(|ui| {
+                                            ui.spacing_mut().item_spacing = Vec2::new(4.0, 4.0);
+                                            for (pname, bands) in [
+                                                ("Disabled", [0.0_f32; 10]),
+                                                ("Cinema", [3.0, 2.0, 1.0, 0.0, 0.0, 1.0, 2.0, 2.0, 1.0, 1.0]),
+                                                ("Music", [4.0, 3.0, 1.0, 0.0, -1.0, 0.0, 2.0, 3.0, 3.0, 2.0]),
+                                                ("Voice", [-2.0, -1.0, 0.0, 2.0, 4.0, 4.0, 3.0, 1.0, 0.0, -1.0]),
+                                                ("Bass", [6.0, 5.0, 4.0, 2.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]),
+                                            ] {
+                                                let act = state.eq_preset == pname;
+                                                if ui.add(
+                                                    egui::Button::new(RichText::new(pname).size(10.5).color(if act { cnx_dark_txt } else { Color32::from_gray(220) }))
+                                                        .fill(if act { cnx_peach } else { cnx_surface })
+                                                        .stroke(Stroke::new(1.0, cnx_border))
+                                                        .corner_radius(CornerRadius::same(6)),
+                                                ).clicked() {
+                                                    state.eq_preset = pname.to_string();
+                                                    state.eq_bands = bands;
+                                                    command_sender(PlayerCommand::SetEqualizer { token: snapshot.token, bands_db: state.eq_bands });
+                                                }
+                                            }
+                                        });
+                                        rui.add_space(8.0);
+
+                                        // 10-Band Visual Equaliser (32..16K)
+                                        let band_labels = ["32", "64", "125", "250", "500", "1K", "2K", "4K", "8K", "16K"];
+                                        let eq_h = 84.0_f32;
+                                        let mut eq_changed = false;
+                                        rui.horizontal(|ui| {
+                                            ui.spacing_mut().item_spacing = Vec2::new(3.0, 0.0);
+                                            let band_w = ((ui.available_width() - 27.0) / 10.0).max(18.0);
+                                            for (i, lbl) in band_labels.iter().enumerate() {
+                                                ui.vertical(|ui| {
+                                                    ui.set_width(band_w);
+                                                    let (bar_rect, bar_resp) = ui.allocate_exact_size(Vec2::new(band_w, eq_h), Sense::click_and_drag());
+                                                    if bar_resp.hovered() {
+                                                        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+                                                    }
+                                                    if bar_resp.dragged() || bar_resp.clicked() {
+                                                        if let Some(p) = ui.input(|inp| inp.pointer.interact_pos()) {
+                                                            let frac = (1.0 - (p.y - bar_rect.top()) / eq_h).clamp(0.0, 1.0);
+                                                            state.eq_bands[i] = (frac * 24.0 - 12.0).round();
+                                                            state.eq_preset = "Custom".to_string();
+                                                            eq_changed = true;
+                                                        }
+                                                    }
+                                                    let cx = bar_rect.center().x;
+                                                    let track_top = bar_rect.top() + 6.0;
+                                                    let track_bot = bar_rect.bottom() - 6.0;
+                                                    let frac = ((state.eq_bands[i] + 12.0) / 24.0).clamp(0.0, 1.0);
+                                                    let thumb_y = track_bot - frac * (track_bot - track_top);
+                                                    ui.painter().line_segment([Pos2::new(cx, track_top), Pos2::new(cx, track_bot)], Stroke::new(3.0, cnx_surface));
+                                                    ui.painter().line_segment([Pos2::new(cx, thumb_y), Pos2::new(cx, track_bot)], Stroke::new(3.0, cnx_amber));
+                                                    ui.painter().circle_filled(Pos2::new(cx, thumb_y), 5.0, cnx_peach);
+                                                    ui.label(RichText::new(*lbl).size(9.5).color(cnx_muted));
+                                                });
+                                            }
+                                        });
+                                        if eq_changed {
+                                            command_sender(PlayerCommand::SetEqualizer { token: snapshot.token, bands_db: state.eq_bands });
+                                        }
+
+                                        rui.add_space(10.0);
+                                        rui.label(RichText::new("Audio boost").size(12.0).color(cnx_muted));
+                                        rui.add_space(4.0);
+                                        rui.horizontal_wrapped(|ui| {
+                                            ui.spacing_mut().item_spacing = Vec2::new(4.0, 4.0);
+                                            for (id, lbl) in [("off", "Off"), ("light", "Light"), ("standard", "Standard"), ("dynamic", "Dynamic"), ("night", "Night")] {
+                                                let act = state.audio_boost_preset == id;
+                                                if ui.add(
+                                                    egui::Button::new(RichText::new(lbl).size(11.0).color(if act { cnx_dark_txt } else { Color32::WHITE }))
+                                                        .fill(if act { cnx_peach } else { cnx_surface })
+                                                        .stroke(Stroke::new(1.0, cnx_border))
+                                                        .corner_radius(CornerRadius::same(6)),
+                                                ).clicked() {
+                                                    state.audio_boost_preset = id.to_string();
+                                                    command_sender(PlayerCommand::SetAudioBoostPreset { token: snapshot.token, preset: id.to_string() });
+                                                }
+                                            }
+                                        });
+
+                                        rui.add_space(10.0);
+                                        rui.label(RichText::new("Audio channel / downmix").size(12.0).color(cnx_muted));
+                                        rui.add_space(4.0);
+                                        rui.horizontal(|ui| {
+                                            for (id, lbl) in [("auto", "Default (System)"), ("stereo", "Stereo"), ("mono", "Mono")] {
+                                                let act = state.audio_downmix == id;
+                                                if ui.add(
+                                                    egui::Button::new(RichText::new(lbl).size(11.0).color(if act { cnx_dark_txt } else { Color32::WHITE }))
+                                                        .fill(if act { cnx_peach } else { cnx_surface })
+                                                        .stroke(Stroke::new(1.0, cnx_border))
+                                                        .corner_radius(CornerRadius::same(6)),
+                                                ).clicked() {
+                                                    state.audio_downmix = id.to_string();
+                                                    command_sender(PlayerCommand::SetAudioDownmix { token: snapshot.token, mode: id.to_string() });
+                                                }
+                                            }
+                                        });
                                     });
-                                    cols[1].label(RichText::new("Subtitles").size(14.0).strong().color(Color32::WHITE));
-                                    cols[1].add_space(6.0);
-                                    let sub_tracks: Vec<_> = snapshot.tracks.iter().filter(|t| t.kind == "sub").collect();
-                                    egui::ScrollArea::vertical().id_salt("nf_sub_scroll").max_height(210.0).show(&mut cols[1], |ui| {
-                                        let none_selected = !sub_tracks.iter().any(|t| t.selected);
-                                        if ui.selectable_label(none_selected, RichText::new(if none_selected { "✓  Off" } else { "    Off" }).size(12.5).color(Color32::WHITE)).clicked() {
+                                } else {
+                                    // 2-Column Subtitles + Sub Look Layout
+                                    ui.columns(2, |cols| {
+                                        // Left Column: Subtitle tracks + External
+                                        cols[0].label(RichText::new("Subtitle track").size(12.0).color(cnx_muted));
+                                        cols[0].add_space(6.0);
+                                        let sub_tracks: Vec<_> = snapshot.tracks.iter().filter(|t| t.kind == "sub").collect();
+                                        let none_sel = !sub_tracks.iter().any(|t| t.selected);
+                                        if cols[0].add(
+                                            egui::Button::new(RichText::new(if none_sel { "Off   ✓" } else { "Turn off subtitles" }).size(12.0).color(if none_sel { cnx_dark_txt } else { Color32::WHITE }))
+                                                .fill(if none_sel { cnx_peach } else { cnx_surface })
+                                                .stroke(Stroke::new(1.0, cnx_border))
+                                                .corner_radius(CornerRadius::same(8))
+                                                .min_size(Vec2::new(cols[0].available_width() - 8.0, 30.0)),
+                                        ).clicked() {
                                             command_sender(PlayerCommand::DisableSubtitles { token: snapshot.token });
                                         }
+                                        cols[0].add_space(4.0);
                                         for (idx, track) in sub_tracks.iter().enumerate() {
                                             let fallback = format!("Subtitle {}", idx + 1);
                                             let name = track_title(track.title.as_deref(), track.language.as_deref(), &fallback);
-                                            let label = if track.selected { format!("✓  {name}") } else { format!("    {name}") };
-                                            if ui.selectable_label(track.selected, RichText::new(label).size(12.5).color(Color32::WHITE)).clicked() {
+                                            let label = if track.selected { format!("{name}   ✓") } else { name };
+                                            if cols[0].add(
+                                                egui::Button::new(RichText::new(label).size(11.5).color(if track.selected { cnx_dark_txt } else { Color32::WHITE }))
+                                                    .fill(if track.selected { cnx_peach } else { cnx_surface })
+                                                    .stroke(Stroke::new(1.0, cnx_border))
+                                                    .corner_radius(CornerRadius::same(8))
+                                                    .min_size(Vec2::new(cols[0].available_width() - 8.0, 28.0)),
+                                            ).clicked() {
                                                 command_sender(PlayerCommand::SelectTrack { token: snapshot.token, id: track.id });
                                             }
+                                            cols[0].add_space(4.0);
                                         }
-                                        if ui.button("Choose file...").clicked() {
+                                        cols[0].add_space(6.0);
+                                        if cols[0].add(
+                                            egui::Button::new(RichText::new("+ Load External Subtitle...").size(11.5).strong().color(cnx_dark_txt))
+                                                .fill(cnx_amber)
+                                                .corner_radius(CornerRadius::same(8))
+                                                .min_size(Vec2::new(cols[0].available_width() - 8.0, 30.0)),
+                                        ).clicked() {
                                             action.choose_subtitle = true;
                                             state.subtitles_popup_open = false;
                                         }
+
+                                        // Right Column: Sub Delay + Sub Look
+                                        let rui = &mut cols[1];
+                                        rui.horizontal(|ui| {
+                                            ui.label(RichText::new("Subtitle delay").size(12.0).color(Color32::from_gray(235)));
+                                            ui.add_space(6.0);
+                                            if ui.add(egui::Button::new(RichText::new("−").size(14.0).color(Color32::WHITE)).fill(cnx_surface).stroke(Stroke::new(1.0, cnx_border)).corner_radius(CornerRadius::same(14)).min_size(Vec2::new(26.0, 26.0))).clicked() {
+                                                state.sub_delay_secs = (state.sub_delay_secs - 0.1).clamp(-30.0, 30.0);
+                                                command_sender(PlayerCommand::SetSubDelay { token: snapshot.token, secs: state.sub_delay_secs });
+                                            }
+                                            ui.label(RichText::new(format!("{:.0} ms", state.sub_delay_secs * 1000.0)).size(11.5).color(cnx_peach));
+                                            if ui.add(egui::Button::new(RichText::new("+").size(14.0).color(Color32::WHITE)).fill(cnx_surface).stroke(Stroke::new(1.0, cnx_border)).corner_radius(CornerRadius::same(14)).min_size(Vec2::new(26.0, 26.0))).clicked() {
+                                                state.sub_delay_secs = (state.sub_delay_secs + 0.1).clamp(-30.0, 30.0);
+                                                command_sender(PlayerCommand::SetSubDelay { token: snapshot.token, secs: state.sub_delay_secs });
+                                            }
+                                        });
+                                        rui.add_space(12.0);
+                                        let mut look_changed = false;
+                                        rui.label(RichText::new("Sub Look").size(12.5).strong().color(Color32::WHITE));
+                                        rui.add_space(6.0);
+                                        rui.horizontal(|ui| {
+                                            ui.label(RichText::new(format!("Size: {:.1}x", state.sub_scale)).size(11.5).color(cnx_muted));
+                                            if ui.add(egui::Slider::new(&mut state.sub_scale, 0.5..=2.0).show_value(false)).changed() {
+                                                look_changed = true;
+                                            }
+                                        });
+                                        rui.add_space(4.0);
+                                        rui.horizontal(|ui| {
+                                            ui.label(RichText::new(format!("Pos: {}%", state.sub_pos)).size(11.5).color(cnx_muted));
+                                            if ui.add(egui::Slider::new(&mut state.sub_pos, 50..=100).show_value(false)).changed() {
+                                                look_changed = true;
+                                            }
+                                        });
+                                        rui.add_space(6.0);
+                                        rui.horizontal(|ui| {
+                                            for (hex, lbl, col) in [
+                                                ("#FFFFFFFF", "White", Color32::WHITE),
+                                                ("#FFFACC15", "Yellow", Color32::from_rgb(250, 204, 21)),
+                                                ("#FF38BDF8", "Cyan", Color32::from_rgb(56, 189, 248)),
+                                                ("#FF4ADE80", "Green", Color32::from_rgb(74, 222, 128)),
+                                            ] {
+                                                let active = state.sub_color == hex;
+                                                if ui.add(
+                                                    egui::Button::new(RichText::new(lbl).size(11.0).color(col))
+                                                        .fill(if active { Color32::from_rgb(54, 46, 38) } else { cnx_surface })
+                                                        .stroke(Stroke::new(1.0, if active { cnx_peach } else { cnx_border }))
+                                                        .corner_radius(CornerRadius::same(6)),
+                                                ).clicked() {
+                                                    state.sub_color = hex.to_string();
+                                                    look_changed = true;
+                                                }
+                                            }
+                                        });
+                                        rui.add_space(6.0);
+                                        rui.horizontal(|ui| {
+                                            if ui.add(
+                                                egui::Button::new(RichText::new(if state.sub_bold { "✓ Bold" } else { "Bold" }).size(11.5).color(if state.sub_bold { cnx_dark_txt } else { Color32::WHITE }))
+                                                    .fill(if state.sub_bold { cnx_peach } else { cnx_surface })
+                                                    .stroke(Stroke::new(1.0, cnx_border))
+                                                    .corner_radius(CornerRadius::same(6)),
+                                            ).clicked() {
+                                                state.sub_bold = !state.sub_bold;
+                                                look_changed = true;
+                                            }
+                                            if ui.add(
+                                                egui::Button::new(RichText::new(if state.sub_box_bg { "✓ Box BG" } else { "Box BG" }).size(11.5).color(if state.sub_box_bg { cnx_dark_txt } else { Color32::WHITE }))
+                                                    .fill(if state.sub_box_bg { cnx_peach } else { cnx_surface })
+                                                    .stroke(Stroke::new(1.0, cnx_border))
+                                                    .corner_radius(CornerRadius::same(6)),
+                                            ).clicked() {
+                                                state.sub_box_bg = !state.sub_box_bg;
+                                                look_changed = true;
+                                            }
+                                        });
+                                        if look_changed {
+                                            command_sender(PlayerCommand::SetSubtitleAppearance {
+                                                token: snapshot.token,
+                                                scale: state.sub_scale,
+                                                pos: state.sub_pos,
+                                                color: state.sub_color.clone(),
+                                                bold: state.sub_bold,
+                                                box_bg: state.sub_box_bg,
+                                            });
+                                        }
                                     });
-                                });
-                            } else {
-                            egui::ScrollArea::vertical().show(ui, |ui| {
-                                ui.label(RichText::new("Subtitles").size(14.0).strong().color(Color32::WHITE));
-                                ui.add_space(6.0);
-
-                                let sub_tracks: Vec<_> = snapshot.tracks.iter().filter(|t| t.kind == "sub").collect();
-                                if sub_tracks.is_empty() {
-                                    ui.label(RichText::new("No subtitles").size(12.0).color(Color32::from_gray(160)));
-                                }
-                                for (idx, track) in sub_tracks.iter().enumerate() {
-                                    let fallback = format!("Subtitle track {}", idx + 1);
-                                    let name = track_title(track.title.as_deref(), track.language.as_deref(), &fallback);
-                                    let label = format!("{}. {}", idx + 1, name);
-                                    let (row_rect, row_resp) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 26.0), Sense::click());
-                                    if row_resp.hovered() {
-                                        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
-                                    }
-                                    let is_selected = track.selected;
-                                    let bg = if is_selected {
-                                        Color32::from_rgb(68, 68, 68)
-                                    } else if row_resp.hovered() {
-                                        Color32::from_white_alpha(30)
-                                    } else {
-                                        Color32::TRANSPARENT
-                                    };
-                                    ui.painter().rect_filled(row_rect, CornerRadius::ZERO, bg);
-                                    let mut job = egui::text::LayoutJob::single_section(
-                                        label,
-                                        egui::TextFormat {
-                                            font_id: FontId::proportional(12.5),
-                                            color: Color32::WHITE,
-                                            ..Default::default()
-                                        },
-                                    );
-                                    job.wrap.max_width = (row_rect.width() - 22.0).max(40.0);
-                                    job.wrap.max_rows = 1;
-                                    let galley = ui.painter().layout_job(job);
-                                    ui.painter().galley(
-                                        Pos2::new(row_rect.left() + 10.0, row_rect.center().y - galley.size().y * 0.5),
-                                        galley,
-                                        Color32::WHITE,
-                                    );
-                                    if row_resp.clicked() {
-                                        command_sender(PlayerCommand::SelectTrack {
-                                            token: snapshot.token,
-                                            id: track.id,
-                                        });
-                                    }
-                                }
-
-                                ui.add_space(6.0);
-                                // Choose subtitle file
-                                let (choose_rect, choose_resp) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 26.0), Sense::click());
-                                if choose_resp.hovered() {
-                                    ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
-                                    ui.painter().rect_filled(choose_rect, CornerRadius::same(2), Color32::from_white_alpha(30));
-                                }
-                                ui.painter().text(
-                                    Pos2::new(choose_rect.left() + 10.0, choose_rect.center().y),
-                                    Align2::LEFT_CENTER,
-                                    "Choose subtitle file",
-                                    FontId::proportional(12.5),
-                                    Color32::WHITE,
-                                );
-                                if choose_resp.clicked() {
-                                    action.choose_subtitle = true;
-                                    state.subtitles_popup_open = false;
-                                }
-
-                                // Subtitles settings / Turn off
-                                let (off_rect, off_resp) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 26.0), Sense::click());
-                                if off_resp.hovered() {
-                                    ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
-                                    ui.painter().rect_filled(off_rect, CornerRadius::same(2), Color32::from_white_alpha(30));
-                                }
-                                let off_text = if sub_tracks.iter().any(|t| t.selected) { "Turn off subtitles" } else { "Subtitles settings" };
-                                ui.painter().text(
-                                    Pos2::new(off_rect.left() + 10.0, off_rect.center().y),
-                                    Align2::LEFT_CENTER,
-                                    off_text,
-                                    FontId::proportional(12.5),
-                                    Color32::WHITE,
-                                );
-                                if off_resp.clicked() {
-                                    command_sender(PlayerCommand::DisableSubtitles { token: snapshot.token });
-                                }
-
-                                ui.add_space(10.0);
-                                ui.separator();
-                                ui.add_space(8.0);
-
-                                ui.label(RichText::new("Audio").size(14.0).strong().color(Color32::WHITE));
-                                ui.add_space(6.0);
-
-                                let audio_tracks: Vec<_> = snapshot.tracks.iter().filter(|t| t.kind == "audio").collect();
-                                for (idx, track) in audio_tracks.iter().enumerate() {
-                                    let fallback = format!("Audio {}", idx + 1);
-                                    let name = track_title(track.title.as_deref(), track.language.as_deref(), &fallback);
-                                    let prefix = if track.selected { "✓ " } else { "   " };
-                                    let label = format!("{}{}. {}", prefix, idx + 1, name);
-                                    let (row_rect, row_resp) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 26.0), Sense::click());
-                                    if row_resp.hovered() {
-                                        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
-                                    }
-                                    let bg = if row_resp.hovered() {
-                                        Color32::from_white_alpha(30)
-                                    } else {
-                                        Color32::TRANSPARENT
-                                    };
-                                    ui.painter().rect_filled(row_rect, CornerRadius::same(2), bg);
-                                    ui.painter().text(
-                                        Pos2::new(row_rect.left() + 6.0, row_rect.center().y),
-                                        Align2::LEFT_CENTER,
-                                        label,
-                                        FontId::proportional(12.5),
-                                        Color32::WHITE,
-                                    );
-                                    if row_resp.clicked() {
-                                        command_sender(PlayerCommand::SelectTrack {
-                                            token: snapshot.token,
-                                            id: track.id,
-                                        });
-                                    }
                                 }
                             });
-                            }
                         });
                 });
         }
@@ -1930,40 +2284,57 @@ pub fn show(
                 });
             }
         }
-        if hud_btn(ui, "hud_lock", rect.right() - 158.0, "dock.lock", "Lock controls (L)").clicked() {
-            state.locked_mode = true;
-            state.overlays_visible = false;
-            state.volume_popup_open = false;
-            state.subtitles_popup_open = false;
-            state.more_options_open = false;
-            state.panel = None;
-        }
-
-        // 3. Picture-in-Picture (PiP / Mini view)
-        if hud_btn(ui, "hud_pip", rect.right() - 116.0, "transport.pip", "Mini view").clicked() {
-            action.toggle_pip = true;
-        }
-
-        // 2. Fullscreen toggle button
-        let is_fs = ui.input(|i| i.viewport().fullscreen.unwrap_or(state.is_fullscreen));
-        let fs_icon = if is_fs { "transport.exit_fullscreen" } else { "transport.fullscreen" };
-        let fs_tooltip = if is_fs { "Exit fullscreen" } else { "Fullscreen (F)" };
-        if hud_btn(ui, "hud_fs", rect.right() - 74.0, fs_icon, fs_tooltip).clicked() {
-            state.is_fullscreen = !is_fs;
-            action.toggle_fullscreen = Some(state.is_fullscreen);
-        }
-
-        // 1. More options (...) button
-        let more_btn_rect = Rect::from_center_size(Pos2::new(rect.right() - 32.0, control_y), Vec2::splat(40.0));
+        // CnX Bottom-Right Group: [More ...] [Bookmarks] [Subtitles/Audio] [Viewing options] [Fullscreen]
+        let more_btn_rect = Rect::from_center_size(Pos2::new(rect.right() - 200.0, control_y), Vec2::splat(40.0));
         let more_resp = OverlayButton::bottom_bar(ui.scope_id().with("hud_more"), more_btn_rect)
             .icon("action.dots_horizontal")
             .icon_size(20.0)
-            .show(ui, theme, icons);
+            .show(ui, theme, icons)
+            .on_hover_text("More options");
         if more_resp.clicked() {
             state.more_options_open = !state.more_options_open;
             if state.more_options_open {
                 state.subtitles_popup_open = false;
             }
+        }
+
+        if hud_btn(ui, "hud_bm", rect.right() - 158.0, "dock.bookmarks", "Bookmarks (B)").clicked() {
+            state.panel = if state.panel == Some(PlayerPanel::Bookmarks) { None } else { Some(PlayerPanel::Bookmarks) };
+            panel_just_opened = true;
+        }
+
+        if hud_btn(ui, "hud_subs_right", rect.right() - 116.0, "dock.subtitles", "Subtitles & Audio").clicked() {
+            state.subtitles_popup_open = !state.subtitles_popup_open;
+            if state.subtitles_popup_open {
+                state.more_options_open = false;
+                state.panel = None;
+            }
+        }
+
+        // Viewing options (highlighted in CnX orange circle when open)
+        let view_btn_rect = Rect::from_center_size(Pos2::new(rect.right() - 74.0, control_y), Vec2::splat(36.0));
+        if state.panel == Some(PlayerPanel::Viewing) {
+            ui.painter().circle_filled(view_btn_rect.center(), 17.0, Color32::from_rgb(235, 140, 52));
+        }
+        let view_resp = OverlayButton::bottom_bar(ui.scope_id().with("hud_viewing"), view_btn_rect)
+            .icon("dock.picture")
+            .icon_size(19.0)
+            .show(ui, theme, icons)
+            .on_hover_text("Viewing options");
+        if view_resp.clicked() {
+            state.panel = if state.panel == Some(PlayerPanel::Viewing) { None } else { Some(PlayerPanel::Viewing) };
+            state.subtitles_popup_open = false;
+            state.more_options_open = false;
+            panel_just_opened = true;
+        }
+
+        // Fullscreen toggle button
+        let is_fs = ui.input(|i| i.viewport().fullscreen.unwrap_or(state.is_fullscreen));
+        let fs_icon = if is_fs { "transport.exit_fullscreen" } else { "transport.fullscreen" };
+        let fs_tooltip = if is_fs { "Exit fullscreen" } else { "Fullscreen (F)" };
+        if hud_btn(ui, "hud_fs", rect.right() - 32.0, fs_icon, fs_tooltip).clicked() {
+            state.is_fullscreen = !is_fs;
+            action.toggle_fullscreen = Some(state.is_fullscreen);
         }
 
         // More options popup (containing Zoom to fill, Audio only, Bookmarks, Queue)
@@ -2050,6 +2421,11 @@ pub fn show(
                             }
                             if item_btn(ui, "Picture / Color Grading").clicked() {
                                 state.panel = Some(PlayerPanel::Picture);
+                                state.more_options_open = false;
+                                panel_just_opened = true;
+                            }
+                            if item_btn(ui, "Viewing Options").clicked() {
+                                state.panel = Some(PlayerPanel::Viewing);
                                 state.more_options_open = false;
                                 panel_just_opened = true;
                             }
@@ -2175,23 +2551,30 @@ pub fn show(
     }
     if let Some(panel) = state.panel {
         let panel_width: f32 = match panel {
-            PlayerPanel::Queue => 460.0_f32,
-            PlayerPanel::Picture => 480.0_f32,
+            PlayerPanel::Queue => 280.0_f32,
+            PlayerPanel::Picture | PlayerPanel::Viewing => 460.0_f32,
             PlayerPanel::Speed | PlayerPanel::Tracks => 360.0_f32,
             PlayerPanel::Bookmarks => 400.0_f32,
         }
-        .min((rect.width() - 32.0_f32).max(280.0_f32));
+        .min((rect.width() - 32.0_f32).max(260.0_f32));
         let panel_height: f32 = match panel {
-            PlayerPanel::Queue => (rect.height() - 120.0_f32).max(320.0_f32),
+            PlayerPanel::Queue => (rect.height() - 140.0_f32).max(320.0_f32),
             PlayerPanel::Picture => 364.0_f32,
+            PlayerPanel::Viewing => 530.0_f32,
             PlayerPanel::Speed => 196.0_f32,
             PlayerPanel::Tracks => 386.0_f32,
             PlayerPanel::Bookmarks => 420.0_f32,
         }
         .min((rect.height() - 32.0_f32).max(260.0_f32));
-        let panel_top = (rect.bottom() - panel_height - 68.0_f32).max(rect.top() + 12.0_f32);
+        let panel_top = if panel == PlayerPanel::Queue {
+            rect.top() + 64.0_f32
+        } else {
+            (rect.bottom() - panel_height - 68.0_f32).max(rect.top() + 12.0_f32)
+        };
         let panel_left = if panel == PlayerPanel::Tracks {
             rect.left() + 24.0_f32
+        } else if panel == PlayerPanel::Queue {
+            rect.right() - panel_width
         } else {
             (rect.right() - panel_width - 24.0_f32).max(rect.left() + 24.0_f32)
         };
@@ -2215,15 +2598,19 @@ pub fn show(
                 egui::Frame::new()
                     .fill(if dragging_picture {
                         Color32::TRANSPARENT
+                    } else if panel == PlayerPanel::Viewing || panel == PlayerPanel::Queue {
+                        Color32::from_rgb(24, 21, 18)
                     } else {
                         Color32::from_rgb(20, 24, 31)
                     })
                     .stroke(if dragging_picture {
                         Stroke::NONE
+                    } else if panel == PlayerPanel::Viewing || panel == PlayerPanel::Queue {
+                        Stroke::new(1.0, Color32::from_rgb(56, 48, 40))
                     } else {
                         Stroke::new(1.0, Color32::from_white_alpha(55))
                     })
-                    .corner_radius(CornerRadius::ZERO)
+                    .corner_radius(if panel == PlayerPanel::Viewing { CornerRadius::same(10) } else { CornerRadius::ZERO })
                     .inner_margin(16.0)
                     .show(ui, |ui| {
                         ui.set_width(panel_width - 34.0);
@@ -2451,6 +2838,453 @@ pub fn show(
                                     }
                                 }
                             }
+                            PlayerPanel::Viewing => {
+                                let cnx_surface = Color32::from_rgb(38, 33, 28);
+                                let cnx_border = Color32::from_rgb(56, 48, 40);
+                                let cnx_peach = Color32::from_rgb(245, 174, 108);
+                                let cnx_dark_txt = Color32::from_rgb(24, 20, 16);
+                                let cnx_muted = Color32::from_rgb(172, 162, 150);
+                                let cnx_amber = Color32::from_rgb(235, 140, 52);
+
+                                let mut view_changed = false;
+                                let mut pic_changed = false;
+                                let mut tm_changed = false;
+
+                                // Header
+                                ui.horizontal(|ui| {
+                                    ui.vertical(|ui| {
+                                        ui.label(RichText::new("Viewing options").size(16.0).strong().color(Color32::WHITE));
+                                        let fname = snapshot
+                                            .path
+                                            .as_ref()
+                                            .and_then(|p| p.file_name())
+                                            .map(|n| n.to_string_lossy().to_string())
+                                            .unwrap_or_else(|| "Current media".to_string());
+                                        let short = if fname.len() > 42 { format!("{}...", &fname[..39]) } else { fname };
+                                        ui.label(RichText::new(format!("Tweak how {short}")).size(11.5).color(cnx_muted));
+                                    });
+                                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                        if ui.add(
+                                            egui::Button::new(RichText::new("×").size(14.0).color(Color32::WHITE))
+                                                .fill(cnx_surface)
+                                                .stroke(Stroke::new(1.0, cnx_border))
+                                                .corner_radius(CornerRadius::same(14))
+                                                .min_size(Vec2::new(28.0, 28.0)),
+                                        ).clicked() {
+                                            state.panel = None;
+                                        }
+                                        if ui.add(
+                                            egui::Button::new(RichText::new("Reset").size(11.5).color(Color32::WHITE))
+                                                .fill(cnx_surface)
+                                                .stroke(Stroke::new(1.0, cnx_border))
+                                                .corner_radius(CornerRadius::same(6))
+                                                .min_size(Vec2::new(54.0, 28.0)),
+                                        ).clicked() {
+                                            state.viewing_preset = "off".to_string();
+                                            state.picture_lighting = 0;
+                                            state.picture_contrast = 0;
+                                            state.picture_vibrance = 0;
+                                            state.picture_shadows = 0;
+                                            state.picture_hue = 0;
+                                            state.picture_fit_mode = "fit".to_string();
+                                            state.view_aspect = "auto".to_string();
+                                            state.view_zoom = 0.0;
+                                            state.view_panscan = 0.0;
+                                            state.view_rotate = 0;
+                                            state.view_hflip = false;
+                                            state.view_vflip = false;
+                                            state.view_ab_a = None;
+                                            state.view_ab_b = None;
+                                            state.hdr_tm_enabled = true;
+                                            state.hdr_tm_strength = 1;
+                                            pic_changed = true;
+                                            view_changed = true;
+                                            tm_changed = true;
+                                            command_sender(PlayerCommand::SetKeepAspect { token: snapshot.token, keep: true });
+                                        }
+                                    });
+                                });
+                                ui.add_space(10.0);
+
+                                // 4-tab bar: Video | Playback | Chapters | Info
+                                egui::Frame::new()
+                                    .fill(Color32::from_rgb(30, 26, 22))
+                                    .stroke(Stroke::new(1.0, cnx_border))
+                                    .corner_radius(CornerRadius::same(8))
+                                    .inner_margin(4.0)
+                                    .show(ui, |ui| {
+                                        ui.horizontal(|ui| {
+                                            ui.spacing_mut().item_spacing = Vec2::new(4.0, 0.0);
+                                            let tab_w = (ui.available_width() - 12.0) / 4.0;
+                                            for (idx, lbl) in [(0u8, "Video"), (1u8, "Playback"), (2u8, "Chapters"), (3u8, "Info")] {
+                                                let active = state.viewing_tab == idx;
+                                                if ui.add(
+                                                    egui::Button::new(
+                                                        RichText::new(lbl)
+                                                            .size(12.0)
+                                                            .strong()
+                                                            .color(if active { cnx_dark_txt } else { Color32::from_gray(225) }),
+                                                    )
+                                                    .fill(if active { cnx_peach } else { Color32::TRANSPARENT })
+                                                    .corner_radius(CornerRadius::same(6))
+                                                    .min_size(Vec2::new(tab_w, 30.0)),
+                                                ).clicked() {
+                                                    state.viewing_tab = idx;
+                                                }
+                                            }
+                                        });
+                                    });
+                                ui.add_space(12.0);
+
+                                egui::ScrollArea::vertical().max_height(395.0).show(ui, |ui| {
+                                    match state.viewing_tab {
+                                        0 => {
+                                            // Preset row
+                                            ui.horizontal(|ui| {
+                                                ui.label(RichText::new("Preset").size(12.0).color(cnx_muted));
+                                                if snapshot.is_10bit || snapshot.is_hdr || snapshot.is_dolby_vision {
+                                                    egui::Frame::new()
+                                                        .fill(Color32::from_rgb(48, 36, 24))
+                                                        .corner_radius(CornerRadius::same(4))
+                                                        .inner_margin(egui::Margin::symmetric(6, 2))
+                                                        .show(ui, |ui| {
+                                                            ui.label(RichText::new(if snapshot.is_dolby_vision { "Dolby Vision" } else { "10-bit HDR" }).size(10.5).color(cnx_peach));
+                                                        });
+                                                }
+                                            });
+                                            ui.add_space(6.0);
+                                            ui.horizontal(|ui| {
+                                                ui.spacing_mut().item_spacing = Vec2::new(6.0, 0.0);
+                                                for (id, lbl, l, c, v, g, h) in [
+                                                    ("off", "Off", 0, 0, 0, 0, 0),
+                                                    ("cinema", "Cinema", -4, 10, 8, 4, 0),
+                                                    ("vivid", "Vivid", 4, 14, 24, 2, 0),
+                                                    ("darkroom", "Dark room", -8, 12, 4, 10, 0),
+                                                    ("sports", "Sports", 6, 10, 16, 0, 0),
+                                                ] {
+                                                    let active = state.viewing_preset == id;
+                                                    if ui.add(
+                                                        egui::Button::new(RichText::new(lbl).size(11.5).color(if active { cnx_dark_txt } else { Color32::from_gray(220) }))
+                                                            .fill(if active { cnx_peach } else { cnx_surface })
+                                                            .stroke(Stroke::new(1.0, cnx_border))
+                                                            .corner_radius(CornerRadius::same(6))
+                                                            .min_size(Vec2::new(56.0, 28.0)),
+                                                    ).clicked() {
+                                                        state.viewing_preset = id.to_string();
+                                                        state.picture_lighting = l;
+                                                        state.picture_contrast = c;
+                                                        state.picture_vibrance = v;
+                                                        state.picture_shadows = g;
+                                                        state.picture_hue = h;
+                                                        pic_changed = true;
+                                                    }
+                                                }
+                                            });
+                                            ui.add_space(12.0);
+
+                                            // 2-column sliders: Brightness / Contrast, Saturation / Gamma, Hue
+                                            ui.columns(2, |cols| {
+                                                for (col_idx, name, val) in [
+                                                    (0usize, "Brightness", &mut state.picture_lighting),
+                                                    (1usize, "Contrast", &mut state.picture_contrast),
+                                                    (0usize, "Saturation", &mut state.picture_vibrance),
+                                                    (1usize, "Gamma", &mut state.picture_shadows),
+                                                    (0usize, "Hue", &mut state.picture_hue),
+                                                ] {
+                                                    let cui = &mut cols[col_idx];
+                                                    cui.horizontal(|ui| {
+                                                        ui.label(RichText::new(name).size(12.0).color(Color32::from_gray(235)));
+                                                        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                                            ui.label(RichText::new(format!("{}", *val)).size(11.5).color(cnx_amber));
+                                                        });
+                                                    });
+                                                    cui.scope(|ui| {
+                                                        ui.visuals_mut().widgets.inactive.bg_fill = cnx_surface;
+                                                        ui.visuals_mut().selection.bg_fill = cnx_amber;
+                                                        if ui.add(egui::Slider::new(val, -50..=50).show_value(false)).changed() {
+                                                            state.viewing_preset = "custom".to_string();
+                                                            pic_changed = true;
+                                                        }
+                                                    });
+                                                    cui.add_space(6.0);
+                                                }
+                                            });
+
+                                            ui.add_space(6.0);
+                                            ui.label(RichText::new("Picture fit").size(12.0).color(cnx_muted));
+                                            ui.add_space(6.0);
+                                            egui::Frame::new()
+                                                .fill(Color32::from_rgb(30, 26, 22))
+                                                .stroke(Stroke::new(1.0, cnx_border))
+                                                .corner_radius(CornerRadius::same(8))
+                                                .inner_margin(4.0)
+                                                .show(ui, |ui| {
+                                                    ui.horizontal(|ui| {
+                                                        ui.spacing_mut().item_spacing = Vec2::new(4.0, 0.0);
+                                                        for (id, lbl) in [("fit", "Fit"), ("fill", "Fill"), ("100", "100%"), ("150", "150%"), ("stretch", "Stretch")] {
+                                                            let active = state.picture_fit_mode == id;
+                                                            if ui.add(
+                                                                egui::Button::new(RichText::new(lbl).size(11.5).color(if active { cnx_dark_txt } else { Color32::from_gray(225) }))
+                                                                    .fill(if active { cnx_peach } else { Color32::TRANSPARENT })
+                                                                    .corner_radius(CornerRadius::same(6))
+                                                                    .min_size(Vec2::new(58.0, 28.0)),
+                                                            ).clicked() {
+                                                                state.picture_fit_mode = id.to_string();
+                                                                match id {
+                                                                    "fit" => { state.view_panscan = 0.0; state.view_zoom = 0.0; command_sender(PlayerCommand::SetKeepAspect { token: snapshot.token, keep: true }); }
+                                                                    "fill" => { state.view_panscan = 1.0; state.view_zoom = 0.0; command_sender(PlayerCommand::SetKeepAspect { token: snapshot.token, keep: true }); }
+                                                                    "100" => { state.view_panscan = 0.0; state.view_zoom = 0.0; command_sender(PlayerCommand::SetKeepAspect { token: snapshot.token, keep: true }); }
+                                                                    "150" => { state.view_panscan = 0.0; state.view_zoom = 0.585; command_sender(PlayerCommand::SetKeepAspect { token: snapshot.token, keep: true }); }
+                                                                    "stretch" => { state.view_panscan = 0.0; state.view_zoom = 0.0; command_sender(PlayerCommand::SetKeepAspect { token: snapshot.token, keep: false }); }
+                                                                    _ => {}
+                                                                }
+                                                                view_changed = true;
+                                                            }
+                                                        }
+                                                    });
+                                                });
+
+                                            ui.add_space(10.0);
+                                            ui.horizontal(|ui| {
+                                                ui.label(RichText::new("Zoom").size(12.0).color(cnx_muted));
+                                                ui.add_space(8.0);
+                                                if ui.add(egui::Button::new(RichText::new("−").size(14.0).color(Color32::WHITE)).fill(cnx_surface).stroke(Stroke::new(1.0, cnx_border)).corner_radius(CornerRadius::same(14)).min_size(Vec2::new(28.0, 28.0))).clicked() {
+                                                    state.view_zoom = (state.view_zoom - 0.1).clamp(-1.0, 2.0);
+                                                    view_changed = true;
+                                                }
+                                                let z_lbl = if state.view_zoom.abs() < 0.01 { "Fit".to_string() } else { format!("{:+.0}%", state.view_zoom * 100.0) };
+                                                ui.label(RichText::new(z_lbl).size(12.0).color(cnx_peach));
+                                                if ui.add(egui::Button::new(RichText::new("+").size(14.0).color(Color32::WHITE)).fill(cnx_surface).stroke(Stroke::new(1.0, cnx_border)).corner_radius(CornerRadius::same(14)).min_size(Vec2::new(28.0, 28.0))).clicked() {
+                                                    state.view_zoom = (state.view_zoom + 0.1).clamp(-1.0, 2.0);
+                                                    view_changed = true;
+                                                }
+                                            });
+
+                                            ui.add_space(10.0);
+                                            ui.separator();
+                                            ui.add_space(8.0);
+                                            ui.horizontal(|ui| {
+                                                ui.label(RichText::new("Rotation / flip").size(12.0).color(Color32::from_gray(235)));
+                                                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                                    for (lbl, is_act, kind) in [
+                                                        ("Flip V", state.view_vflip, 5u8),
+                                                        ("Flip H", state.view_hflip, 4u8),
+                                                        ("270°", state.view_rotate == 270, 3u8),
+                                                        ("180°", state.view_rotate == 180, 2u8),
+                                                        ("90°", state.view_rotate == 90, 1u8),
+                                                        ("None", state.view_rotate == 0 && !state.view_hflip && !state.view_vflip, 0u8),
+                                                    ] {
+                                                        if ui.add(
+                                                            egui::Button::new(RichText::new(lbl).size(11.0).color(if is_act { cnx_dark_txt } else { Color32::from_gray(220) }))
+                                                                .fill(if is_act { cnx_peach } else { cnx_surface })
+                                                                .stroke(Stroke::new(1.0, cnx_border))
+                                                                .corner_radius(CornerRadius::same(6)),
+                                                        ).clicked() {
+                                                            match kind {
+                                                                0 => { state.view_rotate = 0; state.view_hflip = false; state.view_vflip = false; }
+                                                                1 => state.view_rotate = 90,
+                                                                2 => state.view_rotate = 180,
+                                                                3 => state.view_rotate = 270,
+                                                                4 => state.view_hflip = !state.view_hflip,
+                                                                5 => state.view_vflip = !state.view_vflip,
+                                                                _ => {}
+                                                            }
+                                                            view_changed = true;
+                                                        }
+                                                    }
+                                                });
+                                            });
+
+                                            ui.add_space(10.0);
+                                            ui.separator();
+                                            ui.add_space(8.0);
+                                            ui.horizontal(|ui| {
+                                                ui.label(RichText::new("HDR Tone-Mapping").size(12.5).color(Color32::from_gray(235)));
+                                                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                                    let lbl = if state.hdr_tm_enabled { "On" } else { "Off" };
+                                                    if ui.add(
+                                                        egui::Button::new(RichText::new(lbl).size(11.5).strong().color(if state.hdr_tm_enabled { cnx_dark_txt } else { Color32::from_gray(200) }))
+                                                            .fill(if state.hdr_tm_enabled { cnx_amber } else { cnx_surface })
+                                                            .corner_radius(CornerRadius::same(12))
+                                                            .min_size(Vec2::new(48.0, 24.0)),
+                                                    ).clicked() {
+                                                        state.hdr_tm_enabled = !state.hdr_tm_enabled;
+                                                        tm_changed = true;
+                                                    }
+                                                });
+                                            });
+                                            ui.add_space(8.0);
+                                            ui.horizontal(|ui| {
+                                                ui.label(RichText::new("HDR tone-mapping strength").size(12.0).color(cnx_muted));
+                                                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                                    for (id, lbl) in [(2u8, "Strong"), (1u8, "Medium"), (0u8, "Light")] {
+                                                        let act = state.hdr_tm_strength == id;
+                                                        if ui.add(
+                                                            egui::Button::new(RichText::new(lbl).size(11.0).color(if act { cnx_dark_txt } else { Color32::from_gray(220) }))
+                                                                .fill(if act { cnx_peach } else { cnx_surface })
+                                                                .stroke(Stroke::new(1.0, cnx_border))
+                                                                .corner_radius(CornerRadius::same(6)),
+                                                        ).clicked() {
+                                                            state.hdr_tm_strength = id;
+                                                            tm_changed = true;
+                                                        }
+                                                    }
+                                                });
+                                            });
+                                        }
+                                        1 => {
+                                            // Playback tab: Speed, Aspect Ratio, A-B Loop
+                                            ui.label(RichText::new("Playback speed").size(12.5).strong().color(Color32::WHITE));
+                                            ui.add_space(6.0);
+                                            ui.horizontal(|ui| {
+                                                for spd in [0.5_f64, 1.0, 1.25, 1.5, 2.0] {
+                                                    let act = (snapshot.speed - spd).abs() < 0.05;
+                                                    if ui.add(
+                                                        egui::Button::new(RichText::new(format!("{spd:.2}×")).size(12.0).color(if act { cnx_dark_txt } else { Color32::WHITE }))
+                                                            .fill(if act { cnx_peach } else { cnx_surface })
+                                                            .stroke(Stroke::new(1.0, cnx_border))
+                                                            .corner_radius(CornerRadius::same(6)),
+                                                    ).clicked() {
+                                                        command_sender(PlayerCommand::SetSpeed { token: snapshot.token, speed: spd });
+                                                    }
+                                                }
+                                            });
+                                            ui.add_space(12.0);
+                                            ui.label(RichText::new("Aspect ratio").size(12.5).strong().color(Color32::WHITE));
+                                            ui.add_space(6.0);
+                                            ui.horizontal_wrapped(|ui| {
+                                                for (id, lbl) in [("auto", "Auto"), ("16:9", "16:9"), ("4:3", "4:3"), ("21:9", "21:9"), ("16:10", "16:10"), ("1:1", "1:1")] {
+                                                    let act = state.view_aspect == id;
+                                                    if ui.add(
+                                                        egui::Button::new(RichText::new(lbl).size(12.0).color(if act { cnx_dark_txt } else { Color32::WHITE }))
+                                                            .fill(if act { cnx_peach } else { cnx_surface })
+                                                            .stroke(Stroke::new(1.0, cnx_border))
+                                                            .corner_radius(CornerRadius::same(6)),
+                                                    ).clicked() {
+                                                        state.view_aspect = id.to_string();
+                                                        view_changed = true;
+                                                    }
+                                                }
+                                            });
+                                            ui.add_space(12.0);
+                                            let ab_txt = format!(
+                                                "A-B Loop  (A: {}  |  B: {})",
+                                                state.view_ab_a.map(|t| fmt_time_hms(t, false)).unwrap_or_else(|| "--".into()),
+                                                state.view_ab_b.map(|t| fmt_time_hms(t, false)).unwrap_or_else(|| "--".into())
+                                            );
+                                            ui.label(RichText::new(ab_txt).size(12.5).strong().color(Color32::WHITE));
+                                            ui.add_space(6.0);
+                                            ui.horizontal(|ui| {
+                                                if ui.add(egui::Button::new(RichText::new("Set A").size(12.0).color(Color32::WHITE)).fill(cnx_surface).stroke(Stroke::new(1.0, cnx_border)).corner_radius(CornerRadius::same(6))).clicked() {
+                                                    state.view_ab_a = Some(snapshot.position_secs);
+                                                    view_changed = true;
+                                                }
+                                                if ui.add(egui::Button::new(RichText::new("Set B").size(12.0).color(Color32::WHITE)).fill(cnx_surface).stroke(Stroke::new(1.0, cnx_border)).corner_radius(CornerRadius::same(6))).clicked() {
+                                                    state.view_ab_b = Some(snapshot.position_secs);
+                                                    view_changed = true;
+                                                }
+                                                if ui.add(egui::Button::new(RichText::new("Clear A-B").size(12.0).color(cnx_muted)).fill(cnx_surface).stroke(Stroke::new(1.0, cnx_border)).corner_radius(CornerRadius::same(6))).clicked() {
+                                                    state.view_ab_a = None;
+                                                    state.view_ab_b = None;
+                                                    view_changed = true;
+                                                }
+                                            });
+                                        }
+                                        2 => {
+                                            // Chapters tab
+                                            if snapshot.chapters.is_empty() {
+                                                ui.label(RichText::new("No chapters found in this media.").size(12.5).color(cnx_muted));
+                                            } else {
+                                                for ch in &snapshot.chapters {
+                                                    let lbl = format!("{}   {}", fmt_time_hms(ch.start_secs, false), ch.title);
+                                                    if ui.add(
+                                                        egui::Button::new(RichText::new(lbl).size(12.0).color(Color32::WHITE))
+                                                            .fill(cnx_surface)
+                                                            .stroke(Stroke::new(1.0, cnx_border))
+                                                            .corner_radius(CornerRadius::same(6))
+                                                            .min_size(Vec2::new(ui.available_width(), 30.0)),
+                                                    ).clicked() {
+                                                        command_sender(PlayerCommand::Seek { token: snapshot.token, seconds: ch.start_secs, exact: true });
+                                                    }
+                                                    ui.add_space(4.0);
+                                                }
+                                            }
+                                        }
+                                        _ => {
+                                            // Info tab (CnX Screenshot 4)
+                                            let fname = snapshot.path.as_ref().and_then(|p| p.file_name()).map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| "—".into());
+                                            let loc = snapshot.path.as_ref().and_then(|p| p.parent()).map(|d| d.to_string_lossy().to_string()).unwrap_or_else(|| "—".into());
+                                            let size_str = if snapshot.file_size_bytes > 0 {
+                                                format!("{:.2} GB", snapshot.file_size_bytes as f64 / (1024.0 * 1024.0 * 1024.0))
+                                            } else {
+                                                "—".into()
+                                            };
+                                            let dur_str = fmt_time_hms(snapshot.duration_secs, false);
+                                            let res_str = if snapshot.video_width > 0 { format!("{} x {}", snapshot.video_width, snapshot.video_height) } else { "—".into() };
+                                            let fps_str = if snapshot.video_fps > 0.0 { format!("{:.3} fps", snapshot.video_fps) } else { "—".into() };
+                                            let codec_str = snapshot.video_codec.clone().unwrap_or_else(|| "—".into());
+                                            let audio_cnt = snapshot.tracks.iter().filter(|t| t.kind == "audio").count();
+                                            let sub_cnt = snapshot.tracks.iter().filter(|t| t.kind == "sub").count();
+                                            for (k, v) in [
+                                                ("File", fname),
+                                                ("Location", loc),
+                                                ("Size", size_str),
+                                                ("Duration", dur_str),
+                                                ("Video resolution", res_str),
+                                                ("Video framerate", fps_str),
+                                                ("Video codec", codec_str),
+                                                ("Audio streams", audio_cnt.to_string()),
+                                                ("Text streams", sub_cnt.to_string()),
+                                            ] {
+                                                ui.horizontal(|ui| {
+                                                    ui.label(RichText::new(k).size(12.0).color(cnx_muted));
+                                                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                                        ui.add(egui::Label::new(RichText::new(v).size(12.0).color(Color32::from_gray(235))).wrap());
+                                                    });
+                                                });
+                                                ui.add_space(4.0);
+                                                ui.separator();
+                                                ui.add_space(4.0);
+                                            }
+                                        }
+                                    }
+                                });
+
+                                if pic_changed {
+                                    command_sender(PlayerCommand::SetPictureControls {
+                                        token: snapshot.token,
+                                        enabled: true,
+                                        lighting: state.picture_lighting,
+                                        shadows: state.picture_shadows,
+                                        contrast: state.picture_contrast,
+                                        sharpness: state.picture_sharpness,
+                                        vibrance: state.picture_vibrance,
+                                        hue: state.picture_hue,
+                                        deband: state.picture_deband,
+                                        hdr_boost: state.picture_hdr_boost,
+                                    });
+                                }
+                                if tm_changed {
+                                    command_sender(PlayerCommand::SetHdrToneMapping {
+                                        token: snapshot.token,
+                                        enabled: state.hdr_tm_enabled,
+                                        strength: state.hdr_tm_strength,
+                                    });
+                                }
+                                if view_changed {
+                                    command_sender(PlayerCommand::SetViewingOptions {
+                                        token: snapshot.token,
+                                        aspect: state.view_aspect.clone(),
+                                        zoom: state.view_zoom,
+                                        panscan: state.view_panscan,
+                                        rotate: state.view_rotate,
+                                        hflip: state.view_hflip,
+                                        vflip: state.view_vflip,
+                                        ab_a: state.view_ab_a,
+                                        ab_b: state.view_ab_b,
+                                    });
+                                }
+                            }
                             PlayerPanel::Speed => {
                                 ui.horizontal(|ui| {
                                     ui.label(RichText::new("Playback Speed").size(15.0).strong().color(Color32::WHITE));
@@ -2566,16 +3400,16 @@ pub fn show(
                                         if ui.add(clear_btn).clicked() {
                                             command_sender(PlayerCommand::ClearQueue { token: snapshot.token });
                                         }
-                                        let add_q_btn = egui::Button::new(RichText::new("+ Add").size(11.5).strong().color(Color32::WHITE))
-                                            .fill(tokens.accent)
-                                            .corner_radius(CornerRadius::same(4));
+                                        let add_q_btn = egui::Button::new(RichText::new("+ Add").size(11.5).strong().color(Color32::from_rgb(24, 20, 16)))
+                                            .fill(Color32::from_rgb(245, 174, 108))
+                                            .corner_radius(CornerRadius::same(6));
                                         if ui.add(add_q_btn).clicked() {
                                             action.add_to_queue = true;
                                         }
                                     });
                                 });
                                 ui.add_space(8.0);
-                                let queue_height = (panel_height - 124.0).max(220.0);
+                                let queue_height = (panel_height - 96.0).max(220.0);
                                 egui::ScrollArea::vertical()
                                     .max_height(queue_height)
                                     .min_scrolled_height(queue_height)
@@ -2591,14 +3425,21 @@ pub fn show(
                                         let row_hovered = row_resp.hovered();
 
                                         let (bg_color, stroke) = if current {
-                                            (Color32::from_rgb(20, 45, 75), Stroke::new(1.0, Color32::from_rgb(70, 140, 240)))
+                                            (Color32::from_rgb(56, 40, 24), Stroke::new(1.0, Color32::from_rgb(235, 140, 52)))
                                         } else if row_hovered {
-                                            (Color32::from_white_alpha(20), Stroke::new(1.0, Color32::from_white_alpha(50)))
+                                            (Color32::from_rgb(44, 38, 32), Stroke::new(1.0, Color32::from_rgb(76, 66, 56)))
                                         } else {
-                                            (Color32::from_white_alpha(8), Stroke::NONE)
+                                            (Color32::from_rgb(32, 28, 24), Stroke::NONE)
                                         };
 
                                         ui.painter().rect(row_rect, CornerRadius::same(6), bg_color, stroke, egui::StrokeKind::Inside);
+                                        if current {
+                                            ui.painter().rect_filled(
+                                                Rect::from_min_size(row_rect.min, Vec2::new(3.0, row_rect.height())),
+                                                CornerRadius::same(2),
+                                                Color32::from_rgb(235, 140, 52),
+                                            );
+                                        }
 
                                         // Left: Index number
                                         let idx_rect = Rect::from_min_size(row_rect.min + Vec2::new(10.0, 12.0), Vec2::new(24.0, 20.0));
@@ -2607,7 +3448,7 @@ pub fn show(
                                             Align2::CENTER_CENTER,
                                             format!("{:02}", index + 1),
                                             FontId::proportional(12.0),
-                                            if current { Color32::from_rgb(100, 180, 255) } else { Color32::from_gray(160) },
+                                            if current { Color32::from_rgb(245, 174, 108) } else { Color32::from_rgb(172, 162, 150) },
                                         );
 
                                         // Right side buttons
@@ -2617,8 +3458,8 @@ pub fn show(
                                             let play_resp = ui.interact(play_rect, ui.scope_id().with(("q_play", index)), Sense::click());
                                             ui.painter().rect(
                                                 play_rect,
-                                                CornerRadius::same(4),
-                                                if play_resp.hovered() { Color32::from_rgb(74, 110, 224) } else { Color32::from_white_alpha(24) },
+                                                CornerRadius::same(6),
+                                                if play_resp.hovered() { Color32::from_rgb(235, 140, 52) } else { Color32::from_rgb(48, 41, 34) },
                                                 Stroke::NONE,
                                                 egui::StrokeKind::Inside,
                                             );
@@ -3065,6 +3906,7 @@ pub fn show(
         ui.ctx().output_mut(|o| o.cursor_icon = egui::CursorIcon::None);
     }
     action
+    }
 }
 
 #[cfg(test)]

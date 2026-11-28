@@ -4,11 +4,29 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{channel, Receiver, Sender};
 
+#[derive(Debug, Clone)]
+pub struct ServerLibraryItem {
+    pub id: String,
+    pub name: String,
+    pub kind: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct ServerMediaItem {
+    pub id: String,
+    pub title: String,
+    pub kind: String,
+    pub stream_url: String,
+    pub year: Option<u32>,
+    pub duration_secs: f64,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NavItem {
     Home,
     Library,
     Playlists,
+    Servers,
     History,
     Scans,
     Stats,
@@ -257,6 +275,8 @@ pub struct ShellState {
     pub excluded_paths: Vec<PathBuf>,
     pub active_popup: Option<ActivePopupMenu>,
     pub file_menu_pos: Pos2,
+    pub titlebar_popup_anchor: Pos2,
+    pub theme_modal_open: bool,
     pub recent_submenu_open: bool,
     pub quit_at_end_of_playlist: bool,
     pub mini_bar_dismissed_fingerprint: Option<String>,
@@ -269,6 +289,7 @@ pub struct ShellState {
     pub history_search: String,
     pub history_filter: crate::view_models::HistoryFilterPill,
     pub history_selected_day: Option<chrono::NaiveDate>,
+    pub history_ui: crate::history::HistoryUiState,
     pub confirm_clear_history: bool,
     pub clear_history_reset_positions: bool,
     pub library_tab: crate::view_models::LibraryTab,
@@ -302,6 +323,18 @@ pub struct ShellState {
     pub add_to_playlist_target: Option<String>,
     pub playlist_picker_open: bool,
     pub playlist_picker_query: String,
+    pub active_server_id: Option<String>,
+    pub server_libraries: Vec<ServerLibraryItem>,
+    pub active_server_lib_id: Option<String>,
+    pub server_items: Vec<ServerMediaItem>,
+    pub server_status: Option<String>,
+    pub server_form_kind: String,
+    pub server_form_name: String,
+    pub server_form_url: String,
+    pub server_form_user: String,
+    pub server_form_pass: String,
+    pub server_form_token: String,
+    pub server_search: String,
 
     // Async worker channels for lazy folder child loading
     worker_tx: Sender<PathBuf>,
@@ -364,6 +397,8 @@ impl ShellState {
             excluded_paths: Vec::new(),
             active_popup: None,
             file_menu_pos: Pos2::ZERO,
+            titlebar_popup_anchor: Pos2::ZERO,
+            theme_modal_open: false,
             recent_submenu_open: false,
             quit_at_end_of_playlist: false,
             mini_bar_dismissed_fingerprint: None,
@@ -376,6 +411,7 @@ impl ShellState {
             history_search: String::new(),
             history_filter: crate::view_models::HistoryFilterPill::All,
             history_selected_day: None,
+            history_ui: crate::history::HistoryUiState::default(),
             confirm_clear_history: false,
             clear_history_reset_positions: false,
             library_tab: crate::view_models::LibraryTab::Movies,
@@ -409,6 +445,18 @@ impl ShellState {
             add_to_playlist_target: None,
             playlist_picker_open: false,
             playlist_picker_query: String::new(),
+            active_server_id: None,
+            server_libraries: Vec::new(),
+            active_server_lib_id: None,
+            server_items: Vec::new(),
+            server_status: None,
+            server_form_kind: "jellyfin".to_string(),
+            server_form_name: String::new(),
+            server_form_url: String::new(),
+            server_form_user: String::new(),
+            server_form_pass: String::new(),
+            server_form_token: String::new(),
+            server_search: String::new(),
             worker_tx,
             worker_rx,
         }

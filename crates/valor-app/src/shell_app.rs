@@ -82,10 +82,29 @@ pub struct ValorShellApp {
     telemetry_rx: Receiver<(String, u64, Vec<String>, f32)>,
     recs_tx: Sender<Vec<valor_ui::shell_state::TmdbRecommendation>>,
     recs_rx: Receiver<Vec<valor_ui::shell_state::TmdbRecommendation>>,
+    server_tx: Sender<ServerWorkerMsg>,
+    server_rx: Receiver<ServerWorkerMsg>,
     last_telemetry_tick: std::time::Instant,
     restored_tracks_token: u64,
     last_saved_tracks: Option<(String, Option<i64>, Option<i64>)>,
-    scrub_extracting: HashSet<String>,
+    last_deleted_session: Option<WatchSession>,
+    trakt_tx: Sender<valor_ui::history::trakt::TraktSyncEvent>,
+    trakt_rx: Receiver<valor_ui::history::trakt::TraktSyncEvent>,
+}
+
+enum ServerWorkerMsg {
+    Connected {
+        server: valor_core::settings::MediaServerConfig,
+        libs: Vec<valor_ui::shell_state::ServerLibraryItem>,
+        first_lib_id: Option<String>,
+        items: Vec<valor_ui::shell_state::ServerMediaItem>,
+    },
+    LibraryItems {
+        server_id: String,
+        lib_id: String,
+        items: Vec<valor_ui::shell_state::ServerMediaItem>,
+    },
+    Error(String),
 }
 
 struct BookmarkSyncResult {
@@ -125,6 +144,7 @@ impl ValorShellApp {
         let (bookmark_sync_tx, bookmark_sync_rx) = mpsc::channel();
         let (telemetry_tx, telemetry_rx) = mpsc::channel();
         let (recs_tx, recs_rx) = mpsc::channel();
+        let (server_tx, server_rx) = mpsc::channel();
         let mut state = ShellState::new();
         let tmdb_token = load_tmdb_token(&state.settings.tmdb_api_key);
         state.root_folders = folders.iter().cloned().map(FolderTreeNode::new).collect();
@@ -169,11 +189,18 @@ impl ValorShellApp {
             telemetry_rx,
             recs_tx,
             recs_rx,
+            server_tx,
+            server_rx,
             last_telemetry_tick: std::time::Instant::now(),
             restored_tracks_token: 0,
             last_saved_tracks: None,
-            scrub_extracting: HashSet::new(),
+            last_deleted_session: None,
+            trakt_tx: std::sync::mpsc::channel().0,
+            trakt_rx: std::sync::mpsc::channel().1,
         };
+        let (trakt_tx, trakt_rx) = std::sync::mpsc::channel();
+        app.trakt_tx = trakt_tx;
+        app.trakt_rx = trakt_rx;
         let _ = app.player.ensure_render_context();
         spawn_background_thumbnailer(&app.items, &app.state.excluded_paths);
         for folder in app.folders.clone() {
@@ -662,6 +689,16 @@ impl eframe::App for ValorShellApp {
             }
             ctx.request_repaint();
         }
+        while let Ok(ev) = self.trakt_rx.try_recv() {
+            if let Some(err_msg) = self.state.history_ui.trakt.apply_event(ev) {
+                self.state.history_ui.toast = Some(valor_ui::ui_kit::ToastState {
+                    message: err_msg,
+                    action_label: None,
+                    undo_session_id: None,
+                    expires_at: std::time::Instant::now() + std::time::Duration::from_secs(4),
+                });
+            }
+        }
         while let Ok((key, info)) = self.tmdb_rx.try_recv() {
             self.state.tmdb_pending.remove(&key);
             self.state.tmdb_series_cache.insert(key, info);
@@ -687,6 +724,48 @@ impl eframe::App for ValorShellApp {
                 self.state.tmdb_recommendations = recs;
             } else {
                 self.state.tmdb_recommendations.clear();
+            }
+        }
+        while let Ok(msg) = self.server_rx.try_recv() {
+            match msg {
+                ServerWorkerMsg::Connected {
+                    server,
+                    libs,
+                    first_lib_id,
+                    items,
+                } => {
+                    if let Some(pos) = self
+                        .state
+                        .settings
+                        .media_servers
+                        .iter()
+                        .position(|s| s.id == server.id || s.base_url == server.base_url)
+                    {
+                        self.state.settings.media_servers[pos] = server.clone();
+                    } else {
+                        self.state.settings.media_servers.push(server.clone());
+                    }
+                    let _ = self.state.settings.save();
+                    self.state.active_server_id = Some(server.id);
+                    self.state.server_libraries = libs;
+                    self.state.active_server_lib_id = first_lib_id;
+                    self.state.server_items = items;
+                    self.state.server_status = Some("Connected!".to_string());
+                }
+                ServerWorkerMsg::LibraryItems {
+                    server_id,
+                    lib_id,
+                    items,
+                } => {
+                    if self.state.active_server_id.as_deref() == Some(server_id.as_str()) {
+                        self.state.active_server_lib_id = Some(lib_id);
+                        self.state.server_items = items;
+                        self.state.server_status = None;
+                    }
+                }
+                ServerWorkerMsg::Error(err) => {
+                    self.state.server_status = Some(format!("Error: {err}"));
+                }
             }
         }
         while let Ok(res) = self.bookmark_sync_rx.try_recv() {
@@ -811,15 +890,8 @@ impl eframe::App for ValorShellApp {
             disable_dwm_border_for_active_window();
             self.dwm_border_cleared = true;
         }
-        if self.is_fullscreen {
-            if self.was_focused && !is_focused {
-                // Alt+Tab out: cleanly drop fullscreen so Windows doesn't leave a broken frame
-                ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(false));
-            } else if !self.was_focused && is_focused {
-                // Alt+Tab back in: automatically restore fullscreen + remove DWM border
-                ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(true));
-                disable_dwm_border_for_active_window();
-            }
+        if self.is_fullscreen && !self.was_focused && is_focused {
+            disable_dwm_border_for_active_window();
         }
         self.was_focused = is_focused;
 
@@ -984,7 +1056,8 @@ impl eframe::App for ValorShellApp {
                         if ctx.input(|i| i.pointer.primary_pressed()) {
                             ctx.send_viewport_cmd(egui::ViewportCommand::BeginResize(dir));
                         }
-                    } else if pos.y < player_rect.bottom() - 88.0
+                    } else if pos.y > player_rect.top() + 40.0
+                        && pos.y < player_rect.bottom() - 58.0
                         && !self.player_ui.is_seeking
                         && ctx.input(|i| i.pointer.primary_down() && i.pointer.delta().length_sq() > 2.0)
                     {
@@ -992,19 +1065,28 @@ impl eframe::App for ValorShellApp {
                     }
                 }
             }
+            let video_rect = player_rect;
             let mut player_ui = ui.new_child(egui::UiBuilder::new().max_rect(player_rect));
             let bridge = self.player.render_bridge();
             let callback_error = std::sync::Arc::clone(&self.player_render_error);
             let video_callback = egui_glow::CallbackFn::new(move |info, painter| {
                 let gl = painter.gl();
-                let current_fbo = unsafe {
+                let (prev_fbo, prev_vp, prev_scissor, prev_blend, prev_tex, prev_prog, prev_vao) = unsafe {
                     use egui_glow::glow::{self, HasContext};
-                    gl.get_parameter_i32(glow::DRAW_FRAMEBUFFER_BINDING)
+                    let fbo = gl.get_parameter_i32(glow::DRAW_FRAMEBUFFER_BINDING);
+                    let mut vp = [0i32; 4];
+                    gl.get_parameter_i32_slice(glow::VIEWPORT, &mut vp);
+                    let sc = gl.is_enabled(glow::SCISSOR_TEST);
+                    let bl = gl.is_enabled(glow::BLEND);
+                    let tex = gl.get_parameter_i32(glow::ACTIVE_TEXTURE);
+                    let prog = gl.get_parameter_i32(glow::CURRENT_PROGRAM);
+                    let vao = gl.get_parameter_i32(glow::VERTEX_ARRAY_BINDING);
+                    (fbo, vp, sc, bl, tex, prog, vao)
                 };
                 let fbo = painter
                     .intermediate_fbo()
                     .map(|fb| fb.0.get() as i32)
-                    .unwrap_or(current_fbo);
+                    .unwrap_or(prev_fbo);
                 let viewport = info.viewport_in_pixels();
                 unsafe {
                     use egui_glow::glow::{self, HasContext};
@@ -1014,8 +1096,7 @@ impl eframe::App for ValorShellApp {
                     gl.disable(glow::DEPTH_TEST);
                     gl.viewport(viewport.left_px, viewport.from_bottom_px, viewport.width_px, viewport.height_px);
                 }
-                if let Err(error) = bridge.render_frame(fbo, viewport.width_px, viewport.height_px)
-                {
+                if let Err(error) = bridge.render_frame(fbo, viewport.width_px, viewport.height_px) {
                     let mut previous = callback_error.lock();
                     if previous.as_deref() != Some(error.as_str()) {
                         tracing::error!("Video render callback failed: {error}");
@@ -1024,9 +1105,18 @@ impl eframe::App for ValorShellApp {
                 } else {
                     *callback_error.lock() = None;
                 }
+                unsafe {
+                    use egui_glow::glow::{self, HasContext};
+                    gl.viewport(prev_vp[0], prev_vp[1], prev_vp[2], prev_vp[3]);
+                    if prev_scissor { gl.enable(glow::SCISSOR_TEST); } else { gl.disable(glow::SCISSOR_TEST); }
+                    if prev_blend { gl.enable(glow::BLEND); } else { gl.disable(glow::BLEND); }
+                    gl.active_texture(prev_tex as u32);
+                    gl.use_program(std::num::NonZeroU32::new(prev_prog as u32).map(glow::NativeProgram));
+                    gl.bind_vertex_array(std::num::NonZeroU32::new(prev_vao as u32).map(glow::NativeVertexArray));
+                }
             });
             let video_shape = egui::Shape::Callback(egui::PaintCallback {
-                rect: player_rect,
+                rect: video_rect,
                 callback: std::sync::Arc::new(video_callback),
             });
             let player = &self.player;
@@ -1092,13 +1182,19 @@ impl eframe::App for ValorShellApp {
             }
             if action.toggle_pip {
                 if !self.is_pip {
+                    if self.is_fullscreen {
+                        self.is_fullscreen = false;
+                        self.player_ui.is_fullscreen = false;
+                        ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(false));
+                    }
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(false));
                     self.pre_pip_inner_size =
                         ctx.input(|i| i.viewport().inner_rect.map(|r| r.size()));
                     self.is_pip = true;
                     ctx.send_viewport_cmd(egui::ViewportCommand::Resizable(true));
                     ctx.send_viewport_cmd(egui::ViewportCommand::MinInnerSize(egui::vec2(260.0, 146.0)));
                     ctx.send_viewport_cmd(egui::ViewportCommand::WindowLevel(egui::WindowLevel::AlwaysOnTop));
-                    ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(480.0, 270.0)));
+                    ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(420.0, 236.0)));
                 } else {
                     self.exit_pip(&ctx);
                 }
@@ -1189,7 +1285,9 @@ impl eframe::App for ValorShellApp {
                     }
                 }
             }
-            ctx.request_repaint_after(std::time::Duration::from_millis(16));
+            if matches!(snapshot.state, PlaybackState::Playing | PlaybackState::Loading | PlaybackState::Buffering) {
+                ctx.request_repaint_after(std::time::Duration::from_millis(16));
+            }
             if action.leave {
                 self.player_ui.audio_only = false;
                 self.exit_pip(&ctx);
@@ -1262,7 +1360,9 @@ impl eframe::App for ValorShellApp {
                                 });
                         });
                 });
-            ctx.request_repaint_after(std::time::Duration::from_millis(16));
+            if matches!(snapshot.state, PlaybackState::Playing | PlaybackState::Loading | PlaybackState::Buffering) {
+                ctx.request_repaint_after(std::time::Duration::from_millis(16));
+            }
             return;
         }
 
@@ -1502,6 +1602,10 @@ impl eframe::App for ValorShellApp {
                 self.history.clear();
             }
             ShellAction::DeleteHistorySession(id) => {
+                if let Some(pos) = self.sessions.iter().position(|s| s.id == id) {
+                    let removed = self.sessions.remove(pos);
+                    self.last_deleted_session = Some(removed);
+                }
                 let db = self.db.clone();
                 let id_clone = id.clone();
                 let _ = std::thread::Builder::new()
@@ -1509,7 +1613,77 @@ impl eframe::App for ValorShellApp {
                     .spawn(move || {
                         let _ = db.delete_watch_session(&id_clone);
                     });
-                self.sessions.retain(|s| s.id != id);
+            }
+            ShellAction::UndoDeleteHistorySession(id) => {
+                if let Some(sess) = self.last_deleted_session.take() {
+                    if sess.id == id {
+                        let db = self.db.clone();
+                        let sess_clone = sess.clone();
+                        let _ = std::thread::Builder::new()
+                            .name("valor-undo-session".into())
+                            .spawn(move || {
+                                let _ = db.record_watch_session(&sess_clone);
+                            });
+                        self.sessions.push(sess);
+                        self.sessions.sort_by(|a, b| b.start_time.cmp(&a.start_time));
+                    }
+                }
+            }
+            ShellAction::MarkTraktWatched(payload) => {
+                let token = self.state.settings.trakt_access_token.trim().to_string();
+                let tx = self.trakt_tx.clone();
+                if token.is_empty() {
+                    let _ = tx.send(valor_ui::history::trakt::TraktSyncEvent::MarkFailed {
+                        fingerprint: payload.fingerprint,
+                    });
+                } else {
+                    let _ = std::thread::Builder::new()
+                        .name("valor-trakt-mark".into())
+                        .spawn(move || {
+                            let cid = trakt_client_id();
+                            let auth = format!("Bearer {token}");
+                            let watched_at = chrono::Utc::now().to_rfc3339();
+                            let body = if let (Some(s), Some(e)) = (payload.season_number, payload.episode_number) {
+                                serde_json::json!({
+                                    "shows": [{
+                                        "title": payload.title,
+                                        "seasons": [{
+                                            "number": s,
+                                            "episodes": [{ "number": e, "watched_at": watched_at }]
+                                        }]
+                                    }]
+                                })
+                            } else {
+                                serde_json::json!({
+                                    "movies": [{
+                                        "title": payload.title,
+                                        "watched_at": watched_at
+                                    }]
+                                })
+                            };
+                            let ok = http_post_json_resp(
+                                "https://api.trakt.tv/sync/history",
+                                &body,
+                                &[
+                                    ("Authorization", &auth),
+                                    ("trakt-api-version", "2"),
+                                    ("trakt-api-key", &cid),
+                                    ("User-Agent", "Valor/1.0.0"),
+                                ],
+                            )
+                            .is_some();
+                            let ev = if ok {
+                                valor_ui::history::trakt::TraktSyncEvent::MarkSucceeded {
+                                    fingerprint: payload.fingerprint,
+                                }
+                            } else {
+                                valor_ui::history::trakt::TraktSyncEvent::MarkFailed {
+                                    fingerprint: payload.fingerprint,
+                                }
+                            };
+                            let _ = tx.send(ev);
+                        });
+                }
             }
             ShellAction::SelectFolder(path) => self.state.selected_folder = Some(path),
             ShellAction::SelectNav(nav) => {
@@ -1581,12 +1755,30 @@ impl eframe::App for ValorShellApp {
             ShellAction::OpenWithApp(path) => {
                 #[cfg(windows)]
                 {
-                    use std::os::windows::process::CommandExt;
-                    std::thread::spawn(move || {
-                        let _ = std::process::Command::new("rundll32.exe")
-                            .args(["shell32.dll,OpenAs_RunDLL", &path.to_string_lossy()])
-                            .creation_flags(0x0800_0000)
-                            .spawn();
+                    std::thread::spawn(move || unsafe {
+                        use std::os::windows::ffi::OsStrExt;
+                        use windows::core::PCWSTR;
+                        use windows::Win32::Foundation::HWND;
+                        use windows::Win32::System::Com::{
+                            CoInitializeEx, CoUninitialize, COINIT_APARTMENTTHREADED,
+                        };
+                        use windows::Win32::UI::Shell::{
+                            SHOpenWithDialog, OAIF_ALLOW_REGISTRATION, OAIF_EXEC, OPENASINFO,
+                        };
+
+                        let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
+                        let wide: Vec<u16> = path
+                            .as_os_str()
+                            .encode_wide()
+                            .chain(std::iter::once(0))
+                            .collect();
+                        let info = OPENASINFO {
+                            pcszFile: PCWSTR(wide.as_ptr()),
+                            pcszClass: PCWSTR::null(),
+                            oaifInFlags: OAIF_ALLOW_REGISTRATION | OAIF_EXEC,
+                        };
+                        let _ = SHOpenWithDialog(HWND::default(), &info);
+                        CoUninitialize();
                     });
                 }
             }
@@ -1641,6 +1833,22 @@ impl eframe::App for ValorShellApp {
                     self.state.selected_playlist_id = None;
                 }
                 self.state.playlists = self.db.get_all_collections().unwrap_or_default();
+            }
+            ShellAction::RenamePlaylist { playlist_id, name } => {
+                if let Some(mut pl) = self
+                    .state
+                    .playlists
+                    .iter()
+                    .find(|c| c.id == playlist_id)
+                    .cloned()
+                {
+                    let trimmed = name.trim();
+                    if !trimmed.is_empty() {
+                        pl.name = trimmed.to_string();
+                        let _ = self.db.save_collection(&pl);
+                        self.state.playlists = self.db.get_all_collections().unwrap_or_default();
+                    }
+                }
             }
             ShellAction::AddToPlaylist {
                 playlist_id,
@@ -1703,6 +1911,124 @@ impl eframe::App for ValorShellApp {
                         }
                     }
                 }
+            }
+            ShellAction::ConnectNewServer => {
+                let kind = self.state.server_form_kind.clone();
+                let mut base_url = self.state.server_form_url.trim().trim_end_matches('/').to_string();
+                if !base_url.starts_with("http://") && !base_url.starts_with("https://") {
+                    base_url = format!("http://{base_url}");
+                }
+                let name = if self.state.server_form_name.trim().is_empty() {
+                    base_url.clone()
+                } else {
+                    self.state.server_form_name.trim().to_string()
+                };
+                let user = self.state.server_form_user.trim().to_string();
+                let pass = self.state.server_form_pass.clone();
+                let token = self.state.server_form_token.trim().to_string();
+                self.state.server_status = Some(format!("Connecting to {base_url}..."));
+                let tx = self.server_tx.clone();
+                let id = format!(
+                    "srv_{}",
+                    std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| d.as_millis())
+                        .unwrap_or(0)
+                );
+                std::thread::spawn(move || {
+                    let srv = valor_core::settings::MediaServerConfig {
+                        id,
+                        kind,
+                        name,
+                        base_url,
+                        token,
+                        user_id: String::new(),
+                        username: user,
+                    };
+                    match connect_and_browse_server(srv, &pass) {
+                        Ok(msg) => {
+                            let _ = tx.send(msg);
+                        }
+                        Err(e) => {
+                            let _ = tx.send(ServerWorkerMsg::Error(e));
+                        }
+                    }
+                });
+            }
+            ShellAction::BrowseServer(srv_id) => {
+                if let Some(srv) = self
+                    .state
+                    .settings
+                    .media_servers
+                    .iter()
+                    .find(|s| s.id == srv_id)
+                    .cloned()
+                {
+                    self.state.server_status = Some(format!("Loading {}...", srv.name));
+                    let tx = self.server_tx.clone();
+                    std::thread::spawn(move || {
+                        match connect_and_browse_server(srv, "") {
+                            Ok(msg) => {
+                                let _ = tx.send(msg);
+                            }
+                            Err(e) => {
+                                let _ = tx.send(ServerWorkerMsg::Error(e));
+                            }
+                        }
+                    });
+                }
+            }
+            ShellAction::SelectServerLibrary { server_id, lib_id } => {
+                if let Some(srv) = self
+                    .state
+                    .settings
+                    .media_servers
+                    .iter()
+                    .find(|s| s.id == server_id)
+                    .cloned()
+                {
+                    self.state.server_status = Some("Loading library...".to_string());
+                    let tx = self.server_tx.clone();
+                    std::thread::spawn(move || {
+                        match fetch_server_library_items(&srv, &lib_id) {
+                            Ok(items) => {
+                                let _ = tx.send(ServerWorkerMsg::LibraryItems {
+                                    server_id,
+                                    lib_id,
+                                    items,
+                                });
+                            }
+                            Err(e) => {
+                                let _ = tx.send(ServerWorkerMsg::Error(e));
+                            }
+                        }
+                    });
+                }
+            }
+            ShellAction::DeleteServer(srv_id) => {
+                self.state
+                    .settings
+                    .media_servers
+                    .retain(|s| s.id != srv_id);
+                let _ = self.state.settings.save();
+                if self.state.active_server_id.as_deref() == Some(srv_id.as_str()) {
+                    self.state.active_server_id = None;
+                    self.state.server_libraries.clear();
+                    self.state.server_items.clear();
+                }
+            }
+            ShellAction::PlayServerStream { title, url } => {
+                self.player_ui.audio_only = false;
+                self.opening_media = Some(title);
+                self.playback_started_at = chrono::Utc::now();
+                let _ = self.player.send(PlayerCommand::Open {
+                    paths: vec![PathBuf::from(url)],
+                    start_index: 0,
+                    start_position_secs: 0.0,
+                    origin: valor_player::OpenOrigin {
+                        collection_id: None,
+                    },
+                });
             }
             ShellAction::LocateFolder(_) | ShellAction::None => {}
         }
@@ -2513,4 +2839,251 @@ fn spawn_background_thumbnailer(
             );
         }
     });
+}
+
+fn http_get_json_headers(url: &str, headers: &[(&str, &str)]) -> Result<serde_json::Value, String> {
+    let mut cmd = silent_curl();
+    cmd.args(["-sS", "--max-time", "10", "-H", "Accept: application/json"]);
+    for (k, v) in headers {
+        cmd.args(["-H", &format!("{k}: {v}")]);
+    }
+    cmd.arg(url);
+    let out = cmd.output().map_err(|e| format!("curl failed: {e}"))?;
+    if !out.status.success() {
+        let err = String::from_utf8_lossy(&out.stderr);
+        return Err(format!("HTTP request failed: {err}"));
+    }
+    serde_json::from_slice(&out.stdout).map_err(|e| format!("Invalid JSON from server: {e}"))
+}
+
+fn connect_and_browse_server(
+    mut srv: valor_core::settings::MediaServerConfig,
+    password: &str,
+) -> Result<ServerWorkerMsg, String> {
+    let base = srv.base_url.trim_end_matches('/').to_string();
+    if srv.kind == "plex" {
+        if srv.token.trim().is_empty() {
+            return Err("Plex requires an X-Plex-Token.".to_string());
+        }
+        let sections_url = format!("{base}/library/sections?X-Plex-Token={}", srv.token);
+        let res = http_get_json_headers(
+            &sections_url,
+            &[
+                ("X-Plex-Product", "Valor"),
+                ("X-Plex-Version", "1.0.0"),
+                ("X-Plex-Client-Identifier", "valor-desktop"),
+                ("X-Plex-Device", "Desktop"),
+            ],
+        )?;
+        let dirs = res
+            .get("MediaContainer")
+            .and_then(|mc| mc.get("Directory"))
+            .and_then(|d| d.as_array())
+            .cloned()
+            .unwrap_or_default();
+        let libs: Vec<valor_ui::shell_state::ServerLibraryItem> = dirs
+            .iter()
+            .filter_map(|d| {
+                let id = d.get("key")?.as_str()?.to_string();
+                let name = d.get("title")?.as_str()?.to_string();
+                let kind = d.get("type").and_then(|t| t.as_str()).unwrap_or("movie").to_string();
+                Some(valor_ui::shell_state::ServerLibraryItem { id, name, kind })
+            })
+            .collect();
+        let first_lib_id = libs.first().map(|l| l.id.clone());
+        let items = if let Some(ref lib_id) = first_lib_id {
+            fetch_server_library_items(&srv, lib_id).unwrap_or_default()
+        } else {
+            Vec::new()
+        };
+        return Ok(ServerWorkerMsg::Connected {
+            server: srv,
+            libs,
+            first_lib_id,
+            items,
+        });
+    }
+
+    // Jellyfin / Emby
+    let auth_header_base = "MediaBrowser Client=\"Valor\", Device=\"Desktop\", DeviceId=\"valor-desktop\", Version=\"1.0.0\"".to_string();
+    if srv.token.trim().is_empty() {
+        if srv.username.trim().is_empty() {
+            return Err("Jellyfin requires Username + Password or an API Token.".to_string());
+        }
+        let auth_url = format!("{base}/Users/AuthenticateByName");
+        let auth_res = http_post_json_resp(
+            &auth_url,
+            &serde_json::json!({
+                "Username": srv.username,
+                "Pw": password,
+            }),
+            &[("X-Emby-Authorization", &auth_header_base)],
+        )
+        .ok_or_else(|| "Jellyfin authentication failed.".to_string())?;
+        srv.token = auth_res
+            .get("AccessToken")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| "Jellyfin did not return AccessToken.".to_string())?
+            .to_string();
+        if let Some(uid) = auth_res.get("User").and_then(|u| u.get("Id")).and_then(|v| v.as_str()) {
+            srv.user_id = uid.to_string();
+        }
+    }
+
+    if srv.user_id.trim().is_empty() {
+        let me_url = format!("{base}/Users/Me?api_key={}", srv.token);
+        if let Ok(me) = http_get_json_headers(&me_url, &[]) {
+            if let Some(uid) = me.get("Id").and_then(|v| v.as_str()) {
+                srv.user_id = uid.to_string();
+            }
+        }
+    }
+
+    let views_url = if srv.user_id.is_empty() {
+        format!("{base}/Library/MediaFolders?api_key={}", srv.token)
+    } else {
+        format!("{base}/Users/{}/Views?api_key={}", srv.user_id, srv.token)
+    };
+    let views = http_get_json_headers(&views_url, &[])?;
+    let arr = views
+        .get("Items")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
+    let libs: Vec<valor_ui::shell_state::ServerLibraryItem> = arr
+        .iter()
+        .filter_map(|it| {
+            let id = it.get("Id")?.as_str()?.to_string();
+            let name = it.get("Name")?.as_str()?.to_string();
+            let kind = it.get("CollectionType").and_then(|v| v.as_str()).unwrap_or("movies").to_string();
+            Some(valor_ui::shell_state::ServerLibraryItem { id, name, kind })
+        })
+        .collect();
+    let first_lib_id = libs.first().map(|l| l.id.clone());
+    let items = if let Some(ref lib_id) = first_lib_id {
+        fetch_server_library_items(&srv, lib_id).unwrap_or_default()
+    } else {
+        Vec::new()
+    };
+    Ok(ServerWorkerMsg::Connected {
+        server: srv,
+        libs,
+        first_lib_id,
+        items,
+    })
+}
+
+fn fetch_server_library_items(
+    srv: &valor_core::settings::MediaServerConfig,
+    lib_id: &str,
+) -> Result<Vec<valor_ui::shell_state::ServerMediaItem>, String> {
+    let base = srv.base_url.trim_end_matches('/');
+    if srv.kind == "plex" {
+        let url = format!("{base}/library/sections/{lib_id}/all?X-Plex-Token={}", srv.token);
+        let res = http_get_json_headers(
+            &url,
+            &[
+                ("X-Plex-Product", "Valor"),
+                ("X-Plex-Version", "1.0.0"),
+                ("X-Plex-Client-Identifier", "valor-desktop"),
+            ],
+        )?;
+        let meta = res
+            .get("MediaContainer")
+            .and_then(|mc| mc.get("Metadata"))
+            .and_then(|m| m.as_array())
+            .cloned()
+            .unwrap_or_default();
+        let mut items = Vec::new();
+        for m in meta {
+            let id = m.get("ratingKey").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            let title = m.get("title").and_then(|v| v.as_str()).unwrap_or("Untitled").to_string();
+            let kind = m.get("type").and_then(|v| v.as_str()).unwrap_or("movie").to_string();
+            let year = m.get("year").and_then(|v| v.as_u64()).map(|y| y as u32);
+            let duration_secs = m.get("duration").and_then(|v| v.as_f64()).unwrap_or(0.0) / 1000.0;
+            let part_key = m
+                .get("Media")
+                .and_then(|med| med.as_array())
+                .and_then(|arr| arr.first())
+                .and_then(|med0| med0.get("Part"))
+                .and_then(|p| p.as_array())
+                .and_then(|arr| arr.first())
+                .and_then(|p0| p0.get("key"))
+                .and_then(|k| k.as_str());
+            if let Some(pk) = part_key {
+                let stream_url = format!("{base}{pk}?X-Plex-Token={}", srv.token);
+                items.push(valor_ui::shell_state::ServerMediaItem {
+                    id,
+                    title,
+                    kind,
+                    stream_url,
+                    year,
+                    duration_secs,
+                });
+            }
+        }
+        return Ok(items);
+    }
+
+    // Jellyfin / Emby
+    let items_url = if srv.user_id.is_empty() {
+        format!(
+            "{base}/Items?ParentId={lib_id}&IncludeItemTypes=Movie,Episode,Video&Recursive=true&Fields=MediaSources,RunTimeTicks,ProductionYear&Limit=300&api_key={}",
+            srv.token
+        )
+    } else {
+        format!(
+            "{base}/Users/{}/Items?ParentId={lib_id}&IncludeItemTypes=Movie,Episode,Video&Recursive=true&Fields=MediaSources,RunTimeTicks,ProductionYear&Limit=300&api_key={}",
+            srv.user_id, srv.token
+        )
+    };
+    let res = http_get_json_headers(&items_url, &[])?;
+    let arr = res
+        .get("Items")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
+    let mut out = Vec::new();
+    for it in arr {
+        let Some(id) = it.get("Id").and_then(|v| v.as_str()).map(|s| s.to_string()) else {
+            continue;
+        };
+        let series_name = it.get("SeriesName").and_then(|v| v.as_str());
+        let raw_name = it.get("Name").and_then(|v| v.as_str()).unwrap_or("Untitled");
+        let title = if let Some(sn) = series_name {
+            let s = it.get("ParentIndexNumber").and_then(|v| v.as_u64()).unwrap_or(0);
+            let e = it.get("IndexNumber").and_then(|v| v.as_u64()).unwrap_or(0);
+            if s > 0 && e > 0 {
+                format!("{sn} S{s:02}E{e:02} - {raw_name}")
+            } else {
+                format!("{sn} - {raw_name}")
+            }
+        } else {
+            raw_name.to_string()
+        };
+        let kind = it.get("Type").and_then(|v| v.as_str()).unwrap_or("Movie").to_string();
+        let year = it.get("ProductionYear").and_then(|v| v.as_u64()).map(|y| y as u32);
+        let ticks = it.get("RunTimeTicks").and_then(|v| v.as_f64()).unwrap_or(0.0);
+        let duration_secs = ticks / 10_000_000.0;
+        let source_id = it
+            .get("MediaSources")
+            .and_then(|ms| ms.as_array())
+            .and_then(|arr| arr.first())
+            .and_then(|ms0| ms0.get("Id"))
+            .and_then(|v| v.as_str())
+            .unwrap_or(&id);
+        let stream_url = format!(
+            "{base}/Videos/{id}/stream?static=true&MediaSourceId={source_id}&api_key={}",
+            srv.token
+        );
+        out.push(valor_ui::shell_state::ServerMediaItem {
+            id,
+            title,
+            kind,
+            stream_url,
+            year,
+            duration_secs,
+        });
+    }
+    Ok(out)
 }

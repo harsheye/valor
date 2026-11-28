@@ -75,19 +75,36 @@ where
         .get_all_excluded_paths()
         .unwrap_or_default();
     for entry_res in WalkDir::new(root_dir)
+        .max_depth(32)
         .follow_links(true)
         .into_iter()
         .filter_entry(|entry| {
             let path_str = entry.path().to_string_lossy().to_ascii_lowercase();
+            let fname = entry.file_name().to_string_lossy().to_ascii_lowercase();
             if path_str.contains("$recycle.bin")
                 || path_str.contains("system volume information")
                 || path_str.contains(".trash")
                 || path_str.contains(".git")
                 || path_str.contains(".svn")
-                || entry.file_name().to_string_lossy().starts_with("$r")
-                || entry.file_name().to_string_lossy().starts_with("._")
+                || fname.starts_with("$r")
+                || fname.starts_with("._")
+                || fname.ends_with(".part")
+                || fname.ends_with(".fdmdownload")
+                || fname.ends_with(".tmp")
+                || fname.ends_with(".crdownload")
             {
                 return false;
+            }
+            #[cfg(windows)]
+            if entry.depth() > 0 {
+                use std::os::windows::fs::MetadataExt;
+                if let Ok(meta) = entry.metadata() {
+                    let attrs = meta.file_attributes();
+                    const SKIP_ATTRS: u32 = 0x2 | 0x4 | 0x1000 | 0x0040_0000;
+                    if (attrs & SKIP_ATTRS) != 0 {
+                        return false;
+                    }
+                }
             }
             !excluded
                 .iter()
@@ -239,12 +256,14 @@ where
             None
         };
 
+        let duration = probe_media_duration_secs(p);
+
         let item = MediaItem {
             id: format!("item_{}", path_hash),
             fingerprint: fingerprint.clone(),
             file_path: path_str.clone(),
             title: parsed.title,
-            duration: 0.0,
+            duration,
             size_bytes,
             width: if is_hdr { Some(3840) } else { Some(1920) },
             height: if is_hdr { Some(2160) } else { Some(1080) },
@@ -305,4 +324,175 @@ where
     );
 
     Ok(progress)
+}
+
+/// Fast native container header duration prober (MKV/WebM EBML + MP4/MOV mvhd),
+/// with silent ffprobe fallback for other formats (CnX cnxprobe-style).
+pub fn probe_media_duration_secs(path: &Path) -> f64 {
+    let ext = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|s| s.to_ascii_lowercase())
+        .unwrap_or_default();
+    if matches!(ext.as_str(), "mkv" | "webm" | "mka") {
+        if let Some(d) = probe_ebml_duration(path) {
+            if d > 0.0 && d.is_finite() {
+                return d;
+            }
+        }
+    } else if matches!(ext.as_str(), "mp4" | "m4v" | "mov" | "3gp") {
+        if let Some(d) = probe_mp4_duration(path) {
+            if d > 0.0 && d.is_finite() {
+                return d;
+            }
+        }
+    }
+    probe_ffprobe_duration(path).unwrap_or(0.0)
+}
+
+fn probe_ebml_duration(path: &Path) -> Option<f64> {
+    use std::io::Read;
+    let mut f = fs::File::open(path).ok()?;
+    let mut buf = vec![0u8; 65536];
+    let n = f.read(&mut buf).ok()?;
+    let buf = &buf[..n];
+
+    let info_pos = buf.windows(4).position(|w| w == [0x15, 0x49, 0xA9, 0x66])?;
+    let mut i = info_pos + 4;
+    let (_, sz_len) = read_ebml_vint(buf.get(i..)?)?;
+    i += sz_len;
+    let end = (i + 4096).min(buf.len());
+
+    let mut timecode_scale: f64 = 1_000_000.0;
+    let mut raw_duration: Option<f64> = None;
+
+    while i + 2 < end {
+        let (id, id_len) = read_ebml_id(buf.get(i..)?)?;
+        i += id_len;
+        let (sz, sz_len) = read_ebml_vint(buf.get(i..)?)?;
+        i += sz_len;
+        let sz = sz as usize;
+        if i + sz > buf.len() {
+            break;
+        }
+        if id == 0x2AD7B1 && sz <= 8 {
+            let mut val: u64 = 0;
+            for &b in &buf[i..i + sz] {
+                val = (val << 8) | u64::from(b);
+            }
+            if val > 0 {
+                timecode_scale = val as f64;
+            }
+        } else if id == 0x4489 {
+            if sz == 4 {
+                raw_duration = Some(f64::from(f32::from_be_bytes(buf[i..i + 4].try_into().ok()?)));
+            } else if sz == 8 {
+                raw_duration = Some(f64::from_be_bytes(buf[i..i + 8].try_into().ok()?));
+            }
+            break;
+        }
+        i += sz;
+    }
+    raw_duration.map(|d| d * timecode_scale / 1_000_000_000.0)
+}
+
+fn read_ebml_id(b: &[u8]) -> Option<(u32, usize)> {
+    let first = *b.first()?;
+    let len = first.leading_zeros() as usize + 1;
+    if len == 0 || len > 4 || b.len() < len {
+        return None;
+    }
+    let mut v = 0u32;
+    for &byte in &b[..len] {
+        v = (v << 8) | u32::from(byte);
+    }
+    Some((v, len))
+}
+
+fn read_ebml_vint(b: &[u8]) -> Option<(u64, usize)> {
+    let first = *b.first()?;
+    let len = first.leading_zeros() as usize + 1;
+    if len == 0 || len > 8 || b.len() < len {
+        return None;
+    }
+    let mask = 0xFFu8 >> len;
+    let mut v = u64::from(first & mask);
+    for &byte in &b[1..len] {
+        v = (v << 8) | u64::from(byte);
+    }
+    Some((v, len))
+}
+
+fn probe_mp4_duration(path: &Path) -> Option<f64> {
+    use std::io::{Read, Seek, SeekFrom};
+    let mut f = fs::File::open(path).ok()?;
+    let file_len = f.metadata().ok()?.len();
+    let mut pos: u64 = 0;
+    let mut hdr = [0u8; 8];
+    while pos + 8 <= file_len {
+        f.seek(SeekFrom::Start(pos)).ok()?;
+        if f.read_exact(&mut hdr).is_err() {
+            break;
+        }
+        let mut size = u64::from(u32::from_be_bytes(hdr[0..4].try_into().ok()?));
+        if size == 1 {
+            let mut ext = [0u8; 8];
+            f.read_exact(&mut ext).ok()?;
+            size = u64::from_be_bytes(ext);
+        } else if size == 0 {
+            size = file_len - pos;
+        }
+        if size < 8 {
+            break;
+        }
+        if &hdr[4..8] == b"moov" {
+            let mut moov = vec![0u8; (size as usize).min(2 * 1024 * 1024)];
+            f.seek(SeekFrom::Start(pos + 8)).ok()?;
+            let read_n = f.read(&mut moov).ok()?;
+            let moov = &moov[..read_n];
+            let mut j = 0usize;
+            while j + 8 <= moov.len() {
+                let bsz = u32::from_be_bytes(moov[j..j + 4].try_into().ok()?) as usize;
+                if bsz < 8 || j + bsz > moov.len() {
+                    break;
+                }
+                if &moov[j + 4..j + 8] == b"mvhd" && bsz >= 28 {
+                    let ver = moov[j + 8];
+                    if ver == 0 && j + 28 <= moov.len() {
+                        let ts = u32::from_be_bytes(moov[j + 20..j + 24].try_into().ok()?) as f64;
+                        let dur = u32::from_be_bytes(moov[j + 24..j + 28].try_into().ok()?) as f64;
+                        if ts > 0.0 {
+                            return Some(dur / ts);
+                        }
+                    } else if ver == 1 && j + 40 <= moov.len() {
+                        let ts = u32::from_be_bytes(moov[j + 28..j + 32].try_into().ok()?) as f64;
+                        let dur = u64::from_be_bytes(moov[j + 32..j + 40].try_into().ok()?) as f64;
+                        if ts > 0.0 {
+                            return Some(dur / ts);
+                        }
+                    }
+                }
+                j += bsz;
+            }
+            break;
+        }
+        pos += size;
+    }
+    None
+}
+
+fn probe_ffprobe_duration(path: &Path) -> Option<f64> {
+    let mut cmd = std::process::Command::new("ffprobe");
+    cmd.args(["-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1"])
+        .arg(path);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x0800_0000);
+    }
+    let out = cmd.output().ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    String::from_utf8_lossy(&out.stdout).trim().parse::<f64>().ok()
 }

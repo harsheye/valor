@@ -32,9 +32,9 @@ pub mod dimensions {
 }
 
 pub mod radii {
-    pub const CONTROLS: u8 = 0;
-    pub const PANELS: u8 = 2;
-    pub const PILL: u8 = 0;
+    pub const CONTROLS: u8 = 8;
+    pub const PANELS: u8 = 16;
+    pub const PILL: u8 = 8;
 }
 
 pub mod spacing {
@@ -160,6 +160,24 @@ impl ShellTokens {
     pub fn from_skin_and_path(skin_id: &str, custom_skin_path: &str) -> Self {
         let mut t = Self::default();
         match skin_id {
+            "cnx" => {
+                t.window_bg = Color32::from_rgb(18, 15, 12);
+                t.chrome_bg = Color32::from_rgb(26, 22, 19);
+                t.nav_surface = Color32::from_rgb(22, 18, 15);
+                t.content_surface = Color32::from_rgb(18, 15, 12);
+                t.card_fill = Color32::from_rgb(34, 29, 24);
+                t.field_fill = Color32::from_rgb(28, 24, 20);
+                t.field_border = Color32::from_rgb(51, 43, 36);
+                t.divider = Color32::from_rgb(51, 43, 36);
+                t.divider_strong = Color32::from_rgb(72, 61, 51);
+                t.accent = Color32::from_rgb(235, 140, 52);
+                t.accent_hover = Color32::from_rgb(248, 172, 100);
+                t.selected_fill = Color32::from_rgba_unmultiplied(235, 140, 52, 42);
+                t.text_primary = Color32::from_rgb(242, 237, 232);
+                t.text_secondary = Color32::from_rgb(163, 155, 147);
+                t.text_tertiary = Color32::from_rgb(107, 100, 94);
+                t.theme.accent_blue = Color32::from_rgb(235, 140, 52);
+            }
             "cloudflare-docs" => {
                 t.window_bg = Color32::from_rgb(13, 17, 23);
                 t.chrome_bg = Color32::from_rgb(17, 22, 30);

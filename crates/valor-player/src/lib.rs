@@ -46,8 +46,14 @@ pub struct PlayerSnapshot {
     pub is_hdr: bool,
     pub hdr_boost: bool,
     pub is_10bit: bool,
+    pub is_dolby_vision: bool,
     pub pixel_format: Option<String>,
     pub hwdec_current: Option<String>,
+    pub video_codec: Option<String>,
+    pub video_width: i64,
+    pub video_height: i64,
+    pub video_fps: f64,
+    pub file_size_bytes: u64,
 }
 
 /// One chapter marker reported by mpv.
@@ -208,6 +214,58 @@ pub enum PlayerCommand {
         hue: i32,
         deband: bool,
         hdr_boost: i32,
+    },
+    SetAudioDelay {
+        token: u64,
+        secs: f64,
+    },
+    SetSubDelay {
+        token: u64,
+        secs: f64,
+    },
+    SetAudioBoostPreset {
+        token: u64,
+        preset: String,
+    },
+    SetSubtitleAppearance {
+        token: u64,
+        scale: f64,
+        pos: i64,
+        color: String,
+        bold: bool,
+        box_bg: bool,
+    },
+    SetViewingOptions {
+        token: u64,
+        aspect: String,
+        zoom: f64,
+        panscan: f64,
+        rotate: i64,
+        hflip: bool,
+        vflip: bool,
+        ab_a: Option<f64>,
+        ab_b: Option<f64>,
+    },
+    SetEqualizer {
+        token: u64,
+        bands_db: [f32; 10],
+    },
+    SetHdrToneMapping {
+        token: u64,
+        enabled: bool,
+        strength: u8,
+    },
+    SetAudioDownmix {
+        token: u64,
+        mode: String,
+    },
+    SetKeepAspect {
+        token: u64,
+        keep: bool,
+    },
+    SetSubMarginY {
+        token: u64,
+        margin_y: i64,
     },
     Shutdown,
 }

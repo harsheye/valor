@@ -32,6 +32,18 @@ fn default_reduce_motion_mode() -> String {
     "system".to_string()
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[serde(default)]
+pub struct MediaServerConfig {
+    pub id: String,
+    pub kind: String, // "jellyfin" or "plex"
+    pub name: String,
+    pub base_url: String,
+    pub token: String,
+    pub user_id: String,
+    pub username: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
@@ -102,6 +114,10 @@ pub struct Settings {
     pub window_width: u32,
     pub window_height: u32,
     pub window_maximized: bool,
+
+    // Network Media Servers (Jellyfin / Plex)
+    #[serde(default)]
+    pub media_servers: Vec<MediaServerConfig>,
 }
 
 impl Default for Settings {
@@ -153,6 +169,7 @@ impl Default for Settings {
             window_width: 1280,
             window_height: 720,
             window_maximized: false,
+            media_servers: Vec::new(),
         }
     }
 }

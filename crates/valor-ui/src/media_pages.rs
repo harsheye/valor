@@ -4,7 +4,7 @@ use std::collections::HashMap;
 
 use egui::{
     Align, Align2, Color32, CornerRadius, FontId, Frame, Layout, Pos2, Rect, RichText, Sense, Stroke,
-    StrokeKind, Ui, Vec2, vec2,
+    StrokeKind, Ui, Vec2,
 };
 use valor_core::models::{HistoryEntry, MediaItem, PlaybackPosition, WatchSession};
 
@@ -12,6 +12,7 @@ use crate::shell::ShellAction;
 use crate::shell_state::ShellState;
 use crate::shell_tokens::{spacing, typography, ShellTokens};
 use crate::texture_cache::LruTextureCache;
+use crate::ui_helpers::sub_divider;
 use crate::view_models::{
     build_movie_card_view_models, build_other_media_card_view_models, build_series_card_view_models,
     FilterPill, LibraryTab, MovieCardViewModel, SeriesCardViewModel,
@@ -37,33 +38,6 @@ fn thumbnail_path(fingerprint: &str) -> Option<std::path::PathBuf> {
     } else {
         None
     }
-}
-
-fn padded_choice(ui: &mut Ui, label: &str, selected: bool, tokens: &ShellTokens) -> egui::Response {
-    let fill = if selected {
-        tokens.selected_fill
-    } else {
-        tokens.field_fill
-    };
-    let stroke = Stroke::new(
-        1.0,
-        if selected {
-            tokens.accent
-        } else {
-            tokens.divider
-        },
-    );
-    ui.add_sized(
-        [ui.available_width().clamp(64.0, 148.0), 30.0],
-        egui::Button::new(
-            RichText::new(label)
-                .size(12.5)
-                .color(if selected { Color32::WHITE } else { tokens.text_secondary }),
-        )
-        .fill(fill)
-        .stroke(stroke)
-        .corner_radius(CornerRadius::ZERO),
-    )
 }
 
 fn card_frame(tokens: &ShellTokens) -> Frame {
@@ -126,20 +100,6 @@ fn title_letter(title: &str) -> String {
         .next()
         .map(|c| c.to_uppercase().to_string())
         .unwrap_or_default()
-}
-
-fn sort_label(sort: crate::view_models::SortOption) -> &'static str {
-    match sort {
-        crate::view_models::SortOption::RecentlyAdded
-        | crate::view_models::SortOption::DateAddedDesc => "Recently added",
-        crate::view_models::SortOption::TitleAsc => "Title A–Z",
-        crate::view_models::SortOption::TitleDesc => "Title Z–A",
-        crate::view_models::SortOption::YearDesc => "Year newest",
-        crate::view_models::SortOption::YearAsc => "Year oldest",
-        crate::view_models::SortOption::DurationDesc => "Duration",
-        crate::view_models::SortOption::LastWatched => "Recently watched",
-        crate::view_models::SortOption::Progress => "Progress",
-    }
 }
 
 fn title_color(title: &str, tokens: &ShellTokens) -> Color32 {
@@ -224,23 +184,6 @@ fn truncate_text(ui: &Ui, text: &str, font: FontId, max_width: f32) -> String {
     "…".to_string()
 }
 
-fn render_filter_pills(ui: &mut Ui, state: &mut ShellState, tokens: &ShellTokens) {
-    ui.horizontal(|ui| {
-        for (filter, label) in [
-            (FilterPill::All, "All"),
-            (FilterPill::InProgress, "In progress"),
-            (FilterPill::Unwatched, "Unwatched"),
-            (FilterPill::Watched, "Watched"),
-        ] {
-            let selected = state.library_filter == filter;
-            let response = padded_choice(ui, label, selected, tokens);
-            if response.clicked() {
-                state.library_filter = filter;
-            }
-        }
-    });
-}
-
 fn movie_matches(movie: &MovieCardViewModel, filter: FilterPill, query: &str) -> bool {
     let matches_query = query.trim().is_empty()
         || movie
@@ -268,6 +211,18 @@ fn series_matches(series: &SeriesCardViewModel, filter: FilterPill, query: &str)
     matches_query && matches_filter
 }
 
+fn paint_play_triangle(painter: &egui::Painter, c: Pos2, r: f32, col: Color32) {
+    painter.add(egui::Shape::convex_polygon(
+        vec![
+            egui::pos2(c.x - r * 0.55, c.y - r * 0.85),
+            egui::pos2(c.x + r * 0.95, c.y),
+            egui::pos2(c.x - r * 0.55, c.y + r * 0.85),
+        ],
+        col,
+        Stroke::NONE,
+    ));
+}
+
 fn render_named_poster_card(
     ui: &mut Ui,
     rect: Rect,
@@ -277,8 +232,9 @@ fn render_named_poster_card(
     is_hovered: bool,
     tokens: &ShellTokens,
 ) {
+    let radius = CornerRadius::same(12);
     let base_color = title_color(title, tokens);
-    ui.painter().rect_filled(rect, CornerRadius::ZERO, base_color);
+    ui.painter().rect_filled(rect, radius, base_color);
 
     // Subtle dark gradient bottom for readability
     let dark_overlay = Rect::from_min_max(
@@ -287,63 +243,67 @@ fn render_named_poster_card(
     );
     ui.painter().rect_filled(
         dark_overlay,
-        CornerRadius::ZERO,
-        Color32::from_rgba_unmultiplied(12, 16, 26, 200),
+        CornerRadius {
+            nw: 0,
+            ne: 0,
+            sw: 12,
+            se: 12,
+        },
+        Color32::from_rgba_unmultiplied(12, 10, 9, 195),
     );
 
     // Avatar circle with letter in center
     let circle_center = rect.center() - Vec2::new(0.0, 8.0);
-    ui.painter().circle_filled(circle_center, 26.0, Color32::from_black_alpha(100));
-    ui.painter().circle_stroke(circle_center, 26.0, Stroke::new(1.5, Color32::from_white_alpha(90)));
+    ui.painter().circle_filled(circle_center, 24.0, Color32::from_black_alpha(110));
+    ui.painter().circle_stroke(circle_center, 24.0, Stroke::new(1.25, Color32::from_white_alpha(70)));
     ui.painter().text(
         circle_center,
         Align2::CENTER_CENTER,
         title_letter(title),
-        FontId::proportional(22.0),
+        FontId::proportional(20.0),
         Color32::WHITE,
     );
 
     if let Some(sub) = subtitle_badge {
         ui.painter().text(
-            egui::pos2(rect.center().x, rect.bottom() - 14.0),
+            egui::pos2(rect.center().x, rect.bottom() - 16.0),
             Align2::CENTER_CENTER,
             sub,
-            FontId::proportional(11.5),
-            Color32::from_gray(210),
+            FontId::proportional(11.0),
+            Color32::from_gray(205),
         );
     }
 
     if let Some(p) = progress {
         if p > 0.0 {
-            let bar = Rect::from_min_size(
-                egui::pos2(rect.left(), rect.bottom() - 4.0),
-                Vec2::new(rect.width() * p.clamp(0.0, 1.0), 4.0),
+            let track = Rect::from_min_size(
+                egui::pos2(rect.left() + 12.0, rect.bottom() - 10.0),
+                Vec2::new((rect.width() - 24.0).max(4.0), 3.0),
             );
-            ui.painter().rect_filled(bar, CornerRadius::ZERO, tokens.accent);
+            ui.painter().rect_filled(track, CornerRadius::same(2), Color32::from_white_alpha(55));
+            let bar = Rect::from_min_size(
+                track.min,
+                Vec2::new(track.width() * p.clamp(0.0, 1.0), 3.0),
+            );
+            ui.painter().rect_filled(bar, CornerRadius::same(2), tokens.accent);
         }
     }
 
     if is_hovered {
         ui.painter().rect_stroke(
             rect,
-            CornerRadius::ZERO,
-            Stroke::new(2.0, tokens.accent),
+            radius,
+            Stroke::new(1.5, tokens.accent),
             egui::StrokeKind::Inside,
         );
         let play_center = rect.center();
-        ui.painter().circle_filled(play_center, 26.0, tokens.accent);
-        ui.painter().text(
-            egui::pos2(play_center.x + 2.0, play_center.y),
-            Align2::CENTER_CENTER,
-            "▶",
-            FontId::proportional(18.0),
-            Color32::WHITE,
-        );
+        ui.painter().circle_filled(play_center, 24.0, tokens.accent);
+        paint_play_triangle(ui.painter(), play_center, 8.0, Color32::WHITE);
     } else {
         ui.painter().rect_stroke(
             rect,
-            CornerRadius::ZERO,
-            Stroke::new(1.0, tokens.field_border),
+            radius,
+            Stroke::new(1.0, tokens.divider),
             egui::StrokeKind::Inside,
         );
     }
@@ -358,32 +318,508 @@ pub(crate) fn attach_media_context_menu(
 ) {
     resp.context_menu(|ui| {
         ui.set_min_width(170.0);
-        if ui.button("▶  Play in Valor").clicked() {
+        if ui.button("Play in Valor").clicked() {
             *action = ShellAction::PlayMedia(std::path::PathBuf::from(file_path));
             ui.close();
         }
-        if ui.button("➕  Add to Queue").clicked() {
+        if ui.button("Add to Queue").clicked() {
             *action = ShellAction::EnqueueMedia(vec![std::path::PathBuf::from(file_path)]);
             ui.close();
         }
-        if ui.button("📋  Add to Playlist...").clicked() {
+        if ui.button("Add to Playlist...").clicked() {
             *action = ShellAction::OpenAddToPlaylistModal(file_path.to_string());
             ui.close();
         }
-        if ui.button("↗  Open with...").clicked() {
+        if ui.button("Open with...").clicked() {
             *action = ShellAction::OpenWithApp(std::path::PathBuf::from(file_path));
             ui.close();
         }
-        if ui.button("📁  Show in Explorer").clicked() {
+        if ui.button("Show in Explorer").clicked() {
             *action = ShellAction::OpenInExplorer(std::path::PathBuf::from(file_path));
             ui.close();
         }
         ui.separator();
-        if ui.button("ℹ  File information").clicked() {
+        if ui.button("File information").clicked() {
             *selected_media_info = Some(fingerprint.to_string());
             ui.close();
         }
     });
+}
+
+/// Global unified media card descriptor used across Home, Library, and This PC folder views.
+pub(crate) struct UnifiedMediaCard<'a> {
+    pub id: &'a str,
+    pub title: &'a str,
+    pub file_path: &'a str,
+    pub fingerprint: &'a str,
+    pub meta_line: &'a str,
+    pub duration_secs: f64,
+    pub is_hdr: bool,
+    pub episode_tag: Option<String>,
+    pub progress: Option<f32>,
+    pub resume_pos_secs: Option<f64>,
+    pub is_watched: bool,
+    pub tooltip: Option<String>,
+}
+
+/// Global CnX-style Card Options Popover opened by the `•••` button on any media card.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn render_card_options_popover(
+    ui: &mut Ui,
+    menu_id: egui::Id,
+    anchor_id: egui::Id,
+    dots_rect: Rect,
+    dots_clicked: bool,
+    key: &str,
+    title: &str,
+    meta_line: &str,
+    file_path: &str,
+    fingerprint: &str,
+    state: &mut ShellState,
+    tokens: &ShellTokens,
+    action: &mut ShellAction,
+) {
+    let open_fp: Option<String> = ui.data(|d| d.get_temp(menu_id)).flatten();
+    if open_fp.as_deref() != Some(key) {
+        return;
+    }
+    let a_rect: Rect = ui.data(|d| d.get_temp(anchor_id)).unwrap_or(dots_rect);
+    let pop_w = 276.0;
+    let screen = ui.ctx().content_rect();
+    let pop_x = (a_rect.right() - pop_w).clamp(screen.left() + 8.0, (screen.right() - pop_w - 8.0).max(8.0));
+    let pop_y = (a_rect.bottom() + 6.0).min((screen.bottom() - 290.0).max(8.0));
+    let pop_pos = egui::pos2(pop_x, pop_y);
+    let pop_area = egui::Area::new(ui.scope_id().with(("card_more_area", key)))
+        .order(egui::Order::Foreground)
+        .fixed_pos(pop_pos)
+        .show(ui.ctx(), |ui| {
+            Frame::new()
+                .fill(tokens.window_bg)
+                .stroke(Stroke::new(1.0, tokens.divider))
+                .corner_radius(CornerRadius::same(14))
+                .inner_margin(14.0)
+                .show(ui, |ui| {
+                    ui.set_width(pop_w - 28.0);
+                    ui.label(RichText::new(title).size(13.0).strong().color(tokens.text_primary));
+                    if !meta_line.is_empty() {
+                        ui.label(RichText::new(meta_line).size(11.0).color(tokens.text_secondary));
+                    }
+                    ui.add_space(12.0);
+                    ui.columns(4, |cols| {
+                        let quick = [
+                            (0, "Play", true),
+                            (1, "Queue", false),
+                            (2, "Open with", false),
+                            (3, "File info", false),
+                        ];
+                        for (qi, (kind, lbl, is_accent)) in quick.into_iter().enumerate() {
+                            cols[qi].vertical_centered(|ui| {
+                                let (cr, c_resp) = ui.allocate_exact_size(Vec2::splat(36.0), Sense::click());
+                                if c_resp.hovered() {
+                                    ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+                                }
+                                ui.painter().circle_filled(
+                                    cr.center(),
+                                    18.0,
+                                    if is_accent {
+                                        tokens.accent
+                                    } else if c_resp.hovered() {
+                                        tokens.hover_fill
+                                    } else {
+                                        tokens.field_fill
+                                    },
+                                );
+                                match kind {
+                                    0 => paint_play_triangle(
+                                        ui.painter(),
+                                        cr.center(),
+                                        6.0,
+                                        crate::ui_kit::contrast_on_accent(tokens.accent),
+                                    ),
+                                    1 => {
+                                        ui.painter().text(
+                                            cr.center(),
+                                            Align2::CENTER_CENTER,
+                                            "+",
+                                            FontId::proportional(16.0),
+                                            tokens.text_primary,
+                                        );
+                                    }
+                                    2 => {
+                                        let c = cr.center();
+                                        let st = Stroke::new(1.4, tokens.text_primary);
+                                        let bx = Rect::from_center_size(c + Vec2::new(-1.0, 1.0), Vec2::splat(9.0));
+                                        ui.painter().line_segment([bx.left_top(), bx.left_bottom()], st);
+                                        ui.painter().line_segment([bx.left_bottom(), bx.right_bottom()], st);
+                                        ui.painter().line_segment([bx.left_top(), egui::pos2(c.x - 1.0, bx.top())], st);
+                                        ui.painter().line_segment([egui::pos2(bx.right(), c.y + 1.0), bx.right_bottom()], st);
+                                        let tip = egui::pos2(c.x + 5.0, c.y - 5.0);
+                                        ui.painter().line_segment([c + Vec2::new(-1.0, 1.0), tip], st);
+                                        ui.painter().line_segment([tip, tip + Vec2::new(-4.5, 0.0)], st);
+                                        ui.painter().line_segment([tip, tip + Vec2::new(0.0, 4.5)], st);
+                                    }
+                                    _ => {
+                                        ui.painter().text(
+                                            cr.center(),
+                                            Align2::CENTER_CENTER,
+                                            "i",
+                                            FontId::proportional(14.0),
+                                            tokens.text_primary,
+                                        );
+                                    }
+                                }
+                                ui.add_space(4.0);
+                                ui.label(RichText::new(lbl).size(11.0).color(tokens.text_secondary));
+                                if c_resp.clicked() {
+                                    match kind {
+                                        0 => *action = ShellAction::PlayMedia(std::path::PathBuf::from(file_path)),
+                                        1 => *action = ShellAction::EnqueueMedia(vec![std::path::PathBuf::from(file_path)]),
+                                        2 => *action = ShellAction::OpenWithApp(std::path::PathBuf::from(file_path)),
+                                        _ => state.selected_media_info = Some(fingerprint.to_string()),
+                                    }
+                                    ui.data_mut(|d| d.insert_temp::<Option<String>>(menu_id, None));
+                                }
+                            });
+                        }
+                    });
+                    ui.add_space(10.0);
+                    sub_divider(ui, tokens);
+                    ui.add_space(6.0);
+                    for (ri, lbl) in [
+                        "Play in Valor",
+                        "Add to Queue",
+                        "Add to Playlist...",
+                        "Open with...",
+                        "Show in Explorer",
+                        "File information",
+                    ]
+                    .into_iter()
+                    .enumerate()
+                    {
+                        let (rr, r_resp) = ui.allocate_exact_size(Vec2::new(pop_w - 28.0, 28.0), Sense::click());
+                        if r_resp.hovered() {
+                            ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+                            ui.painter().rect_filled(rr, CornerRadius::same(7), tokens.hover_fill);
+                        }
+                        ui.painter().text(
+                            egui::pos2(rr.left() + 8.0, rr.center().y),
+                            Align2::LEFT_CENTER,
+                            lbl,
+                            FontId::proportional(12.5),
+                            tokens.text_primary,
+                        );
+                        if r_resp.clicked() {
+                            match ri {
+                                0 => *action = ShellAction::PlayMedia(std::path::PathBuf::from(file_path)),
+                                1 => *action = ShellAction::EnqueueMedia(vec![std::path::PathBuf::from(file_path)]),
+                                2 => *action = ShellAction::OpenAddToPlaylistModal(file_path.to_string()),
+                                3 => *action = ShellAction::OpenWithApp(std::path::PathBuf::from(file_path)),
+                                4 => *action = ShellAction::OpenInExplorer(std::path::PathBuf::from(file_path)),
+                                _ => state.selected_media_info = Some(fingerprint.to_string()),
+                            }
+                            ui.data_mut(|d| d.insert_temp::<Option<String>>(menu_id, None));
+                        }
+                    }
+                });
+        });
+    if ui.input(|i| i.pointer.any_click()) && !pop_area.response.contains_pointer() && !dots_clicked {
+        ui.data_mut(|d| d.insert_temp::<Option<String>>(menu_id, None));
+    }
+}
+
+/// Global unified media card container rendered identically across Home, Library, and This PC.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn render_unified_media_card(
+    ui: &mut Ui,
+    card_rect: Rect,
+    thumb_h: f32,
+    card: &UnifiedMediaCard<'_>,
+    state: &mut ShellState,
+    tokens: &ShellTokens,
+    textures: &mut LruTextureCache,
+    action: &mut ShellAction,
+    scope_salt: &str,
+) {
+    let thumb_rect = Rect::from_min_size(card_rect.min, Vec2::new(card_rect.width(), thumb_h));
+    let mut response = ui.interact(
+        thumb_rect,
+        ui.scope_id().with((scope_salt, "card", card.id)),
+        Sense::click(),
+    );
+    if let Some(tip) = &card.tooltip {
+        response = response.on_hover_text(tip);
+    }
+    if response.hovered() {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+    }
+
+    let tile_radius = CornerRadius::same(12);
+    let thumb = thumbnail_path(card.fingerprint).filter(|p| {
+        p.metadata().map(|m| m.len() >= 1200 && m.len() != 6479).unwrap_or(false)
+    });
+    if let Some(tex) = thumb
+        .as_ref()
+        .and_then(|p| textures.get_or_request(ui.ctx(), card.fingerprint, Some(p)))
+    {
+        ui.painter().rect_filled(thumb_rect, tile_radius, tokens.content_surface);
+        egui::Image::new(egui::load::SizedTexture::from_handle(tex))
+            .corner_radius(12.0)
+            .paint_at(ui, thumb_rect);
+        if let Some(p) = card.progress {
+            if p > 0.0 {
+                let track = Rect::from_min_size(
+                    egui::pos2(thumb_rect.left() + 10.0, thumb_rect.bottom() - 8.0),
+                    Vec2::new((thumb_rect.width() - 20.0).max(4.0), 3.0),
+                );
+                ui.painter().rect_filled(track, CornerRadius::same(2), Color32::from_white_alpha(60));
+                let bar = Rect::from_min_size(track.min, Vec2::new(track.width() * p.clamp(0.0, 1.0), 3.0));
+                ui.painter().rect_filled(bar, CornerRadius::same(2), tokens.accent);
+            }
+        }
+        ui.painter().rect_stroke(
+            thumb_rect,
+            tile_radius,
+            Stroke::new(
+                if response.hovered() { 1.5 } else { 1.0 },
+                if response.hovered() { tokens.accent } else { tokens.divider },
+            ),
+            StrokeKind::Inside,
+        );
+        if response.hovered() {
+            ui.painter().circle_filled(thumb_rect.center(), 22.0, tokens.accent);
+            paint_play_triangle(
+                ui.painter(),
+                thumb_rect.center(),
+                7.5,
+                crate::ui_kit::contrast_on_accent(tokens.accent),
+            );
+        }
+    } else {
+        render_named_poster_card(
+            ui,
+            thumb_rect,
+            card.title,
+            None,
+            card.progress,
+            response.hovered(),
+            tokens,
+        );
+    }
+
+    // Top-left container + HDR badges
+    let ext = std::path::Path::new(card.file_path)
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("VID")
+        .to_uppercase();
+    let ext_badge = Rect::from_min_size(thumb_rect.min + Vec2::new(8.0, 8.0), Vec2::new(38.0, 18.0));
+    ui.painter().rect_filled(
+        ext_badge,
+        CornerRadius::same(4),
+        Color32::from_rgba_unmultiplied(12, 14, 18, 200),
+    );
+    ui.painter().text(
+        ext_badge.center(),
+        Align2::CENTER_CENTER,
+        ext,
+        FontId::proportional(10.0),
+        Color32::from_gray(225),
+    );
+    if card.is_hdr {
+        let hdr_badge = Rect::from_min_size(
+            egui::pos2(ext_badge.max.x + 4.0, ext_badge.min.y),
+            Vec2::new(34.0, 18.0),
+        );
+        ui.painter().rect_filled(
+            hdr_badge,
+            CornerRadius::same(4),
+            Color32::from_rgba_unmultiplied(210, 150, 20, 215),
+        );
+        ui.painter().text(
+            hdr_badge.center(),
+            Align2::CENTER_CENTER,
+            "HDR",
+            FontId::proportional(10.0),
+            Color32::BLACK,
+        );
+    }
+
+    // Top-right episode badge
+    if let Some(ep) = &card.episode_tag {
+        let ep_w = (ep.len() as f32 * 7.2 + 12.0).max(46.0);
+        let badge = Rect::from_min_size(
+            egui::pos2(thumb_rect.max.x - ep_w - 8.0, thumb_rect.min.y + 8.0),
+            Vec2::new(ep_w, 18.0),
+        );
+        ui.painter().rect_filled(badge, CornerRadius::same(4), Color32::from_rgb(26, 48, 80));
+        ui.painter().text(
+            badge.center(),
+            Align2::CENTER_CENTER,
+            ep,
+            FontId::proportional(10.5),
+            Color32::from_rgb(168, 204, 255),
+        );
+    }
+
+    // Bottom-right duration badge
+    if card.duration_secs > 0.0 {
+        let dur_txt = crate::shell::format_gallery_duration(card.duration_secs);
+        let dur_w = 42.0 + (dur_txt.len().saturating_sub(5) as f32 * 6.5);
+        let badge = Rect::from_min_size(
+            egui::pos2(thumb_rect.max.x - dur_w - 8.0, thumb_rect.max.y - 24.0),
+            Vec2::new(dur_w, 18.0),
+        );
+        ui.painter().rect_filled(
+            badge,
+            CornerRadius::same(4),
+            Color32::from_rgba_unmultiplied(10, 12, 16, 220),
+        );
+        ui.painter().text(
+            badge.center(),
+            Align2::CENTER_CENTER,
+            dur_txt,
+            FontId::proportional(10.5),
+            Color32::WHITE,
+        );
+    }
+
+    // Select-mode indicator
+    let selected = state.selected_media.contains(card.id);
+    if state.select_mode && (response.hovered() || selected) {
+        let cb = Rect::from_min_size(thumb_rect.min + Vec2::new(8.0, 8.0), Vec2::new(20.0, 20.0));
+        ui.painter().circle_filled(
+            cb.center(),
+            10.0,
+            if selected { tokens.accent } else { tokens.window_bg },
+        );
+    }
+
+    attach_media_context_menu(
+        &response,
+        card.file_path,
+        card.fingerprint,
+        &mut state.selected_media_info,
+        action,
+    );
+
+    if response.clicked() {
+        if state.select_mode {
+            if selected {
+                state.selected_media.remove(card.id);
+            } else {
+                state.selected_media.insert(card.id.to_string());
+            }
+        } else {
+            *action = ShellAction::PlayMedia(std::path::PathBuf::from(card.file_path));
+        }
+    }
+
+    // Title row + ••• More options button
+    let title_y = thumb_rect.bottom() + 6.0;
+    let dots_rect = Rect::from_min_size(
+        egui::pos2(card_rect.max.x - 26.0, title_y - 1.0),
+        Vec2::new(26.0, 20.0),
+    );
+    let d_resp = ui
+        .interact(
+            dots_rect,
+            ui.scope_id().with((scope_salt, "dots", card.id)),
+            Sense::click(),
+        )
+        .on_hover_text("More options");
+    if d_resp.hovered() {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+        ui.painter().rect_filled(dots_rect, CornerRadius::same(6), tokens.hover_fill);
+    }
+    for dx in [-4.5_f32, 0.0, 4.5] {
+        ui.painter().circle_filled(
+            egui::pos2(dots_rect.center().x + dx, dots_rect.center().y),
+            1.4,
+            if d_resp.hovered() { tokens.text_primary } else { tokens.text_secondary },
+        );
+    }
+
+    let title_max_w = (card_rect.width() - 32.0).max(24.0);
+    let disp_title = crate::ui_helpers::truncate_text_exact(
+        ui.painter(),
+        card.title,
+        FontId::proportional(13.0),
+        title_max_w,
+    );
+    ui.painter().text(
+        egui::pos2(card_rect.min.x, title_y + 9.0),
+        Align2::LEFT_CENTER,
+        disp_title,
+        FontId::proportional(13.0),
+        if response.hovered() { tokens.accent } else { tokens.text_primary },
+    );
+
+    let key = if card.fingerprint.is_empty() { card.id } else { card.fingerprint };
+    let menu_id = egui::Id::new("global_media_card_more_fp");
+    let anchor_id = egui::Id::new("global_media_card_more_pos");
+    let dots_clicked = d_resp.clicked();
+    if dots_clicked {
+        let cur: Option<String> = ui.data(|d| d.get_temp(menu_id)).flatten();
+        if cur.as_deref() == Some(key) {
+            ui.data_mut(|d| d.insert_temp::<Option<String>>(menu_id, None));
+        } else {
+            ui.data_mut(|d| {
+                d.insert_temp(menu_id, Some(key.to_string()));
+                d.insert_temp(anchor_id, dots_rect);
+            });
+        }
+    }
+    render_card_options_popover(
+        ui,
+        menu_id,
+        anchor_id,
+        dots_rect,
+        dots_clicked,
+        key,
+        card.title,
+        card.meta_line,
+        card.file_path,
+        card.fingerprint,
+        state,
+        tokens,
+        action,
+    );
+
+    // Metadata + Resume/Watched line
+    let meta_y = title_y + 22.0;
+    if !card.meta_line.is_empty() {
+        let disp_meta = crate::ui_helpers::truncate_text_exact(
+            ui.painter(),
+            card.meta_line,
+            FontId::proportional(11.0),
+            card_rect.width() - 4.0,
+        );
+        ui.painter().text(
+            egui::pos2(card_rect.min.x, meta_y),
+            Align2::LEFT_TOP,
+            disp_meta,
+            FontId::proportional(11.0),
+            tokens.text_muted,
+        );
+    }
+    if let Some(pos) = card.resume_pos_secs {
+        let txt = format!("Resume at {}", format_time(pos).unwrap_or_default());
+        ui.painter().text(
+            egui::pos2(card_rect.min.x, meta_y + 15.0),
+            Align2::LEFT_TOP,
+            txt,
+            FontId::proportional(11.0),
+            tokens.accent,
+        );
+    } else if card.is_watched {
+        ui.painter().text(
+            egui::pos2(card_rect.min.x, meta_y + 15.0),
+            Align2::LEFT_TOP,
+            "Watched",
+            FontId::proportional(11.0),
+            tokens.success,
+        );
+    }
 }
 
 fn render_movie_grid(
@@ -688,16 +1124,36 @@ fn render_movie_grid(
                                 &movie.primary_fingerprint,
                                 thumb.as_ref(),
                             ) {
-                                ui.painter().rect_filled(rect, CornerRadius::ZERO, Color32::BLACK);
+                                let tile_radius = CornerRadius::same(12);
+                                ui.painter().rect_filled(rect, tile_radius, tokens.content_surface);
+                                egui::Image::new(egui::load::SizedTexture::from_handle(tex))
+                                    .corner_radius(12.0)
+                                    .paint_at(ui, rect);
                                 let uv = egui::Rect::from_min_max(
                                     egui::pos2(0.0, 0.0),
                                     egui::pos2(1.0, 1.0),
                                 );
-                                ui.painter().image(tex.id(), rect, uv, Color32::WHITE);
+                                if let Some(p) = movie.progress {
+                                    if p > 0.0 {
+                                        let track = Rect::from_min_size(
+                                            egui::pos2(rect.left() + 12.0, rect.bottom() - 10.0),
+                                            Vec2::new((rect.width() - 24.0).max(4.0), 3.0),
+                                        );
+                                        ui.painter().rect_filled(track, CornerRadius::same(2), Color32::from_white_alpha(65));
+                                        let bar = Rect::from_min_size(
+                                            track.min,
+                                            Vec2::new(track.width() * p.clamp(0.0, 1.0), 3.0),
+                                        );
+                                        ui.painter().rect_filled(bar, CornerRadius::same(2), tokens.accent);
+                                    }
+                                }
                                 ui.painter().rect_stroke(
                                     rect,
-                                    CornerRadius::ZERO,
-                                    Stroke::new(1.0, if response.hovered() { tokens.accent } else { tokens.field_border }),
+                                    tile_radius,
+                                    Stroke::new(
+                                        if response.hovered() { 1.5 } else { 1.0 },
+                                        if response.hovered() { tokens.accent } else { tokens.divider },
+                                    ),
                                     egui::StrokeKind::Inside,
                                 );
                                 if response.hovered() {
@@ -757,16 +1213,10 @@ fn render_movie_grid(
                                                     });
                                             });
                                     } else {
-                                        ui.painter().rect_filled(rect, CornerRadius::ZERO, Color32::from_black_alpha(100));
+                                        ui.painter().rect_filled(rect, CornerRadius::same(12), Color32::from_black_alpha(95));
                                         let play_center = rect.center();
-                                        ui.painter().circle_filled(play_center, 26.0, tokens.accent);
-                                        ui.painter().text(
-                                            egui::pos2(play_center.x + 2.0, play_center.y),
-                                            Align2::CENTER_CENTER,
-                                            "▶",
-                                            FontId::proportional(18.0),
-                                            Color32::WHITE,
-                                        );
+                                        ui.painter().circle_filled(play_center, 24.0, tokens.accent);
+                                        paint_play_triangle(ui.painter(), play_center, 8.0, Color32::WHITE);
                                     }
                                 }
                                 drew_image = true;
@@ -789,14 +1239,6 @@ fn render_movie_grid(
                                     &movie.primary_file_path,
                                 ));
                             }
-
-                            ui.add_space(6.0);
-                            ui.label(
-                                RichText::new(&movie.display_title)
-                                    .size(13.5)
-                                    .strong()
-                                    .color(if response.hovered() { tokens.accent } else { tokens.text_primary }),
-                            );
 
                             let ext = std::path::Path::new(&movie.primary_file_path)
                                 .extension()
@@ -823,6 +1265,171 @@ fn render_movie_grid(
                                 parts.push(size);
                             }
                             let meta_line = parts.join(" · ");
+
+                            ui.add_space(6.0);
+                            let mut dots_clicked = false;
+                            let mut dots_rect = Rect::NOTHING;
+                            ui.horizontal(|ui| {
+                                ui.allocate_ui_with_layout(
+                                    Vec2::new((card_w - 30.0).max(60.0), 20.0),
+                                    Layout::left_to_right(Align::Center),
+                                    |ui| {
+                                        ui.add(
+                                            egui::Label::new(
+                                                RichText::new(&movie.display_title)
+                                                    .size(13.5)
+                                                    .strong()
+                                                    .color(if response.hovered() { tokens.accent } else { tokens.text_primary }),
+                                            )
+                                            .truncate(),
+                                        );
+                                    },
+                                );
+                                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                    let (dr, d_resp) = ui.allocate_exact_size(Vec2::new(26.0, 22.0), Sense::click());
+                                    dots_rect = dr;
+                                    let d_resp = d_resp.on_hover_text("More options");
+                                    if d_resp.hovered() {
+                                        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+                                        ui.painter().rect_filled(dr, CornerRadius::same(6), tokens.hover_fill);
+                                    }
+                                    for dx in [-4.5_f32, 0.0, 4.5] {
+                                        ui.painter().circle_filled(
+                                            egui::pos2(dr.center().x + dx, dr.center().y),
+                                            1.4,
+                                            if d_resp.hovered() { tokens.text_primary } else { tokens.text_secondary },
+                                        );
+                                    }
+                                    if d_resp.clicked() {
+                                        dots_clicked = true;
+                                    }
+                                });
+                            });
+                            let menu_id = ui.scope_id().with("movie_more_pop_fp");
+                            let anchor_id = ui.scope_id().with("movie_more_pop_pos");
+                            if dots_clicked {
+                                let cur: Option<String> = ui.data(|d| d.get_temp(menu_id)).flatten();
+                                if cur.as_deref() == Some(&movie.primary_fingerprint) {
+                                    ui.data_mut(|d| d.insert_temp::<Option<String>>(menu_id, None));
+                                } else {
+                                    ui.data_mut(|d| {
+                                        d.insert_temp(menu_id, Some(movie.primary_fingerprint.clone()));
+                                        d.insert_temp(anchor_id, dots_rect);
+                                    });
+                                }
+                            }
+                            let open_fp: Option<String> = ui.data(|d| d.get_temp(menu_id)).flatten();
+                            if open_fp.as_deref() == Some(&movie.primary_fingerprint) {
+                                let a_rect: Rect = ui.data(|d| d.get_temp(anchor_id)).unwrap_or(dots_rect);
+                                let pop_w = 276.0;
+                                let screen = ui.ctx().content_rect();
+                                let pop_x = (a_rect.right() - pop_w).clamp(screen.left() + 8.0, (screen.right() - pop_w - 8.0).max(8.0));
+                                let pop_y = (a_rect.bottom() + 6.0).min((screen.bottom() - 290.0).max(8.0));
+                                let pop_pos = egui::pos2(pop_x, pop_y);
+                                let pop_area = egui::Area::new(ui.scope_id().with(("mv_more_area", &movie.primary_fingerprint)))
+                                    .order(egui::Order::Foreground)
+                                    .fixed_pos(pop_pos)
+                                    .show(ui.ctx(), |ui| {
+                                        Frame::new()
+                                            .fill(tokens.window_bg)
+                                            .stroke(Stroke::new(1.0, tokens.divider))
+                                            .corner_radius(CornerRadius::same(14))
+                                            .inner_margin(14.0)
+                                            .show(ui, |ui| {
+                                                ui.set_width(pop_w - 28.0);
+                                                ui.label(RichText::new(&movie.display_title).size(13.0).strong().color(tokens.text_primary));
+                                                ui.label(RichText::new(&meta_line).size(11.0).color(tokens.text_secondary));
+                                                ui.add_space(12.0);
+                                                ui.columns(4, |cols| {
+                                                    let quick = [
+                                                        (0, "Play", true),
+                                                        (1, "Queue", false),
+                                                        (2, "Open with", false),
+                                                        (3, "File info", false),
+                                                    ];
+                                                    for (qi, (kind, lbl, is_accent)) in quick.into_iter().enumerate() {
+                                                        cols[qi].vertical_centered(|ui| {
+                                                            let (cr, c_resp) = ui.allocate_exact_size(Vec2::splat(36.0), Sense::click());
+                                                            if c_resp.hovered() {
+                                                                ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+                                                            }
+                                                            ui.painter().circle_filled(
+                                                                cr.center(),
+                                                                18.0,
+                                                                if is_accent {
+                                                                    tokens.accent
+                                                                } else if c_resp.hovered() {
+                                                                    tokens.hover_fill
+                                                                } else {
+                                                                    tokens.field_fill
+                                                                },
+                                                            );
+                                                            match kind {
+                                                                0 => paint_play_triangle(ui.painter(), cr.center(), 6.0, crate::ui_kit::contrast_on_accent(tokens.accent)),
+                                                                1 => { ui.painter().text(cr.center(), Align2::CENTER_CENTER, "+", FontId::proportional(16.0), tokens.text_primary); }
+                                                                2 => {
+                                                                    let c = cr.center();
+                                                                    let st = Stroke::new(1.4, tokens.text_primary);
+                                                                    let bx = Rect::from_center_size(c + Vec2::new(-1.0, 1.0), Vec2::splat(9.0));
+                                                                    ui.painter().line_segment([bx.left_top(), bx.left_bottom()], st);
+                                                                    ui.painter().line_segment([bx.left_bottom(), bx.right_bottom()], st);
+                                                                    ui.painter().line_segment([bx.left_top(), egui::pos2(c.x - 1.0, bx.top())], st);
+                                                                    ui.painter().line_segment([egui::pos2(bx.right(), c.y + 1.0), bx.right_bottom()], st);
+                                                                    let tip = egui::pos2(c.x + 5.0, c.y - 5.0);
+                                                                    ui.painter().line_segment([c + Vec2::new(-1.0, 1.0), tip], st);
+                                                                    ui.painter().line_segment([tip, tip + Vec2::new(-4.5, 0.0)], st);
+                                                                    ui.painter().line_segment([tip, tip + Vec2::new(0.0, 4.5)], st);
+                                                                }
+                                                                _ => { ui.painter().text(cr.center(), Align2::CENTER_CENTER, "i", FontId::proportional(14.0), tokens.text_primary); }
+                                                            }
+                                                            ui.add_space(4.0);
+                                                            ui.label(RichText::new(lbl).size(11.0).color(tokens.text_secondary));
+                                                            if c_resp.clicked() {
+                                                                match kind {
+                                                                    0 => *action = ShellAction::PlayMedia(std::path::PathBuf::from(&movie.primary_file_path)),
+                                                                    1 => *action = ShellAction::EnqueueMedia(vec![std::path::PathBuf::from(&movie.primary_file_path)]),
+                                                                    2 => *action = ShellAction::OpenWithApp(std::path::PathBuf::from(&movie.primary_file_path)),
+                                                                    _ => state.selected_media_info = Some(movie.primary_fingerprint.clone()),
+                                                                }
+                                                                ui.data_mut(|d| d.insert_temp::<Option<String>>(menu_id, None));
+                                                            }
+                                                        });
+                                                    }
+                                                });
+                                                ui.add_space(10.0);
+                                                sub_divider(ui, tokens);
+                                                ui.add_space(6.0);
+                                                for (ri, lbl) in ["Play in Valor", "Add to Queue", "Add to Playlist...", "Open with...", "Show in Explorer", "File information"].into_iter().enumerate() {
+                                                    let (rr, r_resp) = ui.allocate_exact_size(Vec2::new(pop_w - 28.0, 28.0), Sense::click());
+                                                    if r_resp.hovered() {
+                                                        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+                                                        ui.painter().rect_filled(rr, CornerRadius::same(7), tokens.hover_fill);
+                                                    }
+                                                    ui.painter().text(
+                                                        egui::pos2(rr.left() + 8.0, rr.center().y),
+                                                        Align2::LEFT_CENTER,
+                                                        lbl,
+                                                        FontId::proportional(12.5),
+                                                        tokens.text_primary,
+                                                    );
+                                                    if r_resp.clicked() {
+                                                        match ri {
+                                                            0 => *action = ShellAction::PlayMedia(std::path::PathBuf::from(&movie.primary_file_path)),
+                                                            1 => *action = ShellAction::EnqueueMedia(vec![std::path::PathBuf::from(&movie.primary_file_path)]),
+                                                            2 => *action = ShellAction::OpenAddToPlaylistModal(movie.primary_file_path.clone()),
+                                                            3 => *action = ShellAction::OpenWithApp(std::path::PathBuf::from(&movie.primary_file_path)),
+                                                            4 => *action = ShellAction::OpenInExplorer(std::path::PathBuf::from(&movie.primary_file_path)),
+                                                            _ => state.selected_media_info = Some(movie.primary_fingerprint.clone()),
+                                                        }
+                                                        ui.data_mut(|d| d.insert_temp::<Option<String>>(menu_id, None));
+                                                    }
+                                                }
+                                            });
+                                    });
+                                if ui.input(|i| i.pointer.any_pressed()) && !pop_area.response.hovered() && !dots_clicked {
+                                    ui.data_mut(|d| d.insert_temp::<Option<String>>(menu_id, None));
+                                }
+                            }
                             ui.label(
                                 RichText::new(meta_line)
                                     .size(typography::SECONDARY)
@@ -841,7 +1448,7 @@ fn render_movie_grid(
                                     );
                                 } else if movie.is_watched {
                                     ui.label(
-                                        RichText::new("✓ Watched")
+                                        RichText::new("Watched")
                                             .size(11.0)
                                             .color(tokens.success),
                                     );
@@ -1151,29 +1758,41 @@ fn render_series_grid(
 
                             let mut drew_image = false;
                             if let Some(texture) = textures.get_or_request(ui.ctx(), &item.primary_fingerprint, thumb_path.as_ref()) {
-                                ui.painter().rect_filled(rect, CornerRadius::same(8), tokens.field_fill);
-                                let uv = Rect::from_min_max(Pos2::new(0.0, 0.0), Pos2::new(1.0, 1.0));
-                                ui.painter().image(texture.id(), rect, uv, Color32::WHITE);
-                                if response.hovered() {
-                                    ui.painter().rect_stroke(
-                                        rect,
-                                        CornerRadius::same(8),
-                                        Stroke::new(2.0, tokens.accent),
-                                        StrokeKind::Inside,
+                                let tile_radius = CornerRadius::same(12);
+                                ui.painter().rect_filled(rect, tile_radius, tokens.content_surface);
+                                egui::Image::new(egui::load::SizedTexture::from_handle(texture))
+                                    .corner_radius(12.0)
+                                    .paint_at(ui, rect);
+                                if item.progress > 0.0 {
+                                    let track = Rect::from_min_size(
+                                        egui::pos2(rect.left() + 12.0, rect.bottom() - 10.0),
+                                        Vec2::new((rect.width() - 24.0).max(4.0), 3.0),
                                     );
+                                    ui.painter().rect_filled(track, CornerRadius::same(2), Color32::from_white_alpha(65));
+                                    let bar = Rect::from_min_size(
+                                        track.min,
+                                        Vec2::new(track.width() * item.progress.clamp(0.0, 1.0), 3.0),
+                                    );
+                                    ui.painter().rect_filled(bar, CornerRadius::same(2), tokens.accent);
+                                }
+                                ui.painter().rect_stroke(
+                                    rect,
+                                    tile_radius,
+                                    Stroke::new(
+                                        if response.hovered() { 1.5 } else { 1.0 },
+                                        if response.hovered() { tokens.accent } else { tokens.divider },
+                                    ),
+                                    StrokeKind::Inside,
+                                );
+                                if response.hovered() {
+                                    ui.painter().rect_filled(rect, tile_radius, Color32::from_black_alpha(95));
                                     let play_circle = Rect::from_center_size(rect.center(), Vec2::splat(44.0));
                                     ui.painter().circle_filled(
                                         play_circle.center(),
                                         22.0,
-                                        Color32::from_rgba_unmultiplied(10, 14, 22, 210),
+                                        tokens.accent,
                                     );
-                                    ui.painter().text(
-                                        play_circle.center(),
-                                        Align2::CENTER_CENTER,
-                                        "▶",
-                                        FontId::proportional(18.0),
-                                        Color32::WHITE,
-                                    );
+                                    paint_play_triangle(ui.painter(), play_circle.center(), 7.5, Color32::WHITE);
                                 }
                                 drew_image = true;
                             }
@@ -1255,13 +1874,13 @@ pub fn render_library(
 ) -> ShellAction {
     let available = outer_ui.max_rect();
     let pad_x = if available.width() >= 1100.0 {
-        48.0
+        28.0
     } else {
-        32.0
+        20.0
     };
     let page_rect = Rect::from_min_max(
-        egui::pos2(available.left() + pad_x, available.top() + 32.0),
-        egui::pos2(available.right() - 2.0, available.bottom() - 8.0),
+        egui::pos2(available.left() + pad_x, available.top() + 14.0),
+        egui::pos2(available.right() - 8.0, available.bottom() - 8.0),
     );
     let mut page = outer_ui.new_child(egui::UiBuilder::new().max_rect(page_rect));
     page.set_clip_rect(page_rect);
@@ -1281,147 +1900,69 @@ pub fn render_library(
     let series = build_series_card_view_models(&active_items, positions, &HashMap::new());
     let other_videos = build_other_media_card_view_models(&active_items, positions, &HashMap::new());
     let mut action = ShellAction::None;
-    ui.heading(
-        RichText::new("Library")
-            .size(24.0)
-            .strong()
-            .color(tokens.text_primary),
-    );
-    ui.add_space(4.0);
-    ui.label(
-        RichText::new(format!(
-            "{} movies · {} series · {} videos",
-            movies.len(),
-            series.len(),
-            other_videos.len()
-        ))
-        .size(13.5)
-        .color(tokens.text_secondary),
-    );
-    ui.add_space(14.0);
-    ui.horizontal_wrapped(|ui| {
-        ui.spacing_mut().item_spacing = Vec2::new(8.0, 6.0);
-        let playlist_count = state
-            .playlists
-            .iter()
-            .filter(|c| c.collection_type == "playlist")
-            .count();
-        for (tab, label, count) in [
-            (LibraryTab::Movies, "Movies", movies.len()),
-            (LibraryTab::Series, "Series", series.len()),
-            (LibraryTab::Playlists, "Playlists", playlist_count),
-            (LibraryTab::Videos, "Videos", other_videos.len()),
-        ] {
-            let text = format!("{label} ({count})");
-            let response = padded_choice(ui, &text, state.library_tab == tab, tokens);
-            if response.clicked() {
-                state.library_tab = tab;
-                state.selected_series = None;
-            }
-        }
-    });
-    ui.add_space(6.0);
-    let wide_row = ui.available_width() >= 1020.0;
-    if wide_row {
-        ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing = Vec2::new(8.0, 6.0);
-            render_filter_pills(ui, state, tokens);
-            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                if padded_choice(
-                    ui,
-                    "List",
-                    state.library_view == crate::view_models::ViewMode::List,
-                    tokens,
-                )
-                .clicked()
-                {
-                    state.library_view = crate::view_models::ViewMode::List;
-                }
-                if padded_choice(
-                    ui,
-                    "Grid",
-                    state.library_view == crate::view_models::ViewMode::Grid,
-                    tokens,
-                )
-                .clicked()
-                {
-                    state.library_view = crate::view_models::ViewMode::Grid;
-                }
-                ui.add_space(spacing::PAD_8);
-                let sort_btn = ui.add(
-                    egui::Button::new(
-                        RichText::new(format!("Sort: {}", sort_label(state.library_sort)))
-                            .size(12.5)
-                            .color(tokens.text_secondary),
-                    )
-                    .fill(tokens.field_fill)
-                    .stroke(Stroke::new(1.0, tokens.divider))
-                    .min_size(Vec2::new(136.0, 30.0))
-                    .corner_radius(CornerRadius::ZERO),
-                );
-                if sort_btn.clicked() {
-                    state.library_sort = match state.library_sort {
-                        crate::view_models::SortOption::DateAddedDesc => crate::view_models::SortOption::TitleAsc,
-                        crate::view_models::SortOption::TitleAsc => crate::view_models::SortOption::TitleDesc,
-                        crate::view_models::SortOption::TitleDesc => crate::view_models::SortOption::YearDesc,
-                        crate::view_models::SortOption::YearDesc => crate::view_models::SortOption::DateAddedDesc,
-                        _ => crate::view_models::SortOption::DateAddedDesc,
-                    };
+
+    let accent_container = Color32::from_rgb(0xF8, 0xAC, 0x64);
+    let on_accent_container = Color32::from_rgb(0x2A, 0x17, 0x04);
+    let playlist_count = state
+        .playlists
+        .iter()
+        .filter(|c| c.collection_type == "playlist")
+        .count();
+
+    let render_left_controls = |ui: &mut Ui, state: &mut ShellState| {
+        // 1. Category segmented pill: Movies | Series | Playlists | Videos
+        egui::Frame::new()
+            .fill(tokens.field_fill)
+            .stroke(Stroke::new(1.0, tokens.divider))
+            .corner_radius(CornerRadius::same(10))
+            .inner_margin(egui::Margin::same(3))
+            .show(ui, |ui| {
+                ui.spacing_mut().item_spacing.x = 2.0;
+                for (tab, label, count) in [
+                    (LibraryTab::Movies, "Movies", movies.len()),
+                    (LibraryTab::Series, "Series", series.len()),
+                    (LibraryTab::Playlists, "Playlists", playlist_count),
+                    (LibraryTab::Videos, "Videos", other_videos.len()),
+                ] {
+                    let active = state.library_tab == tab;
+                    let text_col = if active { on_accent_container } else { tokens.text_secondary };
+                    let (r, resp) = ui.allocate_exact_size(Vec2::new(66.0, 26.0), Sense::click());
+                    let resp = resp.on_hover_text(format!("{label} ({count})"));
+                    if resp.hovered() {
+                        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+                    }
+                    if active {
+                        ui.painter().rect_filled(r, CornerRadius::same(8), accent_container);
+                    } else if resp.hovered() {
+                        ui.painter().rect_filled(r, CornerRadius::same(8), tokens.hover_fill);
+                    }
+                    ui.painter().text(
+                        r.center(),
+                        Align2::CENTER_CENTER,
+                        label,
+                        FontId::proportional(12.5),
+                        text_col,
+                    );
+                    if resp.clicked() {
+                        state.library_tab = tab;
+                        state.selected_series = None;
+                    }
                 }
             });
-        });
-    } else {
+    };
+
+    let titlebar_has_tabs: bool = ui
+        .ctx()
+        .data(|d| d.get_temp(egui::Id::new("valor_titlebar_has_lib_tabs")))
+        .unwrap_or(false);
+    if !titlebar_has_tabs {
         ui.horizontal_wrapped(|ui| {
             ui.spacing_mut().item_spacing = Vec2::new(8.0, 6.0);
-            render_filter_pills(ui, state, tokens);
+            render_left_controls(ui, state);
         });
-        ui.add_space(6.0);
-        ui.horizontal_wrapped(|ui| {
-            ui.spacing_mut().item_spacing = Vec2::new(8.0, 6.0);
-            let sort_btn = ui.add(
-                egui::Button::new(
-                    RichText::new(format!("Sort: {}", sort_label(state.library_sort)))
-                        .size(12.5)
-                        .color(tokens.text_secondary),
-                )
-                .fill(tokens.field_fill)
-                .stroke(Stroke::new(1.0, tokens.divider))
-                .min_size(Vec2::new(136.0, 30.0))
-                .corner_radius(CornerRadius::ZERO),
-            );
-            if sort_btn.clicked() {
-                state.library_sort = match state.library_sort {
-                    crate::view_models::SortOption::DateAddedDesc => crate::view_models::SortOption::TitleAsc,
-                    crate::view_models::SortOption::TitleAsc => crate::view_models::SortOption::TitleDesc,
-                    crate::view_models::SortOption::TitleDesc => crate::view_models::SortOption::YearDesc,
-                    crate::view_models::SortOption::YearDesc => crate::view_models::SortOption::DateAddedDesc,
-                    _ => crate::view_models::SortOption::DateAddedDesc,
-                };
-            }
-            if padded_choice(
-                ui,
-                "Grid",
-                state.library_view == crate::view_models::ViewMode::Grid,
-                tokens,
-            )
-            .clicked()
-            {
-                state.library_view = crate::view_models::ViewMode::Grid;
-            }
-            if padded_choice(
-                ui,
-                "List",
-                state.library_view == crate::view_models::ViewMode::List,
-                tokens,
-            )
-            .clicked()
-            {
-                state.library_view = crate::view_models::ViewMode::List;
-            }
-        });
+        ui.add_space(spacing::PAD_8);
+        ui.separator();
     }
-    ui.add_space(spacing::PAD_8);
-    ui.separator();
     if let Some(series_key) = state.selected_series.clone() {
         if let Some(item) = series.iter().find(|s| s.series_key == series_key) {
             if ui.button("←  All series").clicked() {
@@ -1913,74 +2454,6 @@ pub fn render_library(
     action
 }
 
-pub(crate) fn render_media_info_modal(
-    ctx: &egui::Context,
-    state: &mut ShellState,
-    items: &[MediaItem],
-) {
-    let Some(fingerprint) = state.selected_media_info.clone() else {
-        return;
-    };
-    let found = items
-        .iter()
-        .find(|item| item.fingerprint == fingerprint || item.file_path == fingerprint);
-    let mut open = true;
-    egui::Window::new("Media information")
-        .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
-        .open(&mut open)
-        .collapsible(false)
-        .resizable(false)
-        .show(ctx, |ui| {
-            ui.set_min_width(360.0);
-            if let Some(item) = found {
-                ui.heading(&item.title);
-                ui.add_space(8.0);
-                ui.label(format!("File: {}", item.file_path));
-                ui.label(format!("Size: {}", format_bytes(item.size_bytes)));
-                ui.label(if item.duration > 0.0 {
-                    format!(
-                        "Duration: {}",
-                        format_time(item.duration).unwrap_or_default()
-                    )
-                } else {
-                    "Duration: not analyzed".to_owned()
-                });
-                ui.label(match (item.width, item.height) {
-                    (Some(w), Some(h)) => format!("Resolution: {w} × {h}"),
-                    _ => "Resolution: not analyzed".to_owned(),
-                });
-                ui.label(format!(
-                    "Video codec: {}",
-                    item.video_codec.as_deref().unwrap_or("unknown")
-                ));
-                ui.label(format!(
-                    "Audio codec: {}",
-                    item.audio_codec.as_deref().unwrap_or("unknown")
-                ));
-                if item.is_hdr {
-                    ui.label("Dynamic range: HDR");
-                }
-                if let (Some(season), Some(episode)) = (item.season_number, item.episode_number) {
-                    ui.label(format!("Season {season}, episode {episode}"));
-                }
-            } else {
-                ui.heading("File information");
-                ui.add_space(8.0);
-                ui.label(format!("Identifier: {fingerprint}"));
-                if let Ok(meta) = std::fs::metadata(&fingerprint) {
-                    ui.label(format!("Size: {}", format_bytes(meta.len())));
-                }
-            }
-            ui.add_space(12.0);
-            if ui.button("Close").clicked() {
-                state.selected_media_info = None;
-            }
-        });
-    if !open {
-        state.selected_media_info = None;
-    }
-}
-
 fn format_bytes(bytes: u64) -> String {
     const UNITS: [&str; 4] = ["B", "KB", "MB", "GB"];
     let mut value = bytes as f64;
@@ -1992,30 +2465,24 @@ fn format_bytes(bytes: u64) -> String {
     format!("{value:.1} {}", UNITS[unit])
 }
 
-fn get_codec_badges(item: Option<&MediaItem>) -> (Option<&'static str>, bool, Option<String>) {
-    if let Some(item) = item {
-        let res = if let Some(h) = item.height {
-            if h >= 2100 {
-                Some("4K")
-            } else if h >= 1000 {
-                Some("1080p")
-            } else if h >= 700 {
-                Some("720p")
-            } else {
-                None
-            }
-        } else {
-            None
-        };
-        let hdr = item.is_hdr;
-        let ext = std::path::Path::new(&item.file_path)
-            .extension()
-            .and_then(|e| e.to_str())
-            .map(|e| e.to_uppercase());
-        (res, hdr, ext)
+pub fn compute_history_summary(sessions: &[WatchSession]) -> (String, usize) {
+    let display_sessions = if sessions.is_empty() {
+        sample_history_sessions()
     } else {
-        (None, false, None)
-    }
+        sessions.to_vec()
+    };
+    let total_watch_secs: f64 = display_sessions
+        .iter()
+        .map(|s| (s.end_pos_secs - s.start_pos_secs).abs())
+        .sum();
+    let total_hours = (total_watch_secs / 3600.0).floor() as u64;
+    let total_mins = ((total_watch_secs % 3600.0) / 60.0).floor() as u64;
+    let watch_time_str = if total_hours > 0 {
+        format!("{}h {}m", total_hours, total_mins)
+    } else {
+        format!("{}m", total_mins.max(1))
+    };
+    (watch_time_str, display_sessions.len())
 }
 
 pub fn render_history(
@@ -2037,38 +2504,21 @@ pub fn render_history(
     let ui = &mut page;
     let mut action = ShellAction::None;
 
-    // Cloudflare Developer Docs palette (with OLED Super Black support)
-    let is_oled = tokens.window_bg == Color32::BLACK;
-    let cf_bg = if is_oled { Color32::BLACK } else { Color32::from_rgb(18, 18, 20) };
-    let cf_surface = if is_oled { Color32::from_rgb(6, 6, 8) } else { Color32::from_rgb(22, 22, 25) };
-    let cf_surface_alt = if is_oled { Color32::from_rgb(14, 14, 17) } else { Color32::from_rgb(28, 28, 32) };
-    let cf_border = Color32::from_rgb(44, 44, 50);       // #2C2C32
-    let cf_border_subtle = Color32::from_rgb(34, 34, 39);// #222227
-    let cf_tick = Color32::from_rgb(68, 68, 76);         // #44444C
-    let cf_orange = Color32::from_rgb(246, 130, 31);     // #F6821F
-    let cf_orange_soft = Color32::from_rgb(255, 152, 67);// #FF9843
-    let cf_text_primary = Color32::from_rgb(244, 244, 245); // #F4F4F5
-    let cf_text_muted = Color32::from_rgb(161, 161, 170);   // #A1A1AA
-    let cf_text_dim = Color32::from_rgb(113, 113, 122);     // #71717A
-    let cf_green = Color32::from_rgb(34, 197, 94);       // #22C55E
+    // Theme-aware CnX / active shell tokens
+    let cf_bg = tokens.content_surface;
+    let cf_surface = tokens.window_bg;
+    let cf_surface_alt = tokens.field_fill;
+    let cf_border = tokens.divider;
+    let cf_border_subtle = tokens.divider;
+    let cf_tick = tokens.text_tertiary;
+    let cf_orange = tokens.accent;
+    let cf_orange_soft = tokens.accent;
+    let cf_text_primary = tokens.text_primary;
+    let cf_text_muted = tokens.text_secondary;
+    let cf_text_dim = tokens.text_tertiary;
+    let cf_green = tokens.success;
 
     ui.painter().rect_filled(page_rect, CornerRadius::ZERO, cf_bg);
-
-    // Subtle Cloudflare-style vertical dotted strip on the right margin
-    let dot_strip_x = page_rect.right() - 140.0;
-    if page_rect.width() > 900.0 {
-        let mut dy = page_rect.top() + 8.0;
-        while dy < page_rect.bottom() - 8.0 {
-            for col in 0..4 {
-                ui.painter().circle_filled(
-                    Pos2::new(dot_strip_x + col as f32 * 10.0, dy),
-                    1.0,
-                    Color32::from_white_alpha(16),
-                );
-            }
-            dy += 10.0;
-        }
-    }
 
     let mouse_on_window = ui.ctx().input(|i| i.pointer.latest_pos().is_some());
     ui.style_mut().spacing.scroll = egui::style::ScrollStyle::floating();
@@ -2100,85 +2550,8 @@ pub fn render_history(
                 .data(|d| d.get_temp(picker_month_id))
                 .unwrap_or((chrono::Datelike::year(&today_local), chrono::Datelike::month(&today_local)));
 
-            let mut date_btn_rect = Rect::NOTHING;
-            let hero_start_y = ui.cursor().min.y;
-            ui.horizontal(|ui| {
-                ui.add_space(14.0);
-                ui.vertical(|ui| {
-                    ui.heading(
-                        RichText::new("Watch History")
-                            .size(28.0)
-                            .strong()
-                            .color(cf_text_primary),
-                    );
-                    ui.add_space(4.0);
-                    ui.label(
-                        RichText::new("Explore playback sessions, resume interrupted media, and inspect daily viewing activity.")
-                            .size(13.0)
-                            .color(cf_text_muted),
-                    );
-                });
-            });
-            let hero_end_y = ui.cursor().min.y;
-            ui.painter().line_segment(
-                [
-                    Pos2::new(ui.min_rect().left() + 2.0, hero_start_y + 2.0),
-                    Pos2::new(ui.min_rect().left() + 2.0, hero_end_y - 2.0),
-                ],
-                Stroke::new(2.0, cf_border),
-            );
-
-            ui.add_space(14.0);
-            ui.horizontal(|ui| {
-                let date_label = if let Some(d) = state.history_selected_day {
-                    format!("{} ✕", d.format("%d %b %Y"))
-                } else {
-                    "Pick date".to_string()
-                };
-                let date_btn = egui::Button::new(
-                    RichText::new(date_label)
-                        .size(12.5)
-                        .strong()
-                        .color(Color32::from_rgb(18, 18, 20)),
-                )
-                .fill(cf_orange)
-                .stroke(Stroke::NONE)
-                .corner_radius(CornerRadius::ZERO)
-                .min_size(Vec2::new(104.0, 32.0));
-                let date_resp = ui.add(date_btn);
-                date_btn_rect = date_resp.rect;
-                if date_resp.hovered() {
-                    ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
-                }
-                if date_resp.clicked() {
-                    if state.history_selected_day.is_some() && !picker_open {
-                        state.history_selected_day = None;
-                    } else {
-                        picker_open = !picker_open;
-                    }
-                }
-
-                ui.add_space(6.0);
-                let clear_btn = egui::Button::new(
-                    RichText::new("Clear history")
-                        .size(12.0)
-                        .color(cf_text_primary),
-                )
-                .fill(cf_surface_alt)
-                .stroke(Stroke::new(1.0, cf_border))
-                .corner_radius(CornerRadius::ZERO)
-                .min_size(Vec2::new(102.0, 32.0));
-                if ui.add(clear_btn).clicked() {
-                    state.confirm_clear_history = true;
-                }
-
-                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    ui.add_sized(
-                        [240.0, 32.0],
-                        egui::TextEdit::singleline(&mut state.history_search).hint_text("Search title..."),
-                    );
-                });
-            });
+            let date_btn_rect_id = ui.scope_id().with("gh_date_btn_rect");
+            let mut date_btn_rect: Rect = ui.data(|d| d.get_temp(date_btn_rect_id)).unwrap_or(Rect::NOTHING);
 
             // Sexy Floating Date Picker Calendar Popover
             if picker_open {
@@ -2352,88 +2725,31 @@ pub fn render_history(
                             .contains(&state.history_search.to_lowercase())
                 })
                 .collect();
-            let using_sample_history = sessions.is_empty();
-            let display_sessions = if using_sample_history {
-                sample_history_sessions()
-            } else {
-                sessions.to_vec()
-            };
+            let display_sessions = sessions.to_vec();
 
-            // 2. Architectural Stats Ribbon (2 large stat boxes + 8x8 corner ticks)
-            ui.add_space(spacing::PAD_16);
-            let ribbon_h = 84.0;
-            let ribbon_w = ui.available_width().max(320.0);
-            let (ribbon_rect, _) = ui.allocate_exact_size(Vec2::new(ribbon_w, ribbon_h), Sense::hover());
-
-            ui.painter().rect(
-                ribbon_rect,
-                CornerRadius::same(2),
-                cf_surface,
-                Stroke::new(1.0, cf_border),
-                StrokeKind::Inside,
-            );
-            // 4 large corner boxes (Cloudflare Docs card signature)
-            for corner in [
-                ribbon_rect.left_top(),
-                ribbon_rect.right_top() - Vec2::new(8.0, 0.0),
-                ribbon_rect.left_bottom() - Vec2::new(0.0, 8.0),
-                ribbon_rect.right_bottom() - Vec2::new(8.0, 8.0),
-            ] {
-                ui.painter().rect_stroke(
-                    Rect::from_min_size(corner, Vec2::new(8.0, 8.0)),
-                    CornerRadius::ZERO,
-                    Stroke::new(1.0, cf_tick),
-                    StrokeKind::Inside,
-                );
-            }
-
-            // Compute metrics
-            let total_watch_secs: f64 = display_sessions.iter().map(|s| (s.end_pos_secs - s.start_pos_secs).abs()).sum();
-            let total_hours = (total_watch_secs / 3600.0).floor() as u64;
-            let total_mins = ((total_watch_secs % 3600.0) / 60.0).floor() as u64;
-            let watch_time_str = if total_hours > 0 {
-                format!("{}h {}m", total_hours, total_mins)
-            } else {
-                format!("{}m", total_mins.max(1))
-            };
-
-            let col_w = ribbon_w / 2.0;
-            let metrics = [
-                ("IMMERSION TIME", watch_time_str, cf_orange),
-                ("TITLES LOGGED", display_sessions.len().to_string(), cf_text_primary),
-            ];
-
-            for (idx, (label, val, col)) in metrics.iter().enumerate() {
-                let col_left = ribbon_rect.left() + idx as f32 * col_w;
-                let col_center = col_left + col_w * 0.5;
-
-                if idx > 0 {
-                    ui.painter().line_segment(
-                        [Pos2::new(col_left, ribbon_rect.top() + 14.0), Pos2::new(col_left, ribbon_rect.bottom() - 14.0)],
-                        Stroke::new(1.0, cf_border_subtle),
-                    );
-                }
-
-                ui.painter().text(
-                    Pos2::new(col_center, ribbon_rect.top() + 24.0),
-                    Align2::CENTER_CENTER,
-                    *label,
-                    FontId::proportional(11.0),
-                    cf_text_dim,
-                );
-                ui.painter().text(
-                    Pos2::new(col_center, ribbon_rect.top() + 54.0),
-                    Align2::CENTER_CENTER,
-                    val,
-                    FontId::proportional(22.0),
-                    *col,
-                );
-            }
             let _ = &filtered;
             let _ = cf_orange_soft;
+            let _ = (cf_surface, cf_border, cf_tick, cf_border_subtle, cf_text_dim);
 
-            // 3. Cloudflare-Styled Activity Heatmap Card
-            ui.add_space(spacing::PAD_24);
+            // 2. Activity Heatmap Card + Year Selector above the graph
+            ui.add_space(spacing::PAD_4);
+
+            let current_year = chrono::Datelike::year(&chrono::Local::now().date_naive());
+            let year_state_id = ui.scope_id().with("gh_selected_year");
+            let limit_state_id = ui.scope_id().with("gh_visible_groups");
+            let mut selected_year: Option<i32> = ui.data(|d| d.get_temp(year_state_id)).unwrap_or(Some(current_year));
+            let mut visible_groups: usize = ui.data(|d| d.get_temp(limit_state_id)).unwrap_or(6);
+
+            // Collect available years from sessions (plus current year down to current_year - 3)
+            let mut years: Vec<i32> = display_sessions
+                .iter()
+                .map(|s| chrono::Datelike::year(&s.start_time.with_timezone(&chrono::Local).date_naive()))
+                .collect();
+            for offset in 0..4 {
+                years.push(current_year - offset);
+            }
+            years.sort_unstable_by(|a, b| b.cmp(a));
+            years.dedup();
 
             // Compute real daily aggregates from sessions
             let mut day_counts: HashMap<chrono::NaiveDate, (usize, f64)> = HashMap::new();
@@ -2452,41 +2768,71 @@ pub fn render_history(
             let today = chrono::Local::now().date_naive();
             let heatmap_layout = crate::view_models::calculate_heatmap_layout(&aggregates, today);
 
-            // Header sits OUTSIDE and ABOVE the bordered card
+            // Header + Year Selector pills ABOVE the bordered card
             let count_label = if heatmap_layout.total_sessions_365 == 1 {
                 "1 session in the last year".to_string()
             } else {
                 format!("{} sessions in the last year", heatmap_layout.total_sessions_365)
             };
-            ui.label(
-                RichText::new(count_label)
-                    .size(16.0)
-                    .strong()
-                    .color(cf_text_primary),
-            );
+            ui.horizontal(|ui| {
+                ui.label(
+                    RichText::new(count_label)
+                        .size(15.0)
+                        .strong()
+                        .color(cf_text_primary),
+                );
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    ui.spacing_mut().item_spacing.x = 4.0;
+                    for &yr in years.iter().rev() {
+                        let is_active = selected_year == Some(yr);
+                        let (yr_rect, yr_resp) = ui.allocate_exact_size(Vec2::new(52.0, 24.0), Sense::click());
+                        if yr_resp.hovered() {
+                            ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+                        }
+                        let bg = if is_active {
+                            cf_orange
+                        } else if yr_resp.hovered() {
+                            cf_surface_alt
+                        } else {
+                            Color32::TRANSPARENT
+                        };
+                        ui.painter().rect_filled(yr_rect, CornerRadius::same(8), bg);
+                        ui.painter().text(
+                            yr_rect.center(),
+                            Align2::CENTER_CENTER,
+                            yr.to_string(),
+                            FontId::proportional(12.0),
+                            if is_active { Color32::from_rgb(18, 18, 20) } else { cf_text_muted },
+                        );
+                        if yr_resp.clicked() {
+                            selected_year = if is_active { None } else { Some(yr) };
+                            state.history_selected_day = None;
+                        }
+                    }
+                });
+            });
             ui.add_space(8.0);
 
-            // Cloudflare Docs Dark + Orange heatmap palette
-            let gh_card_bg = cf_surface;
-            let gh_card_border = cf_border;
-            let gh_text_muted = cf_text_muted;
-            let gh_text_label = cf_text_primary;
-            let gh_level_0 = Color32::from_rgb(30, 30, 35);
-            let gh_level_0_border = Color32::from_rgba_unmultiplied(255, 255, 255, 14);
-            let gh_level_1 = Color32::from_rgb(92, 43, 12);
-            let gh_level_2 = Color32::from_rgb(154, 67, 13);
-            let gh_level_3 = Color32::from_rgb(217, 91, 22);
-            let gh_level_4 = cf_orange;
+            // Theme-derived heatmap palette
+            let gh_card_bg = tokens.window_bg;
+            let gh_card_border = tokens.divider;
+            let gh_text_muted = tokens.text_secondary;
+            let gh_text_label = tokens.text_primary;
+            let gh_level_0 = tokens.field_fill;
+            let gh_level_0_border = tokens.divider;
+            let gh_level_1 = tokens.accent.gamma_multiply(0.32);
+            let gh_level_2 = tokens.accent.gamma_multiply(0.55);
+            let gh_level_3 = tokens.accent.gamma_multiply(0.78);
+            let gh_level_4 = tokens.accent;
 
             let total_weeks = heatmap_layout.total_weeks.max(53);
-            let label_w = 34.0;
-            let right_rail_w = if ui.available_width() > 640.0 { 156.0 } else { 0.0 };
-            let card_target_w = (ui.available_width() - right_rail_w).max(400.0);
-            let avail_for_grid = (card_target_w - 36.0 - label_w).max(360.0);
-            // Uniform column spacing (no month gaps), responsive square size matching GitHub proportions
+            let label_w = 26.0;
+            let card_target_w = ui.available_width().min(620.0);
+            let avail_for_grid = (card_target_w - 28.0 - label_w).max(150.0);
+            // Compact square proportions that always fit inside available width without horizontal scroll
             let step_x = avail_for_grid / total_weeks as f32;
-            let col_spacing = (step_x * 0.22).clamp(2.5, 4.0);
-            let sq_size = (step_x - col_spacing).clamp(8.5, 15.0);
+            let col_spacing = (step_x * 0.18).clamp(1.0, 2.5);
+            let sq_size = (step_x - col_spacing).clamp(2.2, 9.5);
             let actual_step_x = sq_size + col_spacing;
             let grid_total_w = label_w + total_weeks as f32 * actual_step_x;
 
@@ -2495,8 +2841,8 @@ pub fn render_history(
             Frame::new()
                 .fill(gh_card_bg)
                 .stroke(Stroke::new(1.0, gh_card_border))
-                .corner_radius(CornerRadius::same(6))
-                .inner_margin(egui::Margin::symmetric(18, 16))
+                .corner_radius(CornerRadius::same(10))
+                .inner_margin(egui::Margin::symmetric(12, 10))
                 .show(ui, |ui| {
                     ui.set_width(grid_total_w);
 
@@ -2713,26 +3059,8 @@ pub fn render_history(
                 .cloned()
                 .collect();
 
-            // 5. GitHub-Style Watch Activity Timeline + Right Year Selector
-            ui.add_space(spacing::PAD_24);
-
-            // Persisted UI state for selected year & visible activity groups
-            let current_year = chrono::Datelike::year(&today);
-            let year_state_id = ui.scope_id().with("gh_selected_year");
-            let limit_state_id = ui.scope_id().with("gh_visible_groups");
-            let mut selected_year: Option<i32> = ui.data(|d| d.get_temp(year_state_id)).unwrap_or(Some(current_year));
-            let mut visible_groups: usize = ui.data(|d| d.get_temp(limit_state_id)).unwrap_or(6);
-
-            // Collect available years from sessions (plus current year down to current_year - 3)
-            let mut years: Vec<i32> = display_sessions
-                .iter()
-                .map(|s| chrono::Datelike::year(&s.start_time.with_timezone(&chrono::Local).date_naive()))
-                .collect();
-            for offset in 0..4 {
-                years.push(current_year - offset);
-            }
-            years.sort_unstable_by(|a, b| b.cmp(a));
-            years.dedup();
+            // 5. Watch Activity Timeline (full width)
+            ui.add_space(spacing::PAD_16);
 
             // Apply year filter if selected (and no specific day is clicked)
             let year_filtered_sessions: Vec<_> = filtered_sessions
@@ -2755,26 +3083,23 @@ pub fn render_history(
             let gh_track = cf_surface_alt;
             let gh_node_bg = cf_surface_alt;
 
-            let total_avail_w = ui.available_width().max(320.0);
-            let show_year_rail = total_avail_w > 640.0;
-            let rail_w = if show_year_rail { 136.0 } else { 0.0 };
-            let rail_gap = if show_year_rail { 20.0 } else { 0.0 };
-            let left_col_w = (total_avail_w - rail_w - rail_gap).max(300.0);
+            let left_col_w = ui.available_width().max(320.0);
 
             ui.horizontal_top(|ui| {
                 // LEFT COLUMN: Watch activity timeline
                 ui.allocate_ui_with_layout(Vec2::new(left_col_w, 0.0), Layout::top_down(Align::Min), |ui| {
                     ui.set_width(left_col_w);
 
-                    // Activity Header + Filter Pills
-                    ui.horizontal(|ui| {
+                    // Activity Header + Pick date / Clear history / Search / Filter Pills
+                    ui.horizontal_wrapped(|ui| {
+                        ui.spacing_mut().item_spacing = Vec2::new(6.0, 6.0);
                         ui.label(
                             RichText::new("Watch activity")
-                                .size(16.0)
-                                .color(Color32::from_rgb(240, 246, 252)),
+                                .size(15.0)
+                                .strong()
+                                .color(cf_text_primary),
                         );
                         if let Some(selected_day) = state.history_selected_day {
-                            ui.add_space(8.0);
                             let pill_text = format!("Day: {} ✕", selected_day.format("%d %b %Y"));
                             let pill_btn = egui::Button::new(
                                 RichText::new(pill_text).size(11.5).color(gh_link),
@@ -2786,6 +3111,55 @@ pub fn render_history(
                                 state.history_selected_day = None;
                             }
                         }
+
+                        // Pick date + Clear history + Search title
+                        let date_label = if let Some(d) = state.history_selected_day {
+                            format!("{} ✕", d.format("%d %b %Y"))
+                        } else {
+                            "Pick date".to_string()
+                        };
+                        let date_btn = egui::Button::new(
+                            RichText::new(date_label)
+                                .size(11.5)
+                                .strong()
+                                .color(Color32::from_rgb(18, 18, 20)),
+                        )
+                        .fill(cf_orange)
+                        .stroke(Stroke::NONE)
+                        .corner_radius(CornerRadius::same(8))
+                        .min_size(Vec2::new(82.0, 26.0));
+                        let date_resp = ui.add(date_btn);
+                        date_btn_rect = date_resp.rect;
+                        ui.data_mut(|d| d.insert_temp(date_btn_rect_id, date_btn_rect));
+                        if date_resp.hovered() {
+                            ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+                        }
+                        if date_resp.clicked() {
+                            if state.history_selected_day.is_some() && !picker_open {
+                                state.history_selected_day = None;
+                            } else {
+                                picker_open = !picker_open;
+                                ui.data_mut(|d| d.insert_temp(picker_open_id, picker_open));
+                            }
+                        }
+
+                        let clear_btn = egui::Button::new(
+                            RichText::new("Clear history")
+                                .size(11.5)
+                                .color(cf_text_primary),
+                        )
+                        .fill(cf_surface_alt)
+                        .stroke(Stroke::new(1.0, cf_border))
+                        .corner_radius(CornerRadius::same(8))
+                        .min_size(Vec2::new(88.0, 26.0));
+                        if ui.add(clear_btn).clicked() {
+                            state.confirm_clear_history = true;
+                        }
+
+                        ui.add_sized(
+                            [160.0, 26.0],
+                            egui::TextEdit::singleline(&mut state.history_search).hint_text("Search title..."),
+                        );
 
                         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                             for (filter, label) in [
@@ -3131,44 +3505,6 @@ pub fn render_history(
                     }
                 });
 
-                // RIGHT COLUMN: GitHub Year Selector Rail (2026, 2025, 2024, 2023)
-                if show_year_rail {
-                    ui.add_space(rail_gap);
-                    ui.allocate_ui_with_layout(Vec2::new(rail_w, 0.0), Layout::top_down(Align::Min), |ui| {
-                        ui.set_width(rail_w);
-                        for yr in years {
-                            let is_active = selected_year == Some(yr);
-                            let (yr_rect, yr_resp) = ui.allocate_exact_size(Vec2::new(rail_w, 32.0), Sense::click());
-                            if yr_resp.hovered() {
-                                ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
-                            }
-                            let bg = if is_active {
-                                gh_blue
-                            } else if yr_resp.hovered() {
-                                cf_surface_alt
-                            } else {
-                                Color32::TRANSPARENT
-                            };
-                            ui.painter().rect_filled(yr_rect, CornerRadius::same(16), bg);
-                            ui.painter().text(
-                                Pos2::new(yr_rect.left() + 14.0, yr_rect.center().y),
-                                Align2::LEFT_CENTER,
-                                yr.to_string(),
-                                FontId::proportional(12.5),
-                                if is_active { Color32::from_rgb(18, 18, 20) } else { gh_text_muted },
-                            );
-                            if yr_resp.clicked() {
-                                if is_active {
-                                    selected_year = None;
-                                } else {
-                                    selected_year = Some(yr);
-                                }
-                                state.history_selected_day = None;
-                            }
-                            ui.add_space(4.0);
-                        }
-                    });
-                }
             });
 
             ui.data_mut(|d| {

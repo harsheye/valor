@@ -12,15 +12,28 @@ use std::{
     ffi::{c_void, CString},
     path::PathBuf,
     ptr::NonNull,
-    sync::{Arc, OnceLock},
+    sync::{Arc, Condvar, Mutex as StdMutex, OnceLock},
     time::Instant,
 };
+
+#[derive(Clone, Copy)]
+enum PendingSeekTarget {
+    Absolute { seconds: f64, exact: bool },
+    Relative { seconds: f64 },
+}
+
+#[derive(Default)]
+struct SeekCoalesceSlot {
+    pending: Option<(u64, PendingSeekTarget)>,
+    shutdown: bool,
+}
 
 /// Owns every libmpv call on the app's UI/render thread.
 pub struct PlayerService {
     core: Arc<Mutex<PlayerCore>>,
     events: Receiver<PlayerEvent>,
     snapshot: SharedSnapshot,
+    seek_slot: Arc<(StdMutex<SeekCoalesceSlot>, Condvar)>,
 }
 
 /// Cloneable bridge used only by the egui Glow paint callback.
@@ -41,6 +54,7 @@ struct PlayerCore {
     last_snapshot: Instant,
     last_tracks: Instant,
     last_picture: (i32, i32, i32, i32, i32, i32, bool, i32),
+    dovi_filter_applied: bool,
 }
 
 // The only cross-thread visibility is through the Glow callback wrapper. egui_glow
@@ -77,8 +91,8 @@ impl PlayerService {
             let _ = init.set_option("hdr-contrast-recovery", 0.3_f64);
             let _ = init.set_option("hdr-peak-percentile", 99.995_f64);
             let _ = init.set_option("hdr-reference-white", 203.0_f64);
-            let _ = init.set_option("target-colorspace-hint", "yes");
-            let _ = init.set_option("target-prim", "auto");
+            let _ = init.set_option("target-colorspace-hint", "no");
+            let _ = init.set_option("target-prim", "bt.709");
             if let Ok(local_app) = std::env::var("LOCALAPPDATA") {
                 let cache_root = std::path::PathBuf::from(local_app).join("valor").join("Valor").join("cache");
                 let shader_dir = cache_root.join("mpv-shaders");
@@ -95,6 +109,10 @@ impl PlayerService {
             let _ = init.set_option("sub-visibility", "yes");
             let _ = init.set_option("embeddedfonts", "yes");
             let _ = init.set_option("sub-font-provider", "auto");
+            let _ = init.set_option("sub-ass-force-margins", "yes");
+            let _ = init.set_option("sub-use-margins", "no");
+            let _ = init.set_option("video-sync", "audio");
+            let _ = init.set_option("cache", "yes");
             Ok(())
         });
         let mpv = match mpv {
@@ -122,16 +140,114 @@ impl PlayerService {
             last_snapshot: Instant::now(),
             last_tracks: Instant::now(),
             last_picture: (0, 0, 0, 0, 0, 0, true, 0),
+            dovi_filter_applied: false,
         };
+        let core = Arc::new(Mutex::new(core));
+        let seek_slot = Arc::new((StdMutex::new(SeekCoalesceSlot::default()), Condvar::new()));
+        let worker_core = Arc::clone(&core);
+        let worker_slot = Arc::clone(&seek_slot);
+        let _ = std::thread::Builder::new()
+            .name("valor-seek-coalescer".into())
+            .spawn(move || {
+                loop {
+                    let next = {
+                        let (lock, cv) = &*worker_slot;
+                        let mut guard = match lock.lock() {
+                            Ok(g) => g,
+                            Err(_) => break,
+                        };
+                        while guard.pending.is_none() && !guard.shutdown {
+                            guard = match cv.wait(guard) {
+                                Ok(g) => g,
+                                Err(_) => return,
+                            };
+                        }
+                        if guard.shutdown {
+                            break;
+                        }
+                        guard.pending.take()
+                    };
+                    if let Some((token, target)) = next {
+                        let cmd = match target {
+                            PendingSeekTarget::Absolute { seconds, exact } => {
+                                PlayerCommand::Seek { token, seconds, exact }
+                            }
+                            PendingSeekTarget::Relative { seconds } => {
+                                PlayerCommand::SeekRel { token, seconds }
+                            }
+                        };
+                        let _ = worker_core.lock().handle_command(cmd);
+                    }
+                }
+            });
         Self {
-            core: Arc::new(Mutex::new(core)),
+            core,
             events,
             snapshot,
+            seek_slot,
         }
     }
 
     pub fn send(&self, command: PlayerCommand) -> Result<(), String> {
-        self.core.lock().handle_command(command)
+        match command {
+            PlayerCommand::Seek { token, seconds, exact } => {
+                {
+                    let mut snap = self.snapshot.write();
+                    if snap.token == token {
+                        let dur = snap.duration_secs.max(0.0);
+                        let clamped = seconds.max(0.0);
+                        snap.position_secs = if dur > 0.0 { clamped.min(dur) } else { clamped };
+                    } else {
+                        return Ok(());
+                    }
+                }
+                let (lock, cv) = &*self.seek_slot;
+                if let Ok(mut guard) = lock.lock() {
+                    guard.pending = Some((token, PendingSeekTarget::Absolute { seconds, exact }));
+                    cv.notify_one();
+                }
+                Ok(())
+            }
+            PlayerCommand::SeekRel { token, seconds } => {
+                {
+                    let mut snap = self.snapshot.write();
+                    if snap.token == token {
+                        let dur = snap.duration_secs.max(0.0);
+                        let target = (snap.position_secs + seconds).max(0.0);
+                        snap.position_secs = if dur > 0.0 { target.min(dur) } else { target };
+                    } else {
+                        return Ok(());
+                    }
+                }
+                let (lock, cv) = &*self.seek_slot;
+                if let Ok(mut guard) = lock.lock() {
+                    let merged = match guard.pending {
+                        Some((t, PendingSeekTarget::Relative { seconds: prev })) if t == token => {
+                            PendingSeekTarget::Relative { seconds: prev + seconds }
+                        }
+                        Some((t, PendingSeekTarget::Absolute { seconds: prev, exact })) if t == token => {
+                            PendingSeekTarget::Absolute { seconds: (prev + seconds).max(0.0), exact }
+                        }
+                        _ => PendingSeekTarget::Relative { seconds },
+                    };
+                    guard.pending = Some((token, merged));
+                    cv.notify_one();
+                }
+                Ok(())
+            }
+            PlayerCommand::Open { .. } | PlayerCommand::Stop { .. } | PlayerCommand::Shutdown => {
+                let (lock, cv) = &*self.seek_slot;
+                if let Ok(mut guard) = lock.lock() {
+                    guard.pending = None;
+                    if matches!(command, PlayerCommand::Shutdown) {
+                        guard.shutdown = true;
+                        cv.notify_all();
+                    }
+                }
+                self.core.lock().handle_command(command)
+            }
+            other => self.core.lock().handle_command(other),
+        }
     }
 
     /// Advances libmpv's nonblocking event queue and refreshes the UI snapshot.
@@ -177,6 +293,12 @@ impl PlayerService {
 
 impl Drop for PlayerService {
     fn drop(&mut self) {
+        let (lock, cv) = &*self.seek_slot;
+        if let Ok(mut guard) = lock.lock() {
+            guard.pending = None;
+            guard.shutdown = true;
+            cv.notify_all();
+        }
         self.core.lock().shutdown();
     }
 }
@@ -348,7 +470,7 @@ impl PlayerCore {
                         "seek",
                         &[
                             &seconds.to_string(),
-                            if exact { "absolute+exact" } else { "absolute" },
+                            if exact { "absolute+exact" } else { "absolute+keyframes" },
                         ],
                     )
                     .map_err(|e| e.to_string())?;
@@ -361,7 +483,7 @@ impl PlayerCore {
                     snap.position_secs = if dur > 0.0 { target.min(dur) } else { target };
                 }
                 self.mpv()?
-                    .command("seek", &[&seconds.to_string(), "relative+exact"])
+                    .command("seek", &[&seconds.to_string(), "relative+keyframes"])
                     .map_err(|e| e.to_string())?;
             }
             PlayerCommand::FrameStep { token } if token == active_token => self
@@ -524,6 +646,152 @@ impl PlayerCore {
                 let _ = self.mpv()?.set_property("panscan", panscan);
                 self.snapshot.write().zoom_to_fill = enabled;
             }
+            PlayerCommand::SetAudioDelay { token, secs } if token == active_token => {
+                let _ = self.mpv()?.set_property("audio-delay", secs.clamp(-10.0, 10.0));
+            }
+            PlayerCommand::SetSubDelay { token, secs } if token == active_token => {
+                let _ = self.mpv()?.set_property("sub-delay", secs.clamp(-30.0, 30.0));
+            }
+            PlayerCommand::SetAudioBoostPreset { token, preset } if token == active_token => {
+                if let Ok(mpv) = self.mpv() {
+                    let _ = mpv.command("af", &["remove", "@boost"]);
+                    let chain = match preset.as_str() {
+                        "light" => "@boost:lavfi=[dynaudnorm=f=100:g=11:b=1]",
+                        "standard" => "@boost:lavfi=[volume=12dB,dynaudnorm=f=100:g=11:b=1,volume=-12dB]",
+                        "dynamic" => "@boost:lavfi=[volume=12dB,acompressor,volume=-12dB]",
+                        "night" => "@boost:lavfi=[volume=12dB,loudnorm=I=-16:TP=-1.5:LRA=11,volume=-12dB]",
+                        _ => "",
+                    };
+                    if !chain.is_empty() {
+                        let _ = mpv.command("af", &["add", chain]);
+                    }
+                }
+            }
+            PlayerCommand::SetSubtitleAppearance {
+                token,
+                scale,
+                pos,
+                color,
+                bold,
+                box_bg,
+            } if token == active_token => {
+                if let Ok(mpv) = self.mpv() {
+                    let _ = mpv.set_property("sub-scale", scale.clamp(0.4, 2.5));
+                    let _ = mpv.set_property("sub-pos", pos.clamp(0, 100));
+                    let _ = mpv.set_property("sub-color", color.as_str());
+                    let _ = mpv.set_property("sub-bold", bold);
+                    if box_bg {
+                        let _ = mpv.set_property("sub-border-style", "background-box");
+                        let _ = mpv.set_property("sub-back-color", "#AA000000");
+                    } else {
+                        let _ = mpv.set_property("sub-border-style", "outline-and-shadow");
+                        let _ = mpv.set_property("sub-back-color", "#00000000");
+                    }
+                }
+            }
+            PlayerCommand::SetViewingOptions {
+                token,
+                aspect,
+                zoom,
+                panscan,
+                rotate,
+                hflip,
+                vflip,
+                ab_a,
+                ab_b,
+            } if token == active_token => {
+                if let Ok(mpv) = self.mpv() {
+                    let _ = mpv.set_property(
+                        "video-aspect-override",
+                        if aspect == "auto" { "-1" } else { aspect.as_str() },
+                    );
+                    let _ = mpv.set_property("video-zoom", zoom.clamp(-1.0, 2.0));
+                    let _ = mpv.set_property("panscan", panscan.clamp(0.0, 1.0));
+                    let _ = mpv.set_property("video-rotate", rotate);
+                    let _ = mpv.command("vf", &["remove", "@hflip"]);
+                    let _ = mpv.command("vf", &["remove", "@vflip"]);
+                    if hflip {
+                        let _ = mpv.command("vf", &["add", "@hflip:hflip"]);
+                    }
+                    if vflip {
+                        let _ = mpv.command("vf", &["add", "@vflip:vflip"]);
+                    }
+                    match ab_a {
+                        Some(a) => {
+                            let _ = mpv.set_property("ab-loop-a", a);
+                        }
+                        None => {
+                            let _ = mpv.set_property("ab-loop-a", "no");
+                        }
+                    }
+                    match ab_b {
+                        Some(b) => {
+                            let _ = mpv.set_property("ab-loop-b", b);
+                        }
+                        None => {
+                            let _ = mpv.set_property("ab-loop-b", "no");
+                        }
+                    }
+                }
+                self.snapshot.write().zoom_to_fill = panscan > 0.5;
+            }
+            PlayerCommand::SetEqualizer { token, bands_db } if token == active_token => {
+                if let Ok(mpv) = self.mpv() {
+                    let _ = mpv.command("af", &["remove", "@eq"]);
+                    const FREQS: [u32; 10] = [32, 64, 125, 250, 500, 1000, 2000, 4000, 8000, 16000];
+                    let parts: Vec<String> = FREQS
+                        .iter()
+                        .zip(bands_db.iter())
+                        .filter(|(_, g)| g.abs() > 0.1)
+                        .map(|(f, g)| format!("equalizer=f={f}:t=q:w=1.4:g={:.1}", g.clamp(-12.0, 12.0)))
+                        .collect();
+                    if !parts.is_empty() {
+                        let chain = format!("@eq:lavfi=[{}]", parts.join(","));
+                        let _ = mpv.command("af", &["add", &chain]);
+                    }
+                }
+            }
+            PlayerCommand::SetHdrToneMapping {
+                token,
+                enabled,
+                strength,
+            } if token == active_token => {
+                if let Ok(mpv) = self.mpv() {
+                    if enabled {
+                        let (algo, recovery) = match strength {
+                            0 => ("reinhard", 0.15_f64),
+                            2 => ("hable", 0.55_f64),
+                            _ => ("bt.2446a", 0.30_f64),
+                        };
+                        let _ = mpv.set_property("tone-mapping", algo);
+                        let _ = mpv.set_property("hdr-compute-peak", "yes");
+                        let _ = mpv.set_property("hdr-contrast-recovery", recovery);
+                    } else {
+                        let _ = mpv.set_property("tone-mapping", "clip");
+                        let _ = mpv.set_property("hdr-compute-peak", "no");
+                    }
+                }
+            }
+            PlayerCommand::SetAudioDownmix { token, mode } if token == active_token => {
+                if let Ok(mpv) = self.mpv() {
+                    let ch = match mode.as_str() {
+                        "stereo" => "stereo",
+                        "mono" => "mono",
+                        _ => "auto-safe",
+                    };
+                    let _ = mpv.set_property("audio-channels", ch);
+                }
+            }
+            PlayerCommand::SetKeepAspect { token, keep } if token == active_token => {
+                if let Ok(mpv) = self.mpv() {
+                    let _ = mpv.set_property("keepaspect", if keep { "yes" } else { "no" });
+                }
+            }
+            PlayerCommand::SetSubMarginY { token, margin_y } if token == active_token => {
+                if let Ok(mpv) = self.mpv() {
+                    let _ = mpv.set_property("sub-margin-y", margin_y.clamp(0, 300));
+                }
+            }
             PlayerCommand::Next { token } if token == active_token => {
                 let path = self.queue.advance_next();
                 self.play_queue_path(path, token)?
@@ -615,7 +883,17 @@ impl PlayerCore {
             | PlayerCommand::SetRepeat { .. }
             | PlayerCommand::SetZoomToFill { .. }
             | PlayerCommand::SetHdrBoost { .. }
-            | PlayerCommand::SetPictureControls { .. } => {}
+            | PlayerCommand::SetPictureControls { .. }
+            | PlayerCommand::SetAudioDelay { .. }
+            | PlayerCommand::SetSubDelay { .. }
+            | PlayerCommand::SetAudioBoostPreset { .. }
+            | PlayerCommand::SetSubtitleAppearance { .. }
+            | PlayerCommand::SetViewingOptions { .. }
+            | PlayerCommand::SetEqualizer { .. }
+            | PlayerCommand::SetHdrToneMapping { .. }
+            | PlayerCommand::SetAudioDownmix { .. }
+            | PlayerCommand::SetKeepAspect { .. }
+            | PlayerCommand::SetSubMarginY { .. } => {}
             PlayerCommand::Shutdown => {}
         }
         self.publish_queue();
@@ -715,10 +993,18 @@ impl PlayerCore {
                         .as_ref()
                         .map(read_chapters)
                         .unwrap_or_default();
+                    let file_size_bytes = self
+                        .active_path
+                        .as_ref()
+                        .and_then(|p| std::fs::metadata(p).ok())
+                        .map(|m| m.len())
+                        .unwrap_or(0);
                     let mut snapshot = self.snapshot.write();
                     snapshot.state = PlaybackState::Playing;
                     snapshot.token = self.token;
                     snapshot.chapters = chapters;
+                    snapshot.file_size_bytes = file_size_bytes;
+                    snapshot.is_dolby_vision = false;
                     let _ = self.event_tx.send(PlayerEvent::StateChanged {
                         token: self.token,
                         state: PlaybackState::Playing,
@@ -746,7 +1032,16 @@ impl PlayerCore {
                     self.publish_queue();
                 }
                 Event::EndFile(_) => {}
-                Event::StartFile => self.snapshot.write().state = PlaybackState::Loading,
+                Event::StartFile => {
+                    self.dovi_filter_applied = false;
+                    if let Some(mpv) = self.mpv.as_mut() {
+                        let _ = mpv.command("vf", &["remove", "@dovi"]);
+                        let _ = mpv.set_property("hwdec", "auto-safe");
+                    }
+                    let mut snap = self.snapshot.write();
+                    snap.state = PlaybackState::Loading;
+                    snap.is_dolby_vision = false;
+                }
                 _ => {}
             }
         }
@@ -761,6 +1056,34 @@ impl PlayerCore {
                 if let Ok(gamma) = mpv.get_property::<String>("video-params/gamma") {
                     let is_hdr = matches!(gamma.as_str(), "pq" | "hlg" | "st2084" | "smpte2084" | "arib-std-b67");
                     self.snapshot.write().is_hdr = is_hdr;
+                }
+                let cm = mpv.get_property::<String>("video-params/colormatrix").unwrap_or_default();
+                let dv_prof = mpv.get_property::<i64>("video-params/dolby-vision-profile").unwrap_or(0);
+                if (cm == "dolbyvision" || dv_prof > 0) && !self.dovi_filter_applied {
+                    self.dovi_filter_applied = true;
+                    let _ = mpv.set_property("hwdec", "auto-copy");
+                    let _ = mpv.set_property("deband", "no");
+                    let _ = mpv.set_property("scale", "bilinear");
+                    let _ = mpv.command("vf", &["remove", "@dovi"]);
+                    let _ = mpv.command(
+                        "vf",
+                        &[
+                            "add",
+                            "@dovi:libplacebo=apply_dolbyvision=true:tonemapping=bt.2446a:gamut_mode=perceptual:colorspace=bt709:color_primaries=bt709:color_trc=bt709:format=nv12:dithering=none:upscaler=bilinear:downscaler=bilinear",
+                        ],
+                    );
+                    self.snapshot.write().is_dolby_vision = true;
+                }
+                if let Ok(codec) = mpv.get_property::<String>("video-codec") {
+                    self.snapshot.write().video_codec = Some(codec);
+                }
+                if let (Ok(w), Ok(h)) = (mpv.get_property::<i64>("width"), mpv.get_property::<i64>("height")) {
+                    let mut snap = self.snapshot.write();
+                    snap.video_width = w;
+                    snap.video_height = h;
+                }
+                if let Ok(fps) = mpv.get_property::<f64>("container-fps") {
+                    self.snapshot.write().video_fps = fps;
                 }
                 if let Ok(pix) = mpv.get_property::<String>("video-params/pixelformat") {
                     let is_10bit = pix.contains("p010") || pix.contains("p10") || pix.contains("10le") || pix.contains("10be");
@@ -881,9 +1204,10 @@ impl PlayerCore {
         }
         let _ = mpv.set_property("vo", "libmpv");
         let _ = mpv.set_property("vid", "auto");
-        let _ = mpv.set_property("hr-seek", "yes");
+        let _ = mpv.set_property("hr-seek", "no");
         let _ = mpv.set_property("hr-seek-framedrop", "yes");
         let _ = mpv.set_property("cache", "yes");
+        let _ = mpv.set_property("demuxer-seekable-cache", "yes");
         let _ = mpv.set_property("demuxer-max-bytes", "150MiB");
         let _ = mpv.set_property("demuxer-max-back-bytes", "75MiB");
         self.render_context = NonNull::new(context);

@@ -1,10 +1,15 @@
 pub mod badge;
+pub mod cnx_kit;
+pub mod cnx_player;
+pub mod cnx_theme;
+pub mod history;
 pub mod icons;
 pub mod layout;
 pub mod media_pages;
 pub mod player_ui;
 pub mod playlists_tab;
 pub mod poster_card;
+pub mod servers_page;
 pub mod settings_page;
 pub mod shell;
 pub mod shell_state;
@@ -14,6 +19,7 @@ pub mod spinner;
 pub mod texture_cache;
 pub mod theme;
 pub mod ui_helpers;
+pub mod ui_kit;
 pub mod view_models;
 
 pub use badge::{Badge, BadgeKind};
