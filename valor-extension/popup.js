@@ -10,13 +10,94 @@ document.addEventListener('DOMContentLoaded', () => {
   const chkResume = document.getElementById('chkResume');
   const btnSwitchCinema = document.getElementById('btnSwitchCinema');
   const chkCinema = document.getElementById('chkCinema');
+  const btnSwitchUpgrade = document.getElementById('btnSwitchUpgrade');
+  const chkUpgrade = document.getElementById('chkUpgrade');
+  const btnOpenApp = document.getElementById('btnOpenApp');
   const btnSave = document.getElementById('btnSave');
   const toastMessage = document.getElementById('toastMessage');
   const versionLabel = document.getElementById('versionLabel');
+  const themeChips = document.getElementById('themeChips');
+  const accentColorPicker = document.getElementById('accentColorPicker');
+  const btnResetAccent = document.getElementById('btnResetAccent');
+
+  const THEME_PRESETS = [
+    { id: 'valor-purple', name: 'Valor Purple', bg: '#0f0f11', surface: '#16161a', surface2: '#1e1e24', border: '#27272e', text: '#f4f4f6', muted: '#8e8e9a', accent: '#a855f7' },
+    { id: 'cnx', name: 'CnX Amber', bg: '#120f0c', surface: '#1a1613', surface2: '#221d18', border: '#332b24', text: '#f2ede8', muted: '#6b645e', accent: '#eb8c34' },
+    { id: 'cloudflare-docs', name: 'Cloudflare', bg: '#0d1117', surface: '#11161e', surface2: '#161b22', border: '#30363d', text: '#f0f6fc', muted: '#8b949e', accent: '#2f81f7' },
+    { id: 'oled-black', name: 'OLED', bg: '#000000', surface: '#08080a', surface2: '#101014', border: '#1c1c20', text: '#f4f4f6', muted: '#7a7a85', accent: '#f6821f' },
+    { id: 'github-midnight', name: 'Midnight', bg: '#0d1117', surface: '#161b22', surface2: '#21262d', border: '#30363d', text: '#f0f6fc', muted: '#8b949e', accent: '#1f6feb' },
+    { id: 'cyber-crimson', name: 'Crimson', bg: '#0c0a0f', surface: '#16121c', surface2: '#1a1522', border: '#2a2234', text: '#f4f1f6', muted: '#8b8294', accent: '#f43f5e' },
+    { id: 'emerald-studio', name: 'Emerald', bg: '#0b110e', surface: '#121b17', surface2: '#16211c', border: '#1f2e27', text: '#eaf2ee', muted: '#71887d', accent: '#10b981' },
+    { id: 'midnight-slate', name: 'Slate', bg: '#0b0e14', surface: '#141a25', surface2: '#1b212a', border: '#232b3a', text: '#f1f3f8', muted: '#8b93a5', accent: '#9db3f6' },
+  ];
 
   let currentMode = 'badge';
+  let currentTheme = 'valor-purple';
+  let currentAccent = '';
   let debounceTimer = null;
   let toastTimer = null;
+
+  function applyThemeToPopup(themeId, accentOverride) {
+    const preset = THEME_PRESETS.find((t) => t.id === themeId) || THEME_PRESETS[0];
+    const root = document.documentElement.style;
+    const activeAccent = accentOverride || preset.accent;
+    root.setProperty('--bg', preset.bg);
+    root.setProperty('--surface', preset.surface);
+    root.setProperty('--surface-2', preset.surface2);
+    root.setProperty('--border', preset.border);
+    root.setProperty('--text', preset.text);
+    root.setProperty('--muted', preset.muted);
+    root.setProperty('--accent', activeAccent);
+    if (accentColorPicker) {
+      accentColorPicker.value = activeAccent;
+    }
+    if (themeChips) {
+      themeChips.querySelectorAll('.theme-chip').forEach((chip) => {
+        chip.classList.toggle('active', chip.dataset.theme === preset.id);
+      });
+    }
+  }
+
+  function renderThemeChips() {
+    if (!themeChips) return;
+    themeChips.innerHTML = '';
+    THEME_PRESETS.forEach((t) => {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = `theme-chip ${t.id === currentTheme ? 'active' : ''}`;
+      btn.dataset.theme = t.id;
+      btn.innerHTML = `<span class="theme-dot" style="background:${t.accent}"></span><span>${escapeHtml(t.name)}</span>`;
+      btn.addEventListener('click', () => {
+        currentTheme = t.id;
+        currentAccent = '';
+        applyThemeToPopup(currentTheme, currentAccent);
+        chrome.storage.sync.set({ theme: currentTheme, accentColor: '' }, () => {
+          showToast(`${t.name} theme`);
+        });
+      });
+      themeChips.appendChild(btn);
+    });
+  }
+
+  renderThemeChips();
+
+  if (accentColorPicker) {
+    accentColorPicker.addEventListener('input', (e) => {
+      currentAccent = e.target.value;
+      applyThemeToPopup(currentTheme, currentAccent);
+      chrome.storage.sync.set({ accentColor: currentAccent });
+    });
+  }
+
+  if (btnResetAccent) {
+    btnResetAccent.addEventListener('click', () => {
+      currentAccent = '';
+      applyThemeToPopup(currentTheme, '');
+      chrome.storage.sync.set({ accentColor: '' }, () => {
+        showToast('Accent reset');
+      });
+    });
+  }
 
   // Set manifest version in footer
   try {
@@ -27,10 +108,18 @@ document.addEventListener('DOMContentLoaded', () => {
   } catch (e) {}
 
   // 1. Load saved settings from Chrome storage
-  chrome.storage.sync.get(['valorUrl', 'embedMode', 'resumePlayback', 'cinemaMode'], (res) => {
-    const initialUrl = res.valorUrl || 'http://localhost:5173/embed';
+  chrome.storage.sync.get(['valorUrl', 'embedMode', 'resumePlayback', 'cinemaMode', 'upgradeVideos', 'theme', 'accentColor'], (res) => {
+    currentTheme = res.theme || 'valor-purple';
+    currentAccent = res.accentColor || '';
+    applyThemeToPopup(currentTheme, currentAccent);
+
+    const rawSaved = res.valorUrl;
+    const initialUrl = (!rawSaved || rawSaved === 'http://localhost:5173/embed') ? 'builtin' : rawSaved;
+    if (rawSaved === 'http://localhost:5173/embed' || !rawSaved) {
+      chrome.storage.sync.set({ valorUrl: 'builtin' });
+    }
     if (valorUrlInput) {
-      valorUrlInput.value = initialUrl;
+      valorUrlInput.value = initialUrl === 'builtin' ? '' : initialUrl;
     }
     currentMode = res.embedMode || 'badge';
     updateModeUI(currentMode);
@@ -40,6 +129,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const isCinema = res.cinemaMode === true;
     setToggleState(btnSwitchCinema, chkCinema, isCinema);
+
+    const isUpgrade = res.upgradeVideos === true || currentMode === 'auto';
+    setToggleState(btnSwitchUpgrade, chkUpgrade, isUpgrade);
 
     checkConnection(initialUrl);
     queryActiveTabMedia();
@@ -83,20 +175,49 @@ document.addEventListener('DOMContentLoaded', () => {
     setToggleState(btnSwitchCinema, chkCinema, nextState);
   });
 
+  if (btnSwitchUpgrade) {
+    btnSwitchUpgrade.addEventListener('click', () => {
+      const nextState = btnSwitchUpgrade.getAttribute('aria-checked') !== 'true';
+      setToggleState(btnSwitchUpgrade, chkUpgrade, nextState);
+      const nextMode = nextState ? 'auto' : (currentMode === 'auto' ? 'badge' : currentMode);
+      updateModeUI(nextMode);
+      chrome.storage.sync.set({
+        upgradeVideos: nextState,
+        embedMode: nextMode,
+        extensionEnabled: nextMode !== 'off'
+      }, () => {
+        showToast(nextState ? 'Page video takeover ON' : 'Page video takeover OFF');
+      });
+    });
+  }
+
+  if (btnOpenApp) {
+    btnOpenApp.addEventListener('click', () => {
+      const url = new URL(chrome.runtime.getURL('app/index.html'));
+      if (currentTheme) url.searchParams.set('theme', currentTheme);
+      if (currentAccent) url.searchParams.set('accent', currentAccent);
+      chrome.tabs.create({ url: url.toString() });
+    });
+  }
+
   // 4. Reachability check (debounced automatically on input)
   async function checkConnection(url) {
     const normalized = normalizeUrl(url);
     let reachable = false;
 
-    try {
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 1800);
-      const res = await fetch(normalized, { method: 'HEAD', signal: controller.signal }).catch(() => null);
-      clearTimeout(timer);
-      if (res && (res.ok || res.status < 500)) {
-        reachable = true;
-      }
-    } catch (e) {}
+    if (normalized === 'builtin' || normalized.startsWith('chrome-extension://')) {
+      reachable = true;
+    } else {
+      try {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 1800);
+        const res = await fetch(normalized, { method: 'HEAD', signal: controller.signal }).catch(() => null);
+        clearTimeout(timer);
+        if (res && (res.ok || res.status < 500)) {
+          reachable = true;
+        }
+      } catch (e) {}
+    }
 
     // Update Header Status
     if (connStatus) {
@@ -242,7 +363,10 @@ document.addEventListener('DOMContentLoaded', () => {
       embedMode: currentMode,
       extensionEnabled: currentMode !== 'off',
       resumePlayback: chkResume.checked,
-      cinemaMode: chkCinema.checked
+      cinemaMode: chkCinema.checked,
+      upgradeVideos: chkUpgrade ? chkUpgrade.checked : currentMode === 'auto',
+      theme: currentTheme,
+      accentColor: currentAccent
     }, () => {
       checkConnection(normalized);
       showToast('Saved');
@@ -261,7 +385,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
   function normalizeUrl(input) {
     let val = (input || '').trim();
-    if (!val) return 'http://localhost:5173/embed';
+    if (!val || val.toLowerCase() === 'builtin' || val === 'http://localhost:5173/embed') return 'builtin';
+    if (val.startsWith('chrome-extension://')) return val;
 
     if (/^:?\d+$/.test(val)) {
       const port = val.replace(':', '');

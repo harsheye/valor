@@ -52,7 +52,7 @@
     <section class="section">
       <label for="valorUrlInput" class="section-label">Player address</label>
       <div class="input-wrap">
-        <input type="text" id="valorUrlInput" spellcheck="false" autocomplete="off" placeholder="http://localhost:5173/embed" />
+        <input type="text" id="valorUrlInput" spellcheck="false" autocomplete="off" placeholder="Built-in extension (or custom URL)" />
         <span id="addressStatusDot" class="input-status-dot" aria-hidden="true"></span>
       </div>
     </section>
@@ -80,10 +80,34 @@
         </button>
         <input type="checkbox" id="chkCinema" class="visually-hidden" />
       </div>
+
+      <div class="toggle-row">
+        <div class="toggle-copy">
+          <span class="toggle-title" id="upgradeLabel">Take over page videos</span>
+          <span class="toggle-desc">Upgrade &lt;video&gt; tags &amp; frames with live proxy</span>
+        </div>
+        <button type="button" role="switch" id="btnSwitchUpgrade" aria-checked="false" aria-labelledby="upgradeLabel" class="switch-btn">
+          <span class="switch-thumb"></span>
+        </button>
+        <input type="checkbox" id="chkUpgrade" class="visually-hidden" />
+      </div>
+    </section>
+
+    <!-- Theme & Colors -->
+    <section class="section">
+      <div class="section-row">
+        <h2 class="section-label">Theme &amp; Colors</h2>
+        <div class="accent-row">
+          <input type="color" id="accentColorPicker" class="accent-picker" value="#a855f7" title="Custom accent color" aria-label="Custom accent color" />
+          <button type="button" id="btnResetAccent" class="icon-btn" title="Reset accent color" style="font-size:11px;">Reset</button>
+        </div>
+      </div>
+      <div id="themeChips" class="theme-chips" role="group" aria-label="Theme presets"></div>
     </section>
 
     <!-- Actions -->
     <div class="actions">
+      <button type="button" id="btnOpenApp" class="btn-secondary">Open Valor Full App</button>
       <button type="button" id="btnSave" class="btn-save">Save</button>
       <div id="toastMessage" class="toast" role="status" aria-live="polite"></div>
     </div>

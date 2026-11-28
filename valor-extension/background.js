@@ -29,16 +29,17 @@ async function checkLiveStatus() {
       return;
     }
 
-    const valorUrl = result.valorUrl || 'http://localhost:5173/embed';
-    const testUrls = [valorUrl];
-
-    // Fallback to common dev/prod ports if default localhost
-    if (valorUrl.includes('localhost') || valorUrl.includes('127.0.0.1')) {
-      for (const p of ['5173', '50000', '443', '80']) {
-        const candidate = `${p === '443' ? 'https' : 'http'}://localhost:${p}/embed`;
-        if (!testUrls.includes(candidate)) testUrls.push(candidate);
-      }
+    const valorUrl = result.valorUrl || 'builtin';
+    if (
+      valorUrl === 'builtin' ||
+      valorUrl === 'http://localhost:5173/embed' ||
+      valorUrl.startsWith('chrome-extension://')
+    ) {
+      updateLiveStatus(true, 'Built-in');
+      return;
     }
+
+    const testUrls = [valorUrl];
 
     let live = false;
 
@@ -59,10 +60,30 @@ async function checkLiveStatus() {
   });
 }
 
+chrome.action.onClicked.addListener(() => {
+  chrome.storage.sync.get(['theme', 'accentColor'], (res) => {
+    const baseUrl = chrome.runtime.getURL('app/index.html');
+    const url = new URL(baseUrl);
+    if (res?.theme) url.searchParams.set('theme', res.theme);
+    if (res?.accentColor) url.searchParams.set('accent', res.accentColor);
+    const appUrl = url.toString();
+    chrome.tabs.query({ url: `${baseUrl}*` }, (tabs) => {
+      if (tabs && tabs.length > 0 && tabs[0].id !== undefined) {
+        chrome.tabs.update(tabs[0].id, { active: true });
+        if (tabs[0].windowId !== undefined) {
+          chrome.windows.update(tabs[0].windowId, { focused: true }).catch(() => {});
+        }
+      } else {
+        chrome.tabs.create({ url: appUrl });
+      }
+    });
+  });
+});
+
 chrome.runtime.onInstalled.addListener(() => {
   chrome.storage.sync.get(['valorUrl', 'extensionEnabled', 'embedMode'], (result) => {
-    if (!result.valorUrl) {
-      chrome.storage.sync.set({ valorUrl: 'http://localhost:5173/embed' });
+    if (!result.valorUrl || result.valorUrl === 'http://localhost:5173/embed') {
+      chrome.storage.sync.set({ valorUrl: 'builtin' });
     }
     // Default to 'badge' (Show Icon)
     if (result.embedMode === undefined) {

@@ -1,15 +1,36 @@
 // Valor Auto-Embed & Stream Sniffer Content Script v2.4
 
 (function() {
-  let valorEmbedUrl = 'http://localhost:5173/embed';
+  let valorEmbedUrl = 'builtin';
+  let valorServerReachable = false;
   let embedMode = 'badge'; // 'auto' (Auto Replace) | 'badge' (Show Icon) | 'off' (Don't)
+  let upgradeVideos = false;
+  let activeTheme = 'valor-purple';
+  let activeAccent = '';
   let replacedElements = new WeakSet();
   let currentUrl = window.location.href;
 
+  const THEME_ACCENTS = {
+    'valor-purple': '#a855f7',
+    'cnx': '#eb8c34',
+    'cloudflare-docs': '#2f81f7',
+    'oled-black': '#f6821f',
+    'github-midnight': '#1f6feb',
+    'cyber-crimson': '#f43f5e',
+    'emerald-studio': '#10b981',
+    'midnight-slate': '#9db3f6',
+  };
+
+  function getEffectiveAccent() {
+    if (activeAccent && /^#[0-9a-f]{3,8}$/i.test(activeAccent)) return activeAccent;
+    return THEME_ACCENTS[activeTheme] || '#a855f7';
+  }
+
   function normalizeEmbedUrl(rawUrl) {
-    if (!rawUrl || typeof rawUrl !== 'string') return 'http://localhost:5173/embed';
+    if (!rawUrl || typeof rawUrl !== 'string') return 'builtin';
     let str = rawUrl.trim();
-    if (!str) return 'http://localhost:5173/embed';
+    if (!str || str.toLowerCase() === 'builtin' || str === 'http://localhost:5173/embed') return 'builtin';
+    if (str.startsWith('chrome-extension://')) return str;
 
     if (/^:?\d+$/.test(str)) {
       const port = str.replace(':', '');
@@ -60,29 +81,37 @@
     return;
   }
 
-  // Detect active local Valor port
+  // Detect active external Valor server or use bundled extension app
   async function detectValorPortIfLocal() {
-    const isLocal = valorEmbedUrl.includes('localhost') || valorEmbedUrl.includes('127.0.0.1');
-    if (!isLocal) return;
-
-    const ports = ['5173', '50000', '443', '80'];
-    for (const port of ports) {
-      const proto = port === '443' ? 'https' : 'http';
-      const testUrl = `${proto}://localhost:${port}/embed`;
-      try {
-        const res = await fetch(testUrl, { method: 'HEAD' }).catch(() => null);
-        if (res && res.ok) {
-          valorEmbedUrl = testUrl;
-          return;
-        }
-      } catch {}
+    if (!valorEmbedUrl || valorEmbedUrl === 'builtin' || valorEmbedUrl.startsWith('chrome-extension://')) {
+      valorServerReachable = false;
+      return;
+    }
+    try {
+      const res = await fetch(normalizeEmbedUrl(valorEmbedUrl), { method: 'HEAD' }).catch(() => null);
+      valorServerReachable = Boolean(res && res.ok);
+    } catch {
+      valorServerReachable = false;
     }
   }
 
   function buildTargetEmbedUrl(params) {
     try {
-      const base = normalizeEmbedUrl(valorEmbedUrl);
+      const useBundled = !valorServerReachable && typeof chrome !== 'undefined' && chrome.runtime?.getURL;
+      const base = useBundled
+        ? chrome.runtime.getURL('app/index.html')
+        : normalizeEmbedUrl(valorEmbedUrl);
       const url = new URL(base);
+      if (useBundled) {
+        url.searchParams.set('embed', '1');
+      }
+      if (activeTheme) {
+        url.searchParams.set('theme', activeTheme);
+      }
+      const effAccent = getEffectiveAccent();
+      if (effAccent) {
+        url.searchParams.set('accent', effAccent);
+      }
       for (const [key, value] of Object.entries(params)) {
         if (value !== undefined && value !== null) {
           url.searchParams.set(key, String(value));
@@ -105,9 +134,10 @@
     return `${m}:${String(s % 60).padStart(2, '0')}`;
   }
 
-  // Heuristic Media Filter: Only target legitimate, interactive media
+  // Heuristic Media Filter: Only target legitimate, visible, playable <video> tags
   function isLegitimateMediaTarget(videoEl) {
     if (!videoEl || !(videoEl instanceof HTMLVideoElement)) return false;
+    if (!document.contains(videoEl)) return false;
     if (replacedElements.has(videoEl) || videoEl.dataset.valorReplaced === 'true') return false;
     if (videoEl.closest('[data-valor-container], [data-valor-replaced]')) return false;
 
@@ -121,32 +151,36 @@
       if (videoEl.closest(sel)) return false;
     }
 
-    // 2. Standalone media document (direct video in browser tab)
+    // 2. Must have a direct, playable, non-blob source so Valor can actually take over playback
+    const src = extractVideoSource(videoEl);
+    if (!src || src.startsWith('blob:') || src.startsWith('mediasource:')) {
+      return false;
+    }
+
+    // 3. Standalone media document (direct video in browser tab)
     const isStandalone = document.body && 
       document.body.children.length <= 3 && 
       document.querySelector('video') === videoEl;
     if (isStandalone) return true;
 
-    // 3. Size check: allow if rendered dimensions are reasonable, or if video has metadata/is playing
+    // 4. Visibility & Size check: must be visibly rendered as a real video player
+    const style = window.getComputedStyle(videoEl);
+    if (style.display === 'none' || style.visibility === 'hidden' || parseFloat(style.opacity || '1') === 0) {
+      return false;
+    }
     const rect = videoEl.getBoundingClientRect();
-    const hasDimensions = rect.width >= 160 && rect.height >= 90;
-    const hasMediaMetadata = (videoEl.videoWidth >= 160 && videoEl.videoHeight >= 90) ||
-                             (videoEl.duration > 4) ||
-                             (!videoEl.paused && videoEl.currentTime > 0);
-
-    if (!hasDimensions && !hasMediaMetadata) {
-      // Don't permanently disqualify unrendered videos; they might be styled/displayed upon interaction
+    if (rect.width < 160 || rect.height < 90) {
       return false;
     }
 
-    // 4. Filter out background decorative / ambient looping videos without audio
+    // 5. Filter out background decorative / ambient looping videos without audio
     const isLoopingSilentHero = videoEl.loop && videoEl.muted && videoEl.autoplay && !videoEl.controls;
     const isHeroBackground = videoEl.closest('.hero, .banner, .background, [class*="bg-video"], [class*="ambient"], [class*="decorative"]');
     if (isLoopingSilentHero && (isHeroBackground || (videoEl.duration > 0 && videoEl.duration < 20))) {
       return false;
     }
 
-    // 5. Filter out tiny audio-only sound effects
+    // 6. Filter out tiny audio-only sound effects
     if (videoEl.duration > 0 && videoEl.duration < 4) {
       return false;
     }
@@ -261,7 +295,143 @@
     return 'Online Video Stream';
   }
 
-  // Replace legitimate video with Valor player iframe (with Restore option)
+  function attachVideoProxy(videoElement, iframe) {
+    const state = {
+      currentTime: Number(videoElement.currentTime) || 0,
+      duration: Number(videoElement.duration) || 0,
+      paused: videoElement.paused,
+      volume: typeof videoElement.volume === 'number' ? videoElement.volume : 1,
+      muted: Boolean(videoElement.muted),
+      playbackRate: Number(videoElement.playbackRate) || 1
+    };
+
+    const sendCommand = (type, payload) => {
+      try {
+        iframe.contentWindow?.postMessage({
+          source: 'valor-embed-host',
+          version: '1.0.0',
+          payload: payload ? { type, payload } : { type }
+        }, '*');
+      } catch {}
+    };
+
+    const props = ['currentTime', 'duration', 'paused', 'volume', 'muted', 'playbackRate'];
+    const savedDescriptors = {};
+    for (const prop of props) {
+      savedDescriptors[prop] = Object.getOwnPropertyDescriptor(videoElement, prop);
+    }
+    const savedPlay = Object.getOwnPropertyDescriptor(videoElement, 'play');
+    const savedPause = Object.getOwnPropertyDescriptor(videoElement, 'pause');
+
+    Object.defineProperties(videoElement, {
+      play: {
+        configurable: true,
+        value: () => {
+          state.paused = false;
+          sendCommand('PLAY');
+          return Promise.resolve();
+        }
+      },
+      pause: {
+        configurable: true,
+        value: () => {
+          state.paused = true;
+          sendCommand('PAUSE');
+        }
+      },
+      currentTime: {
+        configurable: true,
+        get: () => state.currentTime,
+        set: (val) => {
+          const n = Number(val);
+          if (Number.isFinite(n)) {
+            state.currentTime = n;
+            sendCommand('SEEK', { time: n });
+          }
+        }
+      },
+      duration: {
+        configurable: true,
+        get: () => state.duration
+      },
+      paused: {
+        configurable: true,
+        get: () => state.paused
+      },
+      volume: {
+        configurable: true,
+        get: () => state.volume,
+        set: (val) => {
+          const n = Math.max(0, Math.min(1, Number(val)));
+          if (Number.isFinite(n)) {
+            state.volume = n;
+            sendCommand('SET_VOLUME', { volume: n });
+          }
+        }
+      },
+      muted: {
+        configurable: true,
+        get: () => state.muted,
+        set: (val) => {
+          state.muted = Boolean(val);
+          sendCommand('SET_MUTED', { muted: state.muted });
+        }
+      },
+      playbackRate: {
+        configurable: true,
+        get: () => state.playbackRate,
+        set: (val) => {
+          const n = Number(val);
+          if (Number.isFinite(n) && n > 0) {
+            state.playbackRate = n;
+            sendCommand('SET_PLAYBACK_RATE', { rate: n });
+          }
+        }
+      }
+    });
+
+    const syncFromIframe = (msgPayload) => {
+      if (!msgPayload || !msgPayload.type) return;
+      const p = msgPayload.payload || {};
+      if (typeof p.currentTime === 'number') state.currentTime = p.currentTime;
+      if (typeof p.duration === 'number') state.duration = p.duration;
+      if (typeof p.paused === 'boolean') state.paused = p.paused;
+      if (typeof p.volume === 'number') state.volume = p.volume;
+      if (typeof p.muted === 'boolean') state.muted = p.muted;
+      if (typeof p.playbackRate === 'number') state.playbackRate = p.playbackRate;
+
+      const eventMap = {
+        TIME_UPDATE: ['timeupdate'],
+        PLAY: ['play', 'playing'],
+        PAUSE: ['pause'],
+        ENDED: ['ended'],
+        SEEKED: ['seeked'],
+        VOLUME_CHANGE: ['volumechange'],
+        RATE_CHANGE: ['ratechange']
+      };
+      const events = eventMap[msgPayload.type];
+      if (events) {
+        for (const evName of events) {
+          videoElement.dispatchEvent(new Event(evName, { bubbles: false }));
+        }
+      }
+    };
+
+    const detach = () => {
+      for (const prop of props) {
+        if (savedDescriptors[prop]) Object.defineProperty(videoElement, prop, savedDescriptors[prop]);
+        else delete videoElement[prop];
+      }
+      if (savedPlay) Object.defineProperty(videoElement, 'play', savedPlay);
+      else delete videoElement.play;
+      if (savedPause) Object.defineProperty(videoElement, 'pause', savedPause);
+      else delete videoElement.pause;
+    };
+
+    return { syncFromIframe, detach };
+  }
+
+  // Replace legitimate video with Valor player iframe (with Restore option & live proxy)
   function replaceVideoWithValor(videoElement) {
     if (!isLegitimateMediaTarget(videoElement)) return;
 
@@ -292,8 +462,13 @@
     });
     if (!targetUrl) return;
 
-    // Stash original child elements so user can click "Restore Original" anytime
+    // Stash original child elements in a hidden container so videoElement remains a live DOM proxy
     const originalChildren = Array.from(targetContainer.childNodes);
+    const originalStash = document.createElement('div');
+    originalStash.className = 'valor-original-stash';
+    originalStash.style.cssText = 'display: none !important; position: absolute !important; width: 0 !important; height: 0 !important; overflow: hidden !important; pointer-events: none !important;';
+    originalStash.setAttribute('aria-hidden', 'true');
+    originalChildren.forEach(child => originalStash.appendChild(child));
 
     const activeWrapper = document.createElement('div');
     activeWrapper.className = 'valor-active-wrapper';
@@ -314,10 +489,14 @@
     iframe.style.inset = '0';
     iframe.style.zIndex = '999';
 
+    const proxy = attachVideoProxy(videoElement, iframe);
+
     // Restore Original Player Functionality
     const restoreOriginal = () => {
       window.removeEventListener('message', handleWindowMessage);
+      proxy.detach();
       activeWrapper.remove();
+      originalStash.remove();
       delete targetContainer.dataset.valorReplaced;
       delete targetContainer.dataset.valorContainer;
       delete videoElement.dataset.valorReplaced;
@@ -325,20 +504,24 @@
       replacedElements.delete(videoElement);
       replacedElements.delete(targetContainer);
 
-      targetContainer.innerHTML = '';
       originalChildren.forEach(child => targetContainer.appendChild(child));
 
       // Re-attach hover toggle
       setTimeout(() => attachHoverPill(videoElement), 300);
     };
 
-    // Listen for back button / close messages from the embedded player iframe
+    // Listen for back button / close / playback events from the embedded player iframe
     const handleWindowMessage = (event) => {
+      if (!event.data) return;
       if (
-        (event.data && event.data.source === 'valor-embed-iframe' && (event.data.payload?.type === 'CLOSE' || event.data.type === 'RESTORE_ORIGINAL')) ||
-        (event.data && (event.data.type === 'CLOSE' || event.data.type === 'RESTORE_ORIGINAL'))
+        (event.data.source === 'valor-embed-iframe' && (event.data.payload?.type === 'CLOSE' || event.data.type === 'RESTORE_ORIGINAL')) ||
+        (event.data.type === 'CLOSE' || event.data.type === 'RESTORE_ORIGINAL')
       ) {
         restoreOriginal();
+        return;
+      }
+      if (event.data.source === 'valor-embed-iframe' && event.data.payload) {
+        proxy.syncFromIframe(event.data.payload);
       }
     };
     window.addEventListener('message', handleWindowMessage);
@@ -347,7 +530,6 @@
 
     // Standalone direct media tab
     if (document.body && document.body.children.length <= 3 && document.querySelector('video') === videoElement) {
-      document.body.innerHTML = '';
       document.body.style.margin = '0';
       document.body.style.padding = '0';
       document.body.style.overflow = 'hidden';
@@ -357,9 +539,10 @@
       activeWrapper.style.width = '100vw';
       activeWrapper.style.height = '100vh';
       activeWrapper.style.zIndex = '999999';
+      document.body.appendChild(originalStash);
       document.body.appendChild(activeWrapper);
     } else {
-      targetContainer.innerHTML = '';
+      targetContainer.appendChild(originalStash);
       targetContainer.appendChild(activeWrapper);
     }
   }
@@ -384,6 +567,7 @@
     host.className = 'valor-pill-host';
     host.style.cssText = 'all: initial !important; position: absolute !important; top: 12px !important; left: 12px !important; z-index: 2147483647 !important; display: block !important;';
 
+    const accentColor = getEffectiveAccent();
     const shadow = host.attachShadow({ mode: 'open' });
     shadow.innerHTML = `
       <style>
@@ -405,7 +589,7 @@
           background: rgba(15, 16, 19, 0.85);
           backdrop-filter: blur(8px);
           -webkit-backdrop-filter: blur(8px);
-          border: 1px solid rgba(255, 255, 255, 0.1);
+          border: 1px solid rgba(255, 255, 255, 0.12);
           border-radius: 8px;
           color: #f2f2f5;
           font-family: Inter, -apple-system, "Segoe UI", sans-serif;
@@ -415,14 +599,15 @@
           cursor: pointer;
           opacity: 0;
           pointer-events: none;
-          transition: opacity 150ms ease, background-color 150ms ease;
+          transition: opacity 150ms ease, background-color 150ms ease, border-color 150ms ease;
           user-select: none;
         }
         .valor-btn:hover {
           background: rgba(23, 24, 28, 0.95);
+          border-color: ${accentColor};
         }
         .valor-btn:focus-visible {
-          outline: 2px solid #e5484d;
+          outline: 2px solid ${accentColor};
           outline-offset: 2px;
         }
         .valor-btn.visible,
@@ -433,7 +618,7 @@
         .play-icon {
           width: 11px;
           height: 11px;
-          fill: #e5484d;
+          fill: ${accentColor};
           flex-shrink: 0;
         }
         @media (prefers-reduced-motion: reduce) {
@@ -524,16 +709,16 @@
     }
   }
 
-  // Sniffer API for Extension Popup
+  // Sniffer API for Extension Popup (only actual playable <video> tags)
   function getDetectedMediaStreams() {
     const streams = [];
     const seenUrls = new Set();
 
-    // 1. Direct and sniffer-extracted HTML5 video elements
     const videos = Array.from(document.querySelectorAll('video'));
     videos.forEach((v, idx) => {
+      if (!isLegitimateMediaTarget(v)) return;
       const src = extractVideoSource(v);
-      if (src && !src.startsWith('blob:') && !seenUrls.has(src)) {
+      if (src && !src.startsWith('blob:') && !src.startsWith('mediasource:') && !seenUrls.has(src)) {
         seenUrls.add(src);
         const rect = v.getBoundingClientRect();
         streams.push({
@@ -546,45 +731,6 @@
           height: Math.round(rect.height || v.videoHeight || 0),
           isReplaced: v.dataset.valorReplaced === 'true'
         });
-      }
-    });
-
-    // 2. Resource Timing entries for active stream playlists / MP4s
-    try {
-      const entries = performance.getEntriesByType('resource');
-      for (let i = entries.length - 1; i >= 0 && streams.length < 12; i--) {
-        const u = entries[i].name;
-        if (u && !seenUrls.has(u) && (
-          /\.(m3u8|mpd|mp4|webm|m4v)(\?.*)?$/i.test(u) ||
-          /(\/hls\/|\/manifest|\/playlist\.m3u8|\/master\.m3u8)/i.test(u)
-        )) {
-          if (!u.includes('google-analytics') && !u.includes('doubleclick') && !u.includes('beacon')) {
-            seenUrls.add(u);
-            streams.push({
-              id: `res-${streams.length}`,
-              title: getCleanMediaTitle() || `Stream #${streams.length + 1}`,
-              url: u,
-              isReplaced: false
-            });
-          }
-        }
-      }
-    } catch {}
-
-    // 3. Iframe video players
-    const iframes = Array.from(document.querySelectorAll('iframe'));
-    iframes.forEach((ifr, idx) => {
-      const ifrSrc = ifr.src;
-      if (ifrSrc && !seenUrls.has(ifrSrc) && !ifrSrc.includes(chrome.runtime?.id || '') && !ifrSrc.includes('google') && !ifrSrc.includes('recaptcha')) {
-        if (/embed|player|video|stream|watch/i.test(ifrSrc)) {
-          seenUrls.add(ifrSrc);
-          streams.push({
-            id: `ifr-${idx}`,
-            title: `Embedded Frame Player #${idx + 1}`,
-            url: ifrSrc,
-            isReplaced: ifr.dataset.valorReplaced === 'true'
-          });
-        }
       }
     });
 
@@ -631,14 +777,18 @@
 
   // Initialize extension storage and listeners
   if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.sync) {
-    chrome.storage.sync.get(['valorUrl', 'extensionEnabled', 'embedMode'], async (result) => {
+    chrome.storage.sync.get(['valorUrl', 'extensionEnabled', 'embedMode', 'upgradeVideos', 'theme', 'accentColor'], async (result) => {
       if (result) {
+        if (result.theme) activeTheme = result.theme;
+        if (result.accentColor !== undefined) activeAccent = result.accentColor || '';
         if (result.valorUrl) {
           valorEmbedUrl = normalizeEmbedUrl(result.valorUrl);
-        } else {
-          await detectValorPortIfLocal();
         }
-        if (result.embedMode) {
+        await detectValorPortIfLocal();
+        upgradeVideos = result.upgradeVideos === true;
+        if (upgradeVideos) {
+          embedMode = 'auto';
+        } else if (result.embedMode) {
           embedMode = result.embedMode;
         } else if (result.extensionEnabled !== undefined) {
           embedMode = result.extensionEnabled ? 'badge' : 'off';
@@ -653,12 +803,30 @@
 
     chrome.storage.onChanged.addListener((changes, areaName) => {
       if (areaName === 'sync') {
-        if (changes.valorUrl) valorEmbedUrl = normalizeEmbedUrl(changes.valorUrl.newValue);
-        if (changes.embedMode) embedMode = changes.embedMode.newValue;
+        if (changes.theme) {
+          activeTheme = changes.theme.newValue || 'valor-purple';
+        }
+        if (changes.accentColor) {
+          activeAccent = changes.accentColor.newValue || '';
+        }
+        if (changes.theme || changes.accentColor) {
+          clearAllInjected();
+        }
+        if (changes.valorUrl) {
+          valorEmbedUrl = normalizeEmbedUrl(changes.valorUrl.newValue);
+          detectValorPortIfLocal();
+        }
+        if (changes.upgradeVideos) {
+          upgradeVideos = changes.upgradeVideos.newValue === true;
+          if (upgradeVideos) embedMode = 'auto';
+        }
+        if (changes.embedMode) {
+          embedMode = changes.embedMode.newValue;
+        }
         if (changes.extensionEnabled && !changes.embedMode) {
           embedMode = changes.extensionEnabled.newValue ? 'badge' : 'off';
         }
-        if (embedMode === 'off') {
+        if (embedMode === 'off' && !upgradeVideos) {
           clearAllInjected();
         } else if (!isValorHostPage()) {
           scanMedia();

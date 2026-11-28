@@ -49,11 +49,18 @@ import {
 
 export const THEME_OPTIONS = [
   { id: 'auto', name: 'Auto (system)', desc: 'Follows OS mode', bg: '#0F1217', surface: '#1B212A', text: '#E4E8EE', dot: '#8CA9EE' },
-  { id: 'midnight-slate', name: 'Midnight Slate', desc: 'Cool, quiet dark (default)', bg: '#0F1217', surface: '#1B212A', text: '#E4E8EE', dot: '#8CA9EE' },
+  { id: 'valor-purple', name: 'Valor Purple', desc: 'Desktop default purple', bg: '#0F0F11', surface: '#16161A', text: '#F4F4F6', dot: '#A855F7' },
+  { id: 'cnx', name: 'CnX Amber', desc: 'Warm obsidian & amber', bg: '#120F0C', surface: '#1A1613', text: '#F2EDE8', dot: '#EB8C34' },
+  { id: 'cloudflare-docs', name: 'Cloudflare Blue', desc: 'Slate & electric blue', bg: '#0D1117', surface: '#11161E', text: '#F0F6FC', dot: '#2F81F7' },
+  { id: 'oled-black', name: 'OLED Black', desc: 'Pure black & orange', bg: '#000000', surface: '#08080A', text: '#F4F4F6', dot: '#F6821F' },
+  { id: 'github-midnight', name: 'GitHub Midnight', desc: 'Deep midnight blue', bg: '#0D1117', surface: '#161B22', text: '#F0F6FC', dot: '#1F6FEB' },
+  { id: 'cyber-crimson', name: 'Cyber Crimson', desc: 'Dark violet & rose', bg: '#0C0A0F', surface: '#16121C', text: '#F4F1F6', dot: '#F43F5E' },
+  { id: 'emerald-studio', name: 'Emerald Studio', desc: 'Forest & emerald green', bg: '#0B110E', surface: '#121B17', text: '#EAF2EE', dot: '#10B981' },
+  { id: 'midnight-slate', name: 'Midnight Slate', desc: 'Cool, quiet dark', bg: '#0F1217', surface: '#1B212A', text: '#E4E8EE', dot: '#8CA9EE' },
   { id: 'ember-night', name: 'Ember Night', desc: 'Warm, low-blue amber', bg: '#14110F', surface: '#231E1A', text: '#EBE3D8', dot: '#E5A86D' },
   { id: 'forest-mist', name: 'Forest Mist', desc: 'Muted green-grey sage', bg: '#0E1412', surface: '#1A2420', text: '#E0E9E4', dot: '#7CC3A1' },
   { id: 'valor-crimson', name: 'Valor Crimson', desc: 'Softened red brand', bg: '#131114', surface: '#221E24', text: '#E9E4E9', dot: '#E57C86' },
-  { id: 'black-ops', name: 'Black-Ops (OLED Black)', desc: 'Pure #000000 OLED black', bg: '#000000', surface: '#000000', text: '#f2f2f2', dot: '#e53950' },
+  { id: 'black-ops', name: 'Black-Ops (OLED)', desc: 'Pure #000000 & crimson', bg: '#000000', surface: '#000000', text: '#f2f2f2', dot: '#e53950' },
   { id: 'soft-paper', name: 'Soft Paper', desc: 'Warm light paper cream', bg: '#ECE7DD', surface: '#FAF7F0', text: '#25221D', dot: '#3A5CB0' },
   { id: 'dark', name: 'Valor Cyber Dark', desc: 'Modern canvas & coral', bg: '#0B0C10', surface: '#1B1E26', text: '#F2F4F8', dot: '#FF6B7A' },
   { id: 'light', name: 'Studio Light', desc: 'Crisp white & crimson', bg: '#FFFFFF', surface: '#ECEEF3', text: '#12141A', dot: '#C4263A' },
@@ -767,6 +774,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
 
                     <div className="settings-anchor-chips">
                       {[
+                        { id: 'card-appearance', label: 'Colors' },
                         { id: 'card-comfort', label: 'Comfort' },
                         { id: 'card-language', label: 'Language' },
                         { id: 'card-history', label: 'History' },
@@ -785,6 +793,87 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                         </button>
                       ))}
                     </div>
+                  </div>
+                )}
+
+                {/* 1.0 Appearance & Colors Card */}
+                {matchesSearch('appearance', 'theme', 'color', 'accent', 'skin', 'palette') && (
+                  <div id="card-appearance">
+                    <SettingsCard
+                      title="Appearance & Colors"
+                      description="Theme skin and accent color synced with Valor."
+                    >
+                      <SettingRow
+                        title="Theme skin"
+                        description="Choose a color palette"
+                        control={
+                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', justifyContent: 'flex-end', maxWidth: '420px' }}>
+                            {THEME_OPTIONS.map((t) => {
+                              const isActive = (settings.theme || 'midnight-slate') === t.id;
+                              return (
+                                <button
+                                  key={t.id}
+                                  type="button"
+                                  onClick={() => {
+                                    updateSetting('theme', t.id);
+                                    document.documentElement.setAttribute('data-theme', t.id);
+                                    try { localStorage.setItem(`valor_active_theme_${settings.userId || 'local'}`, t.id); } catch {}
+                                  }}
+                                  title={`${t.name} — ${t.desc}`}
+                                  style={{
+                                    display: 'inline-flex',
+                                    alignItems: 'center',
+                                    gap: '6px',
+                                    padding: '5px 10px',
+                                    borderRadius: '8px',
+                                    border: isActive ? `1.5px solid ${t.dot}` : '1px solid var(--border, #262b36)',
+                                    background: isActive ? 'var(--accent-soft)' : t.surface,
+                                    color: t.text,
+                                    fontSize: '12px',
+                                    fontWeight: isActive ? 600 : 500,
+                                    cursor: 'pointer',
+                                  }}
+                                >
+                                  <span style={{ width: '9px', height: '9px', borderRadius: '50%', background: t.dot, flexShrink: 0 }} />
+                                  <span>{t.name}</span>
+                                </button>
+                              );
+                            })}
+                          </div>
+                        }
+                      />
+
+                      <SettingRow
+                        title="Accent color"
+                        description="Override highlight & button color across the player"
+                        control={
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                            <ColorField
+                              value={settings.accentColor || '#a855f7'}
+                              onChange={(hex) => {
+                                updateSetting('accentColor', hex);
+                                try { localStorage.setItem('valor_active_accent', hex); } catch {}
+                                window.dispatchEvent(new CustomEvent('valor-theme-changed'));
+                              }}
+                              aria-label="Custom accent color"
+                            />
+                            {settings.accentColor && (
+                              <button
+                                type="button"
+                                className="settings-anchor-chip"
+                                onClick={() => {
+                                  updateSetting('accentColor', '');
+                                  try { localStorage.removeItem('valor_active_accent'); } catch {}
+                                  window.dispatchEvent(new CustomEvent('valor-theme-changed'));
+                                }}
+                              >
+                                Reset
+                              </button>
+                            )}
+                          </div>
+                        }
+                      />
+                    </SettingsCard>
                   </div>
                 )}
 

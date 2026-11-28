@@ -830,6 +830,85 @@
   border-color: var(--asp-accent);
 }
 
+/* Video Color Grading Sliders */
+.asp-color-presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.asp-color-preset-btn {
+  appearance: none;
+  background: var(--asp-surface);
+  border: 1px solid var(--asp-ln);
+  color: var(--asp-text-secondary);
+  border-radius: 6px;
+  padding: 4px 8px;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.14s ease;
+}
+
+.asp-color-preset-btn:hover {
+  background: var(--asp-surface-hover);
+  color: var(--asp-text);
+}
+
+.asp-color-preset-btn.active {
+  background: var(--asp-accent-bg);
+  border-color: var(--asp-accent);
+  color: var(--asp-text);
+}
+
+.asp-slider-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+}
+
+.asp-slider {
+  -webkit-appearance: none;
+  appearance: none;
+  flex: 1;
+  height: 4px;
+  border-radius: 99px;
+  background: var(--asp-surface-active);
+  outline: none;
+  cursor: pointer;
+}
+
+.asp-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  background: var(--asp-accent);
+  border: 2px solid var(--asp-bg);
+  cursor: pointer;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.4);
+}
+
+.asp-slider::-moz-range-thumb {
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  background: var(--asp-accent);
+  border: 2px solid var(--asp-bg);
+  cursor: pointer;
+}
+
+.asp-slider-val {
+  min-width: 38px;
+  text-align: right;
+  font-size: 11px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--asp-text-secondary);
+}
+
 /* Responsive navigation button */
 .asp-nav-btn {
   appearance: none;

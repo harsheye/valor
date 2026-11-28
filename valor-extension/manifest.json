@@ -10,11 +10,15 @@
   },
   "permissions": [
     "storage",
-    "activeTab"
+    "activeTab",
+    "tabs"
   ],
   "host_permissions": [
     "<all_urls>"
   ],
+  "content_security_policy": {
+    "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self';"
+  },
   "background": {
     "service_worker": "background.js"
   },
@@ -27,8 +31,7 @@
     }
   ],
   "action": {
-    "default_popup": "popup.html",
-    "default_title": "Valor Player Companion",
+    "default_title": "Open Valor Player",
     "default_icon": {
       "16": "icons/icon-16-grey.png",
       "48": "icons/icon-48-grey.png",
@@ -38,6 +41,8 @@
   "web_accessible_resources": [
     {
       "resources": [
+        "app/*",
+        "app/assets/*",
         "embed.html",
         "embed.js",
         "icons/logo.svg",

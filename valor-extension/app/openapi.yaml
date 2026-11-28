@@ -1,0 +1,377 @@
+openapi: 3.0.3
+info:
+  title: Valor Backend API
+  description: REST API specification for the Valor local video player application service and SQLite database backend.
+  version: 1.0.0
+servers:
+  - url: http://localhost:50001
+    description: Local Backend Server
+paths:
+  /api/heartbeat:
+    get:
+      summary: Heartbeat Status
+      description: Returns active server status and checks if a file needs to be played immediately.
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: ok
+                  playFile:
+                    type: string
+                    nullable: true
+                    description: Path of local video file to open
+                    example: D:/Movies/inception.mp4
+
+  /api/play:
+    post:
+      summary: Queue File Playback
+      description: Tells the backend server to queue a specific local file for playback.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - filePath
+              properties:
+                filePath:
+                  type: string
+                  example: D:/Movies/inception.mp4
+      responses:
+        '200':
+          description: File queued successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+
+  /api/profiles:
+    get:
+      summary: Retrieve Profiles
+      description: Fetches all available user profiles registered on this device.
+      responses:
+        '200':
+          description: List of profiles
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    userId:
+                      type: string
+                      example: u_x7z892kd
+                    username:
+                      type: string
+                      example: John Doe
+                    createdAt:
+                      type: string
+                      example: "2026-07-07T12:00:00.000Z"
+    post:
+      summary: Create Profile
+      description: Registers a new user profile with optional password protection.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - username
+              properties:
+                username:
+                  type: string
+                  example: Jane Doe
+                password:
+                  type: string
+                  nullable: true
+                  example: password123
+      responses:
+        '200':
+          description: Profile created successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  userId:
+                    type: string
+                    example: u_8dkw92ns
+
+  /api/profile/delete:
+    post:
+      summary: Delete Profile
+      description: Removes a user profile and deletes associated settings/history databases.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - userId
+              properties:
+                userId:
+                  type: string
+                  example: u_8dkw92ns
+      responses:
+        '200':
+          description: Profile deleted successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+
+  /api/profile/login:
+    post:
+      summary: Authenticate Profile
+      description: Validates profile password and logs the user in.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - userId
+              properties:
+                userId:
+                  type: string
+                  example: u_8dkw92ns
+                password:
+                  type: string
+                  nullable: true
+                  example: password123
+      responses:
+        '200':
+          description: Login successful
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  userId:
+                    type: string
+                    example: u_8dkw92ns
+                  name:
+                    type: string
+                    example: Jane Doe
+
+  /api/profile/data:
+    get:
+      summary: Get Profile Settings & Data
+      description: Fetches full settings object and history metadata lists for a user profile.
+      parameters:
+        - name: userId
+          in: query
+          required: true
+          schema:
+            type: string
+            example: u_8dkw92ns
+      responses:
+        '200':
+          description: Successfully retrieved data
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  settings:
+                    type: object
+                  history:
+                    type: array
+                    items:
+                      type: object
+
+  /api/profile/migrate:
+    post:
+      summary: Migrate Local Data
+      description: Transfers active browser-cached local settings and history into the SQLite database backend.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - userId
+                - settings
+                - history
+              properties:
+                userId:
+                  type: string
+                  example: u_8dkw92ns
+                settings:
+                  type: object
+                history:
+                  type: array
+                  items:
+                    type: object
+      responses:
+        '200':
+          description: Migration successful
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+
+  /api/settings:
+    post:
+      summary: Update Settings
+      description: Overwrites user settings payload.
+      parameters:
+        - name: userId
+          in: query
+          required: true
+          schema:
+            type: string
+            example: u_8dkw92ns
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: Settings saved successfully
+
+  /api/history:
+    get:
+      summary: Fetch History List
+      description: Returns playback progress and rating items for the profile.
+      parameters:
+        - name: userId
+          in: query
+          required: true
+          schema:
+            type: string
+            example: u_8dkw92ns
+      responses:
+        '200':
+          description: List of video items
+    post:
+      summary: Save History / Bookmarks
+      description: Saves active progress, ratings, and bookmark segments.
+      parameters:
+        - name: userId
+          in: query
+          required: true
+          schema:
+            type: string
+            example: u_8dkw92ns
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: History updated successfully
+
+  /api/trakt/exchange:
+    post:
+      summary: Trakt PKCE Token Exchange Proxy
+      description: Exchanges Trakt OAuth authorization code and PKCE code_verifier for an Access Token securely without requiring client_secret.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - code
+              properties:
+                code:
+                  type: string
+                  example: 92c011e4b6df9ff6f52fca5f185a846b36d7c0827e9793781260bae16ead4ecd
+                code_verifier:
+                  type: string
+                  example: dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk
+                redirect_uri:
+                  type: string
+                  example: https://localhost
+      responses:
+        '200':
+          description: Access token payload
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  access_token:
+                    type: string
+                    example: def456...
+                  token_type:
+                    type: string
+                    example: Bearer
+                  refresh_token:
+                    type: string
+                    example: ref789...
+
+  /api/trakt/user:
+    post:
+      summary: Fetch Trakt User Profile
+      description: Fetches full profile details for the authenticated Trakt user via Bearer access token.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - access_token
+              properties:
+                access_token:
+                  type: string
+      responses:
+        '200':
+          description: User profile details
+
+
+  /api/log:
+    post:
+      summary: Write Server Log
+      description: Records client-side error/info diagnostics to console output logs.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - message
+              properties:
+                message:
+                  type: string
+                  example: "[Browser ERROR] Subtitle loading failed"
+      responses:
+        '200':
+          description: Logged successfully

@@ -903,3 +903,167 @@
     --accent-soft: rgba(58, 92, 176, 0.10);
   }
 }
+
+/* --------------------------------------------------------------------------
+   DESKTOP VALOR SKINS (Synced with Valor Desktop)
+   -------------------------------------------------------------------------- */
+[data-theme="valor-purple"] {
+  --bg: #0f0f11;
+  --s1: #16161a;
+  --ln: #27272e;
+  --ac: #a855f7;
+  --on: #ffffff;
+  --tx: #f4f4f6;
+  --mut: #8e8e9a;
+  --surface-1: var(--s1);
+  --surface-2: #1e1e24;
+  --surface-3: #282830;
+  --border: var(--ln);
+  --control-border: #3f3f4a;
+  --text-1: var(--tx);
+  --text-2: #b4b4c0;
+  --text-3: var(--mut);
+  --accent: var(--ac);
+  --accent-fill: #a855f7;
+  --on-accent: var(--on);
+  --accent-soft: rgba(168, 85, 247, 0.16);
+  --focus-ring: #a855f7;
+}
+
+[data-theme="cnx"] {
+  --bg: #120f0c;
+  --s1: #1a1613;
+  --ln: #332b24;
+  --ac: #eb8c34;
+  --on: #120f0c;
+  --tx: #f2ede8;
+  --mut: #6b645e;
+  --surface-1: var(--s1);
+  --surface-2: #221d18;
+  --surface-3: #2c251f;
+  --border: var(--ln);
+  --control-border: #483d33;
+  --text-1: var(--tx);
+  --text-2: #a39b93;
+  --text-3: var(--mut);
+  --accent: var(--ac);
+  --accent-fill: #eb8c34;
+  --on-accent: var(--on);
+  --accent-soft: rgba(235, 140, 52, 0.16);
+  --focus-ring: #eb8c34;
+}
+
+[data-theme="cloudflare-docs"] {
+  --bg: #0d1117;
+  --s1: #11161e;
+  --ln: #30363d;
+  --ac: #2f81f7;
+  --on: #ffffff;
+  --tx: #f0f6fc;
+  --mut: #6e7681;
+  --surface-1: var(--s1);
+  --surface-2: #161b22;
+  --surface-3: #21262d;
+  --border: var(--ln);
+  --control-border: #444c56;
+  --text-1: var(--tx);
+  --text-2: #8b949e;
+  --text-3: var(--mut);
+  --accent: var(--ac);
+  --accent-fill: #2f81f7;
+  --on-accent: var(--on);
+  --accent-soft: rgba(47, 129, 247, 0.15);
+  --focus-ring: #2f81f7;
+}
+
+[data-theme="oled-black"] {
+  --bg: #000000;
+  --s1: #08080a;
+  --ln: #1c1c20;
+  --ac: #f6821f;
+  --on: #000000;
+  --tx: #f4f4f6;
+  --mut: #7a7a85;
+  --surface-1: var(--s1);
+  --surface-2: #0a0a0c;
+  --surface-3: #141418;
+  --border: var(--ln);
+  --control-border: #34343a;
+  --text-1: var(--tx);
+  --text-2: #a8a8b3;
+  --text-3: var(--mut);
+  --accent: var(--ac);
+  --accent-fill: #f6821f;
+  --on-accent: var(--on);
+  --accent-soft: rgba(246, 130, 31, 0.16);
+  --focus-ring: #f6821f;
+}
+
+[data-theme="github-midnight"] {
+  --bg: #0d1117;
+  --s1: #161b22;
+  --ln: #30363d;
+  --ac: #1f6feb;
+  --on: #ffffff;
+  --tx: #f0f6fc;
+  --mut: #6e7681;
+  --surface-1: var(--s1);
+  --surface-2: #161b22;
+  --surface-3: #21262d;
+  --border: var(--ln);
+  --control-border: #444c56;
+  --text-1: var(--tx);
+  --text-2: #8b949e;
+  --text-3: var(--mut);
+  --accent: var(--ac);
+  --accent-fill: #1f6feb;
+  --on-accent: var(--on);
+  --accent-soft: rgba(31, 111, 235, 0.18);
+  --focus-ring: #1f6feb;
+}
+
+[data-theme="cyber-crimson"] {
+  --bg: #0c0a0f;
+  --s1: #16121c;
+  --ln: rgba(255, 255, 255, 0.11);
+  --ac: #f43f5e;
+  --on: #ffffff;
+  --tx: #f4f1f6;
+  --mut: #8b8294;
+  --surface-1: var(--s1);
+  --surface-2: #1a1522;
+  --surface-3: #241d2f;
+  --border: var(--ln);
+  --control-border: rgba(244, 63, 94, 0.28);
+  --text-1: var(--tx);
+  --text-2: #b9afc2;
+  --text-3: var(--mut);
+  --accent: var(--ac);
+  --accent-fill: #f43f5e;
+  --on-accent: var(--on);
+  --accent-soft: rgba(244, 63, 94, 0.16);
+  --focus-ring: #f43f5e;
+}
+
+[data-theme="emerald-studio"] {
+  --bg: #0b110e;
+  --s1: #121b17;
+  --ln: #1f2e27;
+  --ac: #10b981;
+  --on: #04120c;
+  --tx: #eaf2ee;
+  --mut: #71887d;
+  --surface-1: var(--s1);
+  --surface-2: #16211c;
+  --surface-3: #1f2e27;
+  --border: var(--ln);
+  --control-border: #2c4036;
+  --text-1: var(--tx);
+  --text-2: #9db3a8;
+  --text-3: var(--mut);
+  --accent: var(--ac);
+  --accent-fill: #10b981;
+  --on-accent: var(--on);
+  --accent-soft: rgba(16, 185, 129, 0.16);
+  --focus-ring: #10b981;
+}

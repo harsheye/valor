@@ -17,7 +17,10 @@ import {
   PauseDetailsOverlay,
   SkipIntroButton,
   PlayerIsland,
-  usePlayerIsland
+  usePlayerIsland,
+  useVideoColorSettings,
+  buildVideoCssFilter,
+  type ToneMappingMode
 } from './player';
 import { useAutoLandscape } from '../utils/screenOrientation';
 import type { MediaDetails } from './player/PauseDetailsOverlay';
@@ -86,6 +89,22 @@ export const SimpleRemotePlayer: React.FC<SimpleRemotePlayerProps> = ({
   showCloseButton = false
 }) => {
   const island = usePlayerIsland();
+  const [videoColorSettings] = useVideoColorSettings();
+  const [toneMappingMode, setToneMappingMode] = useState<ToneMappingMode>(() => {
+    try {
+      const saved = localStorage.getItem('valor_tone_mapping_mode');
+      if (saved === 'aces' || saved === 'vibrant' || saved === 'reinhard' || saved === 'off') return saved;
+    } catch {}
+    return 'off';
+  });
+  useEffect(() => {
+    const onTmChange = (e: Event) => {
+      const mode = (e as CustomEvent<ToneMappingMode>).detail;
+      if (mode) setToneMappingMode(mode);
+    };
+    window.addEventListener('valor-tone-mapping-change', onTmChange);
+    return () => window.removeEventListener('valor-tone-mapping-change', onTmChange);
+  }, []);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const hlsInstanceRef = useRef<Hls | null>(null);
@@ -843,7 +862,8 @@ export const SimpleRemotePlayer: React.FC<SimpleRemotePlayerProps> = ({
           width: '100%',
           height: '100%',
           objectFit: 'contain',
-          backgroundColor: '#000000'
+          backgroundColor: '#000000',
+          filter: buildVideoCssFilter(toneMappingMode, videoColorSettings)
         }}
         onTimeUpdate={() => {
           if (videoRef.current) {

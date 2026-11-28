@@ -6,6 +6,12 @@ import type { MediaStream } from '../services/ffmpeg';
 import { CustomSelect } from './CustomSelect';
 import { trimSubtitleName } from '../utils/embedSubtitleStorage';
 import { isMobileDevice } from '../utils/screenOrientation';
+import {
+  useVideoColorSettings,
+  DEFAULT_VIDEO_COLOR_SETTINGS,
+  VIDEO_COLOR_PRESETS,
+  type ToneMappingMode,
+} from './player/ToneMappingFilters';
 import './AudioSubPopover.css';
 
 const fontOptions = [
@@ -18,8 +24,8 @@ const fontOptions = [
   { value: 'monospace', label: 'Mono' }
 ];
 
-const PRESET_TEXT_COLORS = ['#ffffff', '#fef08a', '#67e8f9', '#86efac'];
-const PRESET_BG_COLORS = ['rgba(0, 0, 0, 0.75)', 'rgba(0, 0, 0, 0.4)', '#1e293b'];
+const PRESET_TEXT_COLORS = ['#ffffff', '#fef08a', '#67e8f9', '#86efac', '#fda4af', '#c4b5fd'];
+const PRESET_BG_COLORS = ['rgba(0, 0, 0, 0.75)', 'rgba(0, 0, 0, 0.4)', '#1e293b', '#000000'];
 
 export interface AudioSubPopoverProps {
   audioStreams: MediaStream[];
@@ -116,8 +122,33 @@ export const AudioSubPopover: React.FC<AudioSubPopoverProps> = ({
   const [showCustomSearch, setShowCustomSearch] = useState(false);
   const [customSearchText, setCustomSearchText] = useState('');
 
-  // Mobile segmented tab state (Audio | Subs | Transcript | Style)
-  const [mobileTab, setMobileTab] = useState<'audio' | 'subs' | 'transcript' | 'style'>('subs');
+  // Mobile segmented tab state (Audio | Subs | Transcript | Style | Video)
+  const [mobileTab, setMobileTab] = useState<'audio' | 'subs' | 'transcript' | 'style' | 'video'>('subs');
+  const [videoColor, updateVideoColor] = useVideoColorSettings();
+  const [toneMapping, setToneMapping] = useState<ToneMappingMode>(() => {
+    try {
+      const saved = localStorage.getItem('valor_tone_mapping_mode');
+      if (saved === 'aces' || saved === 'vibrant' || saved === 'reinhard' || saved === 'off') return saved;
+    } catch {}
+    return 'off';
+  });
+
+  useEffect(() => {
+    const onTmChange = (e: Event) => {
+      const mode = (e as CustomEvent<ToneMappingMode>).detail;
+      if (mode) setToneMapping(mode);
+    };
+    window.addEventListener('valor-tone-mapping-change', onTmChange);
+    return () => window.removeEventListener('valor-tone-mapping-change', onTmChange);
+  }, []);
+
+  const handleSetToneMapping = (mode: ToneMappingMode) => {
+    setToneMapping(mode);
+    try {
+      localStorage.setItem('valor_tone_mapping_mode', mode);
+      window.dispatchEvent(new CustomEvent('valor-tone-mapping-change', { detail: mode }));
+    } catch {}
+  };
 
   // Device & orientation detection for responsive presentation (mobile portrait/landscape vs desktop popover)
   const [deviceState, setDeviceState] = useState(() => {
@@ -186,8 +217,11 @@ export const AudioSubPopover: React.FC<AudioSubPopoverProps> = ({
     }
   };
 
-  // Unified rightTab state: 'transcript' | 'style', persisted in subSettings (keeps showViewColumn/showStyleColumn working)
-  const rightTab: 'transcript' | 'style' = subSettings?.rightTab || (subSettings?.showStyleColumn ? 'style' : 'transcript');
+  // Unified rightTab state: 'transcript' | 'style' | 'video', persisted in subSettings (keeps showViewColumn/showStyleColumn working)
+  const rightTab: 'transcript' | 'style' | 'video' =
+    subSettings?.rightTab === 'video'
+      ? 'video'
+      : subSettings?.rightTab || (subSettings?.showStyleColumn ? 'style' : 'transcript');
 
   // Foldable state for desktop Transcript & Style pane
   const [isFolded, setIsFolded] = useState<boolean>(() => {
@@ -207,7 +241,7 @@ export const AudioSubPopover: React.FC<AudioSubPopoverProps> = ({
     onUpdateSubSettings({ ...subSettings, isFolded: next });
   };
 
-  const setRightTab = (tab: 'transcript' | 'style') => {
+  const setRightTab = (tab: 'transcript' | 'style' | 'video') => {
     if (tab === 'transcript' && !selectedSubTrack) {
       if (subtitleTracks.length > 0) {
         setSelectedSubTrack(subtitleTracks[subtitleTracks.length - 1]);
@@ -868,6 +902,156 @@ export const AudioSubPopover: React.FC<AudioSubPopoverProps> = ({
     </div>
   );
 
+  const renderVideoColorContent = () => (
+    <div className="asp-style">
+      {/* Color Presets */}
+      <div className="asp-field">
+        <span className="asp-field-label">Color Preset</span>
+        <div className="asp-color-presets">
+          {VIDEO_COLOR_PRESETS.map((p) => {
+            const isActive = videoColor.preset === p.id;
+            return (
+              <button
+                key={p.id}
+                type="button"
+                className={`asp-color-preset-btn ${isActive ? 'active' : ''}`}
+                onClick={() => updateVideoColor({ preset: p.id, ...p.values })}
+              >
+                {p.label}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* HDR Tone Mapping */}
+      <div className="asp-field">
+        <span className="asp-field-label">HDR Tone Mapping</span>
+        <div className="asp-color-presets">
+          {(['off', 'aces', 'vibrant', 'reinhard'] as ToneMappingMode[]).map((mode) => (
+            <button
+              key={mode}
+              type="button"
+              className={`asp-color-preset-btn ${toneMapping === mode ? 'active' : ''}`}
+              onClick={() => handleSetToneMapping(mode)}
+            >
+              {mode === 'off' ? 'Off' : mode.toUpperCase()}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Brightness */}
+      <div className="asp-field">
+        <span className="asp-field-label">
+          <span>Brightness</span>
+          <span className="asp-slider-val">{videoColor.brightness}%</span>
+        </span>
+        <div className="asp-slider-row">
+          <input
+            type="range"
+            min={50}
+            max={200}
+            step={2}
+            value={videoColor.brightness}
+            className="asp-slider"
+            onChange={(e) => updateVideoColor({ preset: 'custom', brightness: Number(e.target.value) })}
+          />
+        </div>
+      </div>
+
+      {/* Contrast */}
+      <div className="asp-field">
+        <span className="asp-field-label">
+          <span>Contrast</span>
+          <span className="asp-slider-val">{videoColor.contrast}%</span>
+        </span>
+        <div className="asp-slider-row">
+          <input
+            type="range"
+            min={50}
+            max={200}
+            step={2}
+            value={videoColor.contrast}
+            className="asp-slider"
+            onChange={(e) => updateVideoColor({ preset: 'custom', contrast: Number(e.target.value) })}
+          />
+        </div>
+      </div>
+
+      {/* Saturation */}
+      <div className="asp-field">
+        <span className="asp-field-label">
+          <span>Saturation</span>
+          <span className="asp-slider-val">{videoColor.saturation}%</span>
+        </span>
+        <div className="asp-slider-row">
+          <input
+            type="range"
+            min={0}
+            max={250}
+            step={5}
+            value={videoColor.saturation}
+            className="asp-slider"
+            onChange={(e) => updateVideoColor({ preset: 'custom', saturation: Number(e.target.value) })}
+          />
+        </div>
+      </div>
+
+      {/* Hue */}
+      <div className="asp-field">
+        <span className="asp-field-label">
+          <span>Hue</span>
+          <span className="asp-slider-val">{videoColor.hue}°</span>
+        </span>
+        <div className="asp-slider-row">
+          <input
+            type="range"
+            min={-180}
+            max={180}
+            step={2}
+            value={videoColor.hue}
+            className="asp-slider"
+            onChange={(e) => updateVideoColor({ preset: 'custom', hue: Number(e.target.value) })}
+          />
+        </div>
+      </div>
+
+      {/* Warmth / Sepia */}
+      <div className="asp-field">
+        <span className="asp-field-label">
+          <span>Warmth</span>
+          <span className="asp-slider-val">{videoColor.sepia}%</span>
+        </span>
+        <div className="asp-slider-row">
+          <input
+            type="range"
+            min={0}
+            max={100}
+            step={2}
+            value={videoColor.sepia}
+            className="asp-slider"
+            onChange={(e) => updateVideoColor({ preset: 'custom', sepia: Number(e.target.value) })}
+          />
+        </div>
+      </div>
+
+      {/* Reset Video Colors */}
+      <button
+        type="button"
+        className="asp-reset-btn"
+        onClick={(e) => {
+          e.stopPropagation();
+          updateVideoColor({ ...DEFAULT_VIDEO_COLOR_SETTINGS });
+          handleSetToneMapping('off');
+        }}
+        title="Reset video colors to defaults"
+      >
+        Reset Video Colors
+      </button>
+    </div>
+  );
+
   // --- MOBILE RENDER: RESPONSIVE BOTTOM SHEET / LANDSCAPE MODAL ---
   if (isMobile) {
     const sheetContent = (
@@ -923,6 +1107,13 @@ export const AudioSubPopover: React.FC<AudioSubPopoverProps> = ({
               >
                 Style
               </button>
+              <button
+                type="button"
+                className={`asp-sheet-tab ${mobileTab === 'video' ? 'active' : ''}`}
+                onClick={() => setMobileTab('video')}
+              >
+                Color
+              </button>
             </div>
 
             <button
@@ -941,6 +1132,7 @@ export const AudioSubPopover: React.FC<AudioSubPopoverProps> = ({
             {mobileTab === 'subs' && effectiveSubVisible && renderSubsContent()}
             {mobileTab === 'transcript' && renderTranscriptContent()}
             {mobileTab === 'style' && renderStyleContent()}
+            {mobileTab === 'video' && renderVideoColorContent()}
           </div>
         </div>
       </div>
@@ -1001,11 +1193,19 @@ export const AudioSubPopover: React.FC<AudioSubPopoverProps> = ({
                 >
                   Style
                 </button>
+                <button
+                  type="button"
+                  className={`asp-seg-btn ${rightTab === 'video' ? 'active' : ''}`}
+                  onClick={() => setRightTab('video')}
+                >
+                  Color
+                </button>
               </div>
             </div>
 
             {rightTab === 'transcript' && renderTranscriptContent()}
             {rightTab === 'style' && renderStyleContent()}
+            {rightTab === 'video' && renderVideoColorContent()}
           </div>
         )}
       </div>

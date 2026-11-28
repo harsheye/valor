@@ -60,7 +60,7 @@ import { classifyVideoTitle, getRegexedTitleWithYear } from '../utils/libraryCla
 import { syncTraktHistory, syncTraktRating, resolveTraktMetadata } from '../services/traktAuth';
 import { LoadingSpinner, BufferingOverlay } from './LoadingSpinner';
 import { isMobileDevice, useAutoLandscape } from '../utils/screenOrientation';
-import { PlayerIsland, usePlayerIsland, type IslandAudioTrack, type IslandSubtitleTrack, AmbianceLighting, ToneMappingSvgDefs, isHdrOrX265Video, getToneMappingCssFilter, type ToneMappingMode } from './player';
+import { PlayerIsland, usePlayerIsland, type IslandAudioTrack, type IslandSubtitleTrack, AmbianceLighting, ToneMappingSvgDefs, isHdrOrX265Video, buildVideoCssFilter, useVideoColorSettings, type ToneMappingMode } from './player';
 import { RadialMenu } from './RadialMenu';
 import { VlcContextMenu } from './player/VlcContextMenu';
 import { ConsoleOverlay } from './ConsoleOverlay';
@@ -2308,6 +2308,16 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
     } catch {}
     return isHdrOrX265Video(video) ? 'aces' : 'off';
   });
+
+  const [videoColorSettings] = useVideoColorSettings();
+  useEffect(() => {
+    const onTmChange = (e: Event) => {
+      const mode = (e as CustomEvent<ToneMappingMode>).detail;
+      if (mode) setToneMappingMode(mode);
+    };
+    window.addEventListener('valor-tone-mapping-change', onTmChange);
+    return () => window.removeEventListener('valor-tone-mapping-change', onTmChange);
+  }, []);
 
   const handleSetToneMapping = useCallback((mode: ToneMappingMode) => {
     setToneMappingMode(mode);
@@ -6002,7 +6012,7 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
             position: 'relative',
             zIndex: 2,
             backgroundColor: '#000',
-            filter: toneMappingMode !== 'off' ? getToneMappingCssFilter(toneMappingMode) : undefined,
+            filter: buildVideoCssFilter(toneMappingMode, videoColorSettings),
             objectFit: aspectRatio === 'cover' ? 'cover' : (aspectRatio === '16:9' || aspectRatio === '4:3' ? 'fill' : 'contain'),
             aspectRatio: aspectRatio === '16:9' ? '16/9' : (aspectRatio === '4:3' ? '4/3' : undefined)
           }}

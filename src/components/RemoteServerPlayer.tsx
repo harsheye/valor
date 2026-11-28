@@ -18,7 +18,7 @@ import { AudioSubPopover } from './AudioSubPopover';
 import { BookmarkPanel } from './BookmarkPanel';
 import { BookmarkModal } from './BookmarkModal';
 import { OdometerClock, PauseDetailsOverlay, SkipIntroButton, AmbianceLighting, type MediaDetails } from './player';
-import { ToneMappingSvgDefs, isHdrOrX265Video, getToneMappingCssFilter, type ToneMappingMode } from './player/ToneMappingFilters';
+import { ToneMappingSvgDefs, isHdrOrX265Video, buildVideoCssFilter, useVideoColorSettings, type ToneMappingMode } from './player/ToneMappingFilters';
 import { AudioSyncEngine } from '../services/remote/audioSync';
 import { parseSubtitles, cleanSubtitleText } from '../utils/subtitleParser';
 import { parseMkv, parseMp4, extractMkvSubtitles } from '../utils/containerParser';
@@ -1927,6 +1927,16 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
     } catch {}
     return isHdrOrX265Video(video) ? 'aces' : 'off';
   });
+
+  const [videoColorSettings] = useVideoColorSettings();
+  useEffect(() => {
+    const onTmChange = (e: Event) => {
+      const mode = (e as CustomEvent<ToneMappingMode>).detail;
+      if (mode) setToneMappingMode(mode);
+    };
+    window.addEventListener('valor-tone-mapping-change', onTmChange);
+    return () => window.removeEventListener('valor-tone-mapping-change', onTmChange);
+  }, []);
 
   const handleSetToneMapping = useCallback((mode: ToneMappingMode) => {
     setToneMappingMode(mode);
@@ -6266,7 +6276,7 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
             position: 'relative',
             zIndex: 2,
             backgroundColor: '#000',
-            filter: toneMappingMode !== 'off' ? getToneMappingCssFilter(toneMappingMode) : undefined,
+            filter: buildVideoCssFilter(toneMappingMode, videoColorSettings),
             objectFit: aspectRatio === 'cover' ? 'cover' : (aspectRatio === '16:9' || aspectRatio === '4:3' ? 'fill' : 'contain'),
             aspectRatio: aspectRatio === '16:9' ? '16/9' : (aspectRatio === '4:3' ? '4/3' : undefined)
           }}

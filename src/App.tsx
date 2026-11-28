@@ -396,6 +396,7 @@ const defaultSettings = {
   customLoaderUrl: '' as string,
   customLoaderType: 'default' as 'default' | 'image' | 'video' | 'gif',
   spinnerPreset: 'fire-circle' as string,
+  accentColor: '' as string,
   radialMenuConfig: {
     console: true,
     audioSubs: true,
@@ -1847,18 +1848,43 @@ function App() {
   }, []);
 
   useEffect(() => {
-    const urlTheme = new URLSearchParams(window.location.search).get('theme');
-    let savedTheme: string | null = null;
-    try {
-      savedTheme = localStorage.getItem(`valor_active_theme_${settings.userId || 'local'}`);
-    } catch {}
-    const theme = urlTheme || settings.theme || savedTheme || 'black-ops';
-    document.documentElement.setAttribute('data-theme', theme);
-    const metaTheme = document.querySelector('meta[name="theme-color"]');
-    if (metaTheme) {
-      metaTheme.setAttribute('content', (theme === 'black-ops' || theme === 'oled') ? '#000000' : (theme === 'soft-paper' ? '#ECE7DD' : '#0F1217'));
-    }
-  }, [settings.theme, settings.userId]);
+    const applyThemeAndAccent = () => {
+      const params = new URLSearchParams(window.location.search);
+      const urlTheme = params.get('theme');
+      const urlAccent = params.get('accent');
+      let savedTheme: string | null = null;
+      let savedAccent: string | null = null;
+      try {
+        savedTheme = localStorage.getItem(`valor_active_theme_${settings.userId || 'local'}`);
+        savedAccent = localStorage.getItem('valor_active_accent');
+      } catch {}
+      const theme = (urlTheme && !urlTheme.startsWith('{') ? urlTheme : null) || settings.theme || savedTheme || 'black-ops';
+      document.documentElement.setAttribute('data-theme', theme);
+      const metaTheme = document.querySelector('meta[name="theme-color"]');
+      if (metaTheme) {
+        metaTheme.setAttribute('content', (theme === 'black-ops' || theme === 'oled' || theme === 'oled-black') ? '#000000' : (theme === 'soft-paper' ? '#ECE7DD' : '#0F1217'));
+      }
+      const accent = urlAccent || settings.accentColor || savedAccent || '';
+      const rootStyle = document.documentElement.style;
+      if (accent && /^#[0-9a-f]{3,8}$/i.test(accent.trim())) {
+        const hex = accent.trim();
+        rootStyle.setProperty('--ac', hex);
+        rootStyle.setProperty('--accent', hex);
+        rootStyle.setProperty('--accent-color', hex);
+        rootStyle.setProperty('--accent-fill', hex);
+        rootStyle.setProperty('--player-accent', hex);
+        rootStyle.setProperty('--focus-ring', hex);
+        rootStyle.setProperty('--btn-base-color', hex);
+        rootStyle.setProperty('--accent-soft', `${hex}26`);
+      } else {
+        ['--ac', '--accent', '--accent-color', '--accent-fill', '--player-accent', '--focus-ring', '--btn-base-color', '--accent-soft']
+          .forEach((prop) => rootStyle.removeProperty(prop));
+      }
+    };
+    applyThemeAndAccent();
+    window.addEventListener('valor-theme-changed', applyThemeAndAccent);
+    return () => window.removeEventListener('valor-theme-changed', applyThemeAndAccent);
+  }, [settings.theme, settings.accentColor, settings.userId]);
 
   const storageProvider = useMemo(() => {
     if (settings.storageMode === 'file' && settings.userId && settings.userId !== 'local' && !settings.userId.startsWith('local_')) {

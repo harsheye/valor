@@ -1,0 +1,37 @@
+<svg viewBox="0 0 120 130" xmlns="http://www.w3.org/2000/svg">
+ <defs>
+  <linearGradient id="g" x1="0" y1="0" x2="0" y2="1">
+   <stop offset="0" stop-color="#ff5a68"/>
+   <stop offset="1" stop-color="#7a0c19"/>
+  </linearGradient>
+  <style>
+   .draw-v {
+     fill: none;
+     stroke: url(#g);
+     stroke-width: 9;
+     stroke-linecap: round;
+     stroke-linejoin: round;
+     stroke-dasharray: 1;
+     stroke-dashoffset: 1;
+     animation: draw 3.6s ease-in-out infinite;
+     filter: drop-shadow(0 0 10px rgba(225, 29, 46, .3));
+   }
+   .draw-v.second {
+     animation-delay: .25s;
+   }
+   @keyframes draw {
+     0% { stroke-dashoffset: 1; opacity: 1; }
+     40%, 72% { stroke-dashoffset: 0; opacity: 1; }
+     100% { stroke-dashoffset: 0; opacity: 0; }
+   }
+   @media (prefers-reduced-motion: reduce) {
+     .draw-v {
+       animation: none;
+       stroke-dashoffset: 0;
+     }
+   }
+  </style>
+ </defs>
+ <path class="draw-v" pathLength="1" d="M14 14 L60 110"/>
+ <path class="draw-v second" pathLength="1" d="M106 14 L60 110"/>
+</svg>

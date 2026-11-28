@@ -230,7 +230,16 @@ export const EmbedPlayerPage: React.FC = () => {
     const params = new URLSearchParams(window.location.search);
     try {
       const themeParam = params.get('theme');
-      if (themeParam) return JSON.parse(themeParam);
+      const accentParam = params.get('accent');
+      if (themeParam) {
+        if (themeParam.startsWith('{')) {
+          return JSON.parse(themeParam);
+        }
+        document.documentElement.setAttribute('data-theme', themeParam);
+      }
+      if (accentParam && /^#[0-9a-f]{3,8}$/i.test(accentParam.trim())) {
+        return { accent: accentParam.trim() };
+      }
     } catch (e) {
       console.error('Failed to parse embed theme', e);
     }
@@ -239,7 +248,15 @@ export const EmbedPlayerPage: React.FC = () => {
 
   // Set CSS Variables for theming
   useEffect(() => {
-    if (theme.accent) document.documentElement.style.setProperty('--accent-color', theme.accent);
+    if (theme.accent) {
+      document.documentElement.style.setProperty('--ac', theme.accent);
+      document.documentElement.style.setProperty('--accent', theme.accent);
+      document.documentElement.style.setProperty('--accent-color', theme.accent);
+      document.documentElement.style.setProperty('--accent-fill', theme.accent);
+      document.documentElement.style.setProperty('--player-accent', theme.accent);
+      document.documentElement.style.setProperty('--focus-ring', theme.accent);
+      document.documentElement.style.setProperty('--accent-soft', `${theme.accent}26`);
+    }
     if (theme.background) document.documentElement.style.setProperty('--bg-color', theme.background);
     if (theme.text) document.documentElement.style.setProperty('--text-primary', theme.text);
     if (theme.font) document.documentElement.style.setProperty('--font-family', theme.font);
