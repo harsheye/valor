@@ -14,3 +14,4 @@ export * from './usePlayerIsland';
 export * from './AmbianceLighting';
 export * from './ToneMappingFilters';
 export * from './VlcContextMenu';
+export * from './ViewingOptionsPopover';

@@ -60,7 +60,7 @@ import { classifyVideoTitle, getRegexedTitleWithYear } from '../utils/libraryCla
 import { syncTraktHistory, syncTraktRating, resolveTraktMetadata } from '../services/traktAuth';
 import { LoadingSpinner, BufferingOverlay } from './LoadingSpinner';
 import { isMobileDevice, useAutoLandscape } from '../utils/screenOrientation';
-import { PlayerIsland, usePlayerIsland, type IslandAudioTrack, type IslandSubtitleTrack, AmbianceLighting, ToneMappingSvgDefs, isHdrOrX265Video, buildVideoCssFilter, useVideoColorSettings, type ToneMappingMode } from './player';
+import { PlayerIsland, usePlayerIsland, type IslandAudioTrack, type IslandSubtitleTrack, AmbianceLighting, ToneMappingSvgDefs, isHdrOrX265Video, buildVideoCssFilter, useVideoColorSettings, ViewingOptionsPopover, type ToneMappingMode } from './player';
 import { RadialMenu } from './RadialMenu';
 import { VlcContextMenu } from './player/VlcContextMenu';
 import { ConsoleOverlay } from './ConsoleOverlay';
@@ -2310,6 +2310,7 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
   });
 
   const [videoColorSettings] = useVideoColorSettings();
+  const [showViewingOptions, setShowViewingOptions] = useState(false);
   useEffect(() => {
     const onTmChange = (e: Event) => {
       const mode = (e as CustomEvent<ToneMappingMode>).detail;
@@ -6013,7 +6014,8 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
             zIndex: 2,
             backgroundColor: '#000',
             filter: buildVideoCssFilter(toneMappingMode, videoColorSettings),
-            objectFit: aspectRatio === 'cover' ? 'cover' : (aspectRatio === '16:9' || aspectRatio === '4:3' ? 'fill' : 'contain'),
+            objectFit: videoColorSettings.pictureFit === 'fill' ? 'cover' : videoColorSettings.pictureFit === 'stretch' ? 'fill' : (aspectRatio === 'cover' ? 'cover' : (aspectRatio === '16:9' || aspectRatio === '4:3' ? 'fill' : 'contain')),
+            transform: videoColorSettings.pictureFit === '150' ? 'scale(1.5)' : undefined,
             aspectRatio: aspectRatio === '16:9' ? '16/9' : (aspectRatio === '4:3' ? '4/3' : undefined)
           }}
           onLoadedMetadata={() => {
@@ -7538,6 +7540,46 @@ export const LocalVideoPlayer: React.FC<VideoPlayerProps> = ({
                   </div>
                 )}
                 
+                {/* Viewing Options Button & Popover */}
+                <div className="popover-wrapper" style={{ position: 'relative' }}>
+                  <button
+                    type="button"
+                    className={`control-btn-netflix ${showViewingOptions ? 'active' : ''}`}
+                    onClick={() => {
+                      setShowViewingOptions(prev => !prev);
+                      setShowAudioSubMenu(false);
+                      setShowSpeedMenu(false);
+                    }}
+                    title="Viewing options"
+                    style={showViewingOptions ? { color: 'var(--accent)' } : undefined}
+                  >
+                    <Sliders size={20} />
+                  </button>
+                  {showViewingOptions && (
+                    <ViewingOptionsPopover
+                      title={video.title || video.fileName || 'Current media'}
+                      videoRef={videoRef}
+                      playbackRate={playbackRate}
+                      onChangePlaybackRate={(rate) => {
+                        setPlaybackRate(rate);
+                        if (videoRef.current) videoRef.current.playbackRate = rate;
+                      }}
+                      toneMappingMode={toneMappingMode}
+                      onChangeToneMapping={handleSetToneMapping}
+                      bookmarks={bookmarks}
+                      onSeek={(t) => {
+                        if (videoRef.current) {
+                          videoRef.current.currentTime = t;
+                          setCurrentTime(t);
+                        }
+                      }}
+                      duration={duration}
+                      formatTime={formatTime}
+                      onClose={() => setShowViewingOptions(false)}
+                    />
+                  )}
+                </div>
+
                 {/* Netflix-style Speed Icon Button & Popover */}
                 <div 
                   className="popover-wrapper"

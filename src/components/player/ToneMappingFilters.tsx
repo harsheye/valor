@@ -2,36 +2,39 @@ import React, { useState, useEffect } from 'react';
 import type { VideoItem } from '../../types/media';
 
 export type ToneMappingMode = 'off' | 'aces' | 'vibrant' | 'reinhard';
+export type PictureFitMode = 'fit' | 'fill' | '100' | '150' | 'stretch';
 
 export interface VideoColorSettings {
   preset: string;
-  brightness: number; // 50..200 (100 = default)
-  contrast: number;   // 50..200 (100 = default)
-  saturation: number; // 0..250 (100 = default)
-  hue: number;        // -180..180 (0 = default)
-  sepia: number;      // 0..100 (0 = default)
+  brightness: number; // -100..100 (0 = default)
+  contrast: number;   // -100..100 (0 = default)
+  saturation: number; // -100..100 (0 = default)
+  gamma: number;      // -100..100 (0 = default)
+  hue: number;        // -100..100 (0 = default)
+  sepia: number;      // 0..100 (legacy compat)
+  pictureFit: PictureFitMode;
 }
 
 export const DEFAULT_VIDEO_COLOR_SETTINGS: VideoColorSettings = {
-  preset: 'default',
-  brightness: 100,
-  contrast: 100,
-  saturation: 100,
+  preset: 'off',
+  brightness: 0,
+  contrast: 0,
+  saturation: 0,
+  gamma: 0,
   hue: 0,
   sepia: 0,
+  pictureFit: 'fit',
 };
 
 export const VIDEO_COLOR_PRESETS: Array<{ id: string; label: string; values: Partial<VideoColorSettings> }> = [
-  { id: 'default', label: 'Default', values: { brightness: 100, contrast: 100, saturation: 100, hue: 0, sepia: 0 } },
-  { id: 'vivid', label: 'Vivid', values: { brightness: 104, contrast: 115, saturation: 135, hue: 0, sepia: 0 } },
-  { id: 'cinema', label: 'Cinema', values: { brightness: 96, contrast: 118, saturation: 108, hue: 0, sepia: 8 } },
-  { id: 'warm', label: 'Warm', values: { brightness: 102, contrast: 105, saturation: 112, hue: -6, sepia: 24 } },
-  { id: 'cool', label: 'Cool', values: { brightness: 102, contrast: 106, saturation: 105, hue: 12, sepia: 0 } },
-  { id: 'night', label: 'Night', values: { brightness: 118, contrast: 112, saturation: 92, hue: 0, sepia: 12 } },
-  { id: 'mono', label: 'B&W', values: { brightness: 102, contrast: 120, saturation: 0, hue: 0, sepia: 0 } },
+  { id: 'off', label: 'Off', values: { brightness: 0, contrast: 0, saturation: 0, gamma: 0, hue: 0 } },
+  { id: 'cinema', label: 'Cinema', values: { brightness: -4, contrast: 10, saturation: 8, gamma: 4 } },
+  { id: 'vivid', label: 'Vivid', values: { brightness: 4, contrast: 14, saturation: 24, gamma: 2 } },
+  { id: 'darkroom', label: 'Dark room', values: { brightness: -8, contrast: 12, saturation: 4, gamma: 10 } },
+  { id: 'sports', label: 'Sports', values: { brightness: 6, contrast: 10, saturation: 16, gamma: 0 } },
 ];
 
-const VIDEO_COLOR_STORAGE_KEY = 'valor_video_color_settings';
+const VIDEO_COLOR_STORAGE_KEY = 'valor_video_color_settings_v2';
 const VIDEO_COLOR_EVENT = 'valor-video-color-change';
 
 export function loadVideoColorSettings(): VideoColorSettings {
@@ -92,22 +95,13 @@ export const isHdrOrX265Video = (video?: VideoItem | null): boolean => {
   return /x265|hevc|h\.?265|hdr|2160p|10bit|bt2020|uhd/i.test(`${str} ${streamCodecs}`);
 };
 
-/**
- * Universal, GPU-accelerated CSS filters for HDR tone mapping.
- * Uses high-performance compositor filters (contrast, saturate, brightness)
- * that work natively across all desktop browsers, WebKit (iOS/Safari), and Android
- * without relying on brittle SVG filter resolution.
- */
 export const getToneMappingCssFilter = (mode: ToneMappingMode): string => {
   switch (mode) {
     case 'aces':
-      // ACES Filmic: Deep blacks, restored highlight contrast, and balanced color saturation
       return 'contrast(1.24) saturate(1.36) brightness(1.04)';
     case 'vibrant':
-      // Vibrant: Maximum color punch and rich vivid tones for heavily washed out 10-bit files
       return 'contrast(1.30) saturate(1.58) brightness(1.06)';
     case 'reinhard':
-      // Reinhard: Natural roll-off with gentle contrast curve and smooth SDR tone mapping
       return 'contrast(1.14) saturate(1.22) brightness(1.02)';
     case 'off':
     default:
@@ -125,11 +119,14 @@ export const buildVideoCssFilter = (
     if (tm && tm !== 'none') parts.push(tm);
   }
   if (color) {
-    if (color.brightness !== 100) parts.push(`brightness(${(color.brightness / 100).toFixed(2)})`);
-    if (color.contrast !== 100) parts.push(`contrast(${(color.contrast / 100).toFixed(2)})`);
-    if (color.saturation !== 100) parts.push(`saturate(${(color.saturation / 100).toFixed(2)})`);
-    if (color.hue !== 0) parts.push(`hue-rotate(${color.hue}deg)`);
-    if (color.sepia !== 0) parts.push(`sepia(${(color.sepia / 100).toFixed(2)})`);
+    const br = 1 + (color.brightness || 0) * 0.005 + (color.gamma || 0) * 0.0025;
+    const con = 1 + (color.contrast || 0) * 0.005 + (color.gamma || 0) * 0.002;
+    const sat = Math.max(0, 1 + (color.saturation || 0) * 0.01);
+    if (Math.abs(br - 1) > 0.001) parts.push(`brightness(${Math.max(0.1, br).toFixed(3)})`);
+    if (Math.abs(con - 1) > 0.001) parts.push(`contrast(${Math.max(0.1, con).toFixed(3)})`);
+    if (Math.abs(sat - 1) > 0.001) parts.push(`saturate(${sat.toFixed(3)})`);
+    if (color.hue) parts.push(`hue-rotate(${Math.round(color.hue * 1.8)}deg)`);
+    if (color.sepia) parts.push(`sepia(${(color.sepia / 100).toFixed(2)})`);
   }
   return parts.length > 0 ? parts.join(' ') : undefined;
 };

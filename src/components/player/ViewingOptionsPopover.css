@@ -1,0 +1,305 @@
+.vop-panel {
+  position: absolute;
+  bottom: 62px;
+  right: 0;
+  width: min(560px, calc(100vw - 32px));
+  max-height: min(440px, calc(100vh - 110px));
+  background: var(--card-bg, var(--surface-1, rgba(20, 18, 16, 0.96)));
+  border: 1px solid var(--border, rgba(255, 255, 255, 0.1));
+  border-radius: 16px;
+  box-shadow: 0 24px 50px rgba(0, 0, 0, 0.72);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+  color: var(--text-1, #f2ede8);
+  padding: 18px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  z-index: 120;
+  user-select: none;
+  box-sizing: border-box;
+}
+
+.vop-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.vop-title {
+  font-size: 17px;
+  font-weight: 700;
+  color: var(--text-1, #f2ede8);
+  line-height: 1.25;
+}
+
+.vop-subtitle {
+  font-size: 11.5px;
+  color: var(--text-2, #a39b93);
+  margin-top: 2px;
+  max-width: 340px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.vop-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.vop-reset-btn {
+  appearance: none;
+  background: var(--surface-2, rgba(255, 255, 255, 0.08));
+  border: 1px solid var(--border, rgba(255, 255, 255, 0.1));
+  color: var(--text-1, #f2ede8);
+  border-radius: 8px;
+  padding: 6px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.vop-reset-btn:hover {
+  background: var(--surface-3, rgba(255, 255, 255, 0.14));
+}
+
+.vop-close-btn {
+  appearance: none;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  background: var(--surface-2, rgba(255, 255, 255, 0.08));
+  border: none;
+  color: var(--text-1, #f2ede8);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.vop-close-btn:hover {
+  background: var(--surface-3, rgba(255, 255, 255, 0.16));
+}
+
+/* Segmented Tabs */
+.vop-tabs {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 4px;
+  background: var(--surface-2, rgba(255, 255, 255, 0.05));
+  border: 1px solid var(--border, rgba(255, 255, 255, 0.07));
+  border-radius: 10px;
+  padding: 4px;
+}
+
+.vop-tab {
+  appearance: none;
+  background: transparent;
+  border: none;
+  border-radius: 7px;
+  padding: 7px 10px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text-2, #a39b93);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.vop-tab:hover {
+  color: var(--text-1, #f2ede8);
+}
+
+.vop-tab.active {
+  background: var(--accent, #eb8c34);
+  color: var(--on-accent, #120f0c);
+}
+
+.vop-body {
+  overflow-y: auto;
+  padding-right: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border, rgba(255, 255, 255, 0.16)) transparent;
+}
+
+.vop-section-label {
+  font-size: 11.5px;
+  font-weight: 500;
+  color: var(--text-2, #a39b93);
+  margin-bottom: 6px;
+}
+
+.vop-presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.vop-chip {
+  appearance: none;
+  background: var(--surface-2, rgba(255, 255, 255, 0.06));
+  border: 1px solid var(--border, rgba(255, 255, 255, 0.08));
+  color: var(--text-2, #a39b93);
+  border-radius: 8px;
+  padding: 6px 13px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.14s ease;
+}
+
+.vop-chip:hover {
+  color: var(--text-1, #f2ede8);
+  background: var(--surface-3, rgba(255, 255, 255, 0.1));
+}
+
+.vop-chip.active {
+  background: var(--accent-soft, rgba(235, 140, 52, 0.18));
+  border-color: var(--accent, #eb8c34);
+  color: var(--accent, #eb8c34);
+}
+
+/* 2-column slider grid */
+.vop-sliders-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px 20px;
+}
+
+@media (max-width: 520px) {
+  .vop-sliders-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.vop-slider-item {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.vop-slider-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text-1, #f2ede8);
+}
+
+.vop-slider-num {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11.5px;
+  color: var(--accent, #eb8c34);
+}
+
+.vop-range {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 4px;
+  border-radius: 99px;
+  outline: none;
+  cursor: pointer;
+}
+
+.vop-range::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 15px;
+  height: 15px;
+  border-radius: 50%;
+  background: #9ca3af;
+  border: 2.5px solid var(--accent, #eb8c34);
+  cursor: pointer;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.5);
+}
+
+.vop-range::-moz-range-thumb {
+  width: 15px;
+  height: 15px;
+  border-radius: 50%;
+  background: #9ca3af;
+  border: 2.5px solid var(--accent, #eb8c34);
+  cursor: pointer;
+}
+
+.vop-fit-seg {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 4px;
+  background: var(--surface-2, rgba(255, 255, 255, 0.05));
+  border-radius: 9px;
+  padding: 3px;
+}
+
+.vop-fit-btn {
+  appearance: none;
+  background: transparent;
+  border: none;
+  border-radius: 6px;
+  padding: 6px 8px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-2, #a39b93);
+  cursor: pointer;
+}
+
+.vop-fit-btn.active {
+  background: var(--accent-soft, rgba(235, 140, 52, 0.2));
+  color: var(--accent, #eb8c34);
+}
+
+.vop-info-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border, rgba(255, 255, 255, 0.07));
+  font-size: 12.5px;
+}
+
+.vop-info-key {
+  color: var(--text-2, #a39b93);
+}
+
+.vop-info-val {
+  color: var(--text-1, #f2ede8);
+  font-weight: 600;
+  max-width: 300px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.vop-chapter-row {
+  appearance: none;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 10px;
+  background: var(--surface-2, rgba(255, 255, 255, 0.04));
+  border: 1px solid var(--border, rgba(255, 255, 255, 0.07));
+  border-radius: 8px;
+  color: var(--text-1, #f2ede8);
+  font-size: 12.5px;
+  cursor: pointer;
+  text-align: left;
+}
+
+.vop-chapter-row:hover {
+  border-color: var(--accent, #eb8c34);
+}

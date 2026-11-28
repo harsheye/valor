@@ -945,14 +945,14 @@ export const AudioSubPopover: React.FC<AudioSubPopoverProps> = ({
       <div className="asp-field">
         <span className="asp-field-label">
           <span>Brightness</span>
-          <span className="asp-slider-val">{videoColor.brightness}%</span>
+          <span className="asp-slider-val">{videoColor.brightness}</span>
         </span>
         <div className="asp-slider-row">
           <input
             type="range"
-            min={50}
-            max={200}
-            step={2}
+            min={-100}
+            max={100}
+            step={1}
             value={videoColor.brightness}
             className="asp-slider"
             onChange={(e) => updateVideoColor({ preset: 'custom', brightness: Number(e.target.value) })}
@@ -964,14 +964,14 @@ export const AudioSubPopover: React.FC<AudioSubPopoverProps> = ({
       <div className="asp-field">
         <span className="asp-field-label">
           <span>Contrast</span>
-          <span className="asp-slider-val">{videoColor.contrast}%</span>
+          <span className="asp-slider-val">{videoColor.contrast}</span>
         </span>
         <div className="asp-slider-row">
           <input
             type="range"
-            min={50}
-            max={200}
-            step={2}
+            min={-100}
+            max={100}
+            step={1}
             value={videoColor.contrast}
             className="asp-slider"
             onChange={(e) => updateVideoColor({ preset: 'custom', contrast: Number(e.target.value) })}
@@ -983,17 +983,36 @@ export const AudioSubPopover: React.FC<AudioSubPopoverProps> = ({
       <div className="asp-field">
         <span className="asp-field-label">
           <span>Saturation</span>
-          <span className="asp-slider-val">{videoColor.saturation}%</span>
+          <span className="asp-slider-val">{videoColor.saturation}</span>
         </span>
         <div className="asp-slider-row">
           <input
             type="range"
-            min={0}
-            max={250}
-            step={5}
+            min={-100}
+            max={100}
+            step={1}
             value={videoColor.saturation}
             className="asp-slider"
             onChange={(e) => updateVideoColor({ preset: 'custom', saturation: Number(e.target.value) })}
+          />
+        </div>
+      </div>
+
+      {/* Gamma */}
+      <div className="asp-field">
+        <span className="asp-field-label">
+          <span>Gamma</span>
+          <span className="asp-slider-val">{videoColor.gamma}</span>
+        </span>
+        <div className="asp-slider-row">
+          <input
+            type="range"
+            min={-100}
+            max={100}
+            step={1}
+            value={videoColor.gamma}
+            className="asp-slider"
+            onChange={(e) => updateVideoColor({ preset: 'custom', gamma: Number(e.target.value) })}
           />
         </div>
       </div>
@@ -1002,36 +1021,17 @@ export const AudioSubPopover: React.FC<AudioSubPopoverProps> = ({
       <div className="asp-field">
         <span className="asp-field-label">
           <span>Hue</span>
-          <span className="asp-slider-val">{videoColor.hue}°</span>
+          <span className="asp-slider-val">{videoColor.hue}</span>
         </span>
         <div className="asp-slider-row">
           <input
             type="range"
-            min={-180}
-            max={180}
-            step={2}
+            min={-100}
+            max={100}
+            step={1}
             value={videoColor.hue}
             className="asp-slider"
             onChange={(e) => updateVideoColor({ preset: 'custom', hue: Number(e.target.value) })}
-          />
-        </div>
-      </div>
-
-      {/* Warmth / Sepia */}
-      <div className="asp-field">
-        <span className="asp-field-label">
-          <span>Warmth</span>
-          <span className="asp-slider-val">{videoColor.sepia}%</span>
-        </span>
-        <div className="asp-slider-row">
-          <input
-            type="range"
-            min={0}
-            max={100}
-            step={2}
-            value={videoColor.sepia}
-            className="asp-slider"
-            onChange={(e) => updateVideoColor({ preset: 'custom', sepia: Number(e.target.value) })}
           />
         </div>
       </div>

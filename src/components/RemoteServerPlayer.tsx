@@ -19,6 +19,7 @@ import { BookmarkPanel } from './BookmarkPanel';
 import { BookmarkModal } from './BookmarkModal';
 import { OdometerClock, PauseDetailsOverlay, SkipIntroButton, AmbianceLighting, type MediaDetails } from './player';
 import { ToneMappingSvgDefs, isHdrOrX265Video, buildVideoCssFilter, useVideoColorSettings, type ToneMappingMode } from './player/ToneMappingFilters';
+import { ViewingOptionsPopover } from './player/ViewingOptionsPopover';
 import { AudioSyncEngine } from '../services/remote/audioSync';
 import { parseSubtitles, cleanSubtitleText } from '../utils/subtitleParser';
 import { parseMkv, parseMp4, extractMkvSubtitles } from '../utils/containerParser';
@@ -1929,6 +1930,7 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
   });
 
   const [videoColorSettings] = useVideoColorSettings();
+  const [showViewingOptions, setShowViewingOptions] = useState(false);
   useEffect(() => {
     const onTmChange = (e: Event) => {
       const mode = (e as CustomEvent<ToneMappingMode>).detail;
@@ -6277,7 +6279,8 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
             zIndex: 2,
             backgroundColor: '#000',
             filter: buildVideoCssFilter(toneMappingMode, videoColorSettings),
-            objectFit: aspectRatio === 'cover' ? 'cover' : (aspectRatio === '16:9' || aspectRatio === '4:3' ? 'fill' : 'contain'),
+            objectFit: videoColorSettings.pictureFit === 'fill' ? 'cover' : videoColorSettings.pictureFit === 'stretch' ? 'fill' : (aspectRatio === 'cover' ? 'cover' : (aspectRatio === '16:9' || aspectRatio === '4:3' ? 'fill' : 'contain')),
+            transform: videoColorSettings.pictureFit === '150' ? 'scale(1.5)' : undefined,
             aspectRatio: aspectRatio === '16:9' ? '16/9' : (aspectRatio === '4:3' ? '4/3' : undefined)
           }}
            onLoadedMetadata={() => {
@@ -7382,6 +7385,46 @@ export const RemoteServerPlayer: React.FC<VideoPlayerProps> = ({
                   </div>
                 )}
                 
+                {/* Viewing Options Button & Popover */}
+                <div className="popover-wrapper" style={{ position: 'relative' }}>
+                  <button
+                    type="button"
+                    className={`control-btn-netflix ${showViewingOptions ? 'active' : ''}`}
+                    onClick={() => {
+                      setShowViewingOptions(prev => !prev);
+                      setShowAudioSubMenu(false);
+                      setShowSpeedMenu(false);
+                    }}
+                    title="Viewing options"
+                    style={showViewingOptions ? { color: 'var(--accent)' } : undefined}
+                  >
+                    <Sliders size={20} />
+                  </button>
+                  {showViewingOptions && (
+                    <ViewingOptionsPopover
+                      title={video.title || video.fileName || 'Current media'}
+                      videoRef={videoRef}
+                      playbackRate={playbackRate}
+                      onChangePlaybackRate={(rate) => {
+                        setPlaybackRate(rate);
+                        if (videoRef.current) videoRef.current.playbackRate = rate;
+                      }}
+                      toneMappingMode={toneMappingMode}
+                      onChangeToneMapping={handleSetToneMapping}
+                      bookmarks={bookmarks}
+                      onSeek={(t) => {
+                        if (videoRef.current) {
+                          videoRef.current.currentTime = t;
+                          setCurrentTime(t);
+                        }
+                      }}
+                      duration={duration}
+                      formatTime={formatTime}
+                      onClose={() => setShowViewingOptions(false)}
+                    />
+                  )}
+                </div>
+
                 {/* HLS Quality Selector (shown when HLS levels are available) */}
                 {hlsLevels.length > 0 && (
                   <div
